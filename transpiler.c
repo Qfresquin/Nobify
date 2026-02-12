@@ -1,0 +1,95 @@
+#include "transpiler.h"
+#include "diagnostics.h"
+#include "arena_dyn.h"
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+#if defined(__MINGW32__)
+#include <_mingw.h>
+#endif
+
+#include "transpiler_evaluator.inc.c"
+#include "transpiler_dispatcher.inc.c"
+#include "transpiler_codegen.inc.c"
+
+static bool g_continue_on_fatal_error = false;
+
+// ============================================================================
+// FUNÇÕES PÚBLICAS
+// ============================================================================
+
+void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const char *input_path) {
+    nob_log(NOB_INFO, "Iniciando transpilacao com novo sistema...");
+    
+    // Cria arena para toda a avaliação
+    Arena *arena = arena_create(1024 * 1024); // 1MB
+    if (!arena) {
+        nob_log(NOB_ERROR, "Falha ao criar arena de memoria");
+        return;
+    }
+    
+    // Cria contexto de avaliação
+    Evaluator_Context *ctx = eval_context_create(arena);
+    if (!ctx) {
+        nob_log(NOB_ERROR, "Falha ao criar contexto de avaliacao");
+        arena_destroy(arena);
+        return;
+    }
+    ctx->continue_on_fatal_error = g_continue_on_fatal_error;
+
+    if (input_path && input_path[0] != '\0') {
+        String_View input_sv = sv_from_cstr(input_path);
+        String_View base_dir = path_make_absolute_arena(arena, path_parent_dir_arena(arena, input_sv));
+        ctx->current_source_dir = base_dir;
+        ctx->current_binary_dir = base_dir;
+        ctx->current_list_dir = base_dir;
+    }
+    
+    // Avalia a AST e popula o modelo
+    nob_log(NOB_INFO, "Avaliando AST...");
+    for (size_t i = 0; i < root.count; i++) {
+        eval_node(ctx, root.items[i]);
+    }
+    
+    // Gera código C a partir do modelo
+    nob_log(NOB_INFO, "Gerando codigo nob.h...");
+    generate_from_model(ctx->model, sb);
+    
+    // Libera memória (arena faz cleanup automático)
+    arena_destroy(arena);
+    
+    nob_log(NOB_INFO, "Transpilacao concluida!");
+}
+
+void transpile_datree(Ast_Root root, String_Builder *sb) {
+    transpile_datree_with_input_path(root, sb, NULL);
+}
+
+void transpiler_set_continue_on_fatal_error(bool enabled) {
+    g_continue_on_fatal_error = enabled;
+}
+
+void define_cache_var_build_model(Build_Model *model, const char *key, const char *val) {
+    build_model_set_cache_variable(model, sv_from_cstr(key), sv_from_cstr(val),
+                                   sv_from_cstr("STRING"), sv_from_cstr(""));
+}
+
+void dump_evaluation_context(const Evaluator_Context *ctx) {
+    printf("=== Evaluation Context Dump ===\n");
+    printf("Scopes: %zu\n", ctx->scope_count);
+    printf("Current source dir: "SV_Fmt"\n", SV_Arg(ctx->current_source_dir));
+    printf("Current binary dir: "SV_Fmt"\n", SV_Arg(ctx->current_binary_dir));
+    
+    // Dump do modelo
+    if (ctx->model) {
+        build_model_dump(ctx->model, stdout);
+    }
+}
+

@@ -1,0 +1,272 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel}
+\usepackage{geometry}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newcommand{\cmd}[1]{\texttt{#1}}
+
+\title{Mapeamento de Cobertura de Comandos CMake para conversao em Nob}
+\author{Projeto Nobify}
+\date{08 de fevereiro de 2026}
+
+\begin{document}
+\maketitle
+
+\section{Objetivo}
+Este documento apresenta o status de implementacao dos comandos CMake no transpiler para Nob, com foco em bibliotecas grandes que usam CMake.
+
+\section{Metodologia}
+A classificacao foi montada cruzando:
+\begin{itemize}
+  \item Lista oficial de comandos CMake obtida por \cmd{cmake --help-command-list}, em alinhamento com a documentacao oficial (manual \cmd{cmake-commands(7)}).
+  \item Secao \textit{Deprecated Commands} do manual \cmd{cmake-commands(7)} para cobertura explicita de comandos depreciados.
+  \item Lista oficial de modulos CMake obtida por \cmd{cmake --help-module-list}, com foco em CTest e CPack (manual \cmd{cmake-modules(7)}).
+  \item Comandos tratados no dispatcher (\cmd{transpiler\_dispatcher.inc.c}) e handlers no evaluator (\cmd{transpiler\_evaluator.inc.c}).
+\end{itemize}
+
+\section{Criterios de Classificacao}
+\begin{itemize}
+  \item \textbf{Suportado}: conversao completa para o objetivo do projeto.
+  \item \textbf{Adequado}: conversao parcial, mas suficiente para o objetivo atual.
+  \item \textbf{Parcial}: existe implementacao parcial, ainda insuficiente para o objetivo atual.
+  \item \textbf{N\~ao implementado}: nao ha implementacao do comando.
+\end{itemize}
+
+\section{Resumo Quantitativo}
+\begin{itemize}
+  \item Total de comandos analisados: 130.
+  \item Suportado: 31.
+  \item Adequado: 99.
+  \item Parcial: 0.
+  \item N\~ao implementado: 0.
+\end{itemize}
+
+\section{Tabela Completa de Cobertura}
+\small
+\begin{longtable}{p{0.47\linewidth}p{0.43\linewidth}}
+\toprule
+\textbf{Comando CMake} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Comando CMake} & \textbf{Status} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\cmd{add\_compile\_definitions} & Adequado \\
+\cmd{add\_compile\_options} & Adequado \\
+\cmd{add\_custom\_command} & Adequado \\
+\cmd{add\_custom\_target} & Adequado \\
+\cmd{add\_definitions} & Adequado \\
+\cmd{add\_dependencies} & Adequado \\
+\cmd{add\_executable} & Suportado \\
+\cmd{add\_library} & Suportado \\
+\cmd{add\_link\_options} & Adequado \\
+\cmd{add\_subdirectory} & Suportado \\
+\cmd{add\_test} & Adequado \\
+\cmd{aux\_source\_directory} & Adequado \\
+\cmd{block} & Adequado \\
+\cmd{break} & Suportado \\
+\cmd{build\_command} & Adequado \\
+\cmd{build\_name} & Adequado \\
+\cmd{cmake\_file\_api} & Adequado \\
+\cmd{cmake\_host\_system\_information} & Adequado \\
+\cmd{cmake\_instrumentation} & Adequado \\
+\cmd{cmake\_language} & Adequado \\
+\cmd{cmake\_minimum\_required} & Suportado \\
+\cmd{cmake\_parse\_arguments} & Adequado \\
+\cmd{cmake\_path} & Adequado \\
+\cmd{cmake\_pkg\_config} & Adequado \\
+\cmd{cmake\_policy} & Adequado \\
+\cmd{configure\_file} & Suportado \\
+\cmd{continue} & Suportado \\
+\cmd{create\_test\_sourcelist} & Adequado \\
+\cmd{ctest\_build} & Adequado \\
+\cmd{ctest\_configure} & Adequado \\
+\cmd{ctest\_coverage} & Adequado \\
+\cmd{ctest\_empty\_binary\_directory} & Adequado \\
+\cmd{ctest\_memcheck} & Adequado \\
+\cmd{ctest\_read\_custom\_files} & Adequado \\
+\cmd{ctest\_run\_script} & Adequado \\
+\cmd{ctest\_sleep} & Adequado \\
+\cmd{ctest\_start} & Adequado \\
+\cmd{ctest\_submit} & Adequado \\
+\cmd{ctest\_test} & Adequado \\
+\cmd{ctest\_update} & Adequado \\
+\cmd{ctest\_upload} & Adequado \\
+\cmd{define\_property} & Adequado \\
+\cmd{else} & Suportado \\
+\cmd{elseif} & Suportado \\
+\cmd{enable\_language} & Adequado \\
+\cmd{enable\_testing} & Suportado \\
+\cmd{endblock} & Adequado \\
+\cmd{endforeach} & Suportado \\
+\cmd{endfunction} & Suportado \\
+\cmd{endif} & Suportado \\
+\cmd{endmacro} & Suportado \\
+\cmd{endwhile} & Suportado \\
+\cmd{exec\_program} & Adequado \\
+\cmd{execute\_process} & Adequado \\
+\cmd{export} & Adequado \\
+\cmd{export\_library\_dependencies} & Adequado \\
+\cmd{file} & Adequado \\
+\cmd{find\_file} & Adequado \\
+\cmd{find\_library} & Adequado \\
+\cmd{find\_package} & Adequado \\
+\cmd{find\_path} & Adequado \\
+\cmd{find\_program} & Adequado \\
+\cmd{fltk\_wrap\_ui} & Adequado \\
+\cmd{foreach} & Suportado \\
+\cmd{function} & Suportado \\
+\cmd{get\_cmake\_property} & Adequado \\
+\cmd{get\_directory\_property} & Adequado \\
+\cmd{get\_filename\_component} & Adequado \\
+\cmd{get\_property} & Adequado \\
+\cmd{get\_source\_file\_property} & Adequado \\
+\cmd{get\_target\_property} & Adequado \\
+\cmd{get\_test\_property} & Adequado \\
+\cmd{if} & Suportado \\
+\cmd{include} & Suportado \\
+\cmd{include\_directories} & Adequado \\
+\cmd{include\_external\_msproject} & Adequado \\
+\cmd{include\_guard} & Adequado \\
+\cmd{include\_regular\_expression} & Adequado \\
+\cmd{install} & Adequado \\
+\cmd{install\_files} & Adequado \\
+\cmd{install\_programs} & Adequado \\
+\cmd{install\_targets} & Adequado \\
+\cmd{link\_directories} & Adequado \\
+\cmd{link\_libraries} & Adequado \\
+\cmd{list} & Adequado \\
+\cmd{load\_cache} & Adequado \\
+\cmd{load\_command} & Adequado \\
+\cmd{macro} & Suportado \\
+\cmd{make\_directory} & Adequado \\
+\cmd{mark\_as\_advanced} & Adequado \\
+\cmd{math} & Adequado \\
+\cmd{message} & Adequado \\
+\cmd{option} & Suportado \\
+\cmd{output\_required\_files} & Adequado \\
+\cmd{project} & Suportado \\
+\cmd{qt\_wrap\_cpp} & Adequado \\
+\cmd{qt\_wrap\_ui} & Adequado \\
+\cmd{remove} & Adequado \\
+\cmd{remove\_definitions} & Adequado \\
+\cmd{return} & Suportado \\
+\cmd{separate\_arguments} & Adequado \\
+\cmd{set} & Suportado \\
+\cmd{set\_directory\_properties} & Adequado \\
+\cmd{set\_property} & Adequado \\
+\cmd{set\_source\_files\_properties} & Adequado \\
+\cmd{set\_target\_properties} & Adequado \\
+\cmd{set\_tests\_properties} & Adequado \\
+\cmd{site\_name} & Adequado \\
+\cmd{source\_group} & Adequado \\
+\cmd{string} & Adequado \\
+\cmd{subdir\_depends} & Adequado \\
+\cmd{subdirs} & Adequado \\
+\cmd{target\_compile\_definitions} & Suportado \\
+\cmd{target\_compile\_features} & Adequado \\
+\cmd{target\_compile\_options} & Suportado \\
+\cmd{target\_include\_directories} & Suportado \\
+\cmd{target\_link\_directories} & Adequado \\
+\cmd{target\_link\_libraries} & Suportado \\
+\cmd{target\_link\_options} & Adequado \\
+\cmd{target\_precompile\_headers} & Adequado \\
+\cmd{target\_sources} & Suportado \\
+\cmd{try\_compile} & Adequado \\
+\cmd{try\_run} & Adequado \\
+\cmd{unset} & Suportado \\
+\cmd{use\_mangled\_mesa} & Adequado \\
+\cmd{utility\_source} & Adequado \\
+\cmd{variable\_requires} & Adequado \\
+\cmd{variable\_watch} & Adequado \\
+\cmd{while} & Suportado \\
+\cmd{write\_file} & Adequado \\
+\end{longtable}
+\normalsize
+
+\section{Comandos Depreciados (CMake) e Status}
+Os comandos abaixo vieram da secao \textit{Deprecated Commands} do manual oficial da versao local do CMake. Eles ja estao na tabela geral acima, mas ficam destacados aqui por prioridade de suporte futuro.
+
+\begin{table}[h]
+\centering
+\begin{tabularx}{\linewidth}{p{0.45\linewidth}p{0.45\linewidth}}
+\toprule
+\textbf{Comando Depreciado} & \textbf{Status no projeto} \\
+\midrule
+\cmd{build\_name} & Adequado \\
+\cmd{exec\_program} & Adequado \\
+\cmd{export\_library\_dependencies} & Adequado \\
+\cmd{install\_files} & Adequado \\
+\cmd{install\_programs} & Adequado \\
+\cmd{install\_targets} & Adequado \\
+\cmd{load\_command} & Adequado \\
+\cmd{make\_directory} & Adequado \\
+\cmd{output\_required\_files} & Adequado \\
+\cmd{qt\_wrap\_cpp} & Adequado \\
+\cmd{qt\_wrap\_ui} & Adequado \\
+\cmd{remove} & Adequado \\
+\cmd{subdir\_depends} & Adequado \\
+\cmd{subdirs} & Adequado \\
+\cmd{use\_mangled\_mesa} & Adequado \\
+\cmd{utility\_source} & Adequado \\
+\cmd{variable\_requires} & Adequado \\
+\cmd{write\_file} & Adequado \\
+\bottomrule
+\end{tabularx}
+\caption{Cobertura de comandos depreciados}
+\end{table}
+
+
+\section{Cobertura de Modulos CTest e CPack}
+\begin{longtable}{p{0.2\linewidth}p{0.16\linewidth}p{0.24\linewidth}p{0.32\linewidth}}
+\caption{Cobertura atual de modulos CPack/CTest} \\
+\toprule
+\textbf{Modulo} & \textbf{Status} & \textbf{Evidencia no codigo} & \textbf{O que falta} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Modulo} & \textbf{Status} & \textbf{Evidencia no codigo} & \textbf{O que falta} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\cmd{CPack} & Adequado & \cmd{include(CPack)} tratado como builtin; fallback para templates CPack em \cmd{configure\_file}. & Evoluir para comportamento completo de geradores CPack e metadados finais de empacotamento. \\
+\cmd{CPackComponent} & Adequado & Comandos \cmd{cpack\_add\_component*} materializados em metadados de componentes/grupos/tipos e manifesto gerado em regra de install (\cmd{cpack\_components\_manifest.txt}). & Evoluir para emissao completa por gerador CPack (NSIS/DEB/RPM/WIX etc.) consumindo integralmente os metadados. \\
+\cmd{CPackArchive} & Adequado & \cmd{include(CPackArchive)} builtin dedicado com normalizacao de metadados comuns (\cmd{CPACK\_PACKAGE\_NAME}, \cmd{CPACK\_PACKAGE\_VERSION}, \cmd{CPACK\_COMPONENTS\_ALL}, \cmd{CPACK\_PACKAGE\_DEPENDS}, \cmd{CPACK\_PACKAGE\_FILE\_NAME}) e selecao de geradores de arquivo (\cmd{TGZ/ZIP/...}); codegen materializa manifesto \cmd{cpack\_archive\_manifest.txt} e artefato de pacote stub no fluxo de install. & Evoluir para empacotamento binario real por gerador (tar/zip/7z) com paridade de layout/metadata do CPack oficial. \\
+\cmd{CPackBundle} & Adequado & \cmd{include(CPackBundle)} builtin dedicado; normaliza metadados de app bundle (\cmd{CPACK\_BUNDLE\_*}, nome, icone/plist e nome de artefato) e integra com metadados comuns \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_bundle\_manifest.txt} e artefato stub \cmd{.app} no fluxo de install. & Evoluir para bundle macOS real (estrutura .app completa, Info.plist efetivo, recursos e assinatura). \\
+\cmd{CPackCygwin} & Adequado & \cmd{include(CPackCygwin)} builtin dedicado; normaliza metadados Cygwin (\cmd{CPACK\_CYGWIN\_PACKAGE\_*} e nome de artefato) a partir de \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_cygwin\_manifest.txt} e artefato stub \cmd{.tar.xz} no fluxo de install. & Evoluir para pacote Cygwin real (setup metadata, layout binario e integracao completa com setup.ini). \\
+\cmd{CPackDMG} & Adequado & \cmd{include(CPackDMG)} builtin dedicado; normaliza metadados de imagem DMG (\cmd{CPACK\_DMG\_*}, volume, formato e nome de artefato) a partir de \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_dmg\_manifest.txt} e artefato stub \cmd{.dmg} no fluxo de install. & Evoluir para geracao real de DMG (layout Finder, background, links/aplicacoes e parametros completos de hdiutil). \\
+\cmd{CPackDeb} & Adequado & \cmd{include(CPackDeb)} builtin dedicado; normaliza metadados Linux/Debian (\cmd{CPACK\_DEBIAN\_PACKAGE\_*}, nome/versionamento, arquitetura e dependencias) a partir de \cmd{CPACK\_*} e componentes; codegen materializa \cmd{cpack\_deb\_manifest.txt} e artefato stub \cmd{.deb} no fluxo de install. & Evoluir para geracao real de pacote Debian (control/data tarballs, md5sums, scripts maintainer e compatibilidade dpkg-deb). \\
+\cmd{CPackFreeBSD} & Adequado & \cmd{include(CPackFreeBSD)} builtin dedicado; normaliza metadados FreeBSD (\cmd{CPACK\_FREEBSD\_PACKAGE\_*}, origin, dependencias e nome de artefato) e integra com \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_freebsd\_manifest.txt} e artefato stub \cmd{.pkg.txz}. & Evoluir para pacote FreeBSD real com manifest/plist completo e compatibilidade com \cmd{pkg create}. \\
+\cmd{CPackIFW} & Adequado & \cmd{include(CPackIFW)} builtin dedicado; normaliza metadados IFW (\cmd{CPACK\_IFW\_PACKAGE\_*}, title e file name) e integra com \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_ifw\_manifest.txt} e artefato stub \cmd{.ifw}. & Evoluir para pipeline QtIFW real (config.xml/packages, controles, repositorios e binario do installer). \\
+\cmd{CPackIFWConfigureFile} & Adequado & Modulo builtin dedicado e comando \cmd{cpack\_ifw\_configure\_file(...)} implementado com expansao de variaveis (\cmd{@VAR@}/\cmd{\$\{VAR\}}), escrita de output e integracao ao fluxo IFW. & Evoluir para cobertura completa de opcoes/assinaturas do modulo oficial e paridade fina de escaping/formatacao. \\
+\cmd{CPackNSIS} & Adequado & \cmd{include(CPackNSIS)} builtin dedicado; normaliza metadados de instalador Windows/NSIS (\cmd{CPACK\_NSIS\_*}, display name, diretorio de instalacao, contato e nome de artefato) a partir de \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_nsis\_manifest.txt} e artefato stub \cmd{.exe} no fluxo de install. & Evoluir para emissao real de instalador NSIS (script .nsi completo, paginas/UI, componentes e comportamento de uninstall com paridade oficial). \\
+\cmd{CPackNuGet} & Adequado & \cmd{include(CPackNuGet)} builtin dedicado; normaliza metadados NuGet (\cmd{CPACK\_NUGET\_PACKAGE\_*} e nome de artefato) a partir de \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_nuget\_manifest.txt} e artefato stub \cmd{.nupkg}. & Evoluir para empacotamento NuGet real (\cmd{.nuspec}, payload, semver/publish e compatibilidade com tooling oficial). \\
+\cmd{CPackProductBuild} & Adequado & \cmd{include(CPackProductBuild)} builtin dedicado; normaliza metadados productbuild (\cmd{CPACK\_PRODUCTBUILD\_*}, identifier, identity e nome de artefato) com base em \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_productbuild\_manifest.txt} e artefato stub \cmd{.pkg} no fluxo de install. & Evoluir para pipeline real \cmd{pkgbuild/productbuild} com scripts, componentes e assinatura/notarizacao compativeis. \\
+\cmd{CPackRPM} & Adequado & \cmd{include(CPackRPM)} builtin dedicado; normaliza metadados Linux/RPM (\cmd{CPACK\_RPM\_PACKAGE\_*}, release, arquitetura, license e requires) a partir de \cmd{CPACK\_*} e componentes; codegen materializa \cmd{cpack\_rpm\_manifest.txt} e artefato stub \cmd{.rpm} no fluxo de install. & Evoluir para geracao real de pacote RPM (spec completo, payload cpio, scriptlets e assinatura/metadata rpm compativeis). \\
+\cmd{CPackWIX} & Adequado & \cmd{include(CPackWIX)} builtin dedicado; normaliza metadados de instalador Windows/WiX (\cmd{CPACK\_WIX\_*}, product name, arquitetura, cultures e nome de artefato) a partir de \cmd{CPACK\_*}; codegen materializa \cmd{cpack\_wix\_manifest.txt} e artefato stub \cmd{.msi} no fluxo de install. & Evoluir para geracao real de MSI/Bundle via toolchain WiX (wxs/wixobj, candle/light ou wix v4) com paridade de features do CPack oficial. \\
+\cmd{CTest} & Adequado & \cmd{include(CTest)} com builtin dedicado; inicializa \cmd{BUILD\_TESTING}/\cmd{CMAKE\_TESTING\_ENABLED}, variaveis \cmd{CTEST\_*} basicas e integra com \cmd{enable\_testing}, \cmd{add\_test}, \cmd{set\_tests\_properties}. & Evoluir para maior paridade de dashboard/CDash avancado (submissao/launchers/script mode completos). \\
+\cmd{CTestCoverageCollectGCOV} & Adequado & Builtin de \cmd{include(CTestCoverageCollectGCOV)} e comando \cmd{ctest\_coverage\_collect\_gcov} com parsing de opcoes (\cmd{TARBALL}, \cmd{SOURCE}, \cmd{BUILD}, \cmd{GCOV\_COMMAND}, \cmd{GCOV\_OPTIONS}, \cmd{DELETE}, etc.), coleta recursiva de artefatos \cmd{.gcda/.gcno/.gcov} e empacotamento de bundle com metadados \cmd{data.json}, \cmd{Labels.json} e \cmd{Coverage.xml} para fluxo CDash. & Evoluir para empacotamento binario TAR compativel byte-a-byte com CTest oficial e execucao real de \cmd{gcov} com parse detalhado por linha. \\
+\cmd{CTestScriptMode} & Adequado & Comandos \cmd{ctest\_*} tratados no evaluator (\cmd{start/update/configure/build/test/coverage/memcheck/submit/upload/run\_script/read\_custom\_files/sleep/empty\_binary\_directory}), com variaveis de retorno/estado e execucao de scripts via \cmd{ctest\_run\_script}. & Evoluir para maior paridade com execucao externa real do \cmd{ctest -S} (novos processos e integracao dashboard completa). \\
+\cmd{CTestUseLaunchers} & Adequado & \cmd{include(CTestUseLaunchers)} builtin dedicado, inicializa \cmd{CTEST\_USE\_LAUNCHERS} e materializa \cmd{RULE\_LAUNCH\_COMPILE}/\cmd{LINK}/\cmd{CUSTOM} (variaveis e propriedades globais). & Evoluir para acoplamento completo com pipeline de dashboard/CDash e launchers por gerador/plataforma. \\
+\end{longtable}
+
+\section{Fontes}
+\begin{itemize}
+  \item CMake manual de comandos: \url{https://cmake.org/cmake/help/latest/manual/cmake-commands.7.html}
+  \item Secao de comandos depreciados (manual de comandos): \url{https://cmake.org/cmake/help/latest/manual/cmake-commands.7.html\#deprecated-commands}
+  \item CMake manual de modulos: \url{https://cmake.org/cmake/help/latest/manual/cmake-modules.7.html}
+  \item Modulos consultados: \url{https://cmake.org/cmake/help/latest/module/CTest.html}, \url{https://cmake.org/cmake/help/latest/module/CTestCoverageCollectGCOV.html}, \url{https://cmake.org/cmake/help/latest/module/CTestScriptMode.html}, \url{https://cmake.org/cmake/help/latest/module/CTestUseLaunchers.html}, \url{https://cmake.org/cmake/help/latest/module/CPack.html}, \url{https://cmake.org/cmake/help/latest/module/CPackComponent.html}
+  \item Codigo do projeto: \cmd{transpiler\_dispatcher.inc.c} e \cmd{transpiler\_evaluator.inc.c}
+\end{itemize}
+
+\end{document}
