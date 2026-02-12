@@ -362,12 +362,6 @@ Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
     return parse_block(arena, &tokens, &cursor, NULL, 0, NULL);
 }
 
-// --- Utils de Debug ---
-
-// As funções de limpeza (ast_free) foram removidas pois
-// a memória é gerenciada pela Arena. Ao destruir a arena
-// no final do processo, toda a árvore AST é liberada automaticamente.
-
 
 // Impressão visual da árvore
 void print_ast_list(Node_List list, int indent);

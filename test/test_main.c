@@ -13,7 +13,6 @@
     #include <unistd.h>  // rmdir
     #include <errno.h>
     #include <sys/stat.h>
-    #include <string.h>  // strerror
 #endif
 
 // Forward declarations dos testes

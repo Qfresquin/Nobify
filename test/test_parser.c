@@ -367,6 +367,142 @@ TEST(quoted_strings) {
     TEST_PASS();
 }
 
+
+
+TEST(case_insensitive_keywords) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("IF(WIN32)\n  set(VAR value)\nEnDiF()");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(diag_has_errors() == false);
+    ASSERT(root.count == 1);
+    ASSERT(root.items[0].kind == NODE_IF);
+    ASSERT(root.items[0].as.if_stmt.then_block.count == 1);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(command_without_parentheses_is_ignored) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("set VAR value\nmessage hello");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(diag_has_errors() == false);
+    ASSERT(root.count == 0);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(semicolon_is_ignored_in_args_at_depth1) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("set(A B; C)");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(diag_has_errors() == false);
+    ASSERT(root.count == 1);
+    ASSERT(root.items[0].kind == NODE_COMMAND);
+    ASSERT(root.items[0].as.cmd.args.count == 3);
+    ASSERT(nob_sv_eq(root.items[0].as.cmd.args.items[0].items[0].text, sv_from_cstr("A")));
+    ASSERT(nob_sv_eq(root.items[0].as.cmd.args.items[1].items[0].text, sv_from_cstr("B")));
+    ASSERT(nob_sv_eq(root.items[0].as.cmd.args.items[2].items[0].text, sv_from_cstr("C")));
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(missing_rparen_logs_error_but_parser_recovers) {
+    Arena *arena = arena_create(1024);
+    // Importante: nao pode existir nenhum ')' depois, senao o parser vai
+    // considerar que o comando fechou no primeiro ')' que encontrar.
+    // Aqui forçamos EOF antes de qualquer ')'.
+    Token_List tokens = tokenize("set(VAR value\nmessage ok\n");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(diag_has_errors() == true);
+    ASSERT(diag_error_count() > 0);
+    // Mesmo com erro, o parser deve continuar e parsear o que conseguir
+    ASSERT(root.count >= 1);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(if_missing_endif_logs_error) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("if(WIN32)\n  set(VAR value)\n");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(root.count == 1);
+    ASSERT(root.items[0].kind == NODE_IF);
+    ASSERT(diag_has_errors() == true);
+    ASSERT(diag_error_count() > 0);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(foreach_missing_endforeach_logs_error) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("foreach(x IN LISTS xs)\n  message(${x})\n");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(root.count == 1);
+    ASSERT(root.items[0].kind == NODE_FOREACH);
+    ASSERT(diag_has_errors() == true);
+    ASSERT(diag_error_count() > 0);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(invalid_command_name_variants_are_ignored) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("1abc(x)\na-b(y)\na:bc(z)\n_ok(ok)");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    // Somente "_ok(ok)" deve ser aceito (comeca com '_' e segue [a-zA-Z0-9_])
+    ASSERT(diag_has_errors() == false);
+    ASSERT(root.count == 1);
+    ASSERT(root.items[0].kind == NODE_COMMAND);
+    ASSERT(nob_sv_eq(root.items[0].as.cmd.name, sv_from_cstr("_ok")));
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(invalid_token_logs_error_and_is_skipped) {
+    Arena *arena = arena_create(1024);
+    // String nao fechada gera TOKEN_INVALID no lexer. O lexer atual consome ate EOF,
+    // entao nao ha como \"recuperar\" e parsear tokens posteriores.
+    Token_List tokens = tokenize("\"unterminated\nset(VAR ok)");
+    diag_reset();
+    Ast_Root root = parse_tokens(arena, tokens);
+
+    ASSERT(diag_has_errors() == true);
+    ASSERT(diag_error_count() > 0);
+    ASSERT(root.count == 0);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 void run_parser_tests(int *passed, int *failed) {
     test_empty_input(passed, failed);
     test_simple_command(passed, failed);
@@ -390,4 +526,12 @@ void run_parser_tests(int *passed, int *failed) {
     test_invalid_command_name_with_parentheses_is_ignored(passed, failed);
     test_parse_tokens_requires_arena(passed, failed);
     test_if_nested_parentheses_dont_escape_as_commands(passed, failed);
+    test_case_insensitive_keywords(passed, failed);
+    test_command_without_parentheses_is_ignored(passed, failed);
+    test_semicolon_is_ignored_in_args_at_depth1(passed, failed);
+    test_missing_rparen_logs_error_but_parser_recovers(passed, failed);
+    test_if_missing_endif_logs_error(passed, failed);
+    test_foreach_missing_endforeach_logs_error(passed, failed);
+    test_invalid_command_name_variants_are_ignored(passed, failed);
+    test_invalid_token_logs_error_and_is_skipped(passed, failed);
 }

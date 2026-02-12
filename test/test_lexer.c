@@ -291,6 +291,162 @@ TEST(single_dollar_is_identifier) {
     TEST_PASS();
 }
 
+
+TEST(line_and_col_tracking_lf) {
+    // token positions should track line/col after '\n'
+    Lexer l = lexer_init(sv_from_cstr("one\n  two\nthree"));
+
+    Token t1 = lexer_next(&l);
+    ASSERT(t1.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t1.text, sv_from_cstr("one")));
+    ASSERT(t1.line == 1);
+    ASSERT(t1.col  == 1);
+
+    Token t2 = lexer_next(&l);
+    ASSERT(t2.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t2.text, sv_from_cstr("two")));
+    ASSERT(t2.line == 2);
+    ASSERT(t2.col  == 3); // two spaces before "two"
+    ASSERT(t2.has_space_left == true);
+
+    Token t3 = lexer_next(&l);
+    ASSERT(t3.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t3.text, sv_from_cstr("three")));
+    ASSERT(t3.line == 3);
+    ASSERT(t3.col  == 1);
+
+    TEST_PASS();
+}
+
+TEST(crlf_newlines_are_handled) {
+    Lexer l = lexer_init(sv_from_cstr("a\r\nb"));
+
+    Token t1 = lexer_next(&l);
+    ASSERT(t1.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t1.text, sv_from_cstr("a")));
+    ASSERT(t1.line == 1);
+    ASSERT(t1.col  == 1);
+
+    Token t2 = lexer_next(&l);
+    ASSERT(t2.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t2.text, sv_from_cstr("b")));
+    ASSERT(t2.line == 2);
+    ASSERT(t2.col  == 1);
+    ASSERT(t2.has_space_left == true);
+
+    TEST_PASS();
+}
+
+TEST(block_comment_with_equals) {
+    Lexer l = lexer_init(sv_from_cstr("#[=[ comment ]=]add_executable"));
+
+    Token t = lexer_next(&l);
+    ASSERT(t.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t.text, sv_from_cstr("add_executable")));
+    ASSERT(t.has_space_left == true);
+
+    TEST_PASS();
+}
+
+TEST(raw_string_with_internal_brackets) {
+    Lexer l = lexer_init(sv_from_cstr("[=[abc]def]=]"));
+    Token t = lexer_next(&l);
+    ASSERT(t.kind == TOKEN_RAW_STRING);
+    ASSERT(nob_sv_eq(t.text, sv_from_cstr("[=[abc]def]=]")));
+    TEST_PASS();
+}
+
+TEST(raw_string_mismatched_equals_does_not_close_early) {
+    Lexer l = lexer_init(sv_from_cstr("[==[a]=]b]==]"));
+    Token t = lexer_next(&l);
+    ASSERT(t.kind == TOKEN_RAW_STRING);
+    ASSERT(nob_sv_eq(t.text, sv_from_cstr("[==[a]=]b]==]")));
+    TEST_PASS();
+}
+
+TEST(genexp_nested_angle_brackets) {
+    Lexer l = lexer_init(sv_from_cstr("$<A<B>>"));
+    Token t = lexer_next(&l);
+    ASSERT(t.kind == TOKEN_GEN_EXP);
+    ASSERT(nob_sv_eq(t.text, sv_from_cstr("$<A<B>>")));
+    TEST_PASS();
+}
+
+TEST(var_with_escaped_braces) {
+    Lexer l1 = lexer_init(sv_from_cstr("${A\\}B}"));
+    Token t1 = lexer_next(&l1);
+    ASSERT(t1.kind == TOKEN_VAR);
+    ASSERT(nob_sv_eq(t1.text, sv_from_cstr("${A\\}B}")));
+
+    // Para manter um '}' literal dentro de ${...}, ele precisa ser escapado.
+    // Um '}' não-escapado fecha a expressão de variável.
+    Lexer l2 = lexer_init(sv_from_cstr("${A\\{B\\}}"));
+    Token t2 = lexer_next(&l2);
+    ASSERT(t2.kind == TOKEN_VAR);
+    ASSERT(nob_sv_eq(t2.text, sv_from_cstr("${A\\{B\\}}")));
+    ASSERT(lexer_next(&l2).kind == TOKEN_END);
+
+    TEST_PASS();
+}
+
+TEST(identifier_with_escaped_delimiters) {
+    // backslash escapes should keep delimiters inside the same identifier
+    Lexer l1 = lexer_init(sv_from_cstr("abc\\ def"));
+    Token a = lexer_next(&l1);
+    ASSERT(a.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(a.text, sv_from_cstr("abc\\ def")));
+    ASSERT(lexer_next(&l1).kind == TOKEN_END);
+
+    Lexer l2 = lexer_init(sv_from_cstr("abc\\;def;"));
+    Token b = lexer_next(&l2);
+    ASSERT(b.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(b.text, sv_from_cstr("abc\\;def")));
+    Token semi = lexer_next(&l2);
+    ASSERT(semi.kind == TOKEN_SEMICOLON);
+
+    TEST_PASS();
+}
+
+TEST(identifier_stops_before_comment) {
+    Lexer l = lexer_init(sv_from_cstr("a#b\nc"));
+    Token t1 = lexer_next(&l);
+    ASSERT(t1.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t1.text, sv_from_cstr("a")));
+
+    Token t2 = lexer_next(&l);
+    ASSERT(t2.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t2.text, sv_from_cstr("c")));
+    ASSERT(t2.has_space_left == true);
+
+    TEST_PASS();
+}
+
+TEST(concatenated_multiple_vars_has_space_left_false) {
+    Lexer l = lexer_init(sv_from_cstr("a${B}${C}d"));
+
+    Token t1 = lexer_next(&l);
+    ASSERT(t1.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t1.text, sv_from_cstr("a")));
+
+    Token t2 = lexer_next(&l);
+    ASSERT(t2.kind == TOKEN_VAR);
+    ASSERT(nob_sv_eq(t2.text, sv_from_cstr("${B}")));
+    ASSERT(t2.has_space_left == false);
+
+    Token t3 = lexer_next(&l);
+    ASSERT(t3.kind == TOKEN_VAR);
+    ASSERT(nob_sv_eq(t3.text, sv_from_cstr("${C}")));
+    ASSERT(t3.has_space_left == false);
+
+    Token t4 = lexer_next(&l);
+    ASSERT(t4.kind == TOKEN_IDENTIFIER);
+    ASSERT(nob_sv_eq(t4.text, sv_from_cstr("d")));
+    ASSERT(t4.has_space_left == false);
+
+    TEST_PASS();
+}
+
+
 void run_lexer_tests(int *passed, int *failed) {
     test_empty_input(passed, failed);
     test_simple_parens(passed, failed);
@@ -315,4 +471,14 @@ void run_lexer_tests(int *passed, int *failed) {
     test_unclosed_genexp_is_invalid(passed, failed);
     test_unclosed_raw_string_is_invalid(passed, failed);
     test_single_dollar_is_identifier(passed, failed);
+    test_line_and_col_tracking_lf(passed, failed);
+    test_crlf_newlines_are_handled(passed, failed);
+    test_block_comment_with_equals(passed, failed);
+    test_raw_string_with_internal_brackets(passed, failed);
+    test_raw_string_mismatched_equals_does_not_close_early(passed, failed);
+    test_genexp_nested_angle_brackets(passed, failed);
+    test_var_with_escaped_braces(passed, failed);
+    test_identifier_with_escaped_delimiters(passed, failed);
+    test_identifier_stops_before_comment(passed, failed);
+    test_concatenated_multiple_vars_has_space_left_false(passed, failed);
 }
