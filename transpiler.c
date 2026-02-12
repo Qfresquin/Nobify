@@ -26,8 +26,6 @@ static bool g_continue_on_fatal_error = false;
 // ============================================================================
 
 void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const char *input_path) {
-    nob_log(NOB_INFO, "Iniciando transpilacao com novo sistema...");
-    
     // Cria arena para toda a avaliação
     Arena *arena = arena_create(1024 * 1024); // 1MB
     if (!arena) {
@@ -53,19 +51,16 @@ void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const c
     }
     
     // Avalia a AST e popula o modelo
-    nob_log(NOB_INFO, "Avaliando AST...");
     for (size_t i = 0; i < root.count; i++) {
         eval_node(ctx, root.items[i]);
     }
     
     // Gera código C a partir do modelo
-    nob_log(NOB_INFO, "Gerando codigo nob.h...");
     generate_from_model(ctx->model, sb);
     
     // Libera memória (arena faz cleanup automático)
     arena_destroy(arena);
     
-    nob_log(NOB_INFO, "Transpilacao concluida!");
 }
 
 void transpile_datree(Ast_Root root, String_Builder *sb) {

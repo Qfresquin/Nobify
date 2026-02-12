@@ -488,6 +488,201 @@ TEST(string_list_unique_helpers) {
     TEST_PASS();
 }
 
+
+TEST(compile_options_visibility) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_STATIC_LIB);
+    ASSERT(t != NULL);
+
+    // PRIVATE: only target properties
+    build_target_add_compile_option(t, arena, sv_from_cstr("-DPRIV"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].compile_options.count == 1);
+    ASSERT(nob_sv_eq(t->properties[CONFIG_ALL].compile_options.items[0], sv_from_cstr("-DPRIV")));
+    ASSERT(t->interface_compile_options.count == 0);
+
+    // INTERFACE: only interface list
+    build_target_add_compile_option(t, arena, sv_from_cstr("-DIFACE"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].compile_options.count == 1);
+    ASSERT(t->interface_compile_options.count == 1);
+    ASSERT(nob_sv_eq(t->interface_compile_options.items[0], sv_from_cstr("-DIFACE")));
+
+    // PUBLIC: both
+    build_target_add_compile_option(t, arena, sv_from_cstr("-DPUB"), VISIBILITY_PUBLIC, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].compile_options.count == 2);
+    ASSERT(nob_sv_eq(t->properties[CONFIG_ALL].compile_options.items[1], sv_from_cstr("-DPUB")));
+    ASSERT(t->interface_compile_options.count == 2);
+    ASSERT(nob_sv_eq(t->interface_compile_options.items[1], sv_from_cstr("-DPUB")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(link_options_visibility) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_SHARED_LIB);
+    ASSERT(t != NULL);
+
+    build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--as-needed"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].link_options.count == 1);
+    ASSERT(t->interface_link_options.count == 0);
+
+    build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--no-undefined"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].link_options.count == 1);
+    ASSERT(t->interface_link_options.count == 1);
+
+    build_target_add_link_option(t, arena, sv_from_cstr("-Wl,-rpath,$ORIGIN"), VISIBILITY_PUBLIC, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].link_options.count == 2);
+    ASSERT(t->interface_link_options.count == 2);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(link_directories_visibility) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_EXECUTABLE);
+    ASSERT(t != NULL);
+
+    build_target_add_link_directory(t, arena, sv_from_cstr("priv_dir"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].link_directories.count == 1);
+    ASSERT(t->interface_link_directories.count == 0);
+
+    build_target_add_link_directory(t, arena, sv_from_cstr("iface_dir"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].link_directories.count == 1);
+    ASSERT(t->interface_link_directories.count == 1);
+
+    build_target_add_link_directory(t, arena, sv_from_cstr("pub_dir"), VISIBILITY_PUBLIC, CONFIG_ALL);
+    ASSERT(t->properties[CONFIG_ALL].link_directories.count == 2);
+    ASSERT(t->interface_link_directories.count == 2);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(interface_dependencies_dedupe) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_STATIC_LIB);
+    ASSERT(t != NULL);
+
+    build_target_add_interface_dependency(t, arena, sv_from_cstr("dep"));
+    build_target_add_interface_dependency(t, arena, sv_from_cstr("dep"));
+    ASSERT(t->interface_dependencies.count == 1);
+    ASSERT(nob_sv_eq(t->interface_dependencies.items[0], sv_from_cstr("dep")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(custom_property_overwrite) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_EXECUTABLE);
+    ASSERT(t != NULL);
+
+    build_target_set_property(t, arena, sv_from_cstr("KEY"), sv_from_cstr("v1"));
+    ASSERT(nob_sv_eq(build_target_get_property(t, sv_from_cstr("KEY")), sv_from_cstr("v1")));
+    build_target_set_property(t, arena, sv_from_cstr("KEY"), sv_from_cstr("v2"));
+    ASSERT(nob_sv_eq(build_target_get_property(t, sv_from_cstr("KEY")), sv_from_cstr("v2")));
+    ASSERT(t->custom_properties.count == 1);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(cache_variable_overwrite) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    build_model_set_cache_variable(model, sv_from_cstr("CMAKE_CXX_STANDARD"), sv_from_cstr("17"), sv_from_cstr("STRING"), sv_from_cstr(""));
+    ASSERT(nob_sv_eq(build_model_get_cache_variable(model, sv_from_cstr("CMAKE_CXX_STANDARD")), sv_from_cstr("17")));
+    build_model_set_cache_variable(model, sv_from_cstr("CMAKE_CXX_STANDARD"), sv_from_cstr("20"), sv_from_cstr("STRING"), sv_from_cstr(""));
+    ASSERT(nob_sv_eq(build_model_get_cache_variable(model, sv_from_cstr("CMAKE_CXX_STANDARD")), sv_from_cstr("20")));
+    ASSERT(model->cache_variables.count == 1);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(add_package_dedup_and_init) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    Found_Package *p1 = build_model_add_package(model, sv_from_cstr("ZLIB"), true);
+    ASSERT(p1 != NULL);
+    ASSERT(model->package_count == 1);
+    ASSERT(nob_sv_eq(p1->name, sv_from_cstr("ZLIB")));
+    ASSERT(p1->found == true);
+    ASSERT(p1->include_dirs.count == 0);
+    ASSERT(p1->libraries.count == 0);
+    ASSERT(p1->definitions.count == 0);
+    ASSERT(p1->options.count == 0);
+
+    // Dedupe: returns existing, does not add new
+    Found_Package *p2 = build_model_add_package(model, sv_from_cstr("ZLIB"), false);
+    ASSERT(p2 == p1);
+    ASSERT(model->package_count == 1);
+    ASSERT(p1->found == true);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(add_test_dedup_updates_fields) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    Build_Test *t1 = build_model_add_test(model, sv_from_cstr("t"), sv_from_cstr("cmd1"), sv_from_cstr("wd1"), false);
+    ASSERT(t1 != NULL);
+    ASSERT(model->test_count == 1);
+    ASSERT(nob_sv_eq(t1->command, sv_from_cstr("cmd1")));
+    ASSERT(nob_sv_eq(t1->working_directory, sv_from_cstr("wd1")));
+    ASSERT(t1->command_expand_lists == false);
+
+    Build_Test *t2 = build_model_add_test(model, sv_from_cstr("t"), sv_from_cstr("cmd2"), sv_from_cstr("wd2"), true);
+    ASSERT(t2 == t1);
+    ASSERT(model->test_count == 1);
+    ASSERT(nob_sv_eq(t1->command, sv_from_cstr("cmd2")));
+    ASSERT(nob_sv_eq(t1->working_directory, sv_from_cstr("wd2")));
+    ASSERT(t1->command_expand_lists == true);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(cpack_dedup_basic) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    CPack_Install_Type *it1 = build_model_add_cpack_install_type(model, sv_from_cstr("Full"));
+    ASSERT(it1 != NULL);
+    ASSERT(model->cpack_install_type_count == 1);
+    CPack_Install_Type *it2 = build_model_add_cpack_install_type(model, sv_from_cstr("Full"));
+    ASSERT(it2 == it1);
+    ASSERT(model->cpack_install_type_count == 1);
+
+    CPack_Component_Group *g1 = build_model_add_cpack_component_group(model, sv_from_cstr("Runtime"));
+    ASSERT(g1 != NULL);
+    ASSERT(model->cpack_component_group_count == 1);
+    CPack_Component_Group *g2 = build_model_add_cpack_component_group(model, sv_from_cstr("Runtime"));
+    ASSERT(g2 == g1);
+    ASSERT(model->cpack_component_group_count == 1);
+
+    CPack_Component *c1 = build_model_add_cpack_component(model, sv_from_cstr("App"));
+    ASSERT(c1 != NULL);
+    ASSERT(model->cpack_component_count == 1);
+    CPack_Component *c2 = build_model_add_cpack_component(model, sv_from_cstr("App"));
+    ASSERT(c2 == c1);
+    ASSERT(model->cpack_component_count == 1);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+
 void run_build_model_tests(int *passed, int *failed) {
     test_create_model(passed, failed);
     test_add_target(passed, failed);
@@ -498,8 +693,14 @@ void run_build_model_tests(int *passed, int *failed) {
     test_add_library(passed, failed);
     test_add_definition(passed, failed);
     test_add_include_directory(passed, failed);
+    test_compile_options_visibility(passed, failed);
+    test_link_options_visibility(passed, failed);
+    test_link_directories_visibility(passed, failed);
+    test_interface_dependencies_dedupe(passed, failed);
+    test_custom_property_overwrite(passed, failed);
     test_set_property(passed, failed);
     test_cache_variable(passed, failed);
+    test_cache_variable_overwrite(passed, failed);
     test_multiple_targets(passed, failed);
     test_validate_dependencies(passed, failed);
     test_invalid_dependency(passed, failed);
@@ -514,4 +715,7 @@ void run_build_model_tests(int *passed, int *failed) {
     test_target_prefixes_suffixes(passed, failed);
     test_find_target_index_api(passed, failed);
     test_string_list_unique_helpers(passed, failed);
+    test_add_package_dedup_and_init(passed, failed);
+    test_add_test_dedup_updates_fields(passed, failed);
+    test_cpack_dedup_basic(passed, failed);
 }

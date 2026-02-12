@@ -306,9 +306,6 @@ typedef struct {
 // Cria um novo modelo vazio
 Build_Model* build_model_create(Arena *arena);
 
-// Destrói o modelo (apenas se não usar arena)
-void build_model_destroy(Build_Model *model);
-
 // Cria um novo target
 Build_Target* build_model_add_target(Build_Model *model, 
                                      String_View name, 
