@@ -1,0 +1,217 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+
+% Configuração de cores para código
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    language=C
+}
+
+\lstset{style=mystyle}
+
+\title{\textbf{Plano de Refatoração: Transpiler Evaluator $\to$ Build Model}}
+\author{Documento de Transição}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Objetivo}
+Este documento consolida as mudanças necessárias para desacoplar a lógica de avaliação (`transpiler\_evaluator.inc.c`) da estrutura de dados e lógica de negócio (`build\_model.c`). O objetivo é garantir que o \texttt{Evaluator} apenas interprete a sintaxe do CMake, enquanto o \texttt{Build Model} protege a integridade dos dados e expõe uma API robusta.
+
+\section{Diretriz Geral}
+\textbf{Regra de Ouro:} Funções movidas para o \texttt{build\_model} não podem receber \texttt{Evaluator\_Context*}. Elas devem receber apenas:
+\begin{itemize}
+    \item \texttt{Build\_Model*} ou \texttt{Build\_Target*}
+    \item \texttt{Arena*} (para alocações)
+    \item Tipos básicos (\texttt{String\_View}, \texttt{bool}, etc.)
+\end{itemize}
+
+\section{Tarefas de Refatoração}
+
+\subsection{1. Metadados do Projeto e Flags Globais}
+\textbf{Origem:} \texttt{eval\_project\_command}, \texttt{eval\_enable\_language\_command}, \texttt{eval\_enable\_testing\_command}.
+
+\begin{itemize}
+    \item Remover manipulação direta de \texttt{model->project\_name}, \texttt{version}, etc.
+    \item Mover lógica de \texttt{eval\_set\_env\_var}.
+\end{itemize}
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+void build_model_set_project_info(Build_Model *model, String_View name, String_View version);
+void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang);
+void build_model_set_testing_enabled(Build_Model *model, bool enabled);
+void build_model_set_env_var(Build_Model *model, Arena *arena, String_View key, String_View value);
+\end{lstlisting}
+
+\subsection{2. Configurações Globais de Build}
+\textbf{Origem:} \texttt{eval\_add\_*\_definitions}, \texttt{eval\_add\_*\_options}.
+
+\begin{itemize}
+    \item Encapsular acesso às listas globais (\texttt{global\_definitions}, \texttt{global\_compile\_options}).
+    \item Mover lógica de parsing de \texttt{-D} (que decide se é definition ou option) para dentro do model.
+\end{itemize}
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+void build_model_add_global_definition(Build_Model *model, Arena *arena, String_View def);
+void build_model_add_global_compile_option(Build_Model *model, Arena *arena, String_View opt);
+void build_model_add_global_link_option(Build_Model *model, Arena *arena, String_View opt);
+// Lógica inteligente para add_definitions:
+void build_model_process_global_definition_arg(Build_Model *model, Arena *arena, String_View arg);
+\end{lstlisting}
+
+\subsection{3. Diretórios Globais}
+\textbf{Origem:} \texttt{eval\_include\_directories}, \texttt{eval\_link\_directories}.
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+void build_model_add_include_directory(Build_Model *model, Arena *arena, String_View dir, bool is_system);
+void build_model_add_link_directory(Build_Model *model, Arena *arena, String_View dir);
+\end{lstlisting}
+
+\subsection{4. Flags e Mutações de Target (Setters)}
+\textbf{Origem:} \texttt{eval\_add\_executable}, \texttt{eval\_add\_library}.
+\textbf{Problema:} Acesso direto a flags como \texttt{win32\_executable}, \texttt{macosx\_bundle}.
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+typedef enum {
+    TARGET_FLAG_WIN32_EXECUTABLE,
+    TARGET_FLAG_MACOSX_BUNDLE,
+    TARGET_FLAG_EXCLUDE_FROM_ALL,
+    TARGET_FLAG_IMPORTED,
+    TARGET_FLAG_ALIAS
+} Target_Flag;
+
+void build_target_set_flag(Build_Target *target, Target_Flag flag, bool value);
+void build_target_set_alias(Build_Target *target, Arena *arena, String_View aliased_name);
+\end{lstlisting}
+
+\subsection{5. Propriedades de Target (Lógica Complexa)}
+\textbf{Origem:} \texttt{parse\_target\_property\_list\_key}, \texttt{eval\_apply\_target\_property}, \texttt{eval\_get\_target\_property\_value}.
+\textbf{Ação:} Esta é a parte mais crítica. A lógica que mapeia strings (\texttt{"COMPILE\_DEFINITIONS\_DEBUG"}) para arrays internos (\texttt{properties[CONFIG\_DEBUG]}) pertence ao modelo.
+
+\textbf{Migração:}
+\begin{enumerate}
+    \item Mover \texttt{config\_from\_string} e \texttt{config\_suffix} para \texttt{build\_model.c} (privados ou utilitários).
+    \item Mover a lógica de \texttt{parse\_target\_property\_list\_key}.
+    \item Criar setters/getters "inteligentes" que fazem o roteamento interno.
+\end{enumerate}
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+// Setter inteligente: parseia a key, descobre a config e aplica na lista correta ou no property map genérico
+void build_target_set_property_smart(Build_Target *target, Arena *arena, String_View key, String_View value);
+
+// Getter inteligente: resolve computed properties (NAME, TYPE) e fallbacks de config
+String_View build_target_get_property_computed(Build_Target *target, String_View key, String_View default_config);
+\end{lstlisting}
+
+\subsection{6. Link Libraries (Global e Frameworks)}
+\textbf{Origem:} \texttt{eval\_append\_link\_library\_item}.
+\textbf{Ação:} Mover lógica de tratamento de \texttt{-framework} (macOS) para o modelo.
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+void build_model_add_global_link_library(Build_Model *model, Arena *arena, String_View lib);
+\end{lstlisting}
+
+\subsection{7. Testes (CTest)}
+\textbf{Origem:} \texttt{eval\_add\_test\_command}.
+\textbf{Ação:} Encapsular a criação e configuração de \texttt{Build\_Test}.
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+// Já existe, mas deve absorver toda a lógica de alocação e flags
+Build_Test* build_model_add_test_ex(Build_Model *model, Arena *arena, String_View name, String_View command, String_View working_dir);
+\end{lstlisting}
+
+\subsection{8. Regras de Instalação}
+\textbf{Origem:} \texttt{eval\_install\_command}, \texttt{install\_rules\_add\_entry}.
+\textbf{Ação:} O formato interno de armazenamento (ex: \texttt{item\textbackslash tdestination}) é detalhe de implementação.
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+typedef enum {
+    INSTALL_RULE_TARGET,
+    INSTALL_RULE_FILE,
+    INSTALL_RULE_PROGRAM,
+    INSTALL_RULE_DIRECTORY
+} Install_Rule_Type;
+
+void build_model_set_install_prefix(Build_Model *model, String_View prefix);
+void build_model_add_install_rule(Build_Model *model, Arena *arena, Install_Rule_Type type, String_View item, String_View destination);
+\end{lstlisting}
+
+\subsection{9. CPack}
+\textbf{Origem:} Comandos \texttt{cpack\_add\_*}.
+\textbf{Ação:} Mover lógica de busca, criação e preenchimento de structs CPack.
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+CPack_Component_Group* build_model_get_or_create_cpack_group(Build_Model *model, Arena *arena, String_View name);
+CPack_Component* build_model_get_or_create_cpack_component(Build_Model *model, Arena *arena, String_View name);
+// ... setters específicos para propriedades de CPack
+\end{lstlisting}
+
+\subsection{10. Utilitários e Custom Commands}
+\textbf{Origem:} Manipulação manual de arrays de \texttt{Custom\_Command} e funções de path.
+
+\textbf{Ações:}
+\begin{itemize}
+    \item Mover utilitários de path (\texttt{path\_join\_arena}, \texttt{path\_is\_absolute\_sv}, etc.) para \texttt{build\_model.c} (ou um novo \texttt{build\_utils.c}).
+    \item Encapsular criação de comandos customizados.
+\end{itemize}
+
+\textbf{Nova API em \texttt{build\_model.h}:}
+\begin{lstlisting}
+Custom_Command* build_target_add_custom_command(Build_Target *target, Arena *arena, bool pre_build, String_View command);
+Custom_Command* build_model_add_custom_command_output(Build_Model *model, Arena *arena, String_View output, String_View command);
+// Utilitários de Path expostos se necessário
+String_View build_path_join(Arena *arena, String_View base, String_View rel);
+\end{lstlisting}
+
+\section{Conclusão}
+Ao final desta transição, o arquivo \texttt{transpiler\_evaluator.inc.c} deverá conter apenas:
+\begin{enumerate}
+    \item Parsing de argumentos (tokenização, identificação de keywords).
+    \item Expansão de variáveis (\texttt{\$\{...\}}) e Generator Expressions.
+    \item Controle de fluxo (\texttt{if}, \texttt{foreach}, \texttt{macro}).
+    \item Chamadas para a nova API do \texttt{build\_model}.
+\end{enumerate}
+
+Isso resultará em um código mais limpo, testável e manutenível.
+
+\end{document}

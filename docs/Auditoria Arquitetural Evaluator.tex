@@ -1,0 +1,169 @@
+\documentclass[a4paper,12pt]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{geometry}
+\usepackage{titlesec}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+
+% Configuração de margens
+\geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+
+% Configuração de cores para código
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\definecolor{codeblue}{rgb}{0.1,0.1,0.8}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    frame=single,
+    language=C
+}
+
+\lstset{style=mystyle}
+
+% Cabeçalho e Rodapé
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\today}
+\lhead{Análise Arquitetural: Transpiler Evaluator}
+\rfoot{Página \thepage}
+
+\title{\textbf{Relatório de Auditoria Arquitetural}\\ \large Análise de Violações de Design no Módulo \texttt{transpiler\_evaluator.inc.c}}
+\author{Equipe de Desenvolvimento}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\chapter{Introdução}
+Este relatório apresenta uma análise crítica do arquivo \texttt{transpiler\_evaluator.inc.c} dentro do projeto de transpilação CMake para NOB. A análise foca em princípios de Engenharia de Software, especificamente o \textbf{Princípio da Responsabilidade Única (SRP)} e \textbf{Separação de Preocupações (SoC)}.
+
+Atualmente, o avaliador atua como um \textit{God Object} (Objeto Deus), acumulando responsabilidades que variam desde a interpretação da AST até manipulação de baixo nível de arquivos, gerenciamento de memória do modelo de dados e execução de processos do sistema operacional.
+
+\chapter{Acoplamento com o Modelo de Dados}
+\section{Violação de Encapsulamento (Feature Envy)}
+O avaliador acessa e modifica diretamente as estruturas internas de \texttt{Build\_Model} e \texttt{Build\_Target}. Isso cria um acoplamento rígido, onde qualquer alteração na estrutura de dados quebra a lógica de avaliação.
+
+\subsection{Problemas Identificados}
+\begin{itemize}
+    \item \textbf{Acesso Direto a Campos:} O avaliador define flags como \texttt{target->win32\_executable = true} diretamente.
+    \item \textbf{Gestão de Memória Externa:} O avaliador invoca \texttt{arena\_da\_reserve} para arrays que pertencem ao modelo (ex: \texttt{Custom\_Command}, \texttt{CPack}).
+    \item \textbf{Lógica de Negócio do Modelo:} A decisão de onde armazenar uma propriedade (se em \texttt{properties[CONFIG\_DEBUG]} ou global) é feita no avaliador, não no modelo.
+\end{itemize}
+
+\subsection{Exemplo de Código Problemático}
+\begin{lstlisting}[caption={Evaluator manipulando estruturas internas do Model}]
+// transpiler_evaluator.inc.c
+if (mode_target) {
+    // O evaluator sabe alocar memoria dentro do target
+    if (!arena_da_reserve(model->arena, 
+        (void**)&target->pre_build_commands, ...)) return NULL;
+    
+    // O evaluator preenche campos internos manualmente
+    Custom_Command *cmd = &target->pre_build_commands[*count];
+    cmd->command = command;
+    cmd->echo = true;
+}
+\end{lstlisting}
+
+\chapter{Abstração de Sistema e I/O}
+O avaliador mistura a lógica de interpretação da linguagem CMake com chamadas de sistema de baixo nível.
+
+\section{Manipulação de Arquivos}
+Comandos como \texttt{file(COPY...)} e \texttt{configure\_file(...)} contêm implementações completas de algoritmos de cópia recursiva e leitura de diretórios.
+
+\begin{itemize}
+    \item \textbf{Recursive Delete/Copy:} Funções como \texttt{file\_delete\_path\_recursive} e \texttt{file\_copy\_entry\_to\_destination} são utilitários de sistema de arquivos agnósticos à linguagem CMake e não deveriam residir no avaliador.
+    \item \textbf{Criação de Diretórios:} A lógica de \texttt{ensure\_parent\_dirs\_for\_path} é um utilitário de OS.
+\end{itemize}
+
+\section{Execução de Processos}
+O comando \texttt{execute\_process} implementa lógica complexa de criação de processos, redirecionamento de pipes (stdout/stderr) e tratamento de diferenças entre Windows (\texttt{CreateProcess}) e Unix (\texttt{system/fork}).
+
+\textbf{Impacto:} Dificulta a portabilidade e testes unitários do avaliador sem efeitos colaterais no sistema.
+
+\chapter{Lógica de Toolchain e Compilação}
+O avaliador contém conhecimento indevido sobre como invocar compiladores específicos (MSVC vs GCC/Clang).
+
+\section{Probes de Compilador}
+As funções que implementam \texttt{check\_c\_source\_compiles} e \texttt{try\_compile} constroem linhas de comando manualmente.
+
+\begin{itemize}
+    \item \textbf{Hardcoded Flags:} O código verifica \texttt{probe\_compiler\_looks\_msvc} e decide entre usar \texttt{/Fe:} ou \texttt{-o}.
+    \item \textbf{Gestão de Extensões:} O avaliador sabe que no Windows o objeto é \texttt{.obj} e no Linux é \texttt{.o}.
+\end{itemize}
+
+Esta lógica pertence a uma camada de abstração de \textbf{Toolchain Driver}, não ao interpretador da linguagem.
+
+\chapter{Sub-parsers Embutidos}
+O arquivo contém implementações completas de parsers para linguagens secundárias utilizadas dentro de strings do CMake.
+
+\section{Parser Matemático}
+O comando \texttt{math(EXPR ...)} desencadeia um parser de descida recursiva completo (\texttt{math\_parse\_add}, \texttt{math\_parse\_mul}, etc.) implementado dentro do arquivo de avaliação.
+
+\section{Generator Expressions}
+A função \texttt{eval\_generator\_expression} e seus auxiliares implementam um parser para a sintaxe \texttt{\$<...>}, incluindo aninhamento e balanceamento de parênteses.
+
+\section{Manipulação de Strings e Regex}
+Algoritmos complexos de substituição de expressões regulares (incluindo back-references \texttt{\textbackslash 1}) estão implementados inline.
+
+\chapter{Recomendações de Refatoração}
+
+Para corrigir os problemas acima, recomenda-se a seguinte decomposição do módulo:
+
+\begin{enumerate}
+    \item \textbf{Mover para \texttt{build\_model.c}:}
+        \begin{itemize}
+            \item Setters de propriedades e flags de targets.
+            \item Gerenciamento de listas de \texttt{Custom\_Command}, \texttt{Tests} e \texttt{InstallRules}.
+            \item Lógica de resolução de configurações (\texttt{DEBUG}, \texttt{RELEASE}).
+        \end{itemize}
+    
+    \item \textbf{Criar \texttt{sys\_utils.c} (ou \texttt{os\_adapter.c}):}
+        \begin{itemize}
+            \item Abstrações para \texttt{copy\_file}, \texttt{recursive\_delete}, \texttt{make\_directory}.
+            \item Abstração para execução de processos subprocessos.
+        \end{itemize}
+        
+    \item \textbf{Criar \texttt{toolchain\_driver.c}:}
+        \begin{itemize}
+            \item Lógica para detectar compilador e gerar comandos de compilação (\texttt{try\_compile}).
+        \end{itemize}
+        
+    \item \textbf{Extrair Parsers:}
+        \begin{itemize}
+            \item \texttt{math\_parser.c}: Para expressões matemáticas.
+            \item \texttt{genex\_evaluator.c}: Para Generator Expressions.
+        \end{itemize}
+\end{enumerate}
+
+\section{Conclusão}
+A refatoração proposta reduzirá drasticamente o tamanho do \texttt{transpiler\_evaluator.inc.c}, transformando-o em um orquestrador focado puramente na semântica dos comandos CMake, delegando a execução e armazenamento para módulos especializados. Isso aumentará a manutenibilidade, testabilidade e clareza do código.
+
+\end{document}
