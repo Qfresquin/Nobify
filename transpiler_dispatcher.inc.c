@@ -551,13 +551,7 @@ static void cmake_pkg_config_configure_variables(Evaluator_Context *ctx,
         req->package_name, false, false);
 }
 
-static void cmake_pkg_config_create_imported_target(Evaluator_Context *ctx,
-                                                    const CMake_Pkg_Config_Request *req,
-                                                    bool found,
-                                                    String_View libs,
-                                                    String_View include_dirs,
-                                                    String_View cflags,
-                                                    String_View ldflags) {
+static void cmake_pkg_config_create_imported_target(Evaluator_Context *ctx, const CMake_Pkg_Config_Request *req, bool found, String_View libs, String_View include_dirs, String_View cflags, String_View ldflags) {
     (void)ldflags;
     if (!ctx || !ctx->model || !req || !found || !req->imported_target || req->prefix.count == 0) return;
 
