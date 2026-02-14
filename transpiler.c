@@ -2,9 +2,11 @@
 #include "diagnostics.h"
 #include "arena_dyn.h"
 #include "genex_evaluator.h"
+#include "logic_model.h"
 #include "math_parser.h"
 #include "sys_utils.h"
 #include "toolchain_driver.h"
+#include "ds_adapter.h"
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>

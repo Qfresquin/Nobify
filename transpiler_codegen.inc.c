@@ -74,6 +74,29 @@ static bool source_should_compile(String_View src) {
            sv_has_file_ext_ci(src, ".asm");
 }
 
+typedef struct {
+    char *key;
+    int value;
+} Fast_String_Set_Entry;
+
+static bool fast_string_set_insert(Fast_String_Set_Entry **set, Arena *arena, String_View value) {
+    if (!set || !arena || value.count == 0 || !value.data) return false;
+    Fast_String_Set_Entry *map = *set;
+    if (ds_shgetp_null(map, nob_temp_sv_to_cstr(value)) != NULL) return false;
+    char *stable = arena_strndup(arena, value.data, value.count);
+    if (!stable) return false;
+    ds_shput(map, stable, 1);
+    *set = map;
+    return true;
+}
+
+static void string_list_add_unique_fast(String_List *list, Arena *arena, Fast_String_Set_Entry **set, String_View value) {
+    if (!list || !arena) return;
+    if (fast_string_set_insert(set, arena, value)) {
+        string_list_add(list, arena, value);
+    }
+}
+
 static bool target_has_dependents(Build_Model *model, String_View target_name) {
     if (!model || target_name.count == 0) return false;
     for (size_t i = 0; i < model->target_count; i++) {
@@ -248,6 +271,13 @@ static void collect_interface_usage_recursive(
     Build_Model *model,
     Build_Target *target,
     uint8_t *visited,
+    Fast_String_Set_Entry **compile_defs_set,
+    Fast_String_Set_Entry **compile_opts_set,
+    Fast_String_Set_Entry **include_dirs_set,
+    Fast_String_Set_Entry **link_opts_set,
+    Fast_String_Set_Entry **link_dirs_set,
+    Fast_String_Set_Entry **link_libs_set,
+    Fast_String_Set_Entry **link_targets_set,
     String_List *compile_defs,
     String_List *compile_opts,
     String_List *include_dirs,
@@ -267,22 +297,22 @@ static void collect_interface_usage_recursive(
     }
 
     for (size_t i = 0; i < base->interface_compile_definitions.count; i++) {
-        string_list_add_unique(compile_defs, model->arena, base->interface_compile_definitions.items[i]);
+        string_list_add_unique_fast(compile_defs, model->arena, compile_defs_set, base->interface_compile_definitions.items[i]);
     }
     for (size_t i = 0; i < base->interface_compile_options.count; i++) {
-        string_list_add_unique(compile_opts, model->arena, base->interface_compile_options.items[i]);
+        string_list_add_unique_fast(compile_opts, model->arena, compile_opts_set, base->interface_compile_options.items[i]);
     }
     for (size_t i = 0; i < base->interface_include_directories.count; i++) {
-        string_list_add_unique(include_dirs, model->arena, base->interface_include_directories.items[i]);
+        string_list_add_unique_fast(include_dirs, model->arena, include_dirs_set, base->interface_include_directories.items[i]);
     }
     for (size_t i = 0; i < base->interface_link_options.count; i++) {
-        string_list_add_unique(link_opts, model->arena, base->interface_link_options.items[i]);
+        string_list_add_unique_fast(link_opts, model->arena, link_opts_set, base->interface_link_options.items[i]);
     }
     for (size_t i = 0; i < base->interface_link_directories.count; i++) {
-        string_list_add_unique(link_dirs, model->arena, base->interface_link_directories.items[i]);
+        string_list_add_unique_fast(link_dirs, model->arena, link_dirs_set, base->interface_link_directories.items[i]);
     }
     for (size_t i = 0; i < base->interface_libs.count; i++) {
-        string_list_add_unique(link_libs, model->arena, base->interface_libs.items[i]);
+        string_list_add_unique_fast(link_libs, model->arena, link_libs_set, base->interface_libs.items[i]);
     }
 
     for (size_t i = 0; i < base->interface_dependencies.count; i++) {
@@ -292,10 +322,15 @@ static void collect_interface_usage_recursive(
         if (!dep) continue;
 
         if (target_is_linkable_artifact(dep)) {
-            string_list_add_unique(link_targets, model->arena, dep->name);
+            string_list_add_unique_fast(link_targets, model->arena, link_targets_set, dep->name);
         }
-        collect_interface_usage_recursive(model, dep, visited, compile_defs, compile_opts, include_dirs,
-                                         link_opts, link_dirs, link_libs, link_targets);
+        collect_interface_usage_recursive(
+            model, dep, visited,
+            compile_defs_set, compile_opts_set, include_dirs_set,
+            link_opts_set, link_dirs_set, link_libs_set, link_targets_set,
+            compile_defs, compile_opts, include_dirs,
+            link_opts, link_dirs, link_libs, link_targets
+        );
     }
 }
 
@@ -1262,60 +1297,67 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     string_list_init(&all_link_dirs);
     string_list_init(&all_link_libs);
     string_list_init(&all_link_targets);
+    Fast_String_Set_Entry *all_compile_defs_set = NULL;
+    Fast_String_Set_Entry *all_compile_opts_set = NULL;
+    Fast_String_Set_Entry *all_include_dirs_set = NULL;
+    Fast_String_Set_Entry *all_link_opts_set = NULL;
+    Fast_String_Set_Entry *all_link_dirs_set = NULL;
+    Fast_String_Set_Entry *all_link_libs_set = NULL;
+    Fast_String_Set_Entry *all_link_targets_set = NULL;
 
     for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_definitions.count; i++) {
-        string_list_add_unique(&all_compile_defs, model->arena, target->properties[CONFIG_ALL].compile_definitions.items[i]);
+        string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[CONFIG_ALL].compile_definitions.items[i]);
     }
     for (size_t i = 0; i < target->properties[cfg_idx].compile_definitions.count; i++) {
-        string_list_add_unique(&all_compile_defs, model->arena, target->properties[cfg_idx].compile_definitions.items[i]);
+        string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[cfg_idx].compile_definitions.items[i]);
     }
     for (size_t i = 0; i < model->global_definitions.count; i++) {
-        string_list_add_unique(&all_compile_defs, model->arena, model->global_definitions.items[i]);
+        string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, model->global_definitions.items[i]);
     }
     for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_options.count; i++) {
-        string_list_add_unique(&all_compile_opts, model->arena, target->properties[CONFIG_ALL].compile_options.items[i]);
+        string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[CONFIG_ALL].compile_options.items[i]);
     }
     for (size_t i = 0; i < target->properties[cfg_idx].compile_options.count; i++) {
-        string_list_add_unique(&all_compile_opts, model->arena, target->properties[cfg_idx].compile_options.items[i]);
+        string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[cfg_idx].compile_options.items[i]);
     }
     for (size_t i = 0; i < model->global_compile_options.count; i++) {
-        string_list_add_unique(&all_compile_opts, model->arena, model->global_compile_options.items[i]);
+        string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, model->global_compile_options.items[i]);
     }
     for (size_t i = 0; i < target->properties[CONFIG_ALL].include_directories.count; i++) {
-        string_list_add_unique(&all_include_dirs, model->arena, target->properties[CONFIG_ALL].include_directories.items[i]);
+        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[CONFIG_ALL].include_directories.items[i]);
     }
     for (size_t i = 0; i < target->properties[cfg_idx].include_directories.count; i++) {
-        string_list_add_unique(&all_include_dirs, model->arena, target->properties[cfg_idx].include_directories.items[i]);
+        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[cfg_idx].include_directories.items[i]);
     }
     for (size_t i = 0; i < model->directories.include_dirs.count; i++) {
-        string_list_add_unique(&all_include_dirs, model->arena, model->directories.include_dirs.items[i]);
+        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.include_dirs.items[i]);
     }
     for (size_t i = 0; i < model->directories.system_include_dirs.count; i++) {
-        string_list_add_unique(&all_include_dirs, model->arena, model->directories.system_include_dirs.items[i]);
+        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.system_include_dirs.items[i]);
     }
     for (size_t i = 0; i < target->properties[CONFIG_ALL].link_options.count; i++) {
-        string_list_add_unique(&all_link_opts, model->arena, target->properties[CONFIG_ALL].link_options.items[i]);
+        string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, target->properties[CONFIG_ALL].link_options.items[i]);
     }
     for (size_t i = 0; i < target->properties[cfg_idx].link_options.count; i++) {
-        string_list_add_unique(&all_link_opts, model->arena, target->properties[cfg_idx].link_options.items[i]);
+        string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, target->properties[cfg_idx].link_options.items[i]);
     }
     for (size_t i = 0; i < model->global_link_options.count; i++) {
-        string_list_add_unique(&all_link_opts, model->arena, model->global_link_options.items[i]);
+        string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, model->global_link_options.items[i]);
     }
     for (size_t i = 0; i < target->properties[CONFIG_ALL].link_directories.count; i++) {
-        string_list_add_unique(&all_link_dirs, model->arena, target->properties[CONFIG_ALL].link_directories.items[i]);
+        string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, target->properties[CONFIG_ALL].link_directories.items[i]);
     }
     for (size_t i = 0; i < target->properties[cfg_idx].link_directories.count; i++) {
-        string_list_add_unique(&all_link_dirs, model->arena, target->properties[cfg_idx].link_directories.items[i]);
+        string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, target->properties[cfg_idx].link_directories.items[i]);
     }
     for (size_t i = 0; i < model->directories.link_dirs.count; i++) {
-        string_list_add_unique(&all_link_dirs, model->arena, model->directories.link_dirs.items[i]);
+        string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, model->directories.link_dirs.items[i]);
     }
     for (size_t i = 0; i < target->link_libraries.count; i++) {
-        string_list_add_unique(&all_link_libs, model->arena, target->link_libraries.items[i]);
+        string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, target->link_libraries.items[i]);
     }
     for (size_t i = 0; i < model->global_link_libraries.count; i++) {
-        string_list_add_unique(&all_link_libs, model->arena, model->global_link_libraries.items[i]);
+        string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, model->global_link_libraries.items[i]);
     }
 
     uint8_t *visited = arena_alloc_zero(model->arena, model->target_count * sizeof(uint8_t));
@@ -1324,10 +1366,15 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         dep = resolve_alias_target(model, dep);
         if (!dep) continue;
         if (target_is_linkable_artifact(dep)) {
-            string_list_add_unique(&all_link_targets, model->arena, dep->name);
+            string_list_add_unique_fast(&all_link_targets, model->arena, &all_link_targets_set, dep->name);
         }
-        collect_interface_usage_recursive(model, dep, visited, &all_compile_defs, &all_compile_opts, &all_include_dirs,
-                                         &all_link_opts, &all_link_dirs, &all_link_libs, &all_link_targets);
+        collect_interface_usage_recursive(
+            model, dep, visited,
+            &all_compile_defs_set, &all_compile_opts_set, &all_include_dirs_set,
+            &all_link_opts_set, &all_link_dirs_set, &all_link_libs_set, &all_link_targets_set,
+            &all_compile_defs, &all_compile_opts, &all_include_dirs,
+            &all_link_opts, &all_link_dirs, &all_link_libs, &all_link_targets
+        );
     }
     
     // Compilar fontes
@@ -1557,6 +1604,14 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         generate_custom_commands(model, target->post_build_commands, target->post_build_count, active_cfg, sb);
         sb_appendf(sb, "\n");
     }
+
+    ds_shfree(all_compile_defs_set);
+    ds_shfree(all_compile_opts_set);
+    ds_shfree(all_include_dirs_set);
+    ds_shfree(all_link_opts_set);
+    ds_shfree(all_link_dirs_set);
+    ds_shfree(all_link_libs_set);
+    ds_shfree(all_link_targets_set);
 
     nob_sb_free(ident_builder);
 }

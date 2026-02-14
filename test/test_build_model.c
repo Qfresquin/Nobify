@@ -682,6 +682,48 @@ TEST(cpack_dedup_basic) {
     TEST_PASS();
 }
 
+TEST(cache_variable_unset_and_has_helpers) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    build_model_set_cache_variable(model, sv_from_cstr("A"), sv_from_cstr("1"), sv_from_cstr("STRING"), sv_from_cstr(""));
+    build_model_set_cache_variable(model, sv_from_cstr("B"), sv_from_cstr("2"), sv_from_cstr("STRING"), sv_from_cstr(""));
+
+    ASSERT(build_model_has_cache_variable(model, sv_from_cstr("A")) == true);
+    ASSERT(build_model_has_cache_variable(model, sv_from_cstr("B")) == true);
+    ASSERT(build_model_has_cache_variable(model, sv_from_cstr("C")) == false);
+    ASSERT(nob_sv_eq(build_model_get_cache_variable(model, sv_from_cstr("A")), sv_from_cstr("1")));
+
+    ASSERT(build_model_unset_cache_variable(model, sv_from_cstr("A")) == true);
+    ASSERT(build_model_has_cache_variable(model, sv_from_cstr("A")) == false);
+    ASSERT(build_model_unset_cache_variable(model, sv_from_cstr("A")) == false);
+    ASSERT(nob_sv_eq(build_model_get_cache_variable(model, sv_from_cstr("A")), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_model_get_cache_variable(model, sv_from_cstr("B")), sv_from_cstr("2")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(env_var_unset_and_has_helpers) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    build_model_set_env_var(model, arena, sv_from_cstr("PATH"), sv_from_cstr("A"));
+    build_model_set_env_var(model, arena, sv_from_cstr("PATH"), sv_from_cstr("B"));
+
+    ASSERT(build_model_has_env_var(model, sv_from_cstr("PATH")) == true);
+    ASSERT(build_model_has_env_var(model, sv_from_cstr("HOME")) == false);
+    ASSERT(nob_sv_eq(build_model_get_env_var(model, sv_from_cstr("PATH")), sv_from_cstr("B")));
+
+    ASSERT(build_model_unset_env_var(model, sv_from_cstr("PATH")) == true);
+    ASSERT(build_model_has_env_var(model, sv_from_cstr("PATH")) == false);
+    ASSERT(build_model_unset_env_var(model, sv_from_cstr("PATH")) == false);
+    ASSERT(nob_sv_eq(build_model_get_env_var(model, sv_from_cstr("PATH")), sv_from_cstr("")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(fase1_target_flags_and_alias) {
     Arena *arena = arena_create(1024 * 1024);
     Build_Model *model = build_model_create(arena);
@@ -890,6 +932,8 @@ void run_build_model_tests(int *passed, int *failed) {
     test_set_property(passed, failed);
     test_cache_variable(passed, failed);
     test_cache_variable_overwrite(passed, failed);
+    test_cache_variable_unset_and_has_helpers(passed, failed);
+    test_env_var_unset_and_has_helpers(passed, failed);
     test_multiple_targets(passed, failed);
     test_validate_dependencies(passed, failed);
     test_invalid_dependency(passed, failed);

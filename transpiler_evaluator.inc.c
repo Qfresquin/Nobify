@@ -29,19 +29,6 @@ static bool sv_ends_with_ci(String_View sv, String_View suffix) {
     return sv_eq_ci(tail, suffix);
 }
 
-static bool sv_is_i64_literal(String_View sv) {
-    if (sv.count == 0) return false;
-    size_t i = 0;
-    if (sv.data[i] == '+' || sv.data[i] == '-') {
-        i++;
-        if (i >= sv.count) return false;
-    }
-    for (; i < sv.count; i++) {
-        if (!isdigit((unsigned char)sv.data[i])) return false;
-    }
-    return true;
-}
-
 static bool cmake_string_is_false(String_View value) {
     String_View v = genex_trim(value);
     if (v.count == 0) return true;
@@ -496,31 +483,13 @@ static void eval_unset_var(Evaluator_Context *ctx, String_View key, bool cache_v
     if (!ctx) return;
 
     if (cache_var) {
-        Property_List *cache = &ctx->model->cache_variables;
-        for (size_t i = 0; i < cache->count; i++) {
-            if (nob_sv_eq(cache->items[i].name, key)) {
-                for (size_t j = i + 1; j < cache->count; j++) {
-                    cache->items[j - 1] = cache->items[j];
-                }
-                cache->count--;
-                return;
-            }
-        }
+        build_model_unset_cache_variable(ctx->model, key);
         return;
     }
 
     if (nob_sv_starts_with(key, sv_from_cstr("ENV{")) && nob_sv_end_with(key, "}")) {
         String_View env_name = nob_sv_from_parts(key.data + 4, key.count - 5);
-        Property_List *envs = &ctx->model->environment_variables;
-        for (size_t i = 0; i < envs->count; i++) {
-            if (nob_sv_eq(envs->items[i].name, env_name)) {
-                for (size_t j = i + 1; j < envs->count; j++) {
-                    envs->items[j - 1] = envs->items[j];
-                }
-                envs->count--;
-                return;
-            }
-        }
+        build_model_unset_env_var(ctx->model, env_name);
         return;
     }
 
@@ -560,13 +529,8 @@ static String_View eval_get_var(Evaluator_Context *ctx, String_View key) {
     if (nob_sv_starts_with(key, sv_from_cstr("ENV{")) && nob_sv_end_with(key, "}")) {
         // Extrai nome: ENV{PATH} -> PATH
         String_View env_name = nob_sv_from_parts(key.data + 4, key.count - 5);
-        String_View env_override = property_list_find(&ctx->model->environment_variables, env_name);
-        if (env_override.count > 0 || ctx->model->environment_variables.count > 0) {
-            for (size_t i = 0; i < ctx->model->environment_variables.count; i++) {
-                if (nob_sv_eq(ctx->model->environment_variables.items[i].name, env_name)) {
-                    return ctx->model->environment_variables.items[i].value;
-                }
-            }
+        if (build_model_has_env_var(ctx->model, env_name)) {
+            return build_model_get_env_var(ctx->model, env_name);
         }
         const char *cstr = nob_temp_sv_to_cstr(env_name);
         const char *env_val = getenv(cstr);
@@ -700,11 +664,7 @@ static String_View eval_get_var(Evaluator_Context *ctx, String_View key) {
 static bool eval_has_var(Evaluator_Context *ctx, String_View key) {
     if (!ctx) return false;
 
-    for (size_t i = 0; i < ctx->model->cache_variables.count; i++) {
-        if (nob_sv_eq(ctx->model->cache_variables.items[i].name, key)) {
-            return true;
-        }
-    }
+    if (build_model_has_cache_variable(ctx->model, key)) return true;
 
     for (size_t i = ctx->scope_count; i > 0; i--) {
         Eval_Scope *scope = &ctx->scopes[i - 1];
@@ -717,11 +677,7 @@ static bool eval_has_var(Evaluator_Context *ctx, String_View key) {
 
     if (nob_sv_starts_with(key, sv_from_cstr("ENV{")) && nob_sv_end_with(key, "}")) {
         String_View env_name = nob_sv_from_parts(key.data + 4, key.count - 5);
-        for (size_t i = 0; i < ctx->model->environment_variables.count; i++) {
-            if (nob_sv_eq(ctx->model->environment_variables.items[i].name, env_name)) {
-                return true;
-            }
-        }
+        if (build_model_has_env_var(ctx->model, env_name)) return true;
         const char *env_val = getenv(nob_temp_sv_to_cstr(env_name));
         return env_val != NULL;
     }
@@ -9788,206 +9744,20 @@ static bool sv_eq_ci_lit(String_View value, const char *lit) {
     return true;
 }
 
-static bool parse_i64_sv(String_View value, long long *out) {
-    const char *cstr = nob_temp_sv_to_cstr(value);
-    char *end = NULL;
-    long long num = strtoll(cstr, &end, 10);
-    if (!end || *end != '\0') return false;
-    *out = num;
-    return true;
-}
-
-static int parse_version_part(const char *s, size_t len, size_t *idx) {
-    long long val = 0;
-    bool has_digit = false;
-    while (*idx < len && s[*idx] >= '0' && s[*idx] <= '9') {
-        has_digit = true;
-        val = val * 10 + (s[*idx] - '0');
-        (*idx)++;
+static String_View eval_condition_get_var_cb(void *userdata, String_View name, bool *is_set) {
+    Evaluator_Context *ctx = (Evaluator_Context*)userdata;
+    if (is_set) *is_set = false;
+    if (!ctx) return sv_from_cstr("");
+    if (eval_has_var(ctx, name)) {
+        if (is_set) *is_set = true;
+        return eval_get_var(ctx, name);
     }
-    return has_digit ? (int)val : 0;
-}
-
-static int compare_versions_sv(String_View a, String_View b) {
-    const char *as = nob_temp_sv_to_cstr(a);
-    const char *bs = nob_temp_sv_to_cstr(b);
-    size_t al = strlen(as), bl = strlen(bs);
-    size_t ai = 0, bi = 0;
-
-    while (ai < al || bi < bl) {
-        int ap = parse_version_part(as, al, &ai);
-        int bp = parse_version_part(bs, bl, &bi);
-
-        if (ap < bp) return -1;
-        if (ap > bp) return 1;
-
-        if (ai < al && as[ai] == '.') ai++;
-        if (bi < bl && bs[bi] == '.') bi++;
-
-        while (ai < al && as[ai] != '.' && (as[ai] < '0' || as[ai] > '9')) ai++;
-        while (bi < bl && bs[bi] != '.' && (bs[bi] < '0' || bs[bi] > '9')) bi++;
-    }
-
-    return 0;
-}
-
-static String_View eval_condition_operand(Evaluator_Context *ctx, String_View token, bool quoted, bool comparison_operand) {
-    if (quoted) return token;
-    if (eval_has_var(ctx, token)) return eval_get_var(ctx, token);
-    if (sv_is_i64_literal(token)) return token;
-    if (sv_eq_ci(token, sv_from_cstr("TRUE")) ||
-        sv_eq_ci(token, sv_from_cstr("FALSE")) ||
-        sv_eq_ci(token, sv_from_cstr("ON")) ||
-        sv_eq_ci(token, sv_from_cstr("OFF")) ||
-        sv_eq_ci(token, sv_from_cstr("YES")) ||
-        sv_eq_ci(token, sv_from_cstr("NO")) ||
-        sv_eq_ci(token, sv_from_cstr("Y")) ||
-        sv_eq_ci(token, sv_from_cstr("N")) ||
-        sv_eq_ci(token, sv_from_cstr("IGNORE")) ||
-        sv_eq_ci(token, sv_from_cstr("NOTFOUND")) ||
-        sv_ends_with_ci(token, sv_from_cstr("-NOTFOUND"))) {
-        return token;
-    }
-    // Em comparadores, identificadores nao resolvidos devem permanecer literais.
-    // Em forma unaria (if(X)), indefinidos viram vazio/falso.
-    if (comparison_operand) return token;
     return sv_from_cstr("");
-}
-
-static bool eval_condition_truthy(String_View value) {
-    return !cmake_string_is_false(value);
-}
-
-static bool eval_condition_comparison(String_View lhs, String_View op, String_View rhs) {
-    if (sv_eq_ci_lit(op, "STREQUAL")) {
-        return nob_sv_eq(lhs, rhs);
-    }
-
-    if (sv_eq_ci_lit(op, "EQUAL") ||
-        sv_eq_ci_lit(op, "LESS") ||
-        sv_eq_ci_lit(op, "GREATER") ||
-        sv_eq_ci_lit(op, "LESS_EQUAL") ||
-        sv_eq_ci_lit(op, "GREATER_EQUAL")) {
-        long long li = 0, ri = 0;
-        bool ln = parse_i64_sv(lhs, &li);
-        bool rn = parse_i64_sv(rhs, &ri);
-
-        if (ln && rn) {
-            if (sv_eq_ci_lit(op, "EQUAL")) return li == ri;
-            if (sv_eq_ci_lit(op, "LESS")) return li < ri;
-            if (sv_eq_ci_lit(op, "GREATER")) return li > ri;
-            if (sv_eq_ci_lit(op, "LESS_EQUAL")) return li <= ri;
-            return li >= ri;
-        }
-
-        int cmp = strcmp(nob_temp_sv_to_cstr(lhs), nob_temp_sv_to_cstr(rhs));
-        if (sv_eq_ci_lit(op, "EQUAL")) return cmp == 0;
-        if (sv_eq_ci_lit(op, "LESS")) return cmp < 0;
-        if (sv_eq_ci_lit(op, "GREATER")) return cmp > 0;
-        if (sv_eq_ci_lit(op, "LESS_EQUAL")) return cmp <= 0;
-        return cmp >= 0;
-    }
-
-    if (sv_eq_ci_lit(op, "VERSION_LESS") ||
-        sv_eq_ci_lit(op, "VERSION_GREATER") ||
-        sv_eq_ci_lit(op, "VERSION_EQUAL") ||
-        sv_eq_ci_lit(op, "VERSION_LESS_EQUAL") ||
-        sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL")) {
-        int cmp = compare_versions_sv(lhs, rhs);
-        if (sv_eq_ci_lit(op, "VERSION_LESS")) return cmp < 0;
-        if (sv_eq_ci_lit(op, "VERSION_GREATER")) return cmp > 0;
-        if (sv_eq_ci_lit(op, "VERSION_EQUAL")) return cmp == 0;
-        if (sv_eq_ci_lit(op, "VERSION_LESS_EQUAL")) return cmp <= 0;
-        return cmp >= 0;
-    }
-
-    return false;
-}
-
-static bool eval_condition_parse_or(Evaluator_Context *ctx, String_View *tokens, bool *quoted_tokens, size_t count, size_t *idx);
-
-static bool eval_condition_parse_atom(Evaluator_Context *ctx, String_View *tokens, bool *quoted_tokens, size_t count, size_t *idx) {
-    if (*idx >= count) return false;
-
-    String_View lhs_tok = tokens[(*idx)++];
-    bool lhs_quoted = quoted_tokens ? quoted_tokens[*idx - 1] : false;
-
-    if (nob_sv_eq(lhs_tok, sv_from_cstr("("))) {
-        bool v = eval_condition_parse_or(ctx, tokens, quoted_tokens, count, idx);
-        if (*idx < count && nob_sv_eq(tokens[*idx], sv_from_cstr(")"))) {
-            (*idx)++;
-        }
-        return v;
-    }
-    if (nob_sv_eq(lhs_tok, sv_from_cstr(")"))) {
-        return false;
-    }
-
-    if (sv_eq_ci_lit(lhs_tok, "DEFINED")) {
-        if (*idx >= count) return false;
-        String_View var_name = tokens[(*idx)++];
-        return eval_has_var(ctx, var_name);
-    }
-
-    String_View lhs = eval_condition_operand(ctx, lhs_tok, lhs_quoted, false);
-
-    if (*idx < count) {
-        String_View op = tokens[*idx];
-        if (sv_eq_ci_lit(op, "STREQUAL") ||
-            sv_eq_ci_lit(op, "EQUAL") ||
-            sv_eq_ci_lit(op, "LESS") ||
-            sv_eq_ci_lit(op, "GREATER") ||
-            sv_eq_ci_lit(op, "LESS_EQUAL") ||
-            sv_eq_ci_lit(op, "GREATER_EQUAL") ||
-            sv_eq_ci_lit(op, "VERSION_LESS") ||
-            sv_eq_ci_lit(op, "VERSION_GREATER") ||
-            sv_eq_ci_lit(op, "VERSION_EQUAL") ||
-            sv_eq_ci_lit(op, "VERSION_LESS_EQUAL") ||
-            sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL")) {
-            (*idx)++;
-            if (*idx >= count) return false;
-            String_View rhs_tok = tokens[(*idx)++];
-            bool rhs_quoted = quoted_tokens ? quoted_tokens[*idx - 1] : false;
-            lhs = eval_condition_operand(ctx, lhs_tok, lhs_quoted, true);
-            String_View rhs = eval_condition_operand(ctx, rhs_tok, rhs_quoted, true);
-            return eval_condition_comparison(lhs, op, rhs);
-        }
-    }
-
-    return eval_condition_truthy(lhs);
-}
-
-static bool eval_condition_parse_not(Evaluator_Context *ctx, String_View *tokens, bool *quoted_tokens, size_t count, size_t *idx) {
-    if (*idx < count && sv_eq_ci_lit(tokens[*idx], "NOT")) {
-        (*idx)++;
-        return !eval_condition_parse_not(ctx, tokens, quoted_tokens, count, idx);
-    }
-    return eval_condition_parse_atom(ctx, tokens, quoted_tokens, count, idx);
-}
-
-static bool eval_condition_parse_and(Evaluator_Context *ctx, String_View *tokens, bool *quoted_tokens, size_t count, size_t *idx) {
-    bool acc = eval_condition_parse_not(ctx, tokens, quoted_tokens, count, idx);
-    while (*idx < count && sv_eq_ci_lit(tokens[*idx], "AND")) {
-        (*idx)++;
-        bool rhs = eval_condition_parse_not(ctx, tokens, quoted_tokens, count, idx);
-        acc = acc && rhs;
-    }
-    return acc;
-}
-
-static bool eval_condition_parse_or(Evaluator_Context *ctx, String_View *tokens, bool *quoted_tokens, size_t count, size_t *idx) {
-    bool acc = eval_condition_parse_and(ctx, tokens, quoted_tokens, count, idx);
-    while (*idx < count && sv_eq_ci_lit(tokens[*idx], "OR")) {
-        (*idx)++;
-        bool rhs = eval_condition_parse_and(ctx, tokens, quoted_tokens, count, idx);
-        acc = acc || rhs;
-    }
-    return acc;
 }
 
 // Avalia condicao com precedencia: NOT > comparador > AND > OR.
 static bool eval_condition(Evaluator_Context *ctx, Args condition) {
-    if (condition.count == 0) return false;
+    if (!ctx || !ctx->arena || condition.count == 0) return false;
 
     String_View *tokens = arena_alloc_array(ctx->arena, String_View, condition.count);
     bool *quoted_tokens = arena_alloc_array_zero(ctx->arena, bool, condition.count);
@@ -10000,8 +9770,20 @@ static bool eval_condition(Evaluator_Context *ctx, Args condition) {
                             condition.items[i].items[0].kind == TOKEN_RAW_STRING);
     }
 
-    size_t idx = 0;
-    return eval_condition_parse_or(ctx, tokens, quoted_tokens, condition.count, &idx);
+    Logic_Parse_Input parse_in = {0};
+    parse_in.arena = ctx->arena;
+    parse_in.tokens = tokens;
+    parse_in.quoted_tokens = quoted_tokens;
+    parse_in.count = condition.count;
+
+    Logic_Eval_Context eval_ctx = {0};
+    eval_ctx.get_var = eval_condition_get_var_cb;
+    eval_ctx.userdata = ctx;
+
+    bool ok = false;
+    bool result = logic_parse_and_evaluate(&parse_in, &eval_ctx, &ok);
+    if (!ok) return false;
+    return result;
 }
 
 static bool eval_handle_flow_control_command(Evaluator_Context *ctx, String_View cmd_name) {

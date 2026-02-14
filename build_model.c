@@ -6,7 +6,12 @@
 static void build_model_heap_cleanup(void *userdata) {
     Build_Model *model = (Build_Model*)userdata;
     if (!model) return;
+    for (size_t i = 0; i < model->target_count; i++) {
+        ds_shfree(model->targets[i].custom_property_index);
+    }
     ds_shfree(model->target_index_by_name);
+    ds_shfree(model->cache_variable_index);
+    ds_shfree(model->environment_variable_index);
 }
 
 static int build_model_lookup_target_index(const Build_Model *model, String_View name) {
@@ -21,6 +26,48 @@ static bool build_model_put_target_index(Build_Model *model, char *key, int inde
     if (!model || !key || key[0] == '\0') return false;
     ds_shput(model->target_index_by_name, key, index);
     return true;
+}
+
+static int build_model_lookup_property_index(const Property_List *list, Build_Property_Index_Entry *index_map, String_View key) {
+    if (!list || !index_map) return -1;
+    Build_Property_Index_Entry *entry = ds_shgetp_null(index_map, nob_temp_sv_to_cstr(key));
+    if (!entry) return -1;
+    if (entry->value < 0 || (size_t)entry->value >= list->count) return -1;
+    if (!nob_sv_eq(list->items[entry->value].name, key)) return -1;
+    return entry->value;
+}
+
+static int build_model_lookup_property_index_linear(const Property_List *list, String_View key) {
+    if (!list) return -1;
+    for (size_t i = 0; i < list->count; i++) {
+        if (nob_sv_eq(list->items[i].name, key)) return (int)i;
+    }
+    return -1;
+}
+
+static bool build_model_put_property_index(Build_Property_Index_Entry **index_map, char *key, int value) {
+    if (!index_map || !key || key[0] == '\0' || value < 0) return false;
+    Build_Property_Index_Entry *map = *index_map;
+    ds_shput(map, key, value);
+    *index_map = map;
+    return true;
+}
+
+static char *build_model_copy_sv_cstr(Arena *arena, String_View sv) {
+    if (!arena || !sv.data || sv.count == 0) return NULL;
+    return arena_strndup(arena, sv.data, sv.count);
+}
+
+static void build_model_rebuild_property_index(Arena *arena, Property_List *list, Build_Property_Index_Entry **index_map) {
+    if (!arena || !list || !index_map) return;
+    ds_shfree(*index_map);
+    *index_map = NULL;
+    for (size_t i = 0; i < list->count; i++) {
+        char *stable_key = build_model_copy_sv_cstr(arena, list->items[i].name);
+        if (!stable_key) continue;
+        list->items[i].name = sv_from_cstr(stable_key);
+        build_model_put_property_index(index_map, stable_key, (int)i);
+    }
 }
 
 static Build_Target* build_model_find_target_const(const Build_Model *model, String_View name) {
@@ -397,21 +444,37 @@ void build_target_set_property(Build_Target *target,
                                String_View key,
                                String_View value) {
     if (!target || !arena) return;
-    // Atualiza se já existir
-    for (size_t i = 0; i < target->custom_properties.count; i++) {
-        if (nob_sv_eq(target->custom_properties.items[i].name, key)) {
-            target->custom_properties.items[i].value = value;
-            return;
+    int idx = build_model_lookup_property_index(&target->custom_properties, target->custom_property_index, key);
+    if (idx < 0) {
+        idx = build_model_lookup_property_index_linear(&target->custom_properties, key);
+        if (idx >= 0) {
+            build_model_rebuild_property_index(arena, &target->custom_properties, &target->custom_property_index);
         }
     }
-    
-    // Adiciona nova
-    property_list_add(&target->custom_properties, arena, key, value);
+
+    if (idx >= 0) {
+        target->custom_properties.items[idx].value = value;
+        return;
+    }
+
+    char *stable_key = build_model_copy_sv_cstr(arena, key);
+    if (!stable_key) return;
+    String_View stable_key_sv = sv_from_cstr(stable_key);
+    size_t before = target->custom_properties.count;
+    property_list_add(&target->custom_properties, arena, stable_key_sv, value);
+    if (target->custom_properties.count == before + 1) {
+        build_model_put_property_index(&target->custom_property_index, stable_key, (int)before);
+    }
 }
 
 String_View build_target_get_property(Build_Target *target, String_View key) {
     if (!target) return sv_from_cstr("");
-    return property_list_find(&target->custom_properties, key);
+    int idx = build_model_lookup_property_index(&target->custom_properties, target->custom_property_index, key);
+    if (idx >= 0) return target->custom_properties.items[idx].value;
+
+    idx = build_model_lookup_property_index_linear(&target->custom_properties, key);
+    if (idx >= 0) return target->custom_properties.items[idx].value;
+    return sv_from_cstr("");
 }
 
 Found_Package* build_model_add_package(Build_Model *model,
@@ -545,25 +608,111 @@ void build_model_set_cache_variable(Build_Model *model,
                                     String_View value,
                                     String_View type,
                                     String_View docstring) {
-    if (!model) return;
+    if (!model || !model->arena) return;
     (void)type;
     (void)docstring;
-    
-    // Atualiza se já existir
-    for (size_t i = 0; i < model->cache_variables.count; i++) {
-        if (nob_sv_eq(model->cache_variables.items[i].name, key)) {
-            model->cache_variables.items[i].value = value;
-            return;
+
+    int idx = build_model_lookup_property_index(&model->cache_variables, model->cache_variable_index, key);
+    if (idx < 0) {
+        idx = build_model_lookup_property_index_linear(&model->cache_variables, key);
+        if (idx >= 0) {
+            build_model_rebuild_property_index(model->arena, &model->cache_variables, &model->cache_variable_index);
         }
     }
-    
-    // Adiciona nova
-    property_list_add(&model->cache_variables, model->arena, key, value);
+    if (idx >= 0) {
+        model->cache_variables.items[idx].value = value;
+        return;
+    }
+
+    char *stable_key = build_model_copy_sv_cstr(model->arena, key);
+    if (!stable_key) return;
+    String_View stable_key_sv = sv_from_cstr(stable_key);
+
+    String_View stable_val = value;
+    if (value.count > 0 && value.data) {
+        char *value_copy = build_model_copy_sv_cstr(model->arena, value);
+        if (value_copy) stable_val = sv_from_cstr(value_copy);
+    }
+
+    size_t before = model->cache_variables.count;
+    property_list_add(&model->cache_variables, model->arena, stable_key_sv, stable_val);
+    if (model->cache_variables.count == before + 1) {
+        build_model_put_property_index(&model->cache_variable_index, stable_key, (int)before);
+    }
 }
 
 String_View build_model_get_cache_variable(Build_Model *model, String_View key) {
     if (!model) return sv_from_cstr("");
-    return property_list_find(&model->cache_variables, key);
+
+    int idx = build_model_lookup_property_index(&model->cache_variables, model->cache_variable_index, key);
+    if (idx >= 0) return model->cache_variables.items[idx].value;
+
+    idx = build_model_lookup_property_index_linear(&model->cache_variables, key);
+    if (idx >= 0) return model->cache_variables.items[idx].value;
+    return sv_from_cstr("");
+}
+
+bool build_model_has_cache_variable(const Build_Model *model, String_View key) {
+    if (!model) return false;
+
+    int idx = build_model_lookup_property_index(&model->cache_variables, model->cache_variable_index, key);
+    if (idx >= 0) return true;
+
+    return build_model_lookup_property_index_linear(&model->cache_variables, key) >= 0;
+}
+
+bool build_model_unset_cache_variable(Build_Model *model, String_View key) {
+    if (!model) return false;
+
+    int idx = build_model_lookup_property_index(&model->cache_variables, model->cache_variable_index, key);
+    if (idx < 0) {
+        idx = build_model_lookup_property_index_linear(&model->cache_variables, key);
+    }
+    if (idx < 0) return false;
+
+    for (size_t i = (size_t)idx + 1; i < model->cache_variables.count; i++) {
+        model->cache_variables.items[i - 1] = model->cache_variables.items[i];
+    }
+    model->cache_variables.count--;
+    build_model_rebuild_property_index(model->arena, &model->cache_variables, &model->cache_variable_index);
+    return true;
+}
+
+String_View build_model_get_env_var(const Build_Model *model, String_View key) {
+    if (!model) return sv_from_cstr("");
+
+    int idx = build_model_lookup_property_index(&model->environment_variables, model->environment_variable_index, key);
+    if (idx >= 0) return model->environment_variables.items[idx].value;
+
+    idx = build_model_lookup_property_index_linear(&model->environment_variables, key);
+    if (idx >= 0) return model->environment_variables.items[idx].value;
+    return sv_from_cstr("");
+}
+
+bool build_model_has_env_var(const Build_Model *model, String_View key) {
+    if (!model) return false;
+
+    int idx = build_model_lookup_property_index(&model->environment_variables, model->environment_variable_index, key);
+    if (idx >= 0) return true;
+
+    return build_model_lookup_property_index_linear(&model->environment_variables, key) >= 0;
+}
+
+bool build_model_unset_env_var(Build_Model *model, String_View key) {
+    if (!model) return false;
+
+    int idx = build_model_lookup_property_index(&model->environment_variables, model->environment_variable_index, key);
+    if (idx < 0) {
+        idx = build_model_lookup_property_index_linear(&model->environment_variables, key);
+    }
+    if (idx < 0) return false;
+
+    for (size_t i = (size_t)idx + 1; i < model->environment_variables.count; i++) {
+        model->environment_variables.items[i - 1] = model->environment_variables.items[i];
+    }
+    model->environment_variables.count--;
+    build_model_rebuild_property_index(model->arena, &model->environment_variables, &model->environment_variable_index);
+    return true;
 }
 
 bool build_model_validate_dependencies(Build_Model *model) {
@@ -998,14 +1147,23 @@ void build_model_set_env_var(Build_Model *model, Arena *arena, String_View key, 
     String_View safe_key = bm_sv_copy_to_arena(arena, key);
     String_View safe_val = bm_sv_copy_to_arena(arena, value);
 
-    for (size_t i = 0; i < model->environment_variables.count; i++) {
-        if (nob_sv_eq(model->environment_variables.items[i].name, safe_key)) {
-            model->environment_variables.items[i].value = safe_val;
-            return;
+    int idx = build_model_lookup_property_index(&model->environment_variables, model->environment_variable_index, safe_key);
+    if (idx < 0) {
+        idx = build_model_lookup_property_index_linear(&model->environment_variables, safe_key);
+        if (idx >= 0) {
+            build_model_rebuild_property_index(arena, &model->environment_variables, &model->environment_variable_index);
         }
     }
+    if (idx >= 0) {
+        model->environment_variables.items[idx].value = safe_val;
+        return;
+    }
 
+    size_t before = model->environment_variables.count;
     property_list_add(&model->environment_variables, arena, safe_key, safe_val);
+    if (model->environment_variables.count == before + 1) {
+        build_model_put_property_index(&model->environment_variable_index, (char*)safe_key.data, (int)before);
+    }
 }
 
 void build_model_add_global_definition(Build_Model *model, Arena *arena, String_View def) {

@@ -44,6 +44,11 @@ typedef struct Property_List {
     size_t capacity;
 } Property_List;
 
+typedef struct Build_Property_Index_Entry {
+    char *key;
+    int value;
+} Build_Property_Index_Entry;
+
 // String_List type definition (moved from build_model.c)
 typedef struct String_List {
     String_View *items;
@@ -171,6 +176,7 @@ typedef struct {
     
     // Propriedades genéricas (key-value)
     Property_List custom_properties;
+    Build_Property_Index_Entry *custom_property_index;
 } Build_Target;
 
 // ============================================================================
@@ -229,9 +235,11 @@ typedef struct {
     
     // Variáveis de cache (persistentes entre runs)
     Property_List cache_variables;
+    Build_Property_Index_Entry *cache_variable_index;
     
     // Variáveis de ambiente
     Property_List environment_variables;
+    Build_Property_Index_Entry *environment_variable_index;
     
     // Pacotes encontrados
     Found_Package *found_packages;
@@ -411,6 +419,11 @@ void build_model_set_cache_variable(Build_Model *model,
 
 // Obtém uma variável de cache
 String_View build_model_get_cache_variable(Build_Model *model, String_View key);
+bool build_model_has_cache_variable(const Build_Model *model, String_View key);
+bool build_model_unset_cache_variable(Build_Model *model, String_View key);
+String_View build_model_get_env_var(const Build_Model *model, String_View key);
+bool build_model_has_env_var(const Build_Model *model, String_View key);
+bool build_model_unset_env_var(Build_Model *model, String_View key);
 
 // Gera um grafo de dependências (para validação e ordenação)
 bool build_model_validate_dependencies(Build_Model *model);

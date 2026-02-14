@@ -22,6 +22,7 @@ void run_transpiler_tests(int *passed, int *failed);
 void run_arena_tests(int *passed, int *failed);
 void run_build_model_tests(int *passed, int *failed);
 void run_phase2_module_tests(int *passed, int *failed);
+void run_logic_model_tests(int *passed, int *failed);
 
 typedef void (*Test_Suite_Fn)(int *passed, int *failed);
 
@@ -248,14 +249,20 @@ int main(int argc, char **argv) {
     run_suite_in_sandbox("phase2_modules", run_phase2_module_tests, &phase2_passed, &phase2_failed, keep_temp);
     nob_log(NOB_INFO, "Phase 2 Modules Results: Passed: %d | Failed: %d", phase2_passed, phase2_failed);
 
+    // Logic model tests (base da Fase 3)
+    nob_log(NOB_INFO, "-> Running Logic Model Tests...");
+    int logic_passed = 0, logic_failed = 0;
+    run_suite_in_sandbox("logic_model", run_logic_model_tests, &logic_passed, &logic_failed, keep_temp);
+    nob_log(NOB_INFO, "Logic Model Results: Passed: %d | Failed: %d", logic_passed, logic_failed);
+
     // Transpiler tests
     nob_log(NOB_INFO, "-> Running Transpiler Tests...");
     int transpiler_passed = 0, transpiler_failed = 0;
     run_suite_in_sandbox("transpiler", run_transpiler_tests, &transpiler_passed, &transpiler_failed, keep_temp);
     nob_log(NOB_INFO, "Transpiler Results: Passed: %d | Failed: %d", transpiler_passed, transpiler_failed);
 
-    int total_passed = arena_passed + lexer_passed + parser_passed + model_passed + phase2_passed + transpiler_passed;
-    int total_failed = arena_failed + lexer_failed + parser_failed + model_failed + phase2_failed + transpiler_failed;
+    int total_passed = arena_passed + lexer_passed + parser_passed + model_passed + phase2_passed + logic_passed + transpiler_passed;
+    int total_failed = arena_failed + lexer_failed + parser_failed + model_failed + phase2_failed + logic_failed + transpiler_failed;
 
     nob_log(NOB_INFO, "------------------------------------------");
     nob_log(NOB_INFO, "-         Test Results Summary           -");
