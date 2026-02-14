@@ -4,6 +4,7 @@
 #include "../arena.h" // <--- Necessário agora
 #include "../diagnostics.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 // Macros de teste adaptadas para o nob
 #define TEST(name) static void test_##name(int *passed, int *failed)
@@ -33,6 +34,18 @@ static Token_List tokenize(const char *input) {
     }
     
     return tokens;
+}
+
+static void set_parser_fail_after_env(const char *value) {
+#if defined(_WIN32)
+    (void)_putenv_s("CMK2NOB_PARSER_FAIL_APPEND_AFTER", value ? value : "");
+#else
+    if (value && value[0] != '\0') {
+        (void)setenv("CMK2NOB_PARSER_FAIL_APPEND_AFTER", value, 1);
+    } else {
+        (void)unsetenv("CMK2NOB_PARSER_FAIL_APPEND_AFTER");
+    }
+#endif
 }
 
 // --- Testes ---
@@ -503,6 +516,47 @@ TEST(invalid_token_logs_error_and_is_skipped) {
     TEST_PASS();
 }
 
+TEST(parser_fail_fast_on_arena_oom) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize("set(VAR value)");
+    diag_reset();
+    set_parser_fail_after_env("0");
+    Ast_Root root = parse_tokens(arena, tokens);
+    set_parser_fail_after_env(NULL);
+
+    ASSERT(diag_has_errors() == true);
+    ASSERT(root.count == 0);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(parser_fail_fast_oom_does_not_loop) {
+    Arena *arena = arena_create(1024);
+    Token_List tokens = tokenize(
+        "set(A 1)\n"
+        "set(B 2)\n"
+        "set(C 3)\n"
+        "set(D 4)\n"
+        "set(E 5)\n"
+        "set(F 6)\n"
+        "set(G 7)\n"
+        "set(H 8)\n"
+    );
+    diag_reset();
+    set_parser_fail_after_env("2");
+    Ast_Root root = parse_tokens(arena, tokens);
+    set_parser_fail_after_env(NULL);
+
+    ASSERT(diag_has_errors() == true);
+    ASSERT(root.count == 0);
+
+    free(tokens.items);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 void run_parser_tests(int *passed, int *failed) {
     test_empty_input(passed, failed);
     test_simple_command(passed, failed);
@@ -534,4 +588,6 @@ void run_parser_tests(int *passed, int *failed) {
     test_foreach_missing_endforeach_logs_error(passed, failed);
     test_invalid_command_name_variants_are_ignored(passed, failed);
     test_invalid_token_logs_error_and_is_skipped(passed, failed);
+    test_parser_fail_fast_on_arena_oom(passed, failed);
+    test_parser_fail_fast_oom_does_not_loop(passed, failed);
 }

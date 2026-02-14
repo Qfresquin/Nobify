@@ -453,23 +453,15 @@ static void eval_set_var(Evaluator_Context *ctx, String_View key,
         }
     }
     
-    if (scope->vars.count >= scope->vars.capacity) {
-        if (!arena_da_reserve(
-                ctx->arena,
-                (void**)&scope->vars.items,
-                &scope->vars.capacity,
-                sizeof(*scope->vars.items),
-                scope->vars.count + 1)) {
-            diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "set",
-                "falha de alocacao ao expandir variaveis de escopo",
-                "reduza o script de entrada ou aumente memoria disponivel");
-            return;
-        }
+    Eval_Scope_Var new_var = {0};
+    new_var.key = safe_key;
+    new_var.value = safe_val;
+    if (!arena_da_try_append(ctx->arena, &scope->vars, new_var)) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "set",
+            "falha de alocacao ao expandir variaveis de escopo",
+            "reduza o script de entrada ou aumente memoria disponivel");
+        return;
     }
-    
-    scope->vars.items[scope->vars.count].key = safe_key;
-    scope->vars.items[scope->vars.count].value = safe_val;
-    scope->vars.count++;
 }
 
 static void eval_set_env_var(Evaluator_Context *ctx, String_View env_key, String_View value) {
@@ -721,12 +713,15 @@ static const char *g_check_state_keys[] = {
 static void eval_check_state_push(Evaluator_Context *ctx, bool reset) {
     if (!ctx) return;
     size_t key_count = sizeof(g_check_state_keys) / sizeof(g_check_state_keys[0]);
-    if (!arena_da_reserve(ctx->arena, (void**)&ctx->check_state_stack.items, &ctx->check_state_stack.capacity,
-            sizeof(*ctx->check_state_stack.items), ctx->check_state_stack.count + 1)) {
+    Eval_Check_State_Frame new_frame = {0};
+    if (!arena_da_try_append(ctx->arena, &ctx->check_state_stack, new_frame)) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_push_check_state",
+            "falha de alocacao ao expandir pilha de estado",
+            "reduza o script de entrada ou aumente memoria disponivel");
         return;
     }
 
-    Eval_Check_State_Frame *frame = &ctx->check_state_stack.items[ctx->check_state_stack.count++];
+    Eval_Check_State_Frame *frame = &ctx->check_state_stack.items[ctx->check_state_stack.count - 1];
     memset(frame, 0, sizeof(*frame));
     frame->count = key_count;
     frame->keys = arena_alloc_array(ctx->arena, String_View, key_count);
@@ -816,39 +811,18 @@ static String_View arena_read_file(Arena *arena, const char *path) {
     return (String_View){.data = data, .count = read};
 }
 
-#define arena_da_append_or_return_void(arena, list, item) do { \
-    if (!arena_da_reserve((arena), (void**)&(list)->items, &(list)->capacity, sizeof((list)->items[0]), (list)->count + 1)) { \
-        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "internal", \
-            "falha de alocacao ao expandir array interno", \
-            "reduza o script de entrada ou aumente memoria disponivel"); \
-        return; \
-    } \
-    (list)->items[(list)->count++] = (item); \
-} while(0)
-
-#define arena_da_append_or_return_false(arena, list, item) do { \
-    if (!arena_da_reserve((arena), (void**)&(list)->items, &(list)->capacity, sizeof((list)->items[0]), (list)->count + 1)) { \
-        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "internal", \
-            "falha de alocacao ao expandir array interno", \
-            "reduza o script de entrada ou aumente memoria disponivel"); \
-        return false; \
-    } \
-    (list)->items[(list)->count++] = (item); \
-} while(0)
-
 // Tokeniza string diretamente para a Arena
 static bool arena_tokenize(Arena *arena, String_View content, Token_List *out_tokens) {
     Lexer l = lexer_init(content);
     Token_List tokens = {0};
 
     for (Token t = lexer_next(&l); t.kind != TOKEN_END; t = lexer_next(&l)) {
-        if (!arena_da_reserve(arena, (void**)&tokens.items, &tokens.capacity, sizeof(tokens.items[0]), tokens.count + 1)) {
+        if (!arena_da_try_append(arena, &tokens, t)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "internal",
                      "falha de alocacao ao expandir token list",
                      "reduza o arquivo de entrada ou aumente memoria disponivel");
             return false;
         }
-        tokens.items[tokens.count++] = t;
     }
 
     *out_tokens = tokens;
@@ -858,15 +832,22 @@ static bool arena_tokenize(Arena *arena, String_View content, Token_List *out_to
 
 // Gerenciamento de Escopo de Avaliação
 static void eval_push_scope(Evaluator_Context *ctx) {
-    if (!arena_da_reserve(ctx->arena, (void**)&ctx->scopes, &ctx->scope_capacity,
-            sizeof(*ctx->scopes), ctx->scope_count + 1)) {
+    Eval_Scope new_scope = {0};
+    struct {
+        Eval_Scope *items;
+        size_t count;
+        size_t capacity;
+    } scopes_view = { ctx->scopes, ctx->scope_count, ctx->scope_capacity };
+
+    if (!arena_da_try_append(ctx->arena, &scopes_view, new_scope)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "internal",
             "falha de alocacao ao expandir pilha de escopos",
             "reduza o nivel de aninhamento ou aumente memoria disponivel");
         return;
     }
-    memset(&ctx->scopes[ctx->scope_count], 0, sizeof(Eval_Scope));
-    ctx->scope_count++;
+    ctx->scopes = scopes_view.items;
+    ctx->scope_count = scopes_view.count;
+    ctx->scope_capacity = scopes_view.capacity;
 }
 
 static void eval_pop_scope(Evaluator_Context *ctx) {
@@ -894,14 +875,18 @@ static bool eval_call_stack_push(Evaluator_Context *ctx, String_View name) {
         }
     }
 
-    if (ctx->call_stack.count >= ctx->call_stack.capacity) {
-        if (!arena_da_reserve(ctx->arena, (void**)&ctx->call_stack.names, &ctx->call_stack.capacity,
-                sizeof(*ctx->call_stack.names), ctx->call_stack.count + 1)) {
-            return false;
-        }
-    }
+    struct {
+        String_View *items;
+        size_t count;
+        size_t capacity;
+    } call_stack_view = { ctx->call_stack.names, ctx->call_stack.count, ctx->call_stack.capacity };
 
-    ctx->call_stack.names[ctx->call_stack.count++] = name;
+    if (!arena_da_try_append(ctx->arena, &call_stack_view, name)) {
+        return false;
+    }
+    ctx->call_stack.names = call_stack_view.items;
+    ctx->call_stack.count = call_stack_view.count;
+    ctx->call_stack.capacity = call_stack_view.capacity;
     return true;
 }
 
@@ -924,13 +909,18 @@ static bool eval_include_stack_contains(Evaluator_Context *ctx, String_View path
 
 static bool eval_include_stack_push(Evaluator_Context *ctx, String_View path) {
     if (!ctx) return false;
-    if (ctx->include_stack.count >= ctx->include_stack.capacity) {
-        if (!arena_da_reserve(ctx->arena, (void**)&ctx->include_stack.paths, &ctx->include_stack.capacity,
-                sizeof(*ctx->include_stack.paths), ctx->include_stack.count + 1)) {
-            return false;
-        }
+    struct {
+        String_View *items;
+        size_t count;
+        size_t capacity;
+    } include_stack_view = { ctx->include_stack.paths, ctx->include_stack.count, ctx->include_stack.capacity };
+
+    if (!arena_da_try_append(ctx->arena, &include_stack_view, path)) {
+        return false;
     }
-    ctx->include_stack.paths[ctx->include_stack.count++] = path;
+    ctx->include_stack.paths = include_stack_view.items;
+    ctx->include_stack.count = include_stack_view.count;
+    ctx->include_stack.capacity = include_stack_view.capacity;
     return true;
 }
 
@@ -1156,11 +1146,11 @@ static void eval_register_macro(Evaluator_Context *ctx, const Node *node) {
 
     Eval_Macro *macro = eval_find_macro(ctx, node->as.func_def.name);
     if (!macro) {
-        if (!arena_da_reserve(ctx->arena, (void**)&ctx->macros.items, &ctx->macros.capacity,
-                sizeof(*ctx->macros.items), ctx->macros.count + 1)) {
+        Eval_Macro new_macro = {0};
+        if (!arena_da_try_append(ctx->arena, &ctx->macros, new_macro)) {
             return;
         }
-        macro = &ctx->macros.items[ctx->macros.count++];
+        macro = &ctx->macros.items[ctx->macros.count - 1];
     }
 
     memset(macro, 0, sizeof(*macro));
@@ -1220,11 +1210,11 @@ static void eval_register_function(Evaluator_Context *ctx, const Node *node) {
 
     Eval_Function *function = eval_find_function(ctx, node->as.func_def.name);
     if (!function) {
-        if (!arena_da_reserve(ctx->arena, (void**)&ctx->functions.items, &ctx->functions.capacity,
-                sizeof(*ctx->functions.items), ctx->functions.count + 1)) {
+        Eval_Function new_function = {0};
+        if (!arena_da_try_append(ctx->arena, &ctx->functions, new_function)) {
             return;
         }
-        function = &ctx->functions.items[ctx->functions.count++];
+        function = &ctx->functions.items[ctx->functions.count - 1];
     }
 
     memset(function, 0, sizeof(*function));

@@ -38,4 +38,13 @@ static inline bool arena_da_reserve(
     return true;
 }
 
+#define arena_da_try_append(arena, list, item) \
+    (arena_da_reserve((arena), \
+                      (void**)&(list)->items, \
+                      &(list)->capacity, \
+                      sizeof((list)->items[0]), \
+                      (list)->count + 1) \
+        ? (((list)->items[(list)->count++] = (item)), true) \
+        : false)
+
 #endif // ARENA_DYN_H_
