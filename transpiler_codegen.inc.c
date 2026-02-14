@@ -79,6 +79,11 @@ typedef struct {
     int value;
 } Fast_String_Set_Entry;
 
+typedef struct {
+    Build_Model *model;
+    Build_Config active_cfg;
+} Codegen_Logic_Vars;
+
 static bool fast_string_set_insert(Fast_String_Set_Entry **set, Arena *arena, String_View value) {
     if (!set || !arena || value.count == 0 || !value.data) return false;
     Fast_String_Set_Entry *map = *set;
@@ -95,6 +100,73 @@ static void string_list_add_unique_fast(String_List *list, Arena *arena, Fast_St
     if (fast_string_set_insert(set, arena, value)) {
         string_list_add(list, arena, value);
     }
+}
+
+static void string_list_add_all_unique_fast(String_List *dst, Arena *arena, Fast_String_Set_Entry **set, const String_List *src) {
+    if (!dst || !arena || !src) return;
+    for (size_t i = 0; i < src->count; i++) {
+        string_list_add_unique_fast(dst, arena, set, src->items[i]);
+    }
+}
+
+static String_View codegen_active_config_name(Build_Config cfg) {
+    switch (cfg) {
+        case CONFIG_DEBUG: return sv_from_cstr("Debug");
+        case CONFIG_RELEASE: return sv_from_cstr("Release");
+        case CONFIG_RELWITHDEBINFO: return sv_from_cstr("RelWithDebInfo");
+        case CONFIG_MINSIZEREL: return sv_from_cstr("MinSizeRel");
+        default: return sv_from_cstr("Debug");
+    }
+}
+
+static String_View codegen_logic_get_var(void *userdata, String_View name, bool *is_set) {
+    if (is_set) *is_set = false;
+    if (!userdata || name.count == 0) return sv_from_cstr("");
+    Codegen_Logic_Vars *vars = (Codegen_Logic_Vars*)userdata;
+    Build_Model *model = vars->model;
+    if (!model) return sv_from_cstr("");
+
+    if (nob_sv_eq(name, sv_from_cstr("CMAKE_BUILD_TYPE"))) {
+        if (is_set) *is_set = true;
+        if (model->default_config.count > 0) return model->default_config;
+        return codegen_active_config_name(vars->active_cfg);
+    }
+    if (nob_sv_eq(name, sv_from_cstr("WIN32"))) {
+        if (is_set) *is_set = true;
+        return model->is_windows ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("UNIX"))) {
+        if (is_set) *is_set = true;
+        return model->is_unix ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("APPLE"))) {
+        if (is_set) *is_set = true;
+        return model->is_apple ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("LINUX"))) {
+        if (is_set) *is_set = true;
+        return model->is_linux ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("CMAKE_SYSTEM_NAME"))) {
+        if (is_set) *is_set = true;
+        if (model->is_windows) return sv_from_cstr("Windows");
+        if (model->is_apple) return sv_from_cstr("Darwin");
+        if (model->is_linux) return sv_from_cstr("Linux");
+        if (model->is_unix) return sv_from_cstr("Unix");
+        return sv_from_cstr("");
+    }
+
+    String_View cache_val = build_model_get_cache_variable(model, name);
+    if (cache_val.count > 0 || build_model_has_cache_variable(model, name)) {
+        if (is_set) *is_set = true;
+        return cache_val;
+    }
+    String_View env_val = build_model_get_env_var(model, name);
+    if (env_val.count > 0 || build_model_has_env_var(model, name)) {
+        if (is_set) *is_set = true;
+        return env_val;
+    }
+    return sv_from_cstr("");
 }
 
 static bool target_has_dependents(Build_Model *model, String_View target_name) {
@@ -1305,29 +1377,61 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     Fast_String_Set_Entry *all_link_libs_set = NULL;
     Fast_String_Set_Entry *all_link_targets_set = NULL;
 
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_definitions.count; i++) {
-        string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[CONFIG_ALL].compile_definitions.items[i]);
-    }
-    for (size_t i = 0; i < target->properties[cfg_idx].compile_definitions.count; i++) {
-        string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[cfg_idx].compile_definitions.items[i]);
+    Codegen_Logic_Vars logic_vars = {
+        .model = model,
+        .active_cfg = active_cfg,
+    };
+    Logic_Eval_Context logic_ctx = {
+        .get_var = codegen_logic_get_var,
+        .userdata = &logic_vars,
+    };
+
+    if (target->conditional_compile_definitions.count > 0) {
+        String_List effective_compile_defs = {0};
+        string_list_init(&effective_compile_defs);
+        build_target_collect_effective_compile_definitions(target, model->arena, &logic_ctx, &effective_compile_defs);
+        string_list_add_all_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, &effective_compile_defs);
+    } else {
+        for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_definitions.count; i++) {
+            string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[CONFIG_ALL].compile_definitions.items[i]);
+        }
+        for (size_t i = 0; i < target->properties[cfg_idx].compile_definitions.count; i++) {
+            string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[cfg_idx].compile_definitions.items[i]);
+        }
     }
     for (size_t i = 0; i < model->global_definitions.count; i++) {
         string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, model->global_definitions.items[i]);
     }
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_options.count; i++) {
-        string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[CONFIG_ALL].compile_options.items[i]);
-    }
-    for (size_t i = 0; i < target->properties[cfg_idx].compile_options.count; i++) {
-        string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[cfg_idx].compile_options.items[i]);
+
+    if (target->conditional_compile_options.count > 0) {
+        String_List effective_compile_opts = {0};
+        string_list_init(&effective_compile_opts);
+        build_target_collect_effective_compile_options(target, model->arena, &logic_ctx, &effective_compile_opts);
+        string_list_add_all_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, &effective_compile_opts);
+    } else {
+        for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_options.count; i++) {
+            string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[CONFIG_ALL].compile_options.items[i]);
+        }
+        for (size_t i = 0; i < target->properties[cfg_idx].compile_options.count; i++) {
+            string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[cfg_idx].compile_options.items[i]);
+        }
     }
     for (size_t i = 0; i < model->global_compile_options.count; i++) {
         string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, model->global_compile_options.items[i]);
     }
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].include_directories.count; i++) {
-        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[CONFIG_ALL].include_directories.items[i]);
-    }
-    for (size_t i = 0; i < target->properties[cfg_idx].include_directories.count; i++) {
-        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[cfg_idx].include_directories.items[i]);
+
+    if (target->conditional_include_directories.count > 0) {
+        String_List effective_include_dirs = {0};
+        string_list_init(&effective_include_dirs);
+        build_target_collect_effective_include_directories(target, model->arena, &logic_ctx, &effective_include_dirs);
+        string_list_add_all_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, &effective_include_dirs);
+    } else {
+        for (size_t i = 0; i < target->properties[CONFIG_ALL].include_directories.count; i++) {
+            string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[CONFIG_ALL].include_directories.items[i]);
+        }
+        for (size_t i = 0; i < target->properties[cfg_idx].include_directories.count; i++) {
+            string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[cfg_idx].include_directories.items[i]);
+        }
     }
     for (size_t i = 0; i < model->directories.include_dirs.count; i++) {
         string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.include_dirs.items[i]);
@@ -1353,8 +1457,16 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     for (size_t i = 0; i < model->directories.link_dirs.count; i++) {
         string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, model->directories.link_dirs.items[i]);
     }
-    for (size_t i = 0; i < target->link_libraries.count; i++) {
-        string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, target->link_libraries.items[i]);
+
+    if (target->conditional_link_libraries.count > 0) {
+        String_List effective_link_libs = {0};
+        string_list_init(&effective_link_libs);
+        build_target_collect_effective_link_libraries(target, model->arena, &logic_ctx, &effective_link_libs);
+        string_list_add_all_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, &effective_link_libs);
+    } else {
+        for (size_t i = 0; i < target->link_libraries.count; i++) {
+            string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, target->link_libraries.items[i]);
+        }
     }
     for (size_t i = 0; i < model->global_link_libraries.count; i++) {
         string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, model->global_link_libraries.items[i]);

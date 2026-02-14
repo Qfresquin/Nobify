@@ -2517,6 +2517,68 @@ TEST(config_debug_output_directory_property) {
     TEST_PASS();
 }
 
+TEST(conditional_target_properties_dual_read_debug) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "project(Test)\n"
+        "set(CMAKE_BUILD_TYPE Debug)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE BASE=1)\n"
+        "target_compile_options(app PRIVATE -Wall)\n"
+        "target_include_directories(app PRIVATE inc_all)\n"
+        "set_target_properties(app PROPERTIES "
+        "COMPILE_DEFINITIONS_DEBUG DBG=1 "
+        "COMPILE_OPTIONS_DEBUG -Og "
+        "INCLUDE_DIRECTORIES_DEBUG debug_inc)";
+
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-DBASE=1\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-DDBG=1\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Wall\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Og\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Iinc_all\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Idebug_inc\");") != NULL);
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(conditional_target_properties_dual_read_release) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "project(Test)\n"
+        "set(CMAKE_BUILD_TYPE Release)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE BASE=1)\n"
+        "target_compile_options(app PRIVATE -Wall)\n"
+        "target_include_directories(app PRIVATE inc_all)\n"
+        "set_target_properties(app PROPERTIES "
+        "COMPILE_DEFINITIONS_DEBUG DBG=1 "
+        "COMPILE_OPTIONS_DEBUG -Og "
+        "INCLUDE_DIRECTORIES_DEBUG debug_inc)";
+
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-DBASE=1\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Wall\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Iinc_all\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-DDBG=1\");") == NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Og\");") == NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Idebug_inc\");") == NULL);
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(install_targets) {
     Arena *arena = arena_create(1024 * 1024);
     const char *input =
@@ -5519,6 +5581,8 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_set_target_properties_prefix_suffix(passed, failed);
     test_config_release_compile_and_output_properties(passed, failed);
     test_config_debug_output_directory_property(passed, failed);
+    test_conditional_target_properties_dual_read_debug(passed, failed);
+    test_conditional_target_properties_dual_read_release(passed, failed);
     test_install_targets(passed, failed);
     test_install_targets_runtime_library_archive(passed, failed);
     test_install_files_programs_directories(passed, failed);

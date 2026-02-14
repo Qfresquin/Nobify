@@ -3,6 +3,7 @@
 
 #include "arena.h"
 #include "nob.h"
+#include "logic_model.h"
 
 // ============================================================================
 // TIPOS BÁSICOS
@@ -55,6 +56,17 @@ typedef struct String_List {
     size_t count;
     size_t capacity;
 } String_List;
+
+typedef struct {
+    String_View value;
+    Logic_Node *condition; // NULL => always true
+} Conditional_Property;
+
+typedef struct Conditional_Property_List {
+    Conditional_Property *items;
+    size_t count;
+    size_t capacity;
+} Conditional_Property_List;
 
 // ============================================================================
 // COMANDOS PERSONALIZADOS
@@ -151,6 +163,12 @@ typedef struct {
         String_List link_directories;
     } properties[CONFIG_ALL + 1];  // Índice por Build_Config (inclui CONFIG_ALL)
     
+    // Fase 3A: propriedades condicionais (dual-write / dual-read)
+    Conditional_Property_List conditional_compile_definitions;
+    Conditional_Property_List conditional_compile_options;
+    Conditional_Property_List conditional_include_directories;
+    Conditional_Property_List conditional_link_libraries;
+
     // Propriedades gerais
     String_View output_name;      // Nome do arquivo de saída
     String_View output_directory;
@@ -365,6 +383,40 @@ void build_target_add_compile_option(Build_Target *target,
                                      String_View option,
                                      Visibility visibility,
                                      Build_Config config);
+
+void build_target_add_conditional_compile_definition(Build_Target *target,
+                                                     Arena *arena,
+                                                     String_View definition,
+                                                     Logic_Node *condition);
+void build_target_add_conditional_compile_option(Build_Target *target,
+                                                 Arena *arena,
+                                                 String_View option,
+                                                 Logic_Node *condition);
+void build_target_add_conditional_include_directory(Build_Target *target,
+                                                    Arena *arena,
+                                                    String_View directory,
+                                                    Logic_Node *condition);
+void build_target_add_conditional_link_library(Build_Target *target,
+                                               Arena *arena,
+                                               String_View library,
+                                               Logic_Node *condition);
+
+void build_target_collect_effective_compile_definitions(Build_Target *target,
+                                                        Arena *arena,
+                                                        const Logic_Eval_Context *logic_ctx,
+                                                        String_List *out);
+void build_target_collect_effective_compile_options(Build_Target *target,
+                                                    Arena *arena,
+                                                    const Logic_Eval_Context *logic_ctx,
+                                                    String_List *out);
+void build_target_collect_effective_include_directories(Build_Target *target,
+                                                        Arena *arena,
+                                                        const Logic_Eval_Context *logic_ctx,
+                                                        String_List *out);
+void build_target_collect_effective_link_libraries(Build_Target *target,
+                                                   Arena *arena,
+                                                   const Logic_Eval_Context *logic_ctx,
+                                                   String_List *out);
 
 // Adiciona uma opcao de link
 void build_target_add_link_option(Build_Target *target,

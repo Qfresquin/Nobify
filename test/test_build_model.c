@@ -18,6 +18,42 @@
     (*passed)++; \
 } while(0)
 
+typedef struct {
+    String_View build_type;
+    bool is_windows;
+    bool is_unix;
+    bool is_apple;
+    bool is_linux;
+} Build_Model_Logic_Test_Vars;
+
+static String_View build_model_test_logic_get_var(void *userdata, String_View name, bool *is_set) {
+    if (is_set) *is_set = false;
+    if (!userdata || name.count == 0) return sv_from_cstr("");
+
+    Build_Model_Logic_Test_Vars *vars = (Build_Model_Logic_Test_Vars*)userdata;
+    if (nob_sv_eq(name, sv_from_cstr("CMAKE_BUILD_TYPE"))) {
+        if (is_set) *is_set = true;
+        return vars->build_type;
+    }
+    if (nob_sv_eq(name, sv_from_cstr("WIN32"))) {
+        if (is_set) *is_set = true;
+        return vars->is_windows ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("UNIX"))) {
+        if (is_set) *is_set = true;
+        return vars->is_unix ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("APPLE"))) {
+        if (is_set) *is_set = true;
+        return vars->is_apple ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    if (nob_sv_eq(name, sv_from_cstr("LINUX"))) {
+        if (is_set) *is_set = true;
+        return vars->is_linux ? sv_from_cstr("1") : sv_from_cstr("0");
+    }
+    return sv_from_cstr("");
+}
+
 // --- Testes ---
 
 TEST(create_model) {
@@ -682,6 +718,127 @@ TEST(cpack_dedup_basic) {
     TEST_PASS();
 }
 
+TEST(conditional_properties_collect_by_context) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_EXECUTABLE);
+    ASSERT(t != NULL);
+
+    Logic_Operand lhs = { .token = sv_from_cstr("CMAKE_BUILD_TYPE"), .quoted = false };
+    Logic_Operand rhs_debug = { .token = sv_from_cstr("Debug"), .quoted = true };
+    Logic_Operand rhs_release = { .token = sv_from_cstr("Release"), .quoted = true };
+    Logic_Node *cond_debug = logic_compare(arena, LOGIC_CMP_STREQUAL, lhs, rhs_debug);
+    Logic_Node *cond_release = logic_compare(arena, LOGIC_CMP_STREQUAL, lhs, rhs_release);
+    ASSERT(cond_debug != NULL);
+    ASSERT(cond_release != NULL);
+
+    build_target_add_conditional_compile_definition(t, arena, sv_from_cstr("ALWAYS_DEF"), NULL);
+    build_target_add_conditional_compile_definition(t, arena, sv_from_cstr("DBG_ONLY"), cond_debug);
+    build_target_add_conditional_compile_definition(t, arena, sv_from_cstr("REL_ONLY"), cond_release);
+
+    Build_Model_Logic_Test_Vars debug_vars = { .build_type = sv_from_cstr("Debug") };
+    Logic_Eval_Context debug_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &debug_vars };
+    String_List debug_defs = {0};
+    string_list_init(&debug_defs);
+    build_target_collect_effective_compile_definitions(t, arena, &debug_ctx, &debug_defs);
+    ASSERT(debug_defs.count == 2);
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("ALWAYS_DEF")));
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("DBG_ONLY")));
+    ASSERT(!string_list_contains(&debug_defs, sv_from_cstr("REL_ONLY")));
+
+    Build_Model_Logic_Test_Vars release_vars = { .build_type = sv_from_cstr("Release") };
+    Logic_Eval_Context release_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &release_vars };
+    String_List release_defs = {0};
+    string_list_init(&release_defs);
+    build_target_collect_effective_compile_definitions(t, arena, &release_ctx, &release_defs);
+    ASSERT(release_defs.count == 2);
+    ASSERT(string_list_contains(&release_defs, sv_from_cstr("ALWAYS_DEF")));
+    ASSERT(string_list_contains(&release_defs, sv_from_cstr("REL_ONLY")));
+    ASSERT(!string_list_contains(&release_defs, sv_from_cstr("DBG_ONLY")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(conditional_dual_write_legacy_apis) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_SHARED_LIB);
+    ASSERT(t != NULL);
+
+    build_target_add_definition(t, arena, sv_from_cstr("BASE_DEF"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    build_target_add_definition(t, arena, sv_from_cstr("DBG_DEF"), VISIBILITY_PRIVATE, CONFIG_DEBUG);
+    build_target_add_compile_option(t, arena, sv_from_cstr("-Wall"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    build_target_add_include_directory(t, arena, sv_from_cstr("include"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    build_target_add_library(t, arena, sv_from_cstr("m"), VISIBILITY_PRIVATE);
+
+    ASSERT(t->conditional_compile_definitions.count == 2);
+    ASSERT(t->conditional_compile_options.count == 1);
+    ASSERT(t->conditional_include_directories.count == 1);
+    ASSERT(t->conditional_link_libraries.count == 1);
+    ASSERT(t->conditional_compile_definitions.items[0].condition == NULL);
+    ASSERT(t->conditional_compile_definitions.items[1].condition != NULL);
+
+    Build_Model_Logic_Test_Vars debug_vars = { .build_type = sv_from_cstr("Debug") };
+    Logic_Eval_Context debug_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &debug_vars };
+    String_List debug_defs = {0};
+    string_list_init(&debug_defs);
+    build_target_collect_effective_compile_definitions(t, arena, &debug_ctx, &debug_defs);
+    ASSERT(debug_defs.count == 2);
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("BASE_DEF")));
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("DBG_DEF")));
+
+    Build_Model_Logic_Test_Vars release_vars = { .build_type = sv_from_cstr("Release") };
+    Logic_Eval_Context release_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &release_vars };
+    String_List release_defs = {0};
+    string_list_init(&release_defs);
+    build_target_collect_effective_compile_definitions(t, arena, &release_ctx, &release_defs);
+    ASSERT(release_defs.count == 1);
+    ASSERT(string_list_contains(&release_defs, sv_from_cstr("BASE_DEF")));
+    ASSERT(!string_list_contains(&release_defs, sv_from_cstr("DBG_DEF")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(conditional_sync_from_property_smart) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("t"), TARGET_EXECUTABLE);
+    ASSERT(t != NULL);
+
+    build_target_add_definition(t, arena, sv_from_cstr("BASE"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    ASSERT(t->conditional_compile_definitions.count == 1);
+
+    build_target_set_property_smart(
+        t, arena,
+        sv_from_cstr("COMPILE_DEFINITIONS_DEBUG"),
+        sv_from_cstr("DBG_ONE;DBG_TWO")
+    );
+    ASSERT(t->conditional_compile_definitions.count == 3);
+
+    Build_Model_Logic_Test_Vars debug_vars = { .build_type = sv_from_cstr("Debug") };
+    Logic_Eval_Context debug_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &debug_vars };
+    String_List debug_defs = {0};
+    string_list_init(&debug_defs);
+    build_target_collect_effective_compile_definitions(t, arena, &debug_ctx, &debug_defs);
+    ASSERT(debug_defs.count == 3);
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("BASE")));
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("DBG_ONE")));
+    ASSERT(string_list_contains(&debug_defs, sv_from_cstr("DBG_TWO")));
+
+    Build_Model_Logic_Test_Vars release_vars = { .build_type = sv_from_cstr("Release") };
+    Logic_Eval_Context release_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &release_vars };
+    String_List release_defs = {0};
+    string_list_init(&release_defs);
+    build_target_collect_effective_compile_definitions(t, arena, &release_ctx, &release_defs);
+    ASSERT(release_defs.count == 1);
+    ASSERT(string_list_contains(&release_defs, sv_from_cstr("BASE")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(cache_variable_unset_and_has_helpers) {
     Arena *arena = arena_create(1024 * 1024);
     Build_Model *model = build_model_create(arena);
@@ -925,6 +1082,9 @@ void run_build_model_tests(int *passed, int *failed) {
     test_add_definition(passed, failed);
     test_add_include_directory(passed, failed);
     test_compile_options_visibility(passed, failed);
+    test_conditional_properties_collect_by_context(passed, failed);
+    test_conditional_dual_write_legacy_apis(passed, failed);
+    test_conditional_sync_from_property_smart(passed, failed);
     test_link_options_visibility(passed, failed);
     test_link_directories_visibility(passed, failed);
     test_interface_dependencies_dedupe(passed, failed);
