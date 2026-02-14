@@ -628,6 +628,7 @@ String_View build_test_get_name(const Build_Test *test);
 String_View build_test_get_command(const Build_Test *test);
 String_View build_test_get_working_directory(const Build_Test *test);
 bool build_test_get_command_expand_lists(const Build_Test *test);
+void build_test_set_command_expand_lists(Build_Test *test, bool value);
 
 String_View build_cpack_install_type_get_name(const CPack_Install_Type *install_type);
 String_View build_cpack_install_type_get_display_name(const CPack_Install_Type *install_type);
@@ -707,6 +708,28 @@ Custom_Command* build_model_add_custom_command_output(Build_Model *model,
                                                       Arena *arena,
                                                       String_View output,
                                                       String_View command);
+void build_custom_command_add_outputs(Custom_Command *cmd, Arena *arena, const String_List *items);
+void build_custom_command_add_byproducts(Custom_Command *cmd, Arena *arena, const String_List *items);
+void build_custom_command_add_depends(Custom_Command *cmd, Arena *arena, const String_List *items);
+void build_custom_command_set_main_dependency(Custom_Command *cmd, String_View value);
+void build_custom_command_set_main_dependency_if_empty(Custom_Command *cmd, String_View value);
+void build_custom_command_set_depfile(Custom_Command *cmd, String_View value);
+void build_custom_command_set_depfile_if_empty(Custom_Command *cmd, String_View value);
+void build_custom_command_set_flags(Custom_Command *cmd,
+                                    bool append,
+                                    bool verbatim,
+                                    bool uses_terminal,
+                                    bool command_expand_lists,
+                                    bool depends_explicit_only,
+                                    bool codegen);
+void build_custom_command_merge_flags(Custom_Command *cmd,
+                                      bool append,
+                                      bool verbatim,
+                                      bool uses_terminal,
+                                      bool command_expand_lists,
+                                      bool depends_explicit_only,
+                                      bool codegen);
+void build_custom_command_append_command(Custom_Command *cmd, Arena *arena, String_View extra);
 
 // Path helpers moved from evaluator
 bool build_path_is_absolute(String_View path);

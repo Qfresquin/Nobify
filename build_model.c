@@ -1774,6 +1774,11 @@ bool build_test_get_command_expand_lists(const Build_Test *test) {
     return test ? test->command_expand_lists : false;
 }
 
+void build_test_set_command_expand_lists(Build_Test *test, bool value) {
+    if (!test) return;
+    test->command_expand_lists = value;
+}
+
 String_View build_cpack_install_type_get_name(const CPack_Install_Type *install_type) {
     if (!install_type) return sv_from_cstr("");
     return install_type->name;
@@ -2045,6 +2050,97 @@ Custom_Command* build_model_add_custom_command_output(Build_Model *model,
     if (!cmd) return NULL;
     if (output.count > 0) string_list_add_unique(&cmd->outputs, arena, output);
     return cmd;
+}
+
+void build_custom_command_add_outputs(Custom_Command *cmd, Arena *arena, const String_List *items) {
+    if (!cmd || !arena || !items) return;
+    for (size_t i = 0; i < items->count; i++) {
+        string_list_add(&cmd->outputs, arena, items->items[i]);
+    }
+}
+
+void build_custom_command_add_byproducts(Custom_Command *cmd, Arena *arena, const String_List *items) {
+    if (!cmd || !arena || !items) return;
+    for (size_t i = 0; i < items->count; i++) {
+        string_list_add(&cmd->byproducts, arena, items->items[i]);
+    }
+}
+
+void build_custom_command_add_depends(Custom_Command *cmd, Arena *arena, const String_List *items) {
+    if (!cmd || !arena || !items) return;
+    for (size_t i = 0; i < items->count; i++) {
+        string_list_add(&cmd->depends, arena, items->items[i]);
+    }
+}
+
+void build_custom_command_set_main_dependency(Custom_Command *cmd, String_View value) {
+    if (!cmd) return;
+    cmd->main_dependency = value;
+}
+
+void build_custom_command_set_main_dependency_if_empty(Custom_Command *cmd, String_View value) {
+    if (!cmd) return;
+    if (cmd->main_dependency.count == 0) {
+        cmd->main_dependency = value;
+    }
+}
+
+void build_custom_command_set_depfile(Custom_Command *cmd, String_View value) {
+    if (!cmd) return;
+    cmd->depfile = value;
+}
+
+void build_custom_command_set_depfile_if_empty(Custom_Command *cmd, String_View value) {
+    if (!cmd) return;
+    if (cmd->depfile.count == 0) {
+        cmd->depfile = value;
+    }
+}
+
+void build_custom_command_set_flags(Custom_Command *cmd,
+                                    bool append,
+                                    bool verbatim,
+                                    bool uses_terminal,
+                                    bool command_expand_lists,
+                                    bool depends_explicit_only,
+                                    bool codegen) {
+    if (!cmd) return;
+    cmd->append = append;
+    cmd->verbatim = verbatim;
+    cmd->uses_terminal = uses_terminal;
+    cmd->command_expand_lists = command_expand_lists;
+    cmd->depends_explicit_only = depends_explicit_only;
+    cmd->codegen = codegen;
+}
+
+void build_custom_command_merge_flags(Custom_Command *cmd,
+                                      bool append,
+                                      bool verbatim,
+                                      bool uses_terminal,
+                                      bool command_expand_lists,
+                                      bool depends_explicit_only,
+                                      bool codegen) {
+    if (!cmd) return;
+    cmd->append = cmd->append || append;
+    cmd->verbatim = cmd->verbatim || verbatim;
+    cmd->uses_terminal = cmd->uses_terminal || uses_terminal;
+    cmd->command_expand_lists = cmd->command_expand_lists || command_expand_lists;
+    cmd->depends_explicit_only = cmd->depends_explicit_only || depends_explicit_only;
+    cmd->codegen = cmd->codegen || codegen;
+}
+
+void build_custom_command_append_command(Custom_Command *cmd, Arena *arena, String_View extra) {
+    if (!cmd || !arena || extra.count == 0) return;
+    if (cmd->command.count == 0) {
+        cmd->command = extra;
+        return;
+    }
+    String_Builder sb = {0};
+    sb_append_buf(&sb, cmd->command.data, cmd->command.count);
+    sb_append_cstr(&sb, " && ");
+    sb_append_buf(&sb, extra.data, extra.count);
+    cmd->command = sb.count > 0 ? sv_from_cstr(arena_strndup(arena, sb.items, sb.count)) : sv_from_cstr("");
+    nob_sb_free(sb);
 }
 
 Custom_Command* build_model_find_output_custom_command_by_output(Build_Model *model, String_View output) {

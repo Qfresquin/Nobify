@@ -969,21 +969,6 @@ static bool is_custom_command_keyword(String_View arg) {
            sv_eq_ci(arg, sv_from_cstr("CODEGEN"));
 }
 
-static void custom_command_copy_list(Arena *arena, String_List *dst, const String_List *src) {
-    if (!arena || !dst || !src) return;
-    for (size_t i = 0; i < src->count; i++) {
-        string_list_add(dst, arena, src->items[i]);
-    }
-}
-
-static Custom_Command* evaluator_target_add_custom_command_ex(Build_Target *target, Arena *arena, bool pre_build, String_View command, String_View working_dir, String_View comment) {
-    return build_target_add_custom_command_ex(target, arena, pre_build, command, working_dir, comment);
-}
-
-static Custom_Command* build_model_add_output_custom_command(Build_Model *model, Arena *arena, String_View command, String_View working_dir, String_View comment) {
-    return build_model_add_custom_command_output_ex(model, arena, command, working_dir, comment);
-}
-
 static size_t parse_custom_command_list(Evaluator_Context *ctx, Args args, size_t start, String_List *out) {
     size_t i = start;
     while (i < args.count) {
@@ -1039,20 +1024,6 @@ static String_View join_command_args(Evaluator_Context *ctx, Args args, size_t s
     String_View out = sb.count > 0 ? sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count)) : sv_from_cstr("");
     nob_sb_free(sb);
     return out;
-}
-
-static void append_custom_command_command(Arena *arena, Custom_Command *cmd, String_View extra) {
-    if (!arena || !cmd || extra.count == 0) return;
-    if (cmd->command.count == 0) {
-        cmd->command = extra;
-        return;
-    }
-    String_Builder sb = {0};
-    sb_append_buf(&sb, cmd->command.data, cmd->command.count);
-    sb_append_cstr(&sb, " && ");
-    sb_append_buf(&sb, extra.data, extra.count);
-    cmd->command = sb.count > 0 ? sv_from_cstr(arena_strndup(arena, sb.items, sb.count)) : sv_from_cstr("");
-    nob_sb_free(sb);
 }
 
 
@@ -2491,26 +2462,27 @@ static void eval_add_custom_command(Evaluator_Context *ctx, Args args) {
         for (size_t d = 0; d < depends.count; d++) {
             Build_Target *dep_target = build_model_find_target(ctx->model, depends.items[d]);
             if (dep_target) {
-                build_target_add_dependency(target, ctx->arena, dep_target->name);
+                build_target_add_dependency(target, ctx->arena, build_target_get_name(dep_target));
             }
         }
     }
 
     String_View merged_command = join_commands_with_and(ctx->arena, commands);
     if (mode_target) {
-        Custom_Command *cmd = evaluator_target_add_custom_command_ex(target, ctx->arena, pre_build || !post_build, merged_command, working_dir, comment);
+        Custom_Command *cmd = build_target_add_custom_command_ex(target, ctx->arena, pre_build || !post_build, merged_command, working_dir, comment);
         if (!cmd) return;
-        custom_command_copy_list(ctx->arena, &cmd->outputs, &outputs);
-        custom_command_copy_list(ctx->arena, &cmd->byproducts, &byproducts);
-        custom_command_copy_list(ctx->arena, &cmd->depends, &depends);
-        cmd->main_dependency = main_dependency;
-        cmd->depfile = depfile;
-        cmd->append = append_mode;
-        cmd->verbatim = verbatim;
-        cmd->uses_terminal = uses_terminal;
-        cmd->command_expand_lists = command_expand_lists;
-        cmd->depends_explicit_only = depends_explicit_only;
-        cmd->codegen = codegen;
+        build_custom_command_add_outputs(cmd, ctx->arena, &outputs);
+        build_custom_command_add_byproducts(cmd, ctx->arena, &byproducts);
+        build_custom_command_add_depends(cmd, ctx->arena, &depends);
+        build_custom_command_set_main_dependency(cmd, main_dependency);
+        build_custom_command_set_depfile(cmd, depfile);
+        build_custom_command_set_flags(cmd,
+                                       append_mode,
+                                       verbatim,
+                                       uses_terminal,
+                                       command_expand_lists,
+                                       depends_explicit_only,
+                                       codegen);
     } else {
         Custom_Command *cmd = NULL;
         if (append_mode) {
@@ -2521,22 +2493,23 @@ static void eval_add_custom_command(Evaluator_Context *ctx, Args args) {
             }
         }
         if (!cmd) {
-            cmd = build_model_add_output_custom_command(ctx->model, ctx->arena, merged_command, working_dir, comment);
+            cmd = build_model_add_custom_command_output_ex(ctx->model, ctx->arena, merged_command, working_dir, comment);
         } else {
-            append_custom_command_command(ctx->arena, cmd, merged_command);
+            build_custom_command_append_command(cmd, ctx->arena, merged_command);
         }
         if (!cmd) return;
-        if (!append_mode) custom_command_copy_list(ctx->arena, &cmd->outputs, &outputs);
-        custom_command_copy_list(ctx->arena, &cmd->byproducts, &byproducts);
-        custom_command_copy_list(ctx->arena, &cmd->depends, &depends);
-        if (cmd->main_dependency.count == 0) cmd->main_dependency = main_dependency;
-        if (cmd->depfile.count == 0) cmd->depfile = depfile;
-        cmd->append = append_mode;
-        cmd->verbatim = cmd->verbatim || verbatim;
-        cmd->uses_terminal = cmd->uses_terminal || uses_terminal;
-        cmd->command_expand_lists = cmd->command_expand_lists || command_expand_lists;
-        cmd->depends_explicit_only = cmd->depends_explicit_only || depends_explicit_only;
-        cmd->codegen = cmd->codegen || codegen;
+        if (!append_mode) build_custom_command_add_outputs(cmd, ctx->arena, &outputs);
+        build_custom_command_add_byproducts(cmd, ctx->arena, &byproducts);
+        build_custom_command_add_depends(cmd, ctx->arena, &depends);
+        build_custom_command_set_main_dependency_if_empty(cmd, main_dependency);
+        build_custom_command_set_depfile_if_empty(cmd, depfile);
+        build_custom_command_merge_flags(cmd,
+                                         append_mode,
+                                         verbatim,
+                                         uses_terminal,
+                                         command_expand_lists,
+                                         depends_explicit_only,
+                                         codegen);
     }
 }
 
@@ -4650,16 +4623,16 @@ static void eval_add_custom_target_command(Evaluator_Context *ctx, Args args) {
     for (size_t d = 0; d < depends.count; d++) {
         Build_Target *dep_target = build_model_find_target(ctx->model, depends.items[d]);
         if (dep_target) {
-            build_target_add_dependency(target, ctx->arena, dep_target->name);
+            build_target_add_dependency(target, ctx->arena, build_target_get_name(dep_target));
         }
     }
 
     if (commands.count == 0) return;
     String_View merged_command = join_commands_with_and(ctx->arena, commands);
-    Custom_Command *cmd = evaluator_target_add_custom_command_ex(target, ctx->arena, true, merged_command, working_dir, comment);
+    Custom_Command *cmd = build_target_add_custom_command_ex(target, ctx->arena, true, merged_command, working_dir, comment);
     if (!cmd) return;
-    custom_command_copy_list(ctx->arena, &cmd->depends, &depends);
-    custom_command_copy_list(ctx->arena, &cmd->byproducts, &byproducts);
+    build_custom_command_add_depends(cmd, ctx->arena, &depends);
+    build_custom_command_add_byproducts(cmd, ctx->arena, &byproducts);
 }
 
 static void eval_include_directories_command(Evaluator_Context *ctx, Args args) {
@@ -7549,7 +7522,8 @@ static void eval_add_test_command(Evaluator_Context *ctx, Args args) {
     }
 
     String_View command = join_string_list_with_space_and_expand_semicolons(ctx, &command_items, command_expand_lists);
-    build_model_add_test(ctx->model, test_name, command, working_dir, command_expand_lists);
+    Build_Test *created_test = build_model_add_test_ex(ctx->model, ctx->arena, test_name, command, working_dir);
+    build_test_set_command_expand_lists(created_test, command_expand_lists);
 
     if (!build_model_is_testing_enabled(ctx->model)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "add_test",
