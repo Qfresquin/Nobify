@@ -512,6 +512,29 @@ TEST(link_libraries_global) {
     TEST_PASS();
 }
 
+TEST(link_libraries_global_framework) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "project(Test)\n"
+        "link_libraries(\"-framework Cocoa\")\n"
+        "add_executable(app main.c)";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-framework\")") != NULL);
+    ASSERT(diag_telemetry_unsupported_count_for("link_libraries") == 0);
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(add_compile_options_global) {
     Arena *arena = arena_create(1024 * 1024);
     const char *input =
@@ -5503,6 +5526,7 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_include_directories_global(passed, failed);
     test_link_directories_global(passed, failed);
     test_link_libraries_global(passed, failed);
+    test_link_libraries_global_framework(passed, failed);
     test_add_compile_options_global(passed, failed);
     test_add_compile_definitions_global(passed, failed);
     test_add_definitions_global(passed, failed);

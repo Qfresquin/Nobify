@@ -682,6 +682,195 @@ TEST(cpack_dedup_basic) {
     TEST_PASS();
 }
 
+TEST(fase1_target_flags_and_alias) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("app"), TARGET_EXECUTABLE);
+    Build_Target *alias = build_model_add_target(model, sv_from_cstr("app_alias"), TARGET_ALIAS);
+    ASSERT(t != NULL);
+    ASSERT(alias != NULL);
+
+    build_target_set_flag(t, TARGET_FLAG_WIN32_EXECUTABLE, true);
+    build_target_set_flag(t, TARGET_FLAG_MACOSX_BUNDLE, true);
+    build_target_set_flag(t, TARGET_FLAG_EXCLUDE_FROM_ALL, true);
+    build_target_set_flag(t, TARGET_FLAG_IMPORTED, true);
+    ASSERT(t->win32_executable == true);
+    ASSERT(t->macosx_bundle == true);
+    ASSERT(t->exclude_from_all == true);
+    ASSERT(t->imported == true);
+
+    build_target_set_alias(alias, arena, sv_from_cstr("app"));
+    ASSERT(alias->alias == true);
+    ASSERT(alias->dependencies.count == 1);
+    ASSERT(nob_sv_eq(alias->dependencies.items[0], sv_from_cstr("app")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_env_and_global_args) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    build_model_set_env_var(model, arena, sv_from_cstr("PATH"), sv_from_cstr("A"));
+    build_model_set_env_var(model, arena, sv_from_cstr("PATH"), sv_from_cstr("B"));
+    ASSERT(model->environment_variables.count == 1);
+    ASSERT(nob_sv_eq(model->environment_variables.items[0].name, sv_from_cstr("PATH")));
+    ASSERT(nob_sv_eq(model->environment_variables.items[0].value, sv_from_cstr("B")));
+
+    build_model_process_global_definition_arg(model, arena, sv_from_cstr("-DONE=1"));
+    build_model_process_global_definition_arg(model, arena, sv_from_cstr("/DTWO=2"));
+    build_model_process_global_definition_arg(model, arena, sv_from_cstr("-Wall"));
+    ASSERT(model->global_definitions.count == 2);
+    ASSERT(string_list_contains(&model->global_definitions, sv_from_cstr("ONE=1")) == true);
+    ASSERT(string_list_contains(&model->global_definitions, sv_from_cstr("TWO=2")) == true);
+    ASSERT(model->global_compile_options.count == 1);
+    ASSERT(nob_sv_eq(model->global_compile_options.items[0], sv_from_cstr("-Wall")));
+
+    build_model_remove_global_definition(model, sv_from_cstr("ONE=1"));
+    ASSERT(model->global_definitions.count == 1);
+    ASSERT(nob_sv_eq(model->global_definitions.items[0], sv_from_cstr("TWO=2")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_property_smart_and_computed) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("core"), TARGET_STATIC_LIB);
+    ASSERT(t != NULL);
+
+    build_target_set_property_smart(t, arena, sv_from_cstr("OUTPUT_NAME"), sv_from_cstr("core_out"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("PREFIX"), sv_from_cstr("pre_"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("SUFFIX"), sv_from_cstr(".ext"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("A=1;B=2"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("COMPILE_DEFINITIONS_DEBUG"), sv_from_cstr("DBG=1"));
+
+    ASSERT(nob_sv_eq(t->output_name, sv_from_cstr("core_out")));
+    ASSERT(nob_sv_eq(t->prefix, sv_from_cstr("pre_")));
+    ASSERT(nob_sv_eq(t->suffix, sv_from_cstr(".ext")));
+    ASSERT(t->properties[CONFIG_ALL].compile_definitions.count == 2);
+    ASSERT(t->properties[CONFIG_DEBUG].compile_definitions.count == 1);
+
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("NAME"), sv_from_cstr("Debug")), sv_from_cstr("core")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("TYPE"), sv_from_cstr("Debug")), sv_from_cstr("STATIC_LIBRARY")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("OUTPUT_NAME"), sv_from_cstr("Debug")), sv_from_cstr("core_out")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("Debug")), sv_from_cstr("A=1;B=2")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS_DEBUG"), sv_from_cstr("Debug")), sv_from_cstr("DBG=1")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_global_link_library_framework) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    build_model_add_global_link_library(model, arena, sv_from_cstr("-framework Cocoa"));
+    build_model_add_global_link_library(model, arena, sv_from_cstr("m"));
+
+    ASSERT(model->global_link_libraries.count == 3);
+    ASSERT(nob_sv_eq(model->global_link_libraries.items[0], sv_from_cstr("-framework")));
+    ASSERT(nob_sv_eq(model->global_link_libraries.items[1], sv_from_cstr("Cocoa")));
+    ASSERT(nob_sv_eq(model->global_link_libraries.items[2], sv_from_cstr("m")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_cpack_wrappers_and_setters) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    CPack_Install_Type *it1 = build_model_get_or_create_cpack_install_type(model, arena, sv_from_cstr("Full"));
+    CPack_Install_Type *it2 = build_model_get_or_create_cpack_install_type(model, arena, sv_from_cstr("Full"));
+    ASSERT(it1 == it2);
+    build_cpack_install_type_set_display_name(it1, sv_from_cstr("Full Install"));
+    ASSERT(nob_sv_eq(it1->display_name, sv_from_cstr("Full Install")));
+
+    CPack_Component_Group *g = build_model_get_or_create_cpack_group(model, arena, sv_from_cstr("Runtime"));
+    build_cpack_group_set_display_name(g, sv_from_cstr("Runtime Group"));
+    build_cpack_group_set_description(g, sv_from_cstr("Runtime files"));
+    build_cpack_group_set_parent_group(g, sv_from_cstr("Parent"));
+    build_cpack_group_set_expanded(g, true);
+    build_cpack_group_set_bold_title(g, true);
+    ASSERT(nob_sv_eq(g->display_name, sv_from_cstr("Runtime Group")));
+    ASSERT(nob_sv_eq(g->description, sv_from_cstr("Runtime files")));
+    ASSERT(nob_sv_eq(g->parent_group, sv_from_cstr("Parent")));
+    ASSERT(g->expanded == true);
+    ASSERT(g->bold_title == true);
+
+    CPack_Component *c = build_model_get_or_create_cpack_component(model, arena, sv_from_cstr("core"));
+    build_cpack_component_set_display_name(c, sv_from_cstr("Core"));
+    build_cpack_component_set_description(c, sv_from_cstr("Core component"));
+    build_cpack_component_set_group(c, sv_from_cstr("Runtime"));
+    build_cpack_component_add_dependency(c, arena, sv_from_cstr("base"));
+    build_cpack_component_add_install_type(c, arena, sv_from_cstr("Full"));
+    build_cpack_component_set_required(c, true);
+    build_cpack_component_set_hidden(c, true);
+    build_cpack_component_set_disabled(c, true);
+    build_cpack_component_set_downloaded(c, true);
+    ASSERT(nob_sv_eq(c->display_name, sv_from_cstr("Core")));
+    ASSERT(c->depends.count == 1);
+    ASSERT(c->install_types.count == 1);
+    ASSERT(c->required == true && c->hidden == true && c->disabled == true && c->downloaded == true);
+    build_cpack_component_clear_dependencies(c);
+    build_cpack_component_clear_install_types(c);
+    ASSERT(c->depends.count == 0);
+    ASSERT(c->install_types.count == 0);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_custom_commands_and_path_helpers) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("tool"), TARGET_UTILITY);
+    ASSERT(t != NULL);
+
+    Custom_Command *pre = build_target_add_custom_command_ex(
+        t, arena, true, sv_from_cstr("echo pre"), sv_from_cstr("wd"), sv_from_cstr("comment"));
+    ASSERT(pre != NULL);
+    ASSERT(t->pre_build_count == 1);
+    ASSERT(nob_sv_eq(pre->command, sv_from_cstr("echo pre")));
+
+    Custom_Command *post = build_target_add_custom_command(t, arena, false, sv_from_cstr("echo post"));
+    ASSERT(post != NULL);
+    ASSERT(t->post_build_count == 1);
+
+    Custom_Command *out = build_model_add_custom_command_output(model, arena, sv_from_cstr("out.txt"), sv_from_cstr("echo out"));
+    ASSERT(out != NULL);
+    ASSERT(model->output_custom_command_count == 1);
+    ASSERT(out->outputs.count == 1);
+    ASSERT(nob_sv_eq(out->outputs.items[0], sv_from_cstr("out.txt")));
+
+    ASSERT(build_path_is_absolute(sv_from_cstr("/tmp")) == true);
+    ASSERT(build_path_is_absolute(sv_from_cstr("C:/tmp")) == true);
+    ASSERT(build_path_is_absolute(sv_from_cstr("rel/path")) == false);
+    ASSERT(nob_sv_eq(build_path_join(arena, sv_from_cstr("base"), sv_from_cstr("rel")), sv_from_cstr("base/rel")));
+    ASSERT(nob_sv_eq(build_path_parent_dir(arena, sv_from_cstr("a/b/c.txt")), sv_from_cstr("a/b")));
+    ASSERT(build_path_make_absolute(arena, sv_from_cstr("local.txt")).count > 0);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_add_test_ex_wrapper) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    Build_Test *t = build_model_add_test_ex(model, arena, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"));
+    ASSERT(t != NULL);
+    ASSERT(model->test_count == 1);
+    ASSERT(t->command_expand_lists == false);
+    ASSERT(nob_sv_eq(t->working_directory, sv_from_cstr("tests")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 
 void run_build_model_tests(int *passed, int *failed) {
     test_create_model(passed, failed);
@@ -718,4 +907,11 @@ void run_build_model_tests(int *passed, int *failed) {
     test_add_package_dedup_and_init(passed, failed);
     test_add_test_dedup_updates_fields(passed, failed);
     test_cpack_dedup_basic(passed, failed);
+    test_fase1_target_flags_and_alias(passed, failed);
+    test_fase1_env_and_global_args(passed, failed);
+    test_fase1_property_smart_and_computed(passed, failed);
+    test_fase1_global_link_library_framework(passed, failed);
+    test_fase1_cpack_wrappers_and_setters(passed, failed);
+    test_fase1_custom_commands_and_path_helpers(passed, failed);
+    test_fase1_add_test_ex_wrapper(passed, failed);
 }

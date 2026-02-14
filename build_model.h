@@ -429,4 +429,128 @@ void property_list_add(Property_List *list, Arena *arena,
                        String_View key, String_View value);
 String_View property_list_find(Property_List *list, String_View key);
 
+// ============================
+// Fase 1: APIs movidas do evaluator para o modelo
+// ============================
+
+typedef enum {
+    TARGET_FLAG_WIN32_EXECUTABLE,
+    TARGET_FLAG_MACOSX_BUNDLE,
+    TARGET_FLAG_EXCLUDE_FROM_ALL,
+    TARGET_FLAG_IMPORTED,
+    TARGET_FLAG_ALIAS,
+} Target_Flag;
+
+void build_target_set_flag(Build_Target *target, Target_Flag flag, bool value);
+void build_target_set_alias(Build_Target *target, Arena *arena, String_View aliased_name);
+
+typedef enum {
+    INSTALL_RULE_TARGET,
+    INSTALL_RULE_FILE,
+    INSTALL_RULE_PROGRAM,
+    INSTALL_RULE_DIRECTORY,
+} Install_Rule_Type;
+
+void build_model_set_project_info(Build_Model *model, String_View name, String_View version);
+void build_model_set_default_config(Build_Model *model, String_View config);
+void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang);
+void build_model_set_testing_enabled(Build_Model *model, bool enabled);
+void build_model_set_env_var(Build_Model *model, Arena *arena, String_View key, String_View value);
+
+void build_model_add_global_definition(Build_Model *model, Arena *arena, String_View def);
+void build_model_add_global_compile_option(Build_Model *model, Arena *arena, String_View opt);
+void build_model_add_global_link_option(Build_Model *model, Arena *arena, String_View opt);
+void build_model_process_global_definition_arg(Build_Model *model, Arena *arena, String_View arg);
+
+void build_model_add_include_directory(Build_Model *model, Arena *arena, String_View dir, bool is_system);
+void build_model_add_link_directory(Build_Model *model, Arena *arena, String_View dir);
+
+void build_model_add_global_link_library(Build_Model *model, Arena *arena, String_View lib);
+
+void build_model_set_install_prefix(Build_Model *model, String_View prefix);
+void build_model_add_install_rule(Build_Model *model, Arena *arena, Install_Rule_Type type, String_View item, String_View destination);
+
+// Helpers adicionais (necessários para eliminar mutação direta do evaluator)
+void build_model_set_install_enabled(Build_Model *model, bool enabled);
+void build_model_remove_global_definition(Build_Model *model, String_View def);
+
+// Config helpers
+Build_Config build_model_config_from_string(String_View cfg);
+String_View build_model_config_suffix(Build_Config cfg);
+
+// Target property routing helpers
+void build_target_set_property_smart(Build_Target *target,
+                                     Arena *arena,
+                                     String_View key,
+                                     String_View value);
+String_View build_target_get_property_computed(Build_Target *target,
+                                               String_View key,
+                                               String_View default_config);
+
+// Test helper wrapper (Fase 1 compat)
+Build_Test* build_model_add_test_ex(Build_Model *model,
+                                    Arena *arena,
+                                    String_View name,
+                                    String_View command,
+                                    String_View working_dir);
+
+// CPack get-or-create wrappers + setters
+CPack_Component_Group* build_model_get_or_create_cpack_group(Build_Model *model,
+                                                             Arena *arena,
+                                                             String_View name);
+CPack_Component* build_model_get_or_create_cpack_component(Build_Model *model,
+                                                           Arena *arena,
+                                                           String_View name);
+CPack_Install_Type* build_model_get_or_create_cpack_install_type(Build_Model *model,
+                                                                  Arena *arena,
+                                                                  String_View name);
+
+void build_cpack_install_type_set_display_name(CPack_Install_Type *install_type,
+                                               String_View display_name);
+
+void build_cpack_group_set_display_name(CPack_Component_Group *group, String_View display_name);
+void build_cpack_group_set_description(CPack_Component_Group *group, String_View description);
+void build_cpack_group_set_parent_group(CPack_Component_Group *group, String_View parent_group);
+void build_cpack_group_set_expanded(CPack_Component_Group *group, bool expanded);
+void build_cpack_group_set_bold_title(CPack_Component_Group *group, bool bold_title);
+
+void build_cpack_component_clear_dependencies(CPack_Component *component);
+void build_cpack_component_clear_install_types(CPack_Component *component);
+void build_cpack_component_set_display_name(CPack_Component *component, String_View display_name);
+void build_cpack_component_set_description(CPack_Component *component, String_View description);
+void build_cpack_component_set_group(CPack_Component *component, String_View group);
+void build_cpack_component_add_dependency(CPack_Component *component, Arena *arena, String_View dependency);
+void build_cpack_component_add_install_type(CPack_Component *component, Arena *arena, String_View install_type);
+void build_cpack_component_set_required(CPack_Component *component, bool required);
+void build_cpack_component_set_hidden(CPack_Component *component, bool hidden);
+void build_cpack_component_set_disabled(CPack_Component *component, bool disabled);
+void build_cpack_component_set_downloaded(CPack_Component *component, bool downloaded);
+
+// Custom command constructors moved from evaluator
+Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
+                                                   Arena *arena,
+                                                   bool pre_build,
+                                                   String_View command,
+                                                   String_View working_dir,
+                                                   String_View comment);
+Custom_Command* build_target_add_custom_command(Build_Target *target,
+                                                Arena *arena,
+                                                bool pre_build,
+                                                String_View command);
+Custom_Command* build_model_add_custom_command_output_ex(Build_Model *model,
+                                                         Arena *arena,
+                                                         String_View command,
+                                                         String_View working_dir,
+                                                         String_View comment);
+Custom_Command* build_model_add_custom_command_output(Build_Model *model,
+                                                      Arena *arena,
+                                                      String_View output,
+                                                      String_View command);
+
+// Path helpers moved from evaluator
+bool build_path_is_absolute(String_View path);
+String_View build_path_join(Arena *arena, String_View base, String_View rel);
+String_View build_path_parent_dir(Arena *arena, String_View full_path);
+String_View build_path_make_absolute(Arena *arena, String_View path);
+
 #endif // BUILD_MODEL_H_

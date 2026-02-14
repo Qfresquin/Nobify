@@ -1,6 +1,10 @@
 #include "transpiler.h"
 #include "diagnostics.h"
 #include "arena_dyn.h"
+#include "genex_evaluator.h"
+#include "math_parser.h"
+#include "sys_utils.h"
+#include "toolchain_driver.h"
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>

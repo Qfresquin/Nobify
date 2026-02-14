@@ -1,5 +1,6 @@
 #include "build_model.h"
 #include "arena_dyn.h"
+#include <ctype.h>
 
 static Build_Target* build_model_find_target_const(const Build_Model *model, String_View name) {
     if (!model) return NULL;
@@ -685,4 +686,674 @@ void build_model_dump(Build_Model *model, FILE *output) {
                 SV_Arg(model->tests[i].name),
                 SV_Arg(model->tests[i].command));
     }
+}
+
+static void bm_install_rules_add_entry(Arena *arena, String_List *list,
+                                       String_View item, String_View destination)
+{
+    if (!arena || !list || item.count == 0) return;
+
+    // Formato interno: "item\tDEST"
+    String_Builder sb = {0};
+    nob_sb_append_buf(&sb, item.data, item.count);
+    nob_sb_append(&sb, '\t');
+    if (destination.count) nob_sb_append_buf(&sb, destination.data, destination.count);
+
+    if (sb.count) {
+        char *s = arena_strndup(arena, sb.items, sb.count);
+        string_list_add(list, arena, sv_from_cstr(s));
+    }
+    nob_sb_free(sb);
+}
+
+void build_model_set_install_prefix(Build_Model *model, String_View prefix)
+{
+    if (!model) return;
+    model->install_rules.prefix = prefix;
+}
+
+void build_model_add_install_rule(Build_Model *model, Arena *arena,
+                                  Install_Rule_Type type,
+                                  String_View item, String_View destination)
+{
+    if (!model || !arena) return;
+
+    switch (type) {
+        case INSTALL_RULE_TARGET:
+            bm_install_rules_add_entry(arena, &model->install_rules.targets, item, destination);
+            break;
+        case INSTALL_RULE_FILE:
+            bm_install_rules_add_entry(arena, &model->install_rules.files, item, destination);
+            break;
+        case INSTALL_RULE_PROGRAM:
+            bm_install_rules_add_entry(arena, &model->install_rules.programs, item, destination);
+            break;
+        case INSTALL_RULE_DIRECTORY:
+            bm_install_rules_add_entry(arena, &model->install_rules.directories, item, destination);
+            break;
+        default:
+            break;
+    }
+
+    model->enable_install = true;
+}
+
+// ============================================================================
+// Fase 1: APIs movidas do evaluator para o modelo
+// ============================================================================
+
+static String_View bm_sv_copy_to_arena(Arena *arena, String_View sv) {
+    if (!arena) return sv;
+    if (sv.count == 0) return sv_from_cstr("");
+    const char *c = arena_strndup(arena, sv.data, sv.count);
+    return sv_from_cstr(c);
+}
+
+static String_View bm_sv_trim_ws(String_View sv) {
+    size_t b = 0;
+    size_t e = sv.count;
+    while (b < e && (sv.data[b] == ' ' || sv.data[b] == '\t' || sv.data[b] == '\n' || sv.data[b] == '\r')) b++;
+    while (e > b && (sv.data[e - 1] == ' ' || sv.data[e - 1] == '\t' || sv.data[e - 1] == '\n' || sv.data[e - 1] == '\r')) e--;
+    return nob_sv_from_parts(sv.data + b, e - b);
+}
+
+static bool bm_sv_eq_ci(String_View a, String_View b) {
+    if (a.count != b.count) return false;
+    for (size_t i = 0; i < a.count; i++) {
+        unsigned char ca = (unsigned char)a.data[i];
+        unsigned char cb = (unsigned char)b.data[i];
+        if (toupper(ca) != toupper(cb)) return false;
+    }
+    return true;
+}
+
+static String_View bm_target_type_to_cmake_name(Target_Type type) {
+    switch (type) {
+        case TARGET_EXECUTABLE: return sv_from_cstr("EXECUTABLE");
+        case TARGET_STATIC_LIB: return sv_from_cstr("STATIC_LIBRARY");
+        case TARGET_SHARED_LIB: return sv_from_cstr("SHARED_LIBRARY");
+        case TARGET_OBJECT_LIB: return sv_from_cstr("OBJECT_LIBRARY");
+        case TARGET_INTERFACE_LIB: return sv_from_cstr("INTERFACE_LIBRARY");
+        case TARGET_UTILITY: return sv_from_cstr("UTILITY");
+        case TARGET_IMPORTED: return sv_from_cstr("UNKNOWN_LIBRARY");
+        case TARGET_ALIAS: return sv_from_cstr("ALIAS");
+        default: return sv_from_cstr("");
+    }
+}
+
+static String_View bm_join_list_semicolon_temp(const String_List *list) {
+    if (!list || list->count == 0) return sv_from_cstr("");
+    String_Builder sb = {0};
+    for (size_t i = 0; i < list->count; i++) {
+        if (i > 0) nob_sb_append(&sb, ';');
+        nob_sb_append_buf(&sb, list->items[i].data, list->items[i].count);
+    }
+    String_View out = sv_from_cstr(nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : ""));
+    nob_sb_free(sb);
+    return out;
+}
+
+static void bm_replace_list_from_semicolon(Arena *arena, String_List *list, String_View value) {
+    if (!arena || !list) return;
+    list->count = 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= value.count; i++) {
+        bool sep = (i == value.count) || (value.data[i] == ';');
+        if (!sep) continue;
+        if (i > start) {
+            String_View item = bm_sv_trim_ws(nob_sv_from_parts(value.data + start, i - start));
+            if (item.count > 0) string_list_add(list, arena, item);
+        }
+        start = i + 1;
+    }
+}
+
+static bool bm_parse_target_property_list_key(String_View key, Build_Config *out_cfg, String_List **out_list, Build_Target *target) {
+    if (!out_cfg || !out_list || !target) return false;
+
+    if (nob_sv_eq(key, sv_from_cstr("COMPILE_DEFINITIONS"))) {
+        *out_cfg = CONFIG_ALL;
+        *out_list = &target->properties[CONFIG_ALL].compile_definitions;
+        return true;
+    }
+    if (nob_sv_eq(key, sv_from_cstr("COMPILE_OPTIONS"))) {
+        *out_cfg = CONFIG_ALL;
+        *out_list = &target->properties[CONFIG_ALL].compile_options;
+        return true;
+    }
+    if (nob_sv_eq(key, sv_from_cstr("INCLUDE_DIRECTORIES"))) {
+        *out_cfg = CONFIG_ALL;
+        *out_list = &target->properties[CONFIG_ALL].include_directories;
+        return true;
+    }
+    if (nob_sv_eq(key, sv_from_cstr("LINK_OPTIONS"))) {
+        *out_cfg = CONFIG_ALL;
+        *out_list = &target->properties[CONFIG_ALL].link_options;
+        return true;
+    }
+    if (nob_sv_eq(key, sv_from_cstr("LINK_DIRECTORIES"))) {
+        *out_cfg = CONFIG_ALL;
+        *out_list = &target->properties[CONFIG_ALL].link_directories;
+        return true;
+    }
+
+    String_View suffix = sv_from_cstr("");
+    if (nob_sv_end_with(key, "_DEBUG")) suffix = sv_from_cstr("DEBUG");
+    else if (nob_sv_end_with(key, "_RELEASE")) suffix = sv_from_cstr("RELEASE");
+    else if (nob_sv_end_with(key, "_RELWITHDEBINFO")) suffix = sv_from_cstr("RELWITHDEBINFO");
+    else if (nob_sv_end_with(key, "_MINSIZEREL")) suffix = sv_from_cstr("MINSIZEREL");
+    else return false;
+
+    Build_Config cfg = build_model_config_from_string(suffix);
+    if (cfg == CONFIG_ALL) return false;
+
+    if (nob_sv_starts_with(key, sv_from_cstr("COMPILE_DEFINITIONS_"))) {
+        *out_cfg = cfg;
+        *out_list = &target->properties[cfg].compile_definitions;
+        return true;
+    }
+    if (nob_sv_starts_with(key, sv_from_cstr("COMPILE_OPTIONS_"))) {
+        *out_cfg = cfg;
+        *out_list = &target->properties[cfg].compile_options;
+        return true;
+    }
+    if (nob_sv_starts_with(key, sv_from_cstr("INCLUDE_DIRECTORIES_"))) {
+        *out_cfg = cfg;
+        *out_list = &target->properties[cfg].include_directories;
+        return true;
+    }
+    if (nob_sv_starts_with(key, sv_from_cstr("LINK_OPTIONS_"))) {
+        *out_cfg = cfg;
+        *out_list = &target->properties[cfg].link_options;
+        return true;
+    }
+    if (nob_sv_starts_with(key, sv_from_cstr("LINK_DIRECTORIES_"))) {
+        *out_cfg = cfg;
+        *out_list = &target->properties[cfg].link_directories;
+        return true;
+    }
+
+    return false;
+}
+
+static String_View bm_target_property_for_config(Build_Target *target, Build_Config cfg, const char *base_key, String_View fallback) {
+    if (!target || !base_key) return fallback;
+    String_View suffix = build_model_config_suffix(cfg);
+    if (suffix.count > 0) {
+        String_View cfg_key = sv_from_cstr(nob_temp_sprintf("%s_%s", base_key, nob_temp_sv_to_cstr(suffix)));
+        String_View cfg_val = build_target_get_property(target, cfg_key);
+        if (cfg_val.count > 0) return cfg_val;
+    }
+    String_View base = build_target_get_property(target, sv_from_cstr(base_key));
+    if (base.count > 0) return base;
+    return fallback;
+}
+
+void build_target_set_flag(Build_Target *target, Target_Flag flag, bool value) {
+    if (!target) return;
+    switch (flag) {
+        case TARGET_FLAG_WIN32_EXECUTABLE: target->win32_executable = value; break;
+        case TARGET_FLAG_MACOSX_BUNDLE:    target->macosx_bundle = value; break;
+        case TARGET_FLAG_EXCLUDE_FROM_ALL: target->exclude_from_all = value; break;
+        case TARGET_FLAG_IMPORTED:         target->imported = value; break;
+        case TARGET_FLAG_ALIAS:            target->alias = value; break;
+        default: break;
+    }
+}
+
+void build_target_set_alias(Build_Target *target, Arena *arena, String_View aliased_name) {
+    if (!target || !arena) return;
+    build_target_set_flag(target, TARGET_FLAG_ALIAS, true);
+    aliased_name = bm_sv_trim_ws(aliased_name);
+    if (aliased_name.count > 0) {
+        build_target_add_dependency(target, arena, aliased_name);
+    }
+}
+
+void build_model_set_project_info(Build_Model *model, String_View name, String_View version) {
+    if (!model) return;
+    model->project_name = name;
+    if (version.count > 0) model->project_version = version;
+}
+
+Build_Config build_model_config_from_string(String_View cfg) {
+    if (bm_sv_eq_ci(cfg, sv_from_cstr("DEBUG"))) return CONFIG_DEBUG;
+    if (bm_sv_eq_ci(cfg, sv_from_cstr("RELEASE"))) return CONFIG_RELEASE;
+    if (bm_sv_eq_ci(cfg, sv_from_cstr("RELWITHDEBINFO"))) return CONFIG_RELWITHDEBINFO;
+    if (bm_sv_eq_ci(cfg, sv_from_cstr("MINSIZEREL"))) return CONFIG_MINSIZEREL;
+    return CONFIG_ALL;
+}
+
+String_View build_model_config_suffix(Build_Config cfg) {
+    switch (cfg) {
+        case CONFIG_DEBUG: return sv_from_cstr("DEBUG");
+        case CONFIG_RELEASE: return sv_from_cstr("RELEASE");
+        case CONFIG_RELWITHDEBINFO: return sv_from_cstr("RELWITHDEBINFO");
+        case CONFIG_MINSIZEREL: return sv_from_cstr("MINSIZEREL");
+        default: return sv_from_cstr("");
+    }
+}
+
+void build_model_set_default_config(Build_Model *model, String_View config) {
+    if (!model) return;
+    Build_Config parsed = build_model_config_from_string(config);
+    if (parsed == CONFIG_DEBUG) model->default_config = sv_from_cstr("Debug");
+    else if (parsed == CONFIG_RELEASE) model->default_config = sv_from_cstr("Release");
+    else if (parsed == CONFIG_RELWITHDEBINFO) model->default_config = sv_from_cstr("RelWithDebInfo");
+    else if (parsed == CONFIG_MINSIZEREL) model->default_config = sv_from_cstr("MinSizeRel");
+    else model->default_config = config;
+}
+
+void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang) {
+    if (!model || !arena) return;
+    lang = bm_sv_trim_ws(lang);
+    if (lang.count == 0) return;
+    string_list_add_unique(&model->project_languages, arena, lang);
+}
+
+void build_model_set_testing_enabled(Build_Model *model, bool enabled) {
+    if (!model) return;
+    model->enable_testing = enabled;
+}
+
+void build_model_set_install_enabled(Build_Model *model, bool enabled) {
+    if (!model) return;
+    model->enable_install = enabled;
+}
+
+void build_model_set_env_var(Build_Model *model, Arena *arena, String_View key, String_View value) {
+    if (!model || !arena) return;
+    key = bm_sv_trim_ws(key);
+    if (key.count == 0) return;
+
+    String_View safe_key = bm_sv_copy_to_arena(arena, key);
+    String_View safe_val = bm_sv_copy_to_arena(arena, value);
+
+    for (size_t i = 0; i < model->environment_variables.count; i++) {
+        if (nob_sv_eq(model->environment_variables.items[i].name, safe_key)) {
+            model->environment_variables.items[i].value = safe_val;
+            return;
+        }
+    }
+
+    property_list_add(&model->environment_variables, arena, safe_key, safe_val);
+}
+
+void build_model_add_global_definition(Build_Model *model, Arena *arena, String_View def) {
+    if (!model || !arena) return;
+    def = bm_sv_trim_ws(def);
+    if (def.count == 0) return;
+    string_list_add_unique(&model->global_definitions, arena, def);
+}
+
+void build_model_add_global_compile_option(Build_Model *model, Arena *arena, String_View opt) {
+    if (!model || !arena) return;
+    opt = bm_sv_trim_ws(opt);
+    if (opt.count == 0) return;
+    string_list_add_unique(&model->global_compile_options, arena, opt);
+}
+
+void build_model_add_global_link_option(Build_Model *model, Arena *arena, String_View opt) {
+    if (!model || !arena) return;
+    opt = bm_sv_trim_ws(opt);
+    if (opt.count == 0) return;
+    string_list_add_unique(&model->global_link_options, arena, opt);
+}
+
+void build_model_process_global_definition_arg(Build_Model *model, Arena *arena, String_View arg) {
+    if (!model || !arena) return;
+    arg = bm_sv_trim_ws(arg);
+    if (arg.count == 0) return;
+
+    if (nob_sv_starts_with(arg, sv_from_cstr("-D")) || nob_sv_starts_with(arg, sv_from_cstr("/D"))) {
+        if (arg.count <= 2) return;
+        String_View def = nob_sv_from_parts(arg.data + 2, arg.count - 2);
+        def = bm_sv_trim_ws(def);
+        if (def.count == 0) return;
+        build_model_add_global_definition(model, arena, def);
+    } else {
+        build_model_add_global_compile_option(model, arena, arg);
+    }
+}
+
+void build_model_add_include_directory(Build_Model *model, Arena *arena, String_View dir, bool is_system) {
+    if (!model || !arena) return;
+    dir = bm_sv_trim_ws(dir);
+    if (dir.count == 0) return;
+    if (is_system) string_list_add_unique(&model->directories.system_include_dirs, arena, dir);
+    else           string_list_add_unique(&model->directories.include_dirs, arena, dir);
+}
+
+void build_model_add_link_directory(Build_Model *model, Arena *arena, String_View dir) {
+    if (!model || !arena) return;
+    dir = bm_sv_trim_ws(dir);
+    if (dir.count == 0) return;
+    string_list_add_unique(&model->directories.link_dirs, arena, dir);
+}
+
+void build_model_add_global_link_library(Build_Model *model, Arena *arena, String_View lib) {
+    if (!model || !arena) return;
+    lib = bm_sv_trim_ws(lib);
+    if (lib.count == 0) return;
+    if (nob_sv_starts_with(lib, sv_from_cstr("-framework "))) {
+        String_View fw = bm_sv_trim_ws(nob_sv_from_parts(lib.data + 11, lib.count - 11));
+        string_list_add_unique(&model->global_link_libraries, arena, sv_from_cstr("-framework"));
+        if (fw.count > 0) string_list_add_unique(&model->global_link_libraries, arena, fw);
+        return;
+    }
+    string_list_add_unique(&model->global_link_libraries, arena, lib);
+}
+
+void build_model_remove_global_definition(Build_Model *model, String_View def) {
+    if (!model) return;
+    size_t out = 0;
+    for (size_t i = 0; i < model->global_definitions.count; i++) {
+        if (!nob_sv_eq(model->global_definitions.items[i], def)) {
+            model->global_definitions.items[out++] = model->global_definitions.items[i];
+        }
+    }
+    model->global_definitions.count = out;
+}
+
+void build_target_set_property_smart(Build_Target *target,
+                                     Arena *arena,
+                                     String_View key,
+                                     String_View value) {
+    if (!target || !arena) return;
+    build_target_set_property(target, arena, key, value);
+
+    if (nob_sv_eq(key, sv_from_cstr("OUTPUT_NAME"))) {
+        target->output_name = value;
+    } else if (nob_sv_eq(key, sv_from_cstr("PREFIX"))) {
+        target->prefix = value;
+    } else if (nob_sv_eq(key, sv_from_cstr("SUFFIX"))) {
+        target->suffix = value;
+    } else if (nob_sv_eq(key, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"))) {
+        target->runtime_output_directory = value;
+    } else if (nob_sv_eq(key, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"))) {
+        target->archive_output_directory = value;
+    } else if (nob_sv_eq(key, sv_from_cstr("OUTPUT_DIRECTORY"))) {
+        target->output_directory = value;
+    }
+
+    Build_Config cfg = CONFIG_ALL;
+    String_List *list = NULL;
+    if (bm_parse_target_property_list_key(key, &cfg, &list, target) && list) {
+        bm_replace_list_from_semicolon(arena, list, value);
+    }
+}
+
+String_View build_target_get_property_computed(Build_Target *target,
+                                               String_View key,
+                                               String_View default_config) {
+    if (!target) return sv_from_cstr("");
+    Build_Config active_cfg = build_model_config_from_string(default_config);
+
+    if (bm_sv_eq_ci(key, sv_from_cstr("TYPE"))) {
+        return bm_target_type_to_cmake_name(target->type);
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("NAME"))) {
+        return target->name;
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("OUTPUT_NAME"))) {
+        return bm_target_property_for_config(target, active_cfg, "OUTPUT_NAME",
+            target->output_name.count > 0 ? target->output_name : target->name);
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("OUTPUT_DIRECTORY"))) {
+        return bm_target_property_for_config(target, active_cfg, "OUTPUT_DIRECTORY",
+            target->output_directory.count > 0 ? target->output_directory : sv_from_cstr("build"));
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"))) {
+        return bm_target_property_for_config(target, active_cfg, "RUNTIME_OUTPUT_DIRECTORY",
+            target->runtime_output_directory.count > 0 ? target->runtime_output_directory : sv_from_cstr(""));
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"))) {
+        return bm_target_property_for_config(target, active_cfg, "ARCHIVE_OUTPUT_DIRECTORY",
+            target->archive_output_directory.count > 0 ? target->archive_output_directory : sv_from_cstr(""));
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("PREFIX"))) {
+        return bm_target_property_for_config(target, active_cfg, "PREFIX", target->prefix);
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("SUFFIX"))) {
+        return bm_target_property_for_config(target, active_cfg, "SUFFIX", target->suffix);
+    }
+    if (bm_sv_eq_ci(key, sv_from_cstr("IMPORTED_LOCATION"))) {
+        return bm_target_property_for_config(target, active_cfg, "IMPORTED_LOCATION", sv_from_cstr(""));
+    }
+
+    Build_Config cfg = CONFIG_ALL;
+    String_List *list = NULL;
+    if (bm_parse_target_property_list_key(key, &cfg, &list, target) && list) {
+        return bm_join_list_semicolon_temp(list);
+    }
+
+    return bm_target_property_for_config(target, active_cfg, nob_temp_sv_to_cstr(key), sv_from_cstr(""));
+}
+
+Build_Test* build_model_add_test_ex(Build_Model *model,
+                                    Arena *arena,
+                                    String_View name,
+                                    String_View command,
+                                    String_View working_dir) {
+    (void)arena;
+    return build_model_add_test(model, name, command, working_dir, false);
+}
+
+CPack_Component_Group* build_model_get_or_create_cpack_group(Build_Model *model,
+                                                             Arena *arena,
+                                                             String_View name) {
+    (void)arena;
+    return build_model_add_cpack_component_group(model, name);
+}
+
+CPack_Component* build_model_get_or_create_cpack_component(Build_Model *model,
+                                                           Arena *arena,
+                                                           String_View name) {
+    (void)arena;
+    return build_model_add_cpack_component(model, name);
+}
+
+CPack_Install_Type* build_model_get_or_create_cpack_install_type(Build_Model *model,
+                                                                  Arena *arena,
+                                                                  String_View name) {
+    (void)arena;
+    return build_model_add_cpack_install_type(model, name);
+}
+
+void build_cpack_install_type_set_display_name(CPack_Install_Type *install_type,
+                                               String_View display_name) {
+    if (!install_type) return;
+    install_type->display_name = display_name;
+}
+
+void build_cpack_group_set_display_name(CPack_Component_Group *group, String_View display_name) {
+    if (!group) return;
+    group->display_name = display_name;
+}
+
+void build_cpack_group_set_description(CPack_Component_Group *group, String_View description) {
+    if (!group) return;
+    group->description = description;
+}
+
+void build_cpack_group_set_parent_group(CPack_Component_Group *group, String_View parent_group) {
+    if (!group) return;
+    group->parent_group = parent_group;
+}
+
+void build_cpack_group_set_expanded(CPack_Component_Group *group, bool expanded) {
+    if (!group) return;
+    group->expanded = expanded;
+}
+
+void build_cpack_group_set_bold_title(CPack_Component_Group *group, bool bold_title) {
+    if (!group) return;
+    group->bold_title = bold_title;
+}
+
+void build_cpack_component_clear_dependencies(CPack_Component *component) {
+    if (!component) return;
+    component->depends.count = 0;
+}
+
+void build_cpack_component_clear_install_types(CPack_Component *component) {
+    if (!component) return;
+    component->install_types.count = 0;
+}
+
+void build_cpack_component_set_display_name(CPack_Component *component, String_View display_name) {
+    if (!component) return;
+    component->display_name = display_name;
+}
+
+void build_cpack_component_set_description(CPack_Component *component, String_View description) {
+    if (!component) return;
+    component->description = description;
+}
+
+void build_cpack_component_set_group(CPack_Component *component, String_View group) {
+    if (!component) return;
+    component->group = group;
+}
+
+void build_cpack_component_add_dependency(CPack_Component *component, Arena *arena, String_View dependency) {
+    if (!component || !arena || dependency.count == 0) return;
+    string_list_add_unique(&component->depends, arena, dependency);
+}
+
+void build_cpack_component_add_install_type(CPack_Component *component, Arena *arena, String_View install_type) {
+    if (!component || !arena || install_type.count == 0) return;
+    string_list_add_unique(&component->install_types, arena, install_type);
+}
+
+void build_cpack_component_set_required(CPack_Component *component, bool required) {
+    if (!component) return;
+    component->required = required;
+}
+
+void build_cpack_component_set_hidden(CPack_Component *component, bool hidden) {
+    if (!component) return;
+    component->hidden = hidden;
+}
+
+void build_cpack_component_set_disabled(CPack_Component *component, bool disabled) {
+    if (!component) return;
+    component->disabled = disabled;
+}
+
+void build_cpack_component_set_downloaded(CPack_Component *component, bool downloaded) {
+    if (!component) return;
+    component->downloaded = downloaded;
+}
+
+Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
+                                                   Arena *arena,
+                                                   bool pre_build,
+                                                   String_View command,
+                                                   String_View working_dir,
+                                                   String_View comment) {
+    if (!target || !arena || command.count == 0) return NULL;
+
+    Custom_Command *list = pre_build ? target->pre_build_commands : target->post_build_commands;
+    size_t *count = pre_build ? &target->pre_build_count : &target->post_build_count;
+    size_t *capacity = pre_build ? &target->pre_build_capacity : &target->post_build_capacity;
+    if (!arena_da_reserve(arena, (void**)&list, capacity, sizeof(*list), *count + 1)) return NULL;
+
+    if (pre_build) target->pre_build_commands = list;
+    else target->post_build_commands = list;
+    list = pre_build ? target->pre_build_commands : target->post_build_commands;
+
+    Custom_Command *cmd = &list[*count];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CUSTOM_COMMAND_SHELL;
+    cmd->command = command;
+    cmd->working_dir = working_dir;
+    cmd->comment = comment;
+    cmd->echo = true;
+    string_list_init(&cmd->outputs);
+    string_list_init(&cmd->byproducts);
+    string_list_init(&cmd->inputs);
+    string_list_init(&cmd->depends);
+    (*count)++;
+    return cmd;
+}
+
+Custom_Command* build_target_add_custom_command(Build_Target *target,
+                                                Arena *arena,
+                                                bool pre_build,
+                                                String_View command) {
+    return build_target_add_custom_command_ex(target, arena, pre_build, command, sv_from_cstr(""), sv_from_cstr(""));
+}
+
+Custom_Command* build_model_add_custom_command_output_ex(Build_Model *model,
+                                                         Arena *arena,
+                                                         String_View command,
+                                                         String_View working_dir,
+                                                         String_View comment) {
+    if (!model || !arena || command.count == 0) return NULL;
+    if (!arena_da_reserve(arena, (void**)&model->output_custom_commands, &model->output_custom_command_capacity,
+            sizeof(*model->output_custom_commands), model->output_custom_command_count + 1)) {
+        return NULL;
+    }
+    Custom_Command *cmd = &model->output_custom_commands[model->output_custom_command_count++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CUSTOM_COMMAND_SHELL;
+    cmd->command = command;
+    cmd->working_dir = working_dir;
+    cmd->comment = comment;
+    cmd->echo = true;
+    string_list_init(&cmd->outputs);
+    string_list_init(&cmd->byproducts);
+    string_list_init(&cmd->inputs);
+    string_list_init(&cmd->depends);
+    return cmd;
+}
+
+Custom_Command* build_model_add_custom_command_output(Build_Model *model,
+                                                      Arena *arena,
+                                                      String_View output,
+                                                      String_View command) {
+    Custom_Command *cmd = build_model_add_custom_command_output_ex(model, arena, command, sv_from_cstr(""), sv_from_cstr(""));
+    if (!cmd) return NULL;
+    if (output.count > 0) string_list_add_unique(&cmd->outputs, arena, output);
+    return cmd;
+}
+
+bool build_path_is_absolute(String_View path) {
+    if (path.count == 0) return false;
+    if (path.count >= 1 && (path.data[0] == '/' || path.data[0] == '\\')) return true;
+    if (path.count >= 2 && path.data[1] == ':') return true;
+    return false;
+}
+
+String_View build_path_join(Arena *arena, String_View base, String_View rel) {
+    if (!arena) return sv_from_cstr("");
+    if (build_path_is_absolute(rel)) return rel;
+    String_Builder sb = {0};
+    nob_sb_append_buf(&sb, base.data, base.count);
+    if (sb.count > 0 && sb.items[sb.count - 1] != '/' && sb.items[sb.count - 1] != '\\') {
+        nob_sb_append(&sb, '/');
+    }
+    nob_sb_append_buf(&sb, rel.data, rel.count);
+    String_View out = sv_from_cstr(arena_strndup(arena, sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    return out;
+}
+
+String_View build_path_parent_dir(Arena *arena, String_View full_path) {
+    if (!arena || full_path.count == 0) return sv_from_cstr(".");
+    size_t cut = full_path.count;
+    while (cut > 0) {
+        char c = full_path.data[cut - 1];
+        if (c == '/' || c == '\\') break;
+        cut--;
+    }
+    if (cut == 0) return sv_from_cstr(".");
+    return sv_from_cstr(arena_strndup(arena, full_path.data, cut - 1));
+}
+
+String_View build_path_make_absolute(Arena *arena, String_View path) {
+    if (!arena) return path;
+    if (build_path_is_absolute(path)) return bm_sv_copy_to_arena(arena, path);
+    return build_path_join(arena, sv_from_cstr(nob_get_current_dir_temp()), path);
 }

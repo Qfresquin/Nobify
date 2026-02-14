@@ -1,9 +1,8 @@
+
 // ============================================================================
 // FUNÇÕES AUXILIARES
 // ============================================================================
 
-static Build_Config config_from_string(String_View cfg);
-static String_View config_suffix(Build_Config cfg);
 static String_View target_property_for_config(Build_Target *target, Build_Config cfg, const char *base_key, String_View fallback);
 static String_View eval_get_target_property_value(Evaluator_Context *ctx, Build_Target *target, String_View prop_name);
 static String_View join_string_list_with_semicolon(Evaluator_Context *ctx, const String_List *list);
@@ -57,265 +56,23 @@ static bool cmake_string_is_false(String_View value) {
     return false;
 }
 
-static size_t split_genex_args(String_View input, String_View *out, size_t out_cap) {
-    size_t count = 0;
-    size_t start = 0;
-    int genex_depth = 0;
-
-    for (size_t i = 0; i <= input.count; i++) {
-        bool is_end = (i == input.count);
-        if (!is_end) {
-            if (input.data[i] == '$' && (i + 1) < input.count && input.data[i + 1] == '<') {
-                genex_depth++;
-                i++;
-                continue;
-            }
-            if (input.data[i] == '>' && genex_depth > 0) {
-                genex_depth--;
-                continue;
-            }
-        }
-        if (!is_end && !(input.data[i] == ',' && genex_depth == 0)) continue;
-        if (count < out_cap) {
-            out[count] = genex_trim(nob_sv_from_parts(input.data + start, i - start));
-        }
-        count++;
-        start = i + 1;
-    }
-
-    return count;
+static String_View genex_target_property_cb(void *ud, Build_Target *target, String_View prop_name) {
+    Evaluator_Context *ctx = (Evaluator_Context *)ud;
+    return eval_get_target_property_value(ctx, target, prop_name);
 }
-
-static String_View platform_id_for_model(Build_Model *model) {
-    if (!model) return sv_from_cstr("");
-    if (model->is_windows) return sv_from_cstr("Windows");
-    if (model->is_apple) return sv_from_cstr("Darwin");
-    if (model->is_linux) return sv_from_cstr("Linux");
-    if (model->is_unix) return sv_from_cstr("Unix");
-    return sv_from_cstr("");
-}
-
-static String_View target_type_to_cmake_name(Target_Type type) {
-    switch (type) {
-        case TARGET_EXECUTABLE: return sv_from_cstr("EXECUTABLE");
-        case TARGET_STATIC_LIB: return sv_from_cstr("STATIC_LIBRARY");
-        case TARGET_SHARED_LIB: return sv_from_cstr("SHARED_LIBRARY");
-        case TARGET_OBJECT_LIB: return sv_from_cstr("OBJECT_LIBRARY");
-        case TARGET_INTERFACE_LIB: return sv_from_cstr("INTERFACE_LIBRARY");
-        case TARGET_UTILITY: return sv_from_cstr("UTILITY");
-        case TARGET_IMPORTED: return sv_from_cstr("UNKNOWN_LIBRARY");
-        case TARGET_ALIAS: return sv_from_cstr("ALIAS");
-        default: return sv_from_cstr("");
-    }
-}
-
-static inline const char *arena_sv_to_cstr(Arena *arena, String_View sv) {
-    if (!sv.data || sv.count == 0) return "";
-    // duplica e adiciona '\0'
-    return arena_strndup(arena, sv.data, sv.count);
-}
-
-static const char *arena_sprintf(Arena *arena, const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    va_list args2;
-    va_copy(args2, args);
-
-    int n = vsnprintf(NULL, 0, fmt, args);
-    va_end(args);
-
-    if (n < 0) {
-        va_end(args2);
-        return "";
-    }
-
-    char *buf = (char *)arena_alloc(arena, (size_t)n + 1);
-    if (!buf) {
-        va_end(args2);
-        return "";
-    }
-
-    vsnprintf(buf, (size_t)n + 1, fmt, args2);
-    va_end(args2);
-    return buf;
-}
-
-
-
 
 static String_View eval_generator_expression(Evaluator_Context *ctx, String_View content) {
-    Build_Config active_cfg = config_from_string(ctx->model->default_config);
+    if (!ctx || !ctx->model) return sv_from_cstr("");
 
-    // $<CONFIG>
-    if (nob_sv_eq(content, sv_from_cstr("CONFIG"))) {
-        return ctx->model->default_config;
-    }
-
-    // $<CONFIG:cfg1,cfg2,...> -> 0 ou 1
-    if (nob_sv_starts_with(content, sv_from_cstr("CONFIG:"))) {
-        String_View cfg_expr = nob_sv_from_parts(content.data + 7, content.count - 7);
-        String_View args[16] = {0};
-        size_t arg_count = split_genex_args(cfg_expr, args, 16);
-        String_View current_cfg = ctx->model->default_config;
-        for (size_t i = 0; i < arg_count && i < 16; i++) {
-            String_View entry = args[i];
-            size_t item_start = 0;
-            for (size_t k = 0; k <= entry.count; k++) {
-                bool sep = (k == entry.count) || (entry.data[k] == ';');
-                if (!sep) continue;
-                String_View candidate = genex_trim(nob_sv_from_parts(entry.data + item_start, k - item_start));
-                item_start = k + 1;
-                if (candidate.count == 0) continue;
-                if (sv_eq_ci(candidate, current_cfg)) {
-                    return sv_from_cstr("1");
-                }
-            }
-        }
-        return sv_from_cstr("0");
-    }
-
-    // $<LOWER_CASE:...>
-    if (nob_sv_starts_with(content, sv_from_cstr("LOWER_CASE:"))) {
-        String_View val = nob_sv_from_parts(content.data + 11, content.count - 11);
-        char *lower = arena_strndup(ctx->arena, val.data, val.count);
-        for (size_t i = 0; i < val.count; i++) {
-            lower[i] = (char)tolower((unsigned char)lower[i]);
-        }
-        return sv_from_cstr(lower);
-    }
-    
-    // $<UPPER_CASE:...>
-    if (nob_sv_starts_with(content, sv_from_cstr("UPPER_CASE:"))) {
-        String_View val = nob_sv_from_parts(content.data + 11, content.count - 11);
-        char *upper = arena_strndup(ctx->arena, val.data, val.count);
-        for (size_t i = 0; i < val.count; i++) {
-            upper[i] = (char)toupper((unsigned char)upper[i]);
-        }
-        return sv_from_cstr(upper);
-    }
-
-    // $<TARGET_FILE:tgt>
-    if (nob_sv_starts_with(content, sv_from_cstr("TARGET_FILE:"))) {
-        String_View target_name = nob_sv_from_parts(content.data + 12, content.count - 12);
-        Build_Target *t = build_model_find_target(ctx->model, target_name);
-
-        if (t) {
-            if (t->type == TARGET_INTERFACE_LIB || t->type == TARGET_ALIAS || t->type == TARGET_OBJECT_LIB) {
-                diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "generator_expression",
-                    nob_temp_sprintf("TARGET_FILE nao aplicavel para target sem artefato: "SV_Fmt, SV_Arg(target_name)),
-                    "use TARGET_OBJECTS para OBJECT ou um target com artefato linkavel");
-                return sv_from_cstr("");
-            }
-            if (t->type == TARGET_IMPORTED) {
-                String_View imported_location = target_property_for_config(t, active_cfg, "IMPORTED_LOCATION", sv_from_cstr(""));
-                if (imported_location.count > 0) {
-                    return imported_location;
-                }
-                diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "generator_expression",
-                    nob_temp_sprintf("TARGET_FILE para imported requer IMPORTED_LOCATION: "SV_Fmt, SV_Arg(target_name)),
-                    "defina IMPORTED_LOCATION via set_target_properties");
-                return sv_from_cstr("");
-            }
-            String_View out_name = target_property_for_config(t, active_cfg, "OUTPUT_NAME",
-                t->output_name.count > 0 ? t->output_name : t->name);
-            String_View out_dir = target_property_for_config(t, active_cfg, "OUTPUT_DIRECTORY", sv_from_cstr("build"));
-            if (t->type == TARGET_EXECUTABLE) {
-                out_dir = target_property_for_config(t, active_cfg, "RUNTIME_OUTPUT_DIRECTORY",
-                    t->runtime_output_directory.count > 0 ? t->runtime_output_directory : out_dir);
-            } else if (t->type == TARGET_STATIC_LIB) {
-                out_dir = target_property_for_config(t, active_cfg, "ARCHIVE_OUTPUT_DIRECTORY",
-                    t->archive_output_directory.count > 0 ? t->archive_output_directory : out_dir);
-            }
-            String_View prefix = target_property_for_config(t, active_cfg, "PREFIX", t->prefix);
-            String_View suffix = target_property_for_config(t, active_cfg, "SUFFIX", t->suffix);
-
-            const char *dir = nob_temp_sv_to_cstr(out_dir);
-            const char *prefix_c = nob_temp_sv_to_cstr(prefix);
-            const char *name = nob_temp_sv_to_cstr(out_name);
-            const char *suffix_c = nob_temp_sv_to_cstr(suffix);
-            const char *path = nob_temp_sprintf("%s/%s%s%s", dir, prefix_c, name, suffix_c);
-            return sv_from_cstr(arena_strdup(ctx->arena, path));
-        } else {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "generator_expression",
-                nob_temp_sprintf("target nao encontrado: "SV_Fmt, SV_Arg(target_name)),
-                "garanta que o target foi definido antes de usar $<TARGET_FILE:...>");
-            return sv_from_cstr("");
-        }
-    }
-
-    // $<BOOL:...> - 0 ou 1
-    if (nob_sv_starts_with(content, sv_from_cstr("BOOL:"))) {
-        String_View val = nob_sv_from_parts(content.data + 5, content.count - 5);
-        return cmake_string_is_false(val) ? sv_from_cstr("0") : sv_from_cstr("1");
-    }
-
-    // $<IF:cond,true,false>
-    if (nob_sv_starts_with(content, sv_from_cstr("IF:"))) {
-        String_View args_expr = nob_sv_from_parts(content.data + 3, content.count - 3);
-        String_View args[3] = {0};
-        size_t arg_count = split_genex_args(args_expr, args, 3);
-        if (arg_count < 3) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "generator_expression",
-                nob_temp_sprintf("IF com aridade invalida: "SV_Fmt, SV_Arg(content)),
-                "use $<IF:cond,valor_true,valor_false>");
-            return sv_from_cstr("");
-        }
-        bool cond = !cmake_string_is_false(args[0]);
-        return cond ? args[1] : args[2];
-    }
-
-    // $<TARGET_PROPERTY:tgt,prop>
-    if (nob_sv_starts_with(content, sv_from_cstr("TARGET_PROPERTY:"))) {
-        String_View args_expr = nob_sv_from_parts(content.data + 16, content.count - 16);
-        String_View args[2] = {0};
-        size_t arg_count = split_genex_args(args_expr, args, 2);
-        if (arg_count < 2 || args[0].count == 0 || args[1].count == 0) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "generator_expression",
-                nob_temp_sprintf("TARGET_PROPERTY incompleto: "SV_Fmt, SV_Arg(content)),
-                "use $<TARGET_PROPERTY:target,propriedade>");
-            return sv_from_cstr("");
-        }
-
-        Build_Target *t = build_model_find_target(ctx->model, args[0]);
-        if (!t) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "generator_expression",
-                nob_temp_sprintf("target nao encontrado em TARGET_PROPERTY: "SV_Fmt, SV_Arg(args[0])),
-                "garanta que o target foi definido antes do uso");
-            return sv_from_cstr("");
-        }
-
-        return eval_get_target_property_value(ctx, t, args[1]);
-    }
-
-    // $<PLATFORM_ID> e $<PLATFORM_ID:...>
-    if (nob_sv_eq(content, sv_from_cstr("PLATFORM_ID"))) {
-        return platform_id_for_model(ctx->model);
-    }
-    if (nob_sv_starts_with(content, sv_from_cstr("PLATFORM_ID:"))) {
-        String_View platform = platform_id_for_model(ctx->model);
-        String_View args_expr = nob_sv_from_parts(content.data + 12, content.count - 12);
-        String_View args[16] = {0};
-        size_t arg_count = split_genex_args(args_expr, args, 16);
-        for (size_t i = 0; i < arg_count && i < 16; i++) {
-            String_View entry = args[i];
-            size_t item_start = 0;
-            for (size_t k = 0; k <= entry.count; k++) {
-                bool sep = (k == entry.count) || (entry.data[k] == ';');
-                if (!sep) continue;
-                String_View candidate = genex_trim(nob_sv_from_parts(entry.data + item_start, k - item_start));
-                item_start = k + 1;
-                if (candidate.count == 0) continue;
-                if (sv_eq_ci(candidate, platform)) {
-                    return sv_from_cstr("1");
-                }
-            }
-        }
-        return sv_from_cstr("0");
-    }
-
-    // Caso não suportado, retorna vazio ou a própria string (opcional)
-    return sv_from_cstr("");
+    Genex_Eval_Context genex = {0};
+    genex.arena = ctx->arena;
+    genex.model = ctx->model;
+    genex.default_config = ctx->model->default_config;
+    genex.get_target_property = genex_target_property_cb;
+    genex.userdata = ctx;
+    return genex_evaluate(&genex, content);
 }
+
 
 
 // Protótipos para funções estáticas
@@ -479,25 +236,6 @@ static bool sv_eq_ci(String_View a, String_View b) {
     }
     return true;
 }
-
-static Build_Config config_from_string(String_View cfg) {
-    if (sv_eq_ci(cfg, sv_from_cstr("DEBUG"))) return CONFIG_DEBUG;
-    if (sv_eq_ci(cfg, sv_from_cstr("RELEASE"))) return CONFIG_RELEASE;
-    if (sv_eq_ci(cfg, sv_from_cstr("RELWITHDEBINFO"))) return CONFIG_RELWITHDEBINFO;
-    if (sv_eq_ci(cfg, sv_from_cstr("MINSIZEREL"))) return CONFIG_MINSIZEREL;
-    return CONFIG_ALL;
-}
-
-static String_View config_suffix(Build_Config cfg) {
-    switch (cfg) {
-        case CONFIG_DEBUG: return sv_from_cstr("DEBUG");
-        case CONFIG_RELEASE: return sv_from_cstr("RELEASE");
-        case CONFIG_RELWITHDEBINFO: return sv_from_cstr("RELWITHDEBINFO");
-        case CONFIG_MINSIZEREL: return sv_from_cstr("MINSIZEREL");
-        default: return sv_from_cstr("");
-    }
-}
-
 
 // ============================================================================
 // PROCESSAMENTO DE LISTAS
@@ -750,20 +488,8 @@ static void eval_set_var(Evaluator_Context *ctx, String_View key,
 }
 
 static void eval_set_env_var(Evaluator_Context *ctx, String_View env_key, String_View value) {
-    if (!ctx) return;
-    String_View safe_key = sv_copy_to_arena(ctx->arena, env_key);
-    String_View safe_val = sv_copy_to_arena(ctx->arena, value);
-    bool updated = false;
-    for (size_t i = 0; i < ctx->model->environment_variables.count; i++) {
-        if (nob_sv_eq(ctx->model->environment_variables.items[i].name, safe_key)) {
-            ctx->model->environment_variables.items[i].value = safe_val;
-            updated = true;
-            break;
-        }
-    }
-    if (!updated) {
-        property_list_add(&ctx->model->environment_variables, ctx->arena, safe_key, safe_val);
-    }
+    if (!ctx || !ctx->model) return;
+    build_model_set_env_var(ctx->model, ctx->arena, env_key, value);
 }
 
 static void eval_unset_var(Evaluator_Context *ctx, String_View key, bool cache_var) {
@@ -1307,55 +1033,12 @@ static void custom_command_copy_list(Arena *arena, String_List *dst, const Strin
     }
 }
 
-static Custom_Command* build_target_add_custom_command(Build_Target *target, Arena *arena, bool pre_build, String_View command, String_View working_dir, String_View comment) {
-    if (!target || !arena || command.count == 0) return NULL;
-
-    Custom_Command *list = pre_build ? target->pre_build_commands : target->post_build_commands;
-    size_t *count = pre_build ? &target->pre_build_count : &target->post_build_count;
-    size_t *capacity = pre_build ? &target->pre_build_capacity : &target->post_build_capacity;
-    if (!arena_da_reserve(arena, (void**)&list, capacity, sizeof(*list), *count + 1)) return NULL;
-
-    if (pre_build) {
-        target->pre_build_commands = list;
-        list = target->pre_build_commands;
-    } else {
-        target->post_build_commands = list;
-        list = target->post_build_commands;
-    }
-
-    Custom_Command *cmd = &list[*count];
-    memset(cmd, 0, sizeof(*cmd));
-    cmd->type = CUSTOM_COMMAND_SHELL;
-    cmd->command = command;
-    cmd->working_dir = working_dir;
-    cmd->comment = comment;
-    cmd->echo = true;
-    string_list_init(&cmd->outputs);
-    string_list_init(&cmd->byproducts);
-    string_list_init(&cmd->inputs);
-    string_list_init(&cmd->depends);
-    (*count)++;
-    return cmd;
+static Custom_Command* evaluator_target_add_custom_command_ex(Build_Target *target, Arena *arena, bool pre_build, String_View command, String_View working_dir, String_View comment) {
+    return build_target_add_custom_command_ex(target, arena, pre_build, command, working_dir, comment);
 }
 
 static Custom_Command* build_model_add_output_custom_command(Build_Model *model, Arena *arena, String_View command, String_View working_dir, String_View comment) {
-    if (!model || !arena || command.count == 0) return NULL;
-    if (!arena_da_reserve(arena, (void**)&model->output_custom_commands, &model->output_custom_command_capacity,
-            sizeof(*model->output_custom_commands), model->output_custom_command_count + 1)) {
-        return NULL;
-    }
-    Custom_Command *cmd = &model->output_custom_commands[model->output_custom_command_count++];
-    memset(cmd, 0, sizeof(*cmd));
-    cmd->type = CUSTOM_COMMAND_SHELL;
-    cmd->command = command;
-    cmd->working_dir = working_dir;
-    cmd->comment = comment;
-    cmd->echo = true;
-    string_list_init(&cmd->outputs);
-    string_list_init(&cmd->byproducts);
-    string_list_init(&cmd->inputs);
-    string_list_init(&cmd->depends);
-    return cmd;
+    return build_model_add_custom_command_output_ex(model, arena, command, working_dir, comment);
 }
 
 static size_t parse_custom_command_list(Evaluator_Context *ctx, Args args, size_t start, String_List *out) {
@@ -1440,21 +1123,6 @@ static void append_custom_command_command(Arena *arena, Custom_Command *cmd, Str
     nob_sb_free(sb);
 }
 
-static void install_rules_add_entry(Arena *arena, String_List *list, String_View item, String_View destination) {
-    if (!arena || !list || item.count == 0) return;
-
-    String_Builder sb = {0};
-    sb_append_buf(&sb, item.data, item.count);
-    sb_append(&sb, '\t');
-    if (destination.count > 0) {
-        sb_append_buf(&sb, destination.data, destination.count);
-    }
-
-    if (sb.count > 0) {
-        string_list_add(list, arena, sv_from_cstr(arena_strndup(arena, sb.items, sb.count)));
-    }
-    nob_sb_free(sb);
-}
 
 static String_View internal_install_export_set_key(Evaluator_Context *ctx, String_View export_set_name) {
     if (!ctx || export_set_name.count == 0) return sv_from_cstr("");
@@ -2565,201 +2233,6 @@ static long parse_long_or_default(String_View sv, long fallback) {
     return value;
 }
 
-typedef struct {
-    const char *text;
-    size_t pos;
-    bool ok;
-} Math_Parser;
-
-static long long math_wrap_add(long long a, long long b) {
-    unsigned long long ua = (unsigned long long)a;
-    unsigned long long ub = (unsigned long long)b;
-    return (long long)(ua + ub);
-}
-
-static long long math_wrap_sub(long long a, long long b) {
-    unsigned long long ua = (unsigned long long)a;
-    unsigned long long ub = (unsigned long long)b;
-    return (long long)(ua - ub);
-}
-
-static long long math_wrap_mul(long long a, long long b) {
-    unsigned long long ua = (unsigned long long)a;
-    unsigned long long ub = (unsigned long long)b;
-    return (long long)(ua * ub);
-}
-
-static long long math_wrap_neg(long long a) {
-    unsigned long long ua = (unsigned long long)a;
-    return (long long)(0ULL - ua);
-}
-
-static void math_skip_ws(Math_Parser *p) {
-    while (p->text[p->pos] && isspace((unsigned char)p->text[p->pos])) p->pos++;
-}
-
-static bool math_match_ch(Math_Parser *p, char ch) {
-    math_skip_ws(p);
-    if (p->text[p->pos] != ch) return false;
-    p->pos++;
-    return true;
-}
-
-static bool math_match_str(Math_Parser *p, const char *lit) {
-    math_skip_ws(p);
-    size_t len = strlen(lit);
-    if (strncmp(p->text + p->pos, lit, len) != 0) return false;
-    p->pos += len;
-    return true;
-}
-
-static long long math_parse_expr_or(Math_Parser *p);
-
-static long long math_parse_primary(Math_Parser *p) {
-    if (!p->ok) return 0;
-    math_skip_ws(p);
-
-    if (math_match_ch(p, '(')) {
-        long long val = math_parse_expr_or(p);
-        if (!math_match_ch(p, ')')) p->ok = false;
-        return val;
-    }
-
-    const char *start = p->text + p->pos;
-    char *endptr = NULL;
-    errno = 0;
-    long long value = strtoll(start, &endptr, 0);
-    if (!endptr || endptr == start || errno == ERANGE) {
-        p->ok = false;
-        return 0;
-    }
-    p->pos += (size_t)(endptr - start);
-    return value;
-}
-
-static long long math_parse_unary(Math_Parser *p) {
-    if (!p->ok) return 0;
-    if (math_match_ch(p, '+')) return +math_parse_unary(p);
-    if (math_match_ch(p, '-')) return math_wrap_neg(math_parse_unary(p));
-    if (math_match_ch(p, '~')) return ~math_parse_unary(p);
-    return math_parse_primary(p);
-}
-
-static long long math_parse_mul(Math_Parser *p) {
-    long long lhs = math_parse_unary(p);
-    while (p->ok) {
-        if (math_match_ch(p, '*')) {
-            lhs = math_wrap_mul(lhs, math_parse_unary(p));
-        } else if (math_match_ch(p, '/')) {
-            long long rhs = math_parse_unary(p);
-            if (rhs == 0) {
-                p->ok = false;
-                return 0;
-            }
-            if (lhs == LLONG_MIN && rhs == -1) {
-                p->ok = false;
-                return 0;
-            }
-            lhs /= rhs;
-        } else if (math_match_ch(p, '%')) {
-            long long rhs = math_parse_unary(p);
-            if (rhs == 0) {
-                p->ok = false;
-                return 0;
-            }
-            if (lhs == LLONG_MIN && rhs == -1) {
-                p->ok = false;
-                return 0;
-            }
-            lhs %= rhs;
-        } else {
-            break;
-        }
-    }
-    return lhs;
-}
-
-static long long math_parse_add(Math_Parser *p) {
-    long long lhs = math_parse_mul(p);
-    while (p->ok) {
-        if (math_match_ch(p, '+')) {
-            lhs = math_wrap_add(lhs, math_parse_mul(p));
-        } else if (math_match_ch(p, '-')) {
-            lhs = math_wrap_sub(lhs, math_parse_mul(p));
-        } else {
-            break;
-        }
-    }
-    return lhs;
-}
-
-static long long math_parse_shift(Math_Parser *p) {
-    long long lhs = math_parse_add(p);
-    while (p->ok) {
-        if (math_match_str(p, "<<")) {
-            long long rhs = math_parse_add(p);
-            unsigned long long sh = ((unsigned long long)rhs) & 63ULL;
-            lhs = (long long)(((unsigned long long)lhs) << sh);
-        } else if (math_match_str(p, ">>")) {
-            long long rhs = math_parse_add(p);
-            unsigned long long sh = ((unsigned long long)rhs) & 63ULL;
-            lhs >>= (int)sh;
-        } else {
-            break;
-        }
-    }
-    return lhs;
-}
-
-static long long math_parse_and(Math_Parser *p) {
-    long long lhs = math_parse_shift(p);
-    while (p->ok) {
-        if (math_match_ch(p, '&')) {
-            lhs &= math_parse_shift(p);
-        } else {
-            break;
-        }
-    }
-    return lhs;
-}
-
-static long long math_parse_xor(Math_Parser *p) {
-    long long lhs = math_parse_and(p);
-    while (p->ok) {
-        if (math_match_ch(p, '^')) {
-            lhs ^= math_parse_and(p);
-        } else {
-            break;
-        }
-    }
-    return lhs;
-}
-
-static long long math_parse_expr_or(Math_Parser *p) {
-    long long lhs = math_parse_xor(p);
-    while (p->ok) {
-        if (math_match_ch(p, '|')) {
-            lhs |= math_parse_xor(p);
-        } else {
-            break;
-        }
-    }
-    return lhs;
-}
-
-static bool eval_math_expr(String_View expr, long long *out_value) {
-    if (!out_value) return false;
-    Math_Parser p = {0};
-    p.text = nob_temp_sv_to_cstr(expr);
-    p.pos = 0;
-    p.ok = true;
-
-    long long value = math_parse_expr_or(&p);
-    math_skip_ws(&p);
-    if (!p.ok || p.text[p.pos] != '\0') return false;
-    *out_value = value;
-    return true;
-}
 
 static void eval_math_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 3) return;
@@ -2808,7 +2281,8 @@ static void eval_math_command(Evaluator_Context *ctx, Args args) {
     }
 
     long long value = 0;
-    if (!eval_math_expr(expr, &value)) {
+    Math_Eval_Status status = math_eval_i64(expr, &value);
+    if (status != MATH_EVAL_OK) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "math",
             nob_temp_sprintf("falha ao avaliar expressao: "SV_Fmt, SV_Arg(expr)),
             "verifique operadores, divisao por zero e range de 64 bits");
@@ -3092,7 +2566,7 @@ static void eval_add_custom_command(Evaluator_Context *ctx, Args args) {
 
     String_View merged_command = join_commands_with_and(ctx->arena, commands);
     if (mode_target) {
-        Custom_Command *cmd = build_target_add_custom_command(target, ctx->arena, pre_build || !post_build, merged_command, working_dir, comment);
+        Custom_Command *cmd = evaluator_target_add_custom_command_ex(target, ctx->arena, pre_build || !post_build, merged_command, working_dir, comment);
         if (!cmd) return;
         custom_command_copy_list(ctx->arena, &cmd->outputs, &outputs);
         custom_command_copy_list(ctx->arena, &cmd->byproducts, &byproducts);
@@ -3175,13 +2649,13 @@ static void eval_set_command(Evaluator_Context *ctx, Args args) {
     String_View value = sb_to_sv(sb);
     if (nob_sv_eq(key, sv_from_cstr("CMAKE_BUILD_TYPE")) && value.count > 0) {
         if (sv_eq_ci(value, sv_from_cstr("Debug"))) {
-            ctx->model->default_config = sv_from_cstr("Debug");
+            build_model_set_default_config(ctx->model, sv_from_cstr("Debug"));
         } else if (sv_eq_ci(value, sv_from_cstr("Release"))) {
-            ctx->model->default_config = sv_from_cstr("Release");
+            build_model_set_default_config(ctx->model, sv_from_cstr("Release"));
         } else if (sv_eq_ci(value, sv_from_cstr("RelWithDebInfo"))) {
-            ctx->model->default_config = sv_from_cstr("RelWithDebInfo");
+            build_model_set_default_config(ctx->model, sv_from_cstr("RelWithDebInfo"));
         } else if (sv_eq_ci(value, sv_from_cstr("MinSizeRel"))) {
-            ctx->model->default_config = sv_from_cstr("MinSizeRel");
+            build_model_set_default_config(ctx->model, sv_from_cstr("MinSizeRel"));
         }
     }
     if (nob_sv_starts_with(key, sv_from_cstr("ENV{")) && nob_sv_end_with(key, "}")) {
@@ -3440,7 +2914,14 @@ static bool eval_real_probes_enabled(Evaluator_Context *ctx) {
 }
 
 // Obtém o timeout para probes reais a partir de variáveis de ambiente ou opções, com valor padrão de 5000ms
-static unsigned long probe_timeout_ms(Evaluator_Context *ctx) {
+typedef struct {
+    bool active;
+    bool had_old;
+    String_View old_value;
+} Eval_Cc_Env_Override;
+
+// Obtem o timeout para probes reais a partir de variaveis de ambiente ou opcoes, com valor padrao de 5000ms
+static unsigned long eval_real_probe_timeout_ms(Evaluator_Context *ctx) {
     unsigned long default_ms = 5000;
 
     if (ctx) {
@@ -3476,429 +2957,116 @@ static unsigned long probe_timeout_ms(Evaluator_Context *ctx) {
     return default_ms;
 }
 
-// Executa um comando de probe real e retorna código de saída, com opção de indicar se ocorreu timeout
-static void probe_append_quoted(String_Builder *sb, String_View value) {
-    sb_append(sb, '"');
-    for (size_t i = 0; i < value.count; i++) {
-        if (value.data[i] == '"') sb_append(sb, '\\');
-        sb_append(sb, value.data[i]);
-    }
-    sb_append(sb, '"');
-}
+static Toolchain_Driver eval_make_toolchain_driver(Evaluator_Context *ctx) {
+    Toolchain_Driver drv = {0};
+    drv.arena = ctx ? ctx->arena : NULL;
+    drv.build_dir = ctx ? ctx->current_binary_dir : sv_from_cstr(".");
+    drv.timeout_ms = eval_real_probe_timeout_ms(ctx);
 
-// Verifica se a string contém espaços ou tabs, o que pode exigir tratamento especial na construção do comando
-static bool probe_has_whitespace(String_View value) {
-    for (size_t i = 0; i < value.count; i++) {
-        if (value.data[i] == ' ' || value.data[i] == '\t') return true;
-    }
-    return false;
-}
-
-// Constrói a parte do comando para executar um programa, tratando casos com espaços no nome do programa especialmente no Windows
-static void probe_append_command_program(String_Builder *sb, String_View program) {
-#if defined(_WIN32)
-    if (probe_has_whitespace(program)) {
-        // cmd.exe has parsing quirks when the command starts with quotes; "call" avoids them.
-        sb_append_cstr(sb, "call ");
-        probe_append_quoted(sb, program);
-    } else {
-        sb_append_buf(sb, program.data, program.count);
-    }
-#else
-    if (probe_has_whitespace(program)) {
-        probe_append_quoted(sb, program);
-    } else {
-        sb_append_buf(sb, program.data, program.count);
-    }
-#endif
-}
-
-// Em sistemas Windows, converte barras invertidas para barras normais para compatibilidade com ferramentas GNU que podem ser usadas nos probes reais
-static String_View probe_path_for_gnu(Evaluator_Context *ctx, String_View path) {
-    (void)ctx;
-#if defined(_WIN32)
-    String_View copy = sv_copy_to_arena(ctx->arena, path);
-    for (size_t i = 0; i < copy.count; i++) {
-        if (copy.data[i] == '\\') {
-            ((char*)copy.data)[i] = '/';
-        }
-    }
-    return copy;
-#else
-    return path;
-#endif
-}
-
-// Executa um comando de probe real e retorna código de saída, com opção de indicar se ocorreu timeout
-static int probe_run_command_rc(Evaluator_Context *ctx, String_View cmdline, bool *timed_out) {
-    if (timed_out) *timed_out = false;
-    String_Builder sb = {0};
-    sb_append_buf(&sb, cmdline.data, cmdline.count);
-    sb_append(&sb, '\0');
     const char *dbg = getenv("CMK2NOB_DEBUG_PROBES");
-    if (dbg && dbg[0] != '\0' && strcmp(dbg, "0") != 0) {
-        nob_log(NOB_INFO, "[probe] CMD: %s", sb.items);
-    }
-    int rc = 0;
-#if defined(_WIN32)
-    String_Builder full = {0};
-    sb_append_cstr(&full, "cmd.exe /C ");
-    sb_append_cstr(&full, sb.items);
-    sb_append(&full, '\0');
-
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    ZeroMemory(&pi, sizeof(pi));
-    si.cb = sizeof(si);
-    BOOL created = CreateProcessA(NULL, full.items, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    if (!created) {
-        nob_sb_free(full);
-        nob_sb_free(sb);
-        return -1;
-    }
-
-    unsigned long timeout_ms = probe_timeout_ms(ctx);
-    DWORD wait_ms = timeout_ms > 0 ? (DWORD)timeout_ms : INFINITE;
-    DWORD wait_rc = WaitForSingleObject(pi.hProcess, wait_ms);
-    if (wait_rc == WAIT_TIMEOUT) {
-        if (timed_out) *timed_out = true;
-        (void)TerminateProcess(pi.hProcess, 124);
-        rc = 124;
-    } else {
-        DWORD exit_code = 1;
-        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) exit_code = 1;
-        rc = (int)exit_code;
-    }
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    nob_sb_free(full);
-#else
-    (void)ctx;
-    rc = system(sb.items);
-#endif
-    nob_sb_free(sb);
-    return rc;
+    drv.debug = (dbg && dbg[0] != '\0' && strcmp(dbg, "0") != 0);
+    return drv;
 }
 
-// Executa um comando de probe real e retorna se foi bem-sucedido (código de saída 0), com opção de indicar se ocorreu timeout
-static bool probe_run_command(Evaluator_Context *ctx, String_View cmdline, bool *timed_out) {
-    return probe_run_command_rc(ctx, cmdline, timed_out) == 0;
-}
-
-// Se o probe real indicou timeout, emite um aviso e retorna true; caso contrário, retorna false
-static bool probe_warn_timed_out(Evaluator_Context *ctx, const char *command_name, bool timed_out) {
-    if (!timed_out) return false;
-    unsigned long timeout_ms = probe_timeout_ms(ctx);
-    diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, command_name,
-        nob_temp_sprintf("probe real excedeu timeout (%lums); usando fallback heuristico", timeout_ms),
-        "aumente CMK2NOB_REAL_PROBE_TIMEOUT_MS/CMAKE2NOB_REAL_PROBE_TIMEOUT_MS para probes lentos");
-    return true;
-}
-
-// Verifica se o nome do compilador sugere que é o MSVC, para ajustar a construção do comando de probe real adequadamente
-static bool probe_compiler_looks_msvc(String_View compiler) {
-    String_View base = path_basename_sv(compiler);
-    if (sv_eq_ci(base, sv_from_cstr("cl")) || sv_eq_ci(base, sv_from_cstr("cl.exe"))) return true;
-    return false;
-}
-
-// Verifica se o compilador especificado está disponível no sistema, tentando executar um comando que não produz saída, e tratando casos específicos para Windows
-static bool probe_compiler_available(Evaluator_Context *ctx, String_View compiler) {
-    bool timed_out = false;
-#if defined(_WIN32)
-    String_Builder cmd = {0};
-    probe_append_command_program(&cmd, compiler);
-    sb_append_cstr(&cmd, " --version >nul 2>nul");
-    bool ok = probe_run_command(ctx, sb_to_sv(cmd), &timed_out);
-    nob_sb_free(cmd);
-    if (ok) return true;
-
-    String_Builder cmd_msvc = {0};
-    probe_append_command_program(&cmd_msvc, compiler);
-    sb_append_cstr(&cmd_msvc, " /? >nul 2>nul");
-    ok = probe_run_command(ctx, sb_to_sv(cmd_msvc), &timed_out);
-    nob_sb_free(cmd_msvc);
-    return ok;
-#else
-    String_Builder cmd = {0};
-    probe_append_quoted(&cmd, compiler);
-    sb_append_cstr(&cmd, " --version >/dev/null 2>&1");
-    bool ok = probe_run_command(ctx, sb_to_sv(cmd), &timed_out);
-    nob_sb_free(cmd);
-    return ok;
-#endif
-}
-
-static String_View probe_default_compiler(Evaluator_Context *ctx) {
+static String_View eval_toolchain_compiler(Evaluator_Context *ctx) {
     String_View c_compiler = eval_get_var(ctx, sv_from_cstr("CMAKE_C_COMPILER"));
     if (c_compiler.count > 0) return c_compiler;
-    const char *env_cc = getenv("CC");
-    if (env_cc && env_cc[0] != '\0') return sv_from_cstr(env_cc);
-#if defined(_WIN32)
-    return sv_from_cstr("gcc");
-#else
-    return sv_from_cstr("cc");
-#endif
+    return toolchain_default_c_compiler();
 }
 
-static String_View probe_make_base_path(Evaluator_Context *ctx, const char *prefix) {
-    static size_t s_probe_counter = 0;
-    s_probe_counter++;
-    String_View probe_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_probes"));
-    (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(probe_dir));
-    return path_join_arena(ctx->arena, probe_dir, sv_from_cstr(nob_temp_sprintf("%s_%zu", prefix, s_probe_counter)));
-}
+static Eval_Cc_Env_Override eval_push_cc_override(Evaluator_Context *ctx, String_View compiler) {
+    Eval_Cc_Env_Override ov = {0};
+    if (!ctx) return ov;
 
-// Realiza o processo de probe real para verificar se um símbolo existe, compilando e executando um código de teste, e retorna se o símbolo foi encontrado
-static bool probe_compile_c(Evaluator_Context *ctx, String_View compiler, String_View src_path, String_View exe_path, String_View library_name, String_View library_dir, bool use_library) {
-    bool msvc = probe_compiler_looks_msvc(compiler);
-    String_View src_arg = src_path;
-    String_View exe_arg = exe_path;
-    String_View lib_arg = library_name;
-    String_View lib_dir_arg = library_dir;
-    if (!msvc) {
-        src_arg = probe_path_for_gnu(ctx, src_path);
-        exe_arg = probe_path_for_gnu(ctx, exe_path);
-        lib_arg = probe_path_for_gnu(ctx, library_name);
-        lib_dir_arg = probe_path_for_gnu(ctx, library_dir);
+    String_View cc = genex_trim(compiler);
+    if (cc.count == 0) return ov;
+
+    const char *old_cc = getenv("CC");
+    if (old_cc && old_cc[0] != '\0') {
+        ov.had_old = true;
+        ov.old_value = sv_copy_to_arena(ctx->arena, sv_from_cstr(old_cc));
     }
-    String_Builder cmd = {0};
-    probe_append_command_program(&cmd, compiler);
-    if (msvc) {
-        sb_append_cstr(&cmd, " /nologo ");
-        sb_append_cstr(&cmd, "/Fe:");
-        probe_append_quoted(&cmd, exe_arg);
-        sb_append(&cmd, ' ');
-        probe_append_quoted(&cmd, src_arg);
-        if (use_library) {
-            sb_append_cstr(&cmd, " /link ");
-            if (lib_dir_arg.count > 0) {
-                sb_append_cstr(&cmd, "/LIBPATH:");
-                probe_append_quoted(&cmd, lib_dir_arg);
-                sb_append(&cmd, ' ');
-            }
-            bool has_suffix = nob_sv_end_with(lib_arg, ".lib");
-            if (has_suffix || path_has_separator(lib_arg)) {
-                probe_append_quoted(&cmd, lib_arg);
-            } else {
-                String_View lib_with_ext = sv_from_cstr(nob_temp_sprintf("%.*s.lib", (int)lib_arg.count, lib_arg.data));
-                probe_append_quoted(&cmd, lib_with_ext);
-            }
-        }
+
+#if defined(_WIN32)
+    ov.active = (_putenv_s("CC", nob_temp_sv_to_cstr(cc)) == 0);
+#else
+    ov.active = (setenv("CC", nob_temp_sv_to_cstr(cc), 1) == 0);
+#endif
+    return ov;
+}
+
+static void eval_pop_cc_override(Eval_Cc_Env_Override *ov) {
+    if (!ov || !ov->active) return;
+#if defined(_WIN32)
+    if (ov->had_old) {
+        (void)_putenv_s("CC", nob_temp_sv_to_cstr(ov->old_value));
     } else {
-        sb_append_cstr(&cmd, " -o ");
-        probe_append_quoted(&cmd, exe_arg);
-        sb_append(&cmd, ' ');
-        probe_append_quoted(&cmd, src_arg);
-        if (use_library) {
-            if (lib_dir_arg.count > 0) {
-                sb_append_cstr(&cmd, " -L");
-                probe_append_quoted(&cmd, lib_dir_arg);
-            }
-            if (path_has_separator(lib_arg) ||
-                nob_sv_end_with(lib_arg, ".a") ||
-                nob_sv_end_with(lib_arg, ".so") ||
-                nob_sv_end_with(lib_arg, ".dylib") ||
-                nob_sv_end_with(lib_arg, ".lib")) {
-                sb_append(&cmd, ' ');
-                probe_append_quoted(&cmd, lib_arg);
-            } else {
-                sb_append_cstr(&cmd, " -l");
-                sb_append_buf(&cmd, lib_arg.data, lib_arg.count);
-            }
-        }
+        (void)_putenv_s("CC", "");
     }
-
-    bool timed_out = false;
-    bool ok = probe_run_command(ctx, sb_to_sv(cmd), &timed_out);
-    (void)probe_warn_timed_out(ctx, "real_probe_compile", timed_out);
-    nob_sb_free(cmd);
-    return ok;
-}
-
-static bool probe_run_executable(Evaluator_Context *ctx, String_View exe_path) {
-    String_Builder cmd = {0};
-#if defined(_WIN32)
-    sb_append_cstr(&cmd, "call ");
-#endif
-    probe_append_quoted(&cmd, exe_path);
-    bool timed_out = false;
-    bool ok = probe_run_command(ctx, sb_to_sv(cmd), &timed_out);
-    (void)probe_warn_timed_out(ctx, "real_probe_run", timed_out);
-    nob_sb_free(cmd);
-    return ok;
-}
-
-static void probe_cleanup_outputs(String_View base_path, bool msvc) {
-    String_View src = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base_path)));
-#if defined(_WIN32)
-    String_View exe = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base_path)));
 #else
-    String_View exe = base_path;
-#endif
-    const char *src_c = nob_temp_sv_to_cstr(src);
-    const char *exe_c = nob_temp_sv_to_cstr(exe);
-    if (nob_file_exists(src_c)) (void)nob_delete_file(src_c);
-    if (nob_file_exists(exe_c)) (void)nob_delete_file(exe_c);
-    if (msvc) {
-        String_View obj = sv_from_cstr(nob_temp_sprintf("%s.obj", nob_temp_sv_to_cstr(base_path)));
-        String_View pdb = sv_from_cstr(nob_temp_sprintf("%s.pdb", nob_temp_sv_to_cstr(base_path)));
-        const char *obj_c = nob_temp_sv_to_cstr(obj);
-        const char *pdb_c = nob_temp_sv_to_cstr(pdb);
-        if (nob_file_exists(obj_c)) (void)nob_delete_file(obj_c);
-        if (nob_file_exists(pdb_c)) (void)nob_delete_file(pdb_c);
+    if (ov->had_old) {
+        (void)setenv("CC", nob_temp_sv_to_cstr(ov->old_value), 1);
+    } else {
+        (void)unsetenv("CC");
     }
+#endif
 }
 
 static bool eval_real_probe_check_library_exists(Evaluator_Context *ctx, String_View library, String_View function_name, String_View location, bool *used_probe) {
     if (used_probe) *used_probe = false;
-    String_View compiler = probe_default_compiler(ctx);
-    if (!probe_compiler_available(ctx, compiler)) return false;
+    if (!ctx) return false;
 
-    if (used_probe) *used_probe = true;
-    bool msvc = probe_compiler_looks_msvc(compiler);
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
 
-    String_View base = probe_make_base_path(ctx, "check_library_exists");
-    String_View src = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
-#if defined(_WIN32)
-    String_View exe = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
-#else
-    String_View exe = base;
-#endif
-
-    const char *func_c = nob_temp_sv_to_cstr(function_name);
-    String_View source = sv_from_cstr(nob_temp_sprintf(
-        "extern int %s(void);\nint main(void){ (void)%s; return 0; }\n",
-        func_c, func_c));
-
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(src), source.data, source.count)) {
-        probe_cleanup_outputs(base, msvc);
-        return false;
-    }
-
-    bool ok = probe_compile_c(ctx, compiler, src, exe, library, location, true);
-    probe_cleanup_outputs(base, msvc);
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+    bool ok = toolchain_probe_check_library_exists(&drv, library, function_name, location, used_probe);
+    eval_pop_cc_override(&ov);
     return ok;
 }
 
 static bool eval_real_probe_check_c_source_runs(Evaluator_Context *ctx, String_View source, bool *used_probe) {
     if (used_probe) *used_probe = false;
-    String_View compiler = probe_default_compiler(ctx);
-    if (!probe_compiler_available(ctx, compiler)) return false;
+    if (!ctx) return false;
 
-    if (used_probe) *used_probe = true;
-    bool msvc = probe_compiler_looks_msvc(compiler);
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
 
-    String_View base = probe_make_base_path(ctx, "check_c_source_runs");
-    String_View src = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
-#if defined(_WIN32)
-    String_View exe = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
-#else
-    String_View exe = base;
-#endif
-
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(src), source.data, source.count)) {
-        probe_cleanup_outputs(base, msvc);
-        return false;
-    }
-
-    if (!probe_compile_c(ctx, compiler, src, exe, sv_from_cstr(""), sv_from_cstr(""), false)) {
-        probe_cleanup_outputs(base, msvc);
-        return false;
-    }
-    bool run_ok = probe_run_executable(ctx, exe);
-    probe_cleanup_outputs(base, msvc);
-    return run_ok;
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+    bool ok = toolchain_probe_check_c_source_runs(&drv, source, used_probe);
+    eval_pop_cc_override(&ov);
+    return ok;
 }
 
 static bool eval_real_probe_check_c_source_compiles(Evaluator_Context *ctx, String_View source, bool *used_probe) {
     if (used_probe) *used_probe = false;
-    String_View compiler = probe_default_compiler(ctx);
-    if (!probe_compiler_available(ctx, compiler)) return false;
+    if (!ctx) return false;
 
-    if (used_probe) *used_probe = true;
-    bool msvc = probe_compiler_looks_msvc(compiler);
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
 
-    String_View base = probe_make_base_path(ctx, "check_c_source_compiles");
-    String_View src = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
-#if defined(_WIN32)
-    String_View exe = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
-#else
-    String_View exe = base;
-#endif
-
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(src), source.data, source.count)) {
-        probe_cleanup_outputs(base, msvc);
-        return false;
-    }
-
-    bool compile_ok = probe_compile_c(ctx, compiler, src, exe, sv_from_cstr(""), sv_from_cstr(""), false);
-    probe_cleanup_outputs(base, msvc);
-    return compile_ok;
-}
-
-static void probe_append_headers_source(String_Builder *source, String_View headers) {
-    size_t start = 0;
-    bool added_any = false;
-    for (size_t i = 0; i <= headers.count; i++) {
-        bool sep = (i == headers.count) || headers.data[i] == ';';
-        if (!sep) continue;
-        String_View item = genex_trim(nob_sv_from_parts(headers.data + start, i - start));
-        start = i + 1;
-        if (item.count == 0) continue;
-        added_any = true;
-        sb_append_cstr(source, "#include ");
-        if ((item.data[0] == '<' && item.data[item.count - 1] == '>') ||
-            (item.data[0] == '"' && item.data[item.count - 1] == '"')) {
-            sb_append_buf(source, item.data, item.count);
-        } else {
-            sb_append(source, '<');
-            sb_append_buf(source, item.data, item.count);
-            sb_append(source, '>');
-        }
-        sb_append(source, '\n');
-    }
-    if (!added_any) {
-        sb_append_cstr(source, "#include <stddef.h>\n");
-    }
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+    bool ok = toolchain_probe_check_c_source_compiles(&drv, source, used_probe);
+    eval_pop_cc_override(&ov);
+    return ok;
 }
 
 static bool eval_real_probe_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers, bool *used_probe) {
     if (used_probe) *used_probe = false;
-    String_View compiler = probe_default_compiler(ctx);
-    if (!probe_compiler_available(ctx, compiler)) return false;
+    if (!ctx) return false;
 
-    if (used_probe) *used_probe = true;
-    bool msvc = probe_compiler_looks_msvc(compiler);
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
 
-    String_View base = probe_make_base_path(ctx, "check_symbol_exists");
-    String_View src = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
-#if defined(_WIN32)
-    String_View exe = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
-#else
-    String_View exe = base;
-#endif
-
-    String_Builder source = {0};
-    probe_append_headers_source(&source, headers);
-    sb_append_cstr(&source, "int main(void){ (void)");
-    sb_append_buf(&source, symbol.data, symbol.count);
-    sb_append_cstr(&source, "; return 0; }\n");
-
-    bool wrote = nob_write_entire_file(nob_temp_sv_to_cstr(src), source.items, source.count);
-    nob_sb_free(source);
-    if (!wrote) {
-        probe_cleanup_outputs(base, msvc);
-        return false;
-    }
-
-    bool compile_ok = probe_compile_c(ctx, compiler, src, exe, sv_from_cstr(""), sv_from_cstr(""), false);
-    probe_cleanup_outputs(base, msvc);
-    return compile_ok;
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+    bool ok = toolchain_probe_check_symbol_exists(&drv, symbol, headers, used_probe);
+    eval_pop_cc_override(&ov);
+    return ok;
 }
-
-
 static bool eval_check_library_exists(Evaluator_Context *ctx, String_View library, String_View function_name, String_View location) {
     (void)ctx;
     String_View lib = genex_trim(library);
@@ -4057,123 +3225,25 @@ static String_View try_compile_run_compile(Evaluator_Context *ctx,
                                            String_List *link_options,
                                            String_List *link_libraries,
                                            bool *out_ok) {
-    bool msvc = probe_compiler_looks_msvc(compiler);
-    String_View src_arg = src_path;
-    String_View out_arg = out_path;
-    if (!msvc) {
-        src_arg = probe_path_for_gnu(ctx, src_path);
-        out_arg = probe_path_for_gnu(ctx, out_path);
+    if (!ctx) {
+        if (out_ok) *out_ok = false;
+        return sv_from_cstr("");
     }
 
-    String_Builder cmd = {0};
-    probe_append_command_program(&cmd, compiler);
-    if (msvc) {
-        sb_append_cstr(&cmd, " /nologo ");
-        sb_append_cstr(&cmd, "/Fe:");
-        probe_append_quoted(&cmd, out_arg);
-        sb_append(&cmd, ' ');
-        probe_append_quoted(&cmd, src_arg);
-        for (size_t i = 0; i < compile_definitions->count; i++) {
-            String_View d = compile_definitions->items[i];
-            if (d.count == 0) continue;
-            sb_append_cstr(&cmd, " /D");
-            if (nob_sv_starts_with(d, sv_from_cstr("-D")) || nob_sv_starts_with(d, sv_from_cstr("/D"))) {
-                d = nob_sv_from_parts(d.data + 2, d.count - 2);
-            }
-            probe_append_quoted(&cmd, d);
-        }
-        if (link_options->count > 0 || link_libraries->count > 0) {
-            sb_append_cstr(&cmd, " /link");
-            for (size_t i = 0; i < link_options->count; i++) {
-                String_View opt = link_options->items[i];
-                if (opt.count == 0) continue;
-                sb_append(&cmd, ' ');
-                probe_append_quoted(&cmd, opt);
-            }
-            for (size_t i = 0; i < link_libraries->count; i++) {
-                String_View lib = link_libraries->items[i];
-                if (lib.count == 0) continue;
-                sb_append(&cmd, ' ');
-                probe_append_quoted(&cmd, lib);
-            }
-        }
-    } else {
-        sb_append_cstr(&cmd, " -o ");
-        probe_append_quoted(&cmd, out_arg);
-        sb_append(&cmd, ' ');
-        probe_append_quoted(&cmd, src_arg);
-        for (size_t i = 0; i < compile_definitions->count; i++) {
-            String_View d = compile_definitions->items[i];
-            if (d.count == 0) continue;
-            sb_append(&cmd, ' ');
-            if (nob_sv_starts_with(d, sv_from_cstr("-D")) || nob_sv_starts_with(d, sv_from_cstr("/D"))) {
-                sb_append_cstr(&cmd, "-D");
-                sb_append_buf(&cmd, d.data + 2, d.count - 2);
-            } else {
-                sb_append_cstr(&cmd, "-D");
-                sb_append_buf(&cmd, d.data, d.count);
-            }
-        }
-        for (size_t i = 0; i < link_options->count; i++) {
-            String_View opt = link_options->items[i];
-            if (opt.count == 0) continue;
-            sb_append(&cmd, ' ');
-            probe_append_quoted(&cmd, opt);
-        }
-        for (size_t i = 0; i < link_libraries->count; i++) {
-            String_View lib = link_libraries->items[i];
-            if (lib.count == 0) continue;
-            if (path_has_separator(lib) ||
-                nob_sv_end_with(lib, ".a") ||
-                nob_sv_end_with(lib, ".so") ||
-                nob_sv_end_with(lib, ".dylib") ||
-                nob_sv_end_with(lib, ".lib")) {
-                sb_append(&cmd, ' ');
-                probe_append_quoted(&cmd, lib);
-            } else {
-                sb_append_cstr(&cmd, " -l");
-                sb_append_buf(&cmd, lib.data, lib.count);
-            }
-        }
-    }
-
-    String_View base = probe_make_base_path(ctx, "try_compile");
-    String_View stdout_path = sv_from_cstr(nob_temp_sprintf("%s.out", nob_temp_sv_to_cstr(base)));
-    String_View stderr_path = sv_from_cstr(nob_temp_sprintf("%s.err", nob_temp_sv_to_cstr(base)));
-
-    #if defined(_WIN32)
-        sb_append_cstr(&cmd, " >");
-        probe_append_quoted(&cmd, stdout_path);
-        sb_append_cstr(&cmd, " 2>");
-        probe_append_quoted(&cmd, stderr_path);
-    #else
-        sb_append_cstr(&cmd, " >");
-        probe_append_quoted(&cmd, stdout_path);
-        sb_append_cstr(&cmd, " 2>");
-        probe_append_quoted(&cmd, stderr_path);
-    #endif
-
-    bool timed_out = false;
-    int rc = probe_run_command_rc(ctx, sb_to_sv(cmd), &timed_out);
-    (void)probe_warn_timed_out(ctx, "try_compile", timed_out);
-    nob_sb_free(cmd);
-
-    String_View out_content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(stdout_path));
-    String_View err_content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(stderr_path));
-    if (!out_content.data) out_content = sv_from_cstr("");
-    if (!err_content.data) err_content = sv_from_cstr("");
-    if (nob_file_exists(nob_temp_sv_to_cstr(stdout_path))) (void)nob_delete_file(nob_temp_sv_to_cstr(stdout_path));
-    if (nob_file_exists(nob_temp_sv_to_cstr(stderr_path))) (void)nob_delete_file(nob_temp_sv_to_cstr(stderr_path));
-
-    String_Builder merged = {0};
-    sb_append_buf(&merged, out_content.data, out_content.count);
-    if (out_content.count > 0 && err_content.count > 0) sb_append(&merged, '\n');
-    sb_append_buf(&merged, err_content.data, err_content.count);
-    String_View compile_output = sv_from_cstr(arena_strndup(ctx->arena, merged.items ? merged.items : "", merged.count));
-    nob_sb_free(merged);
-
-    if (out_ok) *out_ok = (rc == 0);
-    return compile_output;
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    Toolchain_Compile_Request req = {
+        .compiler = compiler,
+        .src_path = src_path,
+        .out_path = out_path,
+        .compile_definitions = compile_definitions,
+        .link_options = link_options,
+        .link_libraries = link_libraries,
+    };
+    Toolchain_Compile_Result result = {0};
+    bool invoked = toolchain_try_compile(&drv, &req, &result);
+    if (out_ok) *out_ok = invoked && result.ok;
+    if (!invoked) return sv_from_cstr("");
+    return result.output;
 }
 
 static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
@@ -4281,8 +3351,9 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    String_View compiler = probe_default_compiler(ctx);
-    if (!probe_compiler_available(ctx, compiler)) {
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) {
         eval_set_var(ctx, out_var, sv_from_cstr("0"), false, false);
         if (output_var.count > 0) {
             eval_set_var(ctx, output_var,
@@ -4518,14 +3589,6 @@ static void eval_qt_wrap_ui_command(Evaluator_Context *ctx, Args args) {
     nob_sb_free(list_sb);
 }
 
-// Opcionalmente remove whitespace do final do output de execute_process, se a flag estiver presente
-static String_View maybe_strip_trailing_whitespace(Evaluator_Context *ctx, String_View value, bool strip) {
-    if (!ctx || !strip) return value;
-    size_t end = value.count;
-    while (end > 0 && isspace((unsigned char)value.data[end - 1])) end--;
-    return sv_from_cstr(arena_strndup(ctx->arena, value.data, end));
-}
-
 // Verifica se o token é uma keyword de execute_process que indica início de nova seção de argumentos
 static bool exec_program_is_keyword(String_View tok) {
     return sv_eq_ci(tok, sv_from_cstr("ARGS")) ||
@@ -4576,17 +3639,19 @@ static void eval_fltk_wrap_ui_command(Evaluator_Context *ctx, Args args) {
 
 
 // Avalia o comando 'execute_process'
+// Avalia o comando 'execute_process'
 static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
     if (!ctx || args.count < 1) return;
 
-    String_View result_var  = sv_from_cstr("");
-    String_View output_var  = sv_from_cstr("");
-    String_View error_var   = sv_from_cstr("");
+    String_View result_var = sv_from_cstr("");
+    String_View output_var = sv_from_cstr("");
+    String_View error_var = sv_from_cstr("");
     String_View working_dir = sv_from_cstr("");
     bool output_strip = false;
-    bool error_strip  = false;
+    bool error_strip = false;
     bool output_quiet = false;
-    bool error_quiet  = false;
+    bool error_quiet = false;
+    unsigned long timeout_ms = 0;
 
     String_View command_items[64] = {0};
     size_t command_count = 0;
@@ -4624,23 +3689,19 @@ static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
         }
 
         if (sv_eq_ci(token, sv_from_cstr("WORKING_DIRECTORY")) && i + 1 < args.count) {
-            working_dir = resolve_arg(ctx, args.items[i + 1]);
-            i++;
+            working_dir = resolve_arg(ctx, args.items[++i]);
             continue;
         }
         if (sv_eq_ci(token, sv_from_cstr("RESULT_VARIABLE")) && i + 1 < args.count) {
-            result_var = resolve_arg(ctx, args.items[i + 1]);
-            i++;
+            result_var = resolve_arg(ctx, args.items[++i]);
             continue;
         }
         if (sv_eq_ci(token, sv_from_cstr("OUTPUT_VARIABLE")) && i + 1 < args.count) {
-            output_var = resolve_arg(ctx, args.items[i + 1]);
-            i++;
+            output_var = resolve_arg(ctx, args.items[++i]);
             continue;
         }
         if (sv_eq_ci(token, sv_from_cstr("ERROR_VARIABLE")) && i + 1 < args.count) {
-            error_var = resolve_arg(ctx, args.items[i + 1]);
-            i++;
+            error_var = resolve_arg(ctx, args.items[++i]);
             continue;
         }
         if (sv_eq_ci(token, sv_from_cstr("OUTPUT_STRIP_TRAILING_WHITESPACE"))) {
@@ -4659,51 +3720,21 @@ static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
             error_quiet = true;
             continue;
         }
-        if ((sv_eq_ci(token, sv_from_cstr("TIMEOUT")) ||
-             sv_eq_ci(token, sv_from_cstr("ENCODING")) ||
+        if (sv_eq_ci(token, sv_from_cstr("TIMEOUT")) && i + 1 < args.count) {
+            long timeout_s = parse_long_or_default(resolve_arg(ctx, args.items[++i]), 0);
+            if (timeout_s > 0) timeout_ms = (unsigned long)timeout_s * 1000UL;
+            continue;
+        }
+        if ((sv_eq_ci(token, sv_from_cstr("ENCODING")) ||
              sv_eq_ci(token, sv_from_cstr("COMMAND_ECHO")) ||
              sv_eq_ci(token, sv_from_cstr("COMMAND_ERROR_IS_FATAL"))) && i + 1 < args.count) {
-            i++; // ignora valor
+            i++;
             continue;
         }
     }
 
     if (command_count == 0) return;
 
-    static size_t s_exec_counter = 0;
-    s_exec_counter++;
-
-    String_View exec_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
-    if (!nob_mkdir_if_not_exists(arena_sv_to_cstr(ctx->arena, exec_dir))) {
-        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "execute_process",
-                 "falha ao criar diretorio .cmk2nob_exec", "verifique permissoes");
-    }
-
-    String_View stdout_path = path_join_arena(
-        ctx->arena, exec_dir, sv_from_cstr(arena_sprintf(ctx->arena, "exec_%zu.out", s_exec_counter)));
-    String_View stderr_path = path_join_arena(
-        ctx->arena, exec_dir, sv_from_cstr(arena_sprintf(ctx->arena, "exec_%zu.err", s_exec_counter)));
-
-    const char *stdout_path_c = arena_sv_to_cstr(ctx->arena, stdout_path);
-    const char *stderr_path_c = arena_sv_to_cstr(ctx->arena, stderr_path);
-
-    // Monta Nob_Cmd usando APENAS Arena (sem nob_da_append)
-    Nob_Cmd cmd = {0};
-    cmd.items = arena_alloc_array(ctx->arena, const char *, command_count);
-    if (!cmd.items) {
-        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "execute_process",
-                 "falha ao alocar argv do comando", "aumente memoria disponivel");
-        return;
-    }
-    cmd.count = command_count;
-    cmd.capacity = command_count;
-
-    for (size_t k = 0; k < command_count; k++) {
-        cmd.items[k] = arena_sv_to_cstr(ctx->arena, command_items[k]);
-    }
-
-    // cwd
-    String_View old_cwd = sv_from_cstr(arena_strdup(ctx->arena, nob_get_current_dir_temp()));
     String_View exec_cwd = ctx->current_binary_dir;
     if (working_dir.count > 0) {
         exec_cwd = path_is_absolute_sv(working_dir)
@@ -4711,34 +3742,40 @@ static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
             : path_join_arena(ctx->arena, ctx->current_binary_dir, working_dir);
     }
 
-    if (!nob_set_current_dir(arena_sv_to_cstr(ctx->arena, exec_cwd))) {
+    String_View scratch_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+
+    Sys_Process_Request req = {0};
+    req.arena = ctx->arena;
+    req.working_dir = exec_cwd;
+    req.timeout_ms = timeout_ms;
+    req.argv = command_items;
+    req.argv_count = command_count;
+    req.capture_stdout = (output_var.count > 0) && !output_quiet;
+    req.capture_stderr = (error_var.count > 0) && !error_quiet;
+    req.strip_stdout_trailing_ws = output_strip;
+    req.strip_stderr_trailing_ws = error_strip;
+    req.scratch_dir = scratch_dir;
+
+    Sys_Process_Result result = {0};
+    bool ran = sys_run_process(&req, &result);
+    if (!ran) {
+        if (result_var.count > 0) eval_set_var(ctx, result_var, sv_from_cstr("1"), false, false);
+        if (output_var.count > 0) eval_set_var(ctx, output_var, sv_from_cstr(""), false, false);
+        if (error_var.count > 0) eval_set_var(ctx, error_var, sv_from_cstr(""), false, false);
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "execute_process",
-                 arena_sprintf(ctx->arena, "falha ao entrar em WORKING_DIRECTORY: " SV_Fmt, SV_Arg(exec_cwd)),
-                 "executando comando no diretorio atual");
+                 "falha ao executar processo",
+                 "verifique comando e diretorio de trabalho");
+        return;
     }
-
-    bool ok = nob_cmd_run(&cmd,
-        .stdout_path = stdout_path_c,
-        .stderr_path = stderr_path_c);
-
-    (void)nob_set_current_dir(arena_sv_to_cstr(ctx->arena, old_cwd));
-
-    String_View out_content = arena_read_file(ctx->arena, stdout_path_c);
-    String_View err_content = arena_read_file(ctx->arena, stderr_path_c);
-    if (!out_content.data) out_content = sv_from_cstr("");
-    if (!err_content.data) err_content = sv_from_cstr("");
-
-    out_content = maybe_strip_trailing_whitespace(ctx, out_content, output_strip);
-    err_content = maybe_strip_trailing_whitespace(ctx, err_content, error_strip);
 
     if (result_var.count > 0) {
-        eval_set_var(ctx, result_var, ok ? sv_from_cstr("0") : sv_from_cstr("1"), false, false);
+        eval_set_var(ctx, result_var, result.exit_code == 0 ? sv_from_cstr("0") : sv_from_cstr("1"), false, false);
     }
     if (output_var.count > 0) {
-        eval_set_var(ctx, output_var, output_quiet ? sv_from_cstr("") : out_content, false, false);
+        eval_set_var(ctx, output_var, output_quiet ? sv_from_cstr("") : result.stdout_text, false, false);
     }
     if (error_var.count > 0) {
-        eval_set_var(ctx, error_var, error_quiet ? sv_from_cstr("") : err_content, false, false);
+        eval_set_var(ctx, error_var, error_quiet ? sv_from_cstr("") : result.stderr_text, false, false);
     }
 }
 
@@ -4750,8 +3787,8 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
     if (executable.count == 0) return;
 
     String_View working_dir = sv_from_cstr("");
-    String_View output_var  = sv_from_cstr("");
-    String_View return_var  = sv_from_cstr("");
+    String_View output_var = sv_from_cstr("");
+    String_View return_var = sv_from_cstr("");
 
     String_View argv_items[64] = {0};
     size_t argv_count = 0;
@@ -4793,39 +3830,6 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
         }
     }
 
-    static size_t s_exec_program_counter = 0;
-    s_exec_program_counter++;
-
-    String_View exec_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
-    if (!nob_mkdir_if_not_exists(arena_sv_to_cstr(ctx->arena, exec_dir))) {
-        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "exec_program",
-                 "falha ao criar diretorio .cmk2nob_exec", "verifique permissoes");
-    }
-
-    String_View stdout_path = path_join_arena(
-        ctx->arena, exec_dir, sv_from_cstr(arena_sprintf(ctx->arena, "exec_program_%zu.out", s_exec_program_counter)));
-    String_View stderr_path = path_join_arena(
-        ctx->arena, exec_dir, sv_from_cstr(arena_sprintf(ctx->arena, "exec_program_%zu.err", s_exec_program_counter)));
-
-    const char *stdout_path_c = arena_sv_to_cstr(ctx->arena, stdout_path);
-    const char *stderr_path_c = arena_sv_to_cstr(ctx->arena, stderr_path);
-
-    // Monta Nob_Cmd usando APENAS Arena (sem nob_da_append)
-    Nob_Cmd cmd = {0};
-    cmd.items = arena_alloc_array(ctx->arena, const char *, argv_count);
-    if (!cmd.items) {
-        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "exec_program",
-                 "falha ao alocar argv do comando", "aumente memoria disponivel");
-        return;
-    }
-    cmd.count = argv_count;
-    cmd.capacity = argv_count;
-
-    for (size_t a = 0; a < argv_count; a++) {
-        cmd.items[a] = arena_sv_to_cstr(ctx->arena, argv_items[a]);
-    }
-
-    String_View old_cwd = sv_from_cstr(arena_strdup(ctx->arena, nob_get_current_dir_temp()));
     String_View exec_cwd = ctx->current_binary_dir;
     if (working_dir.count > 0) {
         exec_cwd = path_is_absolute_sv(working_dir)
@@ -4833,30 +3837,38 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
             : path_join_arena(ctx->arena, ctx->current_binary_dir, working_dir);
     }
 
-    if (!nob_set_current_dir(arena_sv_to_cstr(ctx->arena, exec_cwd))) {
+    String_View scratch_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+
+    Sys_Process_Request req = {0};
+    req.arena = ctx->arena;
+    req.working_dir = exec_cwd;
+    req.timeout_ms = 0;
+    req.argv = argv_items;
+    req.argv_count = argv_count;
+    req.capture_stdout = output_var.count > 0;
+    req.capture_stderr = false;
+    req.strip_stdout_trailing_ws = true;
+    req.strip_stderr_trailing_ws = false;
+    req.scratch_dir = scratch_dir;
+
+    Sys_Process_Result result = {0};
+    bool ran = sys_run_process(&req, &result);
+    if (!ran) {
+        if (output_var.count > 0) eval_set_var(ctx, output_var, sv_from_cstr(""), false, false);
+        if (return_var.count > 0) eval_set_var(ctx, return_var, sv_from_cstr("1"), false, false);
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "exec_program",
-                 arena_sprintf(ctx->arena, "falha ao entrar em diretorio: " SV_Fmt, SV_Arg(exec_cwd)),
-                 "executando comando no diretorio atual");
+                 "falha ao executar processo",
+                 "verifique comando e diretorio de trabalho");
+        return;
     }
-
-    bool ok = nob_cmd_run(&cmd,
-        .stdout_path = stdout_path_c,
-        .stderr_path = stderr_path_c);
-
-    (void)nob_set_current_dir(arena_sv_to_cstr(ctx->arena, old_cwd));
-
-    String_View out_content = arena_read_file(ctx->arena, stdout_path_c);
-    if (!out_content.data) out_content = sv_from_cstr("");
-    out_content = maybe_strip_trailing_whitespace(ctx, out_content, true);
 
     if (output_var.count > 0) {
-        eval_set_var(ctx, output_var, out_content, false, false);
+        eval_set_var(ctx, output_var, result.stdout_text, false, false);
     }
     if (return_var.count > 0) {
-        eval_set_var(ctx, return_var, ok ? sv_from_cstr("0") : sv_from_cstr("1"), false, false);
+        eval_set_var(ctx, return_var, result.exit_code == 0 ? sv_from_cstr("0") : sv_from_cstr("1"), false, false);
     }
 }
-
 static bool try_run_keyword(String_View tok) {
     return sv_eq_ci(tok, sv_from_cstr("COMPILE_OUTPUT_VARIABLE")) ||
            sv_eq_ci(tok, sv_from_cstr("RUN_OUTPUT_VARIABLE")) ||
@@ -5170,52 +4182,6 @@ static void eval_cmake_instrumentation_command(Evaluator_Context *ctx, Args args
     eval_set_var(ctx, sv_from_cstr("CMAKE_INSTRUMENTATION_CALLBACKS"), join_list_semicolon(ctx, &callbacks), false, false);
 }
 
-static String_View try_run_execute_binary(Evaluator_Context *ctx,
-                                          String_View exe_path,
-                                          String_List *run_args,
-                                          int *out_rc) {
-    if (out_rc) *out_rc = 1;
-    String_Builder cmd = {0};
-#if defined(_WIN32)
-    sb_append_cstr(&cmd, "call ");
-#endif
-    probe_append_quoted(&cmd, exe_path);
-    for (size_t i = 0; i < run_args->count; i++) {
-        String_View arg = run_args->items[i];
-        sb_append(&cmd, ' ');
-        probe_append_quoted(&cmd, arg);
-    }
-
-    String_View base = probe_make_base_path(ctx, "try_run_exec");
-    String_View stdout_path = sv_from_cstr(nob_temp_sprintf("%s.out", nob_temp_sv_to_cstr(base)));
-    String_View stderr_path = sv_from_cstr(nob_temp_sprintf("%s.err", nob_temp_sv_to_cstr(base)));
-    sb_append_cstr(&cmd, " >");
-    probe_append_quoted(&cmd, stdout_path);
-    sb_append_cstr(&cmd, " 2>");
-    probe_append_quoted(&cmd, stderr_path);
-
-    bool timed_out = false;
-    int rc = probe_run_command_rc(ctx, sb_to_sv(cmd), &timed_out);
-    (void)probe_warn_timed_out(ctx, "try_run", timed_out);
-    nob_sb_free(cmd);
-
-    if (out_rc) *out_rc = rc;
-    String_View out_content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(stdout_path));
-    String_View err_content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(stderr_path));
-    if (!out_content.data) out_content = sv_from_cstr("");
-    if (!err_content.data) err_content = sv_from_cstr("");
-    if (nob_file_exists(nob_temp_sv_to_cstr(stdout_path))) (void)nob_delete_file(nob_temp_sv_to_cstr(stdout_path));
-    if (nob_file_exists(nob_temp_sv_to_cstr(stderr_path))) (void)nob_delete_file(nob_temp_sv_to_cstr(stderr_path));
-
-    String_Builder merged = {0};
-    sb_append_buf(&merged, out_content.data, out_content.count);
-    if (out_content.count > 0 && err_content.count > 0) sb_append(&merged, '\n');
-    sb_append_buf(&merged, err_content.data, err_content.count);
-    String_View run_output = sv_from_cstr(arena_strndup(ctx->arena, merged.items ? merged.items : "", merged.count));
-    nob_sb_free(merged);
-    return run_output;
-}
-
 // Avalia o comando 'try_run'
 static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
     if (!ctx || args.count < 4) return;
@@ -5347,8 +4313,9 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    String_View compiler = probe_default_compiler(ctx);
-    if (!probe_compiler_available(ctx, compiler)) {
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) {
         eval_set_var(ctx, compile_result_var, sv_from_cstr("0"), false, false);
         eval_set_var(ctx, run_result_var, sv_from_cstr("FAILED_TO_RUN"), false, false);
         if (compile_output_var.count > 0) {
@@ -5361,21 +4328,53 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    bool compile_ok = false;
     #if defined(_WIN32)
         String_View out_path = path_join_arena(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_run.exe"));
     #else
         String_View out_path = path_join_arena(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_run"));
     #endif
-    String_View compile_output = try_compile_run_compile(ctx, compiler, src_path, out_path,
-    &compile_definitions, &link_options, &link_libraries, &compile_ok);
-    eval_set_var(ctx, compile_result_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
-    if (compile_output_var.count > 0) {
-        eval_set_var(ctx, compile_output_var, compile_output, false, false);
-    }
+
+    Toolchain_Compile_Request req = {
+        .compiler = compiler,
+        .src_path = src_path,
+        .out_path = out_path,
+        .compile_definitions = &compile_definitions,
+        .link_options = &link_options,
+        .link_libraries = &link_libraries,
+    };
 
     String_View cross = eval_get_var(ctx, sv_from_cstr("CMAKE_CROSSCOMPILING"));
     bool cross_compiling = (cross.count > 0) && !cmake_string_is_false(cross);
+
+    if (cross_compiling) {
+        Toolchain_Compile_Result compile_out = {0};
+        bool invoked = toolchain_try_compile(&drv, &req, &compile_out);
+        bool compile_ok = invoked && compile_out.ok;
+        eval_set_var(ctx, compile_result_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
+        if (compile_output_var.count > 0) {
+            eval_set_var(ctx, compile_output_var, compile_out.output, false, false);
+        }
+
+        eval_set_var(ctx, run_result_var, sv_from_cstr("FAILED_TO_RUN"), false, false);
+        String_View run_skip = compile_ok
+            ? sv_from_cstr("try_run skipped due to CMAKE_CROSSCOMPILING")
+            : sv_from_cstr("try_run skipped: compilation failed");
+        if (run_output_var.count > 0) eval_set_var(ctx, run_output_var, run_skip, false, false);
+        if (output_var.count > 0) eval_set_var(ctx, output_var, run_skip, false, false);
+        return;
+    }
+
+    Toolchain_Compile_Result compile_out = {0};
+    int run_rc = 1;
+    String_View run_output = sv_from_cstr("");
+    bool invoked = toolchain_try_run(&drv, &req, &run_args, &compile_out, &run_rc, &run_output);
+    bool compile_ok = invoked && compile_out.ok;
+
+    eval_set_var(ctx, compile_result_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
+    if (compile_output_var.count > 0) {
+        eval_set_var(ctx, compile_output_var, compile_out.output, false, false);
+    }
+
     if (!compile_ok) {
         eval_set_var(ctx, run_result_var, sv_from_cstr("FAILED_TO_RUN"), false, false);
         String_View run_skip = sv_from_cstr("try_run skipped: compilation failed");
@@ -5384,16 +4383,6 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    if (cross_compiling) {
-        eval_set_var(ctx, run_result_var, sv_from_cstr("FAILED_TO_RUN"), false, false);
-        String_View run_skip = sv_from_cstr("try_run skipped due to CMAKE_CROSSCOMPILING");
-        if (run_output_var.count > 0) eval_set_var(ctx, run_output_var, run_skip, false, false);
-        if (output_var.count > 0) eval_set_var(ctx, output_var, run_skip, false, false);
-        return;
-    }
-
-    int run_rc = 1;
-    String_View run_output = try_run_execute_binary(ctx, out_path, &run_args, &run_rc);
     eval_set_var(ctx, run_result_var, sv_from_cstr(nob_temp_sprintf("%d", run_rc)), false, false);
     if (run_output_var.count > 0) eval_set_var(ctx, run_output_var, run_output, false, false);
     if (output_var.count > 0) eval_set_var(ctx, output_var, run_output, false, false);
@@ -5445,38 +4434,41 @@ static void eval_get_cmake_property_command(Evaluator_Context *ctx, Args args) {
 
 // Avalia o comando 'project'
 static void eval_project_command(Evaluator_Context *ctx, Args args) {
+    if (!ctx || !ctx->model) return;
     if (args.count < 1) return;
-    
+
     String_View name = resolve_arg(ctx, args.items[0]);
-    ctx->model->project_name = name;
-    
-    // Define variáveis do projeto
+    String_View version = sv_from_cstr("");
+
+    // Define variáveis do projeto (semântica do evaluator)
     eval_set_var(ctx, sv_from_cstr("PROJECT_NAME"), name, false, false);
     eval_set_var(ctx, sv_from_cstr("PROJECT_SOURCE_DIR"), ctx->current_source_dir, false, false);
     eval_set_var(ctx, sv_from_cstr("PROJECT_BINARY_DIR"), ctx->current_binary_dir, false, false);
     eval_set_var(ctx, sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->current_source_dir, false, false);
     eval_set_var(ctx, sv_from_cstr("CMAKE_BINARY_DIR"), ctx->current_binary_dir, false, false);
-    
-    // Verifica versão e outras opções
+
+    // Parse VERSION / LANGUAGES
     for (size_t i = 1; i < args.count; i++) {
         String_View arg = resolve_arg(ctx, args.items[i]);
         if (nob_sv_eq(arg, sv_from_cstr("VERSION")) && i + 1 < args.count) {
-            ctx->model->project_version = resolve_arg(ctx, args.items[i + 1]);
-            eval_set_var(ctx, sv_from_cstr("PROJECT_VERSION"), ctx->model->project_version, false, false);
+            version = resolve_arg(ctx, args.items[i + 1]);
+            eval_set_var(ctx, sv_from_cstr("PROJECT_VERSION"), version, false, false);
             i++;
         } else if (nob_sv_eq(arg, sv_from_cstr("LANGUAGES"))) {
-            // Processa linguagens
             for (size_t j = i + 1; j < args.count; j++) {
                 String_View lang = resolve_arg(ctx, args.items[j]);
                 if (nob_sv_eq(lang, sv_from_cstr("C"))) {
-                    string_list_add(&ctx->model->project_languages, ctx->arena, sv_from_cstr("C"));
+                    build_model_enable_language(ctx->model, ctx->arena, sv_from_cstr("C"));
                 } else if (nob_sv_eq(lang, sv_from_cstr("CXX"))) {
-                    string_list_add(&ctx->model->project_languages, ctx->arena, sv_from_cstr("CXX"));
+                    build_model_enable_language(ctx->model, ctx->arena, sv_from_cstr("CXX"));
                 }
             }
             break;
         }
     }
+
+    // Persistir no modelo (dados/invariantes)
+    build_model_set_project_info(ctx->model, name, version);
 }
 
 // Avalia o comando 'enable_language'
@@ -5493,7 +4485,7 @@ static void eval_enable_language_command(Evaluator_Context *ctx, Args args) {
         else if (sv_eq_ci(lang, sv_from_cstr("CXX"))) canonical = sv_from_cstr("CXX");
         else if (sv_eq_ci(lang, sv_from_cstr("ASM"))) canonical = sv_from_cstr("ASM");
 
-        string_list_add_unique(&ctx->model->project_languages, ctx->arena, canonical);
+        build_model_enable_language(ctx->model, ctx->arena, canonical);
 
         const char *compiler_default = "cc";
         if (nob_sv_eq(canonical, sv_from_cstr("CXX"))) compiler_default = "c++";
@@ -5522,9 +4514,8 @@ static void eval_add_executable_command(Evaluator_Context *ctx, Args args) {
         if (nob_sv_eq(mode, sv_from_cstr("ALIAS"))) {
             Build_Target *alias_target = build_model_add_target(ctx->model, name, TARGET_ALIAS);
             if (!alias_target) return;
-            alias_target->alias = true;
             String_View aliased = resolve_arg(ctx, args.items[2]);
-            build_target_add_dependency(alias_target, ctx->arena, aliased);
+            build_target_set_alias(alias_target, ctx->arena, aliased);
             return;
         }
     }
@@ -5549,11 +4540,11 @@ static void eval_add_executable_command(Evaluator_Context *ctx, Args args) {
         }
         
         if (nob_sv_eq(arg, sv_from_cstr("WIN32"))) {
-            target->win32_executable = true;
+            build_target_set_flag(target, TARGET_FLAG_WIN32_EXECUTABLE, true);
         } else if (nob_sv_eq(arg, sv_from_cstr("MACOSX_BUNDLE"))) {
-            target->macosx_bundle = true;
+            build_target_set_flag(target, TARGET_FLAG_MACOSX_BUNDLE, true);
         } else if (nob_sv_eq(arg, sv_from_cstr("EXCLUDE_FROM_ALL"))) {
-            target->exclude_from_all = true;
+            build_target_set_flag(target, TARGET_FLAG_EXCLUDE_FROM_ALL, true);
         } else if (nob_sv_eq(arg, sv_from_cstr("GLOBAL")) && imported) {
             // Flag valida para imported targets, sem efeito no modelo atual.
         } else if (nob_sv_eq(arg, sv_from_cstr("IMPORTED"))) {
@@ -5568,7 +4559,7 @@ static void eval_add_executable_command(Evaluator_Context *ctx, Args args) {
         if (!target) return;
     }
     if (imported) {
-        target->imported = true;
+        build_target_set_flag(target, TARGET_FLAG_IMPORTED, true);
     }
 }
 // Avalia o comando 'add_library'
@@ -5582,9 +4573,8 @@ static void eval_add_library_command(Evaluator_Context *ctx, Args args) {
         if (nob_sv_eq(mode, sv_from_cstr("ALIAS"))) {
             Build_Target *alias_target = build_model_add_target(ctx->model, name, TARGET_ALIAS);
             if (!alias_target) return;
-            alias_target->alias = true;
             String_View aliased = resolve_arg(ctx, args.items[2]);
-            build_target_add_dependency(alias_target, ctx->arena, aliased);
+            build_target_set_alias(alias_target, ctx->arena, aliased);
             return;
         }
     }
@@ -5649,8 +4639,8 @@ static void eval_add_library_command(Evaluator_Context *ctx, Args args) {
 
     Build_Target *target = build_model_add_target(ctx->model, name, type);
     if (!target) return;
-    target->exclude_from_all = exclude_from_all;
-    target->imported = imported;
+    build_target_set_flag(target, TARGET_FLAG_EXCLUDE_FROM_ALL, exclude_from_all);
+    build_target_set_flag(target, TARGET_FLAG_IMPORTED, imported);
     
     bool accepts_sources = (type == TARGET_STATIC_LIB || type == TARGET_SHARED_LIB || type == TARGET_OBJECT_LIB);
     if (!accepts_sources) return;
@@ -5681,10 +4671,10 @@ static void eval_add_custom_target_command(Evaluator_Context *ctx, Args args) {
 
     size_t i = 1;
     if (i < args.count && nob_sv_eq(resolve_arg(ctx, args.items[i]), sv_from_cstr("ALL"))) {
-        target->exclude_from_all = false;
+        build_target_set_flag(target, TARGET_FLAG_EXCLUDE_FROM_ALL, false);
         i++;
     } else {
-        target->exclude_from_all = true;
+        build_target_set_flag(target, TARGET_FLAG_EXCLUDE_FROM_ALL, true);
     }
 
     while (i < args.count) {
@@ -5732,7 +4722,7 @@ static void eval_add_custom_target_command(Evaluator_Context *ctx, Args args) {
 
     if (commands.count == 0) return;
     String_View merged_command = join_commands_with_and(ctx->arena, commands);
-    Custom_Command *cmd = build_target_add_custom_command(target, ctx->arena, true, merged_command, working_dir, comment);
+    Custom_Command *cmd = evaluator_target_add_custom_command_ex(target, ctx->arena, true, merged_command, working_dir, comment);
     if (!cmd) return;
     custom_command_copy_list(ctx->arena, &cmd->depends, &depends);
     custom_command_copy_list(ctx->arena, &cmd->byproducts, &byproducts);
@@ -5754,11 +4744,7 @@ static void eval_include_directories_command(Evaluator_Context *ctx, Args args) 
 
         String_View path = genex_trim(arg);
         if (path.count == 0) continue;
-        if (system_mode) {
-            string_list_add_unique(&ctx->model->directories.system_include_dirs, ctx->arena, path);
-        } else {
-            string_list_add_unique(&ctx->model->directories.include_dirs, ctx->arena, path);
-        }
+        build_model_add_include_directory(ctx->model, ctx->arena, path, system_mode);
     }
 }
 
@@ -5788,15 +4774,15 @@ static void eval_dirprop_on_item(Evaluator_Context *ctx, String_View item, void 
     String_View prop = u->prop;
 
     if (sv_eq_ci(prop, sv_from_cstr("INCLUDE_DIRECTORIES"))) {
-        string_list_add_unique(&ctx->model->directories.include_dirs, ctx->arena, item);
+        build_model_add_include_directory(ctx->model, ctx->arena, item, false);
     } else if (sv_eq_ci(prop, sv_from_cstr("SYSTEM_INCLUDE_DIRECTORIES"))) {
-        string_list_add_unique(&ctx->model->directories.system_include_dirs, ctx->arena, item);
+        build_model_add_include_directory(ctx->model, ctx->arena, item, true);
     } else if (sv_eq_ci(prop, sv_from_cstr("LINK_DIRECTORIES"))) {
-        string_list_add_unique(&ctx->model->directories.link_dirs, ctx->arena, item);
+        build_model_add_link_directory(ctx->model, ctx->arena, item);
     } else if (sv_eq_ci(prop, sv_from_cstr("COMPILE_OPTIONS"))) {
-        string_list_add_unique(&ctx->model->global_compile_options, ctx->arena, item);
+        build_model_add_global_compile_option(ctx->model, ctx->arena, item);
     } else if (sv_eq_ci(prop, sv_from_cstr("LINK_OPTIONS"))) {
-        string_list_add_unique(&ctx->model->global_link_options, ctx->arena, item);
+        build_model_add_global_link_option(ctx->model, ctx->arena, item);
     } else if (sv_eq_ci(prop, sv_from_cstr("COMPILE_DEFINITIONS")) ||
                sv_eq_ci(prop, sv_from_cstr("DEFINITIONS"))) {
 
@@ -5811,7 +4797,7 @@ static void eval_dirprop_on_item(Evaluator_Context *ctx, String_View item, void 
             if (item.count == 0) return;
         }
 
-        string_list_add_unique(&ctx->model->global_definitions, ctx->arena, item);
+        build_model_add_global_definition(ctx->model, ctx->arena, item);
     }
 }
 
@@ -5856,7 +4842,7 @@ static void eval_add_compile_options_command(Evaluator_Context *ctx, Args args) 
     for (size_t i = 0; i < args.count; i++) {
         String_View opt = resolve_arg(ctx, args.items[i]);
         if (opt.count == 0) continue;
-        string_list_add_unique(&ctx->model->global_compile_options, ctx->arena, opt);
+        build_model_add_global_compile_option(ctx->model, ctx->arena, opt);
     }
 }
 
@@ -5870,7 +4856,7 @@ static void eval_add_compile_definitions_command(Evaluator_Context *ctx, Args ar
         }
         def = genex_trim(def);
         if (def.count == 0) continue;
-        string_list_add_unique(&ctx->model->global_definitions, ctx->arena, def);
+        build_model_add_global_definition(ctx->model, ctx->arena, def);
     }
 }
 
@@ -5880,16 +4866,7 @@ static void eval_add_definitions_command(Evaluator_Context *ctx, Args args) {
     for (size_t i = 0; i < args.count; i++) {
         String_View arg = genex_trim(resolve_arg(ctx, args.items[i]));
         if (arg.count == 0) continue;
-
-        if (nob_sv_starts_with(arg, sv_from_cstr("-D")) ||
-            nob_sv_starts_with(arg, sv_from_cstr("/D"))) {
-            String_View def = nob_sv_from_parts(arg.data + 2, arg.count - 2);
-            def = genex_trim(def);
-            if (def.count == 0) continue;
-            string_list_add_unique(&ctx->model->global_definitions, ctx->arena, def);
-        } else {
-            string_list_add_unique(&ctx->model->global_compile_options, ctx->arena, arg);
-        }
+        build_model_process_global_definition_arg(ctx->model, ctx->arena, arg);
     }
 }
 
@@ -5939,17 +4916,6 @@ static void eval_aux_source_directory_command(Evaluator_Context *ctx, Args args)
     nob_da_free(children);
     eval_set_var(ctx, out_var, sb_to_sv(list), false, false);
     nob_sb_free(list);
-}
-
-static void string_list_remove_exact(String_List *list, String_View item) {
-    if (!list) return;
-    size_t out = 0;
-    for (size_t i = 0; i < list->count; i++) {
-        if (!nob_sv_eq(list->items[i], item)) {
-            list->items[out++] = list->items[i];
-        }
-    }
-    list->count = out;
 }
 
 static String_View source_property_internal_key(Evaluator_Context *ctx, String_View source, const char *prop_name) {
@@ -6038,7 +5004,7 @@ static void eval_remove_definitions_command(Evaluator_Context *ctx, Args args) {
         }
         def = genex_trim(def);
         if (def.count == 0) continue;
-        string_list_remove_exact(&ctx->model->global_definitions, def);
+        build_model_remove_global_definition(ctx->model, def);
     }
 }
 
@@ -6117,7 +5083,7 @@ static void eval_add_link_options_command(Evaluator_Context *ctx, Args args) {
     for (size_t i = 0; i < args.count; i++) {
         String_View opt = resolve_arg(ctx, args.items[i]);
         if (opt.count == 0) continue;
-        string_list_add_unique(&ctx->model->global_link_options, ctx->arena, opt);
+        build_model_add_global_link_option(ctx->model, ctx->arena, opt);
     }
 }
 
@@ -6131,7 +5097,7 @@ static void eval_link_directories_command(Evaluator_Context *ctx, Args args) {
         }
         dir = genex_trim(dir);
         if (dir.count == 0) continue;
-        string_list_add_unique(&ctx->model->directories.link_dirs, ctx->arena, dir);
+        build_model_add_link_directory(ctx->model, ctx->arena, dir);
     }
 }
 
@@ -6147,13 +5113,12 @@ static void eval_append_link_library_item(Evaluator_Context *ctx, Build_Target *
     }
 
     if (nob_sv_starts_with(item, sv_from_cstr("-framework "))) {
-        String_View fw = genex_trim(nob_sv_from_parts(item.data + 11, item.count - 11));
         if (target) {
+            String_View fw = genex_trim(nob_sv_from_parts(item.data + 11, item.count - 11));
             build_target_add_library(target, ctx->arena, sv_from_cstr("-framework"), visibility);
             if (fw.count > 0) build_target_add_library(target, ctx->arena, fw, visibility);
         } else {
-            string_list_add_unique(&ctx->model->global_link_libraries, ctx->arena, sv_from_cstr("-framework"));
-            if (fw.count > 0) string_list_add_unique(&ctx->model->global_link_libraries, ctx->arena, fw);
+            build_model_add_global_link_library(ctx->model, ctx->arena, item);
         }
         return;
     }
@@ -6171,7 +5136,7 @@ static void eval_append_link_library_item(Evaluator_Context *ctx, Build_Target *
             build_target_add_library(target, ctx->arena, item, visibility);
         }
     } else {
-        string_list_add_unique(&ctx->model->global_link_libraries, ctx->arena, item);
+        build_model_add_global_link_library(ctx->model, ctx->arena, item);
     }
 }
 
@@ -6456,74 +5421,6 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
     }
 }
 
-static bool parse_target_property_list_key(String_View key, Build_Config *out_cfg, String_List **out_list, Build_Target *target) {
-    if (!out_cfg || !out_list || !target) return false;
-
-    if (nob_sv_eq(key, sv_from_cstr("COMPILE_DEFINITIONS"))) {
-        *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].compile_definitions;
-        return true;
-    }
-    if (nob_sv_eq(key, sv_from_cstr("COMPILE_OPTIONS"))) {
-        *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].compile_options;
-        return true;
-    }
-    if (nob_sv_eq(key, sv_from_cstr("INCLUDE_DIRECTORIES"))) {
-        *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].include_directories;
-        return true;
-    }
-    if (nob_sv_eq(key, sv_from_cstr("LINK_OPTIONS"))) {
-        *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].link_options;
-        return true;
-    }
-    if (nob_sv_eq(key, sv_from_cstr("LINK_DIRECTORIES"))) {
-        *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].link_directories;
-        return true;
-    }
-
-    String_View suffix = sv_from_cstr("");
-    if (nob_sv_end_with(key, "_DEBUG")) suffix = sv_from_cstr("DEBUG");
-    else if (nob_sv_end_with(key, "_RELEASE")) suffix = sv_from_cstr("RELEASE");
-    else if (nob_sv_end_with(key, "_RELWITHDEBINFO")) suffix = sv_from_cstr("RELWITHDEBINFO");
-    else if (nob_sv_end_with(key, "_MINSIZEREL")) suffix = sv_from_cstr("MINSIZEREL");
-    else return false;
-
-    Build_Config cfg = config_from_string(suffix);
-    if (cfg == CONFIG_ALL) return false;
-
-    if (nob_sv_starts_with(key, sv_from_cstr("COMPILE_DEFINITIONS_"))) {
-        *out_cfg = cfg;
-        *out_list = &target->properties[cfg].compile_definitions;
-        return true;
-    }
-    if (nob_sv_starts_with(key, sv_from_cstr("COMPILE_OPTIONS_"))) {
-        *out_cfg = cfg;
-        *out_list = &target->properties[cfg].compile_options;
-        return true;
-    }
-    if (nob_sv_starts_with(key, sv_from_cstr("INCLUDE_DIRECTORIES_"))) {
-        *out_cfg = cfg;
-        *out_list = &target->properties[cfg].include_directories;
-        return true;
-    }
-    if (nob_sv_starts_with(key, sv_from_cstr("LINK_OPTIONS_"))) {
-        *out_cfg = cfg;
-        *out_list = &target->properties[cfg].link_options;
-        return true;
-    }
-    if (nob_sv_starts_with(key, sv_from_cstr("LINK_DIRECTORIES_"))) {
-        *out_cfg = cfg;
-        *out_list = &target->properties[cfg].link_directories;
-        return true;
-    }
-
-    return false;
-}
-
 static String_View append_property_value(Evaluator_Context *ctx, String_View current, String_View value, bool append, bool append_string) {
     if (!append && !append_string) return value;
     if (current.count == 0) return value;
@@ -6541,29 +5438,7 @@ static String_View append_property_value(Evaluator_Context *ctx, String_View cur
 static void eval_apply_target_property(Evaluator_Context *ctx, Build_Target *target, String_View key, String_View value, bool append, bool append_string) {
     String_View current = build_target_get_property(target, key);
     String_View final_value = append_property_value(ctx, current, value, append, append_string);
-    build_target_set_property(target, ctx->arena, key, final_value);
-
-    if (nob_sv_eq(key, sv_from_cstr("OUTPUT_NAME"))) {
-        target->output_name = final_value;
-    } else if (nob_sv_eq(key, sv_from_cstr("PREFIX"))) {
-        target->prefix = final_value;
-    } else if (nob_sv_eq(key, sv_from_cstr("SUFFIX"))) {
-        target->suffix = final_value;
-    } else if (nob_sv_eq(key, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"))) {
-        target->runtime_output_directory = final_value;
-    } else if (nob_sv_eq(key, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"))) {
-        target->archive_output_directory = final_value;
-    } else if (nob_sv_eq(key, sv_from_cstr("OUTPUT_DIRECTORY"))) {
-        target->output_directory = final_value;
-    }
-
-    Build_Config cfg = CONFIG_ALL;
-    String_List *list = NULL;
-    if (parse_target_property_list_key(key, &cfg, &list, target) && list) {
-        list->count = 0;
-        List_Add_Ud ud = { .list = list, .unique = false };
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_list_add_item, &ud);
-    }
+    build_target_set_property_smart(target, ctx->arena, key, final_value);
 }
 
 static String_View target_property_list_to_sv(Evaluator_Context *ctx, String_List *list) {
@@ -6579,47 +5454,8 @@ static String_View target_property_list_to_sv(Evaluator_Context *ctx, String_Lis
 }
 
 static String_View eval_get_target_property_value(Evaluator_Context *ctx, Build_Target *target, String_View prop_name) {
-    Build_Config active_cfg = config_from_string(ctx->model->default_config);
-    if (sv_eq_ci(prop_name, sv_from_cstr("TYPE"))) {
-        return target_type_to_cmake_name(target->type);
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("NAME"))) {
-        return target->name;
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("OUTPUT_NAME"))) {
-        return target_property_for_config(target, active_cfg, "OUTPUT_NAME",
-            target->output_name.count > 0 ? target->output_name : target->name);
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("OUTPUT_DIRECTORY"))) {
-        return target_property_for_config(target, active_cfg, "OUTPUT_DIRECTORY",
-            target->output_directory.count > 0 ? target->output_directory : sv_from_cstr("build"));
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"))) {
-        return target_property_for_config(target, active_cfg, "RUNTIME_OUTPUT_DIRECTORY",
-            target->runtime_output_directory.count > 0 ? target->runtime_output_directory : sv_from_cstr(""));
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"))) {
-        return target_property_for_config(target, active_cfg, "ARCHIVE_OUTPUT_DIRECTORY",
-            target->archive_output_directory.count > 0 ? target->archive_output_directory : sv_from_cstr(""));
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("PREFIX"))) {
-        return target_property_for_config(target, active_cfg, "PREFIX", target->prefix);
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("SUFFIX"))) {
-        return target_property_for_config(target, active_cfg, "SUFFIX", target->suffix);
-    }
-    if (sv_eq_ci(prop_name, sv_from_cstr("IMPORTED_LOCATION"))) {
-        return target_property_for_config(target, active_cfg, "IMPORTED_LOCATION", sv_from_cstr(""));
-    }
-
-    Build_Config cfg = CONFIG_ALL;
-    String_List *list = NULL;
-    if (parse_target_property_list_key(prop_name, &cfg, &list, target) && list) {
-        return target_property_list_to_sv(ctx, list);
-    }
-
-    const char *prop_key = nob_temp_sv_to_cstr(prop_name);
-    return target_property_for_config(target, active_cfg, prop_key, sv_from_cstr(""));
+    String_View value = build_target_get_property_computed(target, prop_name, ctx->model->default_config);
+    return sv_copy_to_arena(ctx->arena, value);
 }
 
 static String_View internal_advanced_key_for_var(Evaluator_Context *ctx, String_View var_name) {
@@ -7161,7 +5997,7 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
         }
 
         if (ctx->model->install_rules.prefix.count == 0) {
-            ctx->model->install_rules.prefix = general_dest;
+            build_model_set_install_prefix(ctx->model, general_dest);
         }
 
         for (size_t t = 0; t < targets.count; t++) {
@@ -7173,7 +6009,7 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
                 else if (target->type == TARGET_STATIC_LIB && archive_dest.count > 0) destination = archive_dest;
                 else if (target->type == TARGET_SHARED_LIB && library_dest.count > 0) destination = library_dest;
             }
-            install_rules_add_entry(ctx->arena, &ctx->model->install_rules.targets, target_name, destination);
+            build_model_add_install_rule(ctx->model, ctx->arena, INSTALL_RULE_TARGET, target_name, destination);
         }
         if (export_set_name.count > 0) {
             String_View set_key = internal_install_export_set_key(ctx, export_set_name);
@@ -7194,7 +6030,7 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
             nob_sb_free(list_sb);
             build_model_set_cache_variable(ctx->model, set_key, merged_targets, sv_from_cstr("INTERNAL"), sv_from_cstr(""));
         }
-        ctx->model->enable_install = true;
+        build_model_set_install_enabled(ctx->model, true);
         return;
     }
 
@@ -7214,7 +6050,7 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
         destination = ctx->model->install_rules.prefix;
     }
     if (ctx->model->install_rules.prefix.count == 0) {
-        ctx->model->install_rules.prefix = destination;
+        build_model_set_install_prefix(ctx->model, destination);
     }
 
     size_t end = dest_idx < args.count ? dest_idx : args.count;
@@ -7224,9 +6060,9 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
         for (size_t i = 1; i < end; i++) {
             String_View item = resolve_arg(ctx, args.items[i]);
             if (is_install_keyword(item)) continue;
-            install_rules_add_entry(ctx->arena, &ctx->model->install_rules.files, item, destination);
+            build_model_add_install_rule(ctx->model, ctx->arena, INSTALL_RULE_FILE, item, destination);
         }
-        ctx->model->enable_install = true;
+        build_model_set_install_enabled(ctx->model, true);
         return;
     }
 
@@ -7234,9 +6070,9 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
         for (size_t i = 1; i < end; i++) {
             String_View item = resolve_arg(ctx, args.items[i]);
             if (is_install_keyword(item)) continue;
-            install_rules_add_entry(ctx->arena, &ctx->model->install_rules.programs, item, destination);
+            build_model_add_install_rule(ctx->model, ctx->arena, INSTALL_RULE_PROGRAM, item, destination);
         }
-        ctx->model->enable_install = true;
+        build_model_set_install_enabled(ctx->model, true);
         return;
     }
 
@@ -7244,9 +6080,9 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
         for (size_t i = 1; i < end; i++) {
             String_View item = resolve_arg(ctx, args.items[i]);
             if (is_install_keyword(item)) continue;
-            install_rules_add_entry(ctx->arena, &ctx->model->install_rules.directories, item, destination);
+            build_model_add_install_rule(ctx->model, ctx->arena, INSTALL_RULE_DIRECTORY, item, destination);
         }
-        ctx->model->enable_install = true;
+        build_model_set_install_enabled(ctx->model, true);
     }
 }
 
@@ -7254,7 +6090,7 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
 static void eval_enable_testing_command(Evaluator_Context *ctx, Args args) {
     (void)args;
     if (!ctx || !ctx->model) return;
-    ctx->model->enable_testing = true;
+    build_model_set_testing_enabled(ctx->model, true);
     eval_set_var(ctx, sv_from_cstr("CMAKE_TESTING_ENABLED"), sv_from_cstr("ON"), false, false);
 }
 
@@ -8414,13 +7250,13 @@ static void eval_cpack_add_install_type_command(Evaluator_Context *ctx, Args arg
     String_View name = resolve_arg(ctx, args.items[0]);
     if (name.count == 0) return;
 
-    CPack_Install_Type *install_type = build_model_add_cpack_install_type(ctx->model, name);
+    CPack_Install_Type *install_type = build_model_get_or_create_cpack_install_type(ctx->model, ctx->arena, name);
     if (!install_type) return;
 
     for (size_t i = 1; i < args.count; i++) {
         String_View tok = resolve_arg(ctx, args.items[i]);
         if (sv_eq_ci(tok, sv_from_cstr("DISPLAY_NAME")) && i + 1 < args.count) {
-            install_type->display_name = resolve_arg(ctx, args.items[++i]);
+            build_cpack_install_type_set_display_name(install_type, resolve_arg(ctx, args.items[++i]));
         }
     }
 
@@ -8449,29 +7285,29 @@ static void eval_cpack_add_component_group_command(Evaluator_Context *ctx, Args 
     String_View name = resolve_arg(ctx, args.items[0]);
     if (name.count == 0) return;
 
-    CPack_Component_Group *group = build_model_add_cpack_component_group(ctx->model, name);
+    CPack_Component_Group *group = build_model_get_or_create_cpack_group(ctx->model, ctx->arena, name);
     if (!group) return;
 
     for (size_t i = 1; i < args.count; i++) {
         String_View tok = resolve_arg(ctx, args.items[i]);
         if (sv_eq_ci(tok, sv_from_cstr("DISPLAY_NAME")) && i + 1 < args.count) {
-            group->display_name = resolve_arg(ctx, args.items[++i]);
+            build_cpack_group_set_display_name(group, resolve_arg(ctx, args.items[++i]));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DESCRIPTION")) && i + 1 < args.count) {
-            group->description = resolve_arg(ctx, args.items[++i]);
+            build_cpack_group_set_description(group, resolve_arg(ctx, args.items[++i]));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("PARENT_GROUP")) && i + 1 < args.count) {
-            group->parent_group = resolve_arg(ctx, args.items[++i]);
+            build_cpack_group_set_parent_group(group, resolve_arg(ctx, args.items[++i]));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("EXPANDED"))) {
-            group->expanded = true;
+            build_cpack_group_set_expanded(group, true);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("BOLD_TITLE"))) {
-            group->bold_title = true;
+            build_cpack_group_set_bold_title(group, true);
             continue;
         }
     }
@@ -8517,24 +7353,24 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
     String_View name = resolve_arg(ctx, args.items[0]);
     if (name.count == 0) return;
 
-    CPack_Component *component = build_model_add_cpack_component(ctx->model, name);
+    CPack_Component *component = build_model_get_or_create_cpack_component(ctx->model, ctx->arena, name);
     if (!component) return;
-    component->depends.count = 0;
-    component->install_types.count = 0;
+    build_cpack_component_clear_dependencies(component);
+    build_cpack_component_clear_install_types(component);
 
     for (size_t i = 1; i < args.count; i++) {
         String_View tok = resolve_arg(ctx, args.items[i]);
         if (sv_eq_ci(tok, sv_from_cstr("DISPLAY_NAME")) && i + 1 < args.count) {
-            component->display_name = resolve_arg(ctx, args.items[++i]);
+            build_cpack_component_set_display_name(component, resolve_arg(ctx, args.items[++i]));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DESCRIPTION")) && i + 1 < args.count) {
-            component->description = resolve_arg(ctx, args.items[++i]);
+            build_cpack_component_set_description(component, resolve_arg(ctx, args.items[++i]));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("GROUP")) && i + 1 < args.count) {
-            component->group = resolve_arg(ctx, args.items[++i]);
-            (void)build_model_add_cpack_component_group(ctx->model, component->group);
+            build_cpack_component_set_group(component, resolve_arg(ctx, args.items[++i]));
+            (void)build_model_get_or_create_cpack_group(ctx->model, ctx->arena, component->group);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DEPENDS"))) {
@@ -8545,7 +7381,7 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
                     i--;
                     break;
                 }
-                if (dep.count > 0) string_list_add_unique(&component->depends, ctx->arena, dep);
+                if (dep.count > 0) build_cpack_component_add_dependency(component, ctx->arena, dep);
                 i++;
             }
             continue;
@@ -8559,27 +7395,27 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
                     break;
                 }
                 if (it.count > 0) {
-                    string_list_add_unique(&component->install_types, ctx->arena, it);
-                    (void)build_model_add_cpack_install_type(ctx->model, it);
+                    build_cpack_component_add_install_type(component, ctx->arena, it);
+                    (void)build_model_get_or_create_cpack_install_type(ctx->model, ctx->arena, it);
                 }
                 i++;
             }
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("REQUIRED"))) {
-            component->required = true;
+            build_cpack_component_set_required(component, true);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("HIDDEN"))) {
-            component->hidden = true;
+            build_cpack_component_set_hidden(component, true);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DISABLED"))) {
-            component->disabled = true;
+            build_cpack_component_set_disabled(component, true);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DOWNLOADED"))) {
-            component->downloaded = true;
+            build_cpack_component_set_downloaded(component, true);
             continue;
         }
         if ((sv_eq_ci(tok, sv_from_cstr("ARCHIVE_FILE")) || sv_eq_ci(tok, sv_from_cstr("PLIST"))) && i + 1 < args.count) {
@@ -8889,36 +7725,15 @@ static void eval_get_test_property_command(Evaluator_Context *ctx, Args args) {
 }
 
 static bool path_is_absolute_sv(String_View path) {
-    if (path.count == 0) return false;
-    if (path.count >= 1 && (path.data[0] == '/' || path.data[0] == '\\')) return true;
-    if (path.count >= 2 && path.data[1] == ':') return true; // Windows drive
-    return false;
+    return build_path_is_absolute(path);
 }
 
 static String_View path_join_arena(Arena *arena, String_View base, String_View rel) {
-    if (!arena) return sv_from_cstr("");
-    if (path_is_absolute_sv(rel)) return rel;
-    String_Builder sb = {0};
-    sb_append_buf(&sb, base.data, base.count);
-    if (sb.count > 0 && sb.items[sb.count - 1] != '/' && sb.items[sb.count - 1] != '\\') {
-        sb_append(&sb, '/');
-    }
-    sb_append_buf(&sb, rel.data, rel.count);
-    String_View out = sv_from_cstr(arena_strndup(arena, sb.items, sb.count));
-    nob_sb_free(sb);
-    return out;
+    return build_path_join(arena, base, rel);
 }
 
 static String_View path_parent_dir_arena(Arena *arena, String_View full_path) {
-    if (!arena || full_path.count == 0) return sv_from_cstr(".");
-    size_t cut = full_path.count;
-    while (cut > 0) {
-        char c = full_path.data[cut - 1];
-        if (c == '/' || c == '\\') break;
-        cut--;
-    }
-    if (cut == 0) return sv_from_cstr(".");
-    return sv_from_cstr(arena_strndup(arena, full_path.data, cut - 1));
+    return build_path_parent_dir(arena, full_path);
 }
 
 static bool path_has_separator(String_View path) {
@@ -8929,43 +7744,11 @@ static bool path_has_separator(String_View path) {
 }
 
 static bool ensure_parent_dirs_for_path(Arena *arena, String_View file_path) {
-    if (!arena || file_path.count == 0) return true;
-
-    size_t sep = file_path.count;
-    while (sep > 0) {
-        char c = file_path.data[sep - 1];
-        if (c == '/' || c == '\\') break;
-        sep--;
-    }
-    if (sep == 0) return true;
-
-    char *dir = arena_strndup(arena, file_path.data, sep - 1);
-    if (!dir) return false;
-    size_t len = strlen(dir);
-    if (len == 0) return true;
-
-    for (size_t i = 0; i < len; i++) {
-        if (dir[i] != '/' && dir[i] != '\\') continue;
-
-        char saved = dir[i];
-        dir[i] = '\0';
-        if (i > 0 && !(i == 2 && isalpha((unsigned char)dir[0]) && dir[1] == ':')) {
-            if (!nob_mkdir_if_not_exists(dir)) {
-                dir[i] = saved;
-                return false;
-            }
-        }
-        dir[i] = saved;
-    }
-
-    return nob_mkdir_if_not_exists(dir);
+    return sys_ensure_parent_dirs(arena, file_path);
 }
 
 static String_View path_make_absolute_arena(Arena *arena, String_View path) {
-    if (!arena) return path;
-    if (path_is_absolute_sv(path)) return sv_copy_to_arena(arena, path);
-    String_View cwd = sv_from_cstr(nob_get_current_dir_temp());
-    return path_join_arena(arena, cwd, path);
+    return build_path_make_absolute(arena, path);
 }
 
 static size_t path_last_separator_index(String_View path) {
@@ -10509,50 +9292,13 @@ static bool file_path_is_dot_or_dotdot(String_View p) {
 }
 
 static bool file_delete_path_recursive(Evaluator_Context *ctx, String_View path) {
-    if (!ctx || path.count == 0) return false;
-    const char *path_c = nob_temp_sv_to_cstr(path);
-    Nob_File_Type t = nob_get_file_type(path_c);
-    if ((int)t < 0) return true; // ja nao existe
-    if (t == NOB_FILE_REGULAR || t == NOB_FILE_SYMLINK || t == NOB_FILE_OTHER) {
-        return nob_delete_file(path_c);
-    }
-    if (t != NOB_FILE_DIRECTORY) return false;
-
-    Nob_File_Paths children = {0};
-    if (!nob_read_entire_dir(path_c, &children)) return false;
-    for (size_t i = 0; i < children.count; i++) {
-        String_View name = sv_from_cstr(children.items[i]);
-        if (file_path_is_dot_or_dotdot(name)) continue;
-        String_View child = path_join_arena(ctx->arena, path, name);
-        if (!file_delete_path_recursive(ctx, child)) {
-            nob_da_free(children);
-            return false;
-        }
-    }
-    nob_da_free(children);
-    return remove(path_c) == 0;
+    if (!ctx) return false;
+    return sys_delete_path_recursive(ctx->arena, path);
 }
 
 static bool file_copy_entry_to_destination(Evaluator_Context *ctx, String_View src, String_View destination) {
-    if (!ctx || src.count == 0 || destination.count == 0) return false;
-    const char *src_c = nob_temp_sv_to_cstr(src);
-    Nob_File_Type t = nob_get_file_type(src_c);
-    if ((int)t < 0) return false;
-
-    String_View final_dst = destination;
-    if (t == NOB_FILE_REGULAR || t == NOB_FILE_SYMLINK || t == NOB_FILE_OTHER) {
-        String_View name = path_basename_sv(src);
-        final_dst = path_join_arena(ctx->arena, destination, name);
-        if (!ensure_parent_dirs_for_path(ctx->arena, final_dst)) return false;
-        return nob_copy_file(src_c, nob_temp_sv_to_cstr(final_dst));
-    }
-    if (t == NOB_FILE_DIRECTORY) {
-        String_View name = path_basename_sv(src);
-        final_dst = path_join_arena(ctx->arena, destination, name);
-        if (!nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(destination))) return false;
-        return nob_copy_directory_recursively(src_c, nob_temp_sv_to_cstr(final_dst));
-    }
-    return false;
+    if (!ctx) return false;
+    return sys_copy_entry_to_destination(ctx->arena, src, destination);
 }
 
 static bool file_collect_glob_recursive(Evaluator_Context *ctx,
@@ -10833,27 +9579,8 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             if (sv_eq_ci(tok, sv_from_cstr("STATUS")) && i + 1 < args.count) status_var = resolve_arg(ctx, args.items[++i]);
             else if (sv_eq_ci(tok, sv_from_cstr("LOG")) && i + 1 < args.count) log_var = resolve_arg(ctx, args.items[++i]);
         }
-        bool ok = false;
         String_View log_msg = sv_from_cstr("");
-        if (!ensure_parent_dirs_for_path(ctx->arena, out_path)) {
-            ok = false;
-            log_msg = sv_from_cstr("failed to prepare output directory");
-        } else if (nob_sv_starts_with(url, sv_from_cstr("file://"))) {
-            String_View src = nob_sv_from_parts(url.data + 7, url.count - 7);
-            ok = nob_copy_file(nob_temp_sv_to_cstr(src), nob_temp_sv_to_cstr(out_path));
-            log_msg = ok ? sv_from_cstr("downloaded via file://") : sv_from_cstr("failed to copy file:// source");
-        } else {
-            #if defined(_WIN32)
-                int rc = system(nob_temp_sprintf("powershell -NoProfile -Command \"try {(New-Object Net.WebClient).DownloadFile('%s','%s'); exit 0} catch { exit 1 }\"",
-                nob_temp_sv_to_cstr(url), nob_temp_sv_to_cstr(out_path)));
-                ok = (rc == 0);
-            #else
-                int rc = system(nob_temp_sprintf("curl -L --fail -o '%s' '%s' >/dev/null 2>&1",
-                nob_temp_sv_to_cstr(out_path), nob_temp_sv_to_cstr(url)));
-                ok = (rc == 0);
-            #endif
-            log_msg = ok ? sv_from_cstr("downloaded via external tool") : sv_from_cstr("download failed");
-        }
+        bool ok = sys_download_to_path(ctx->arena, url, out_path, &log_msg);
         if (status_var.count > 0) {
             eval_set_var(ctx, status_var, ok ? sv_from_cstr("0;\"OK\"") : sv_from_cstr("1;\"FAILED\""), false, false);
         }
@@ -10928,7 +9655,7 @@ static void eval_use_mangled_mesa_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    string_list_add_unique(&ctx->model->directories.include_dirs, ctx->arena, out_dir);
+    build_model_add_include_directory(ctx->model, ctx->arena, out_dir, false);
     eval_set_var(ctx, sv_from_cstr("MANGLED_MESA_OUTPUT_DIR"), out_dir, false, false);
 }
 

@@ -233,7 +233,7 @@ static bool target_is_linkable_artifact(Build_Target *target) {
 
 static String_View target_property_for_config(Build_Target *target, Build_Config cfg, const char *base_key, String_View fallback) {
     if (!target) return fallback;
-    String_View suffix = config_suffix(cfg);
+    String_View suffix = build_model_config_suffix(cfg);
     if (suffix.count > 0) {
         String_View cfg_key = sv_from_cstr(nob_temp_sprintf("%s_%s", base_key, nob_temp_sv_to_cstr(suffix)));
         String_View cfg_val = build_target_get_property(target, cfg_key);
@@ -302,7 +302,7 @@ static void collect_interface_usage_recursive(
 static void generate_output_custom_commands(Build_Model *model, String_Builder *sb) {
     if (!model || model->output_custom_command_count == 0) return;
 
-    Build_Config active_cfg = config_from_string(model->default_config);
+    Build_Config active_cfg = build_model_config_from_string(model->default_config);
     sb_appendf(sb, "    // Custom commands: OUTPUT (%zu)\n", model->output_custom_command_count);
 
     for (size_t i = 0; i < model->output_custom_command_count; i++) {
@@ -919,7 +919,7 @@ static void generate_install_code(Build_Model *model, String_Builder *sb) {
         cpack_productbuild_manifest.count == 0 && cpack_ifw_manifest.count == 0 &&
         cpack_nuget_manifest.count == 0 && cpack_freebsd_manifest.count == 0 &&
         cpack_cygwin_manifest.count == 0) return;
-    Build_Config active_cfg = config_from_string(model->default_config);
+    Build_Config active_cfg = build_model_config_from_string(model->default_config);
 
     String_View default_dest = model->install_rules.prefix.count > 0 ? model->install_rules.prefix : sv_from_cstr("install");
     sb_append_cstr(sb, "    if (argc > 1 && strcmp(argv[1], \"install\") == 0) {\n");
@@ -1233,7 +1233,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     }
     sb_appendf(sb, "    Nob_Cmd cmd_"SV_Fmt" = {0};\n", SV_Arg(ident));
     sb_appendf(sb, "    Nob_File_Paths objs_"SV_Fmt" = {0};\n\n", SV_Arg(ident));
-    Build_Config active_cfg = config_from_string(model->default_config);
+    Build_Config active_cfg = build_model_config_from_string(model->default_config);
 
     if (target->pre_build_count > 0) {
         sb_appendf(sb, "    // Custom commands: PRE_BUILD (%zu)\n", target->pre_build_count);
@@ -1501,7 +1501,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
             dep = resolve_alias_target(model, dep);
             if (!dep || !target_is_linkable_artifact(dep)) continue;
             sb_appendf(sb, "    nob_cmd_append(&cmd_"SV_Fmt", ", SV_Arg(ident));
-            sb_append_target_output_path_literal(sb, dep, config_from_string(model->default_config));
+            sb_append_target_output_path_literal(sb, dep, build_model_config_from_string(model->default_config));
             sb_append_cstr(sb, ");\n");
         }
         for (size_t i = 0; i < all_link_libs.count; i++) {
