@@ -172,7 +172,7 @@ static String_View codegen_logic_get_var(void *userdata, String_View name, bool 
 static bool target_has_dependents(Build_Model *model, String_View target_name) {
     if (!model || target_name.count == 0) return false;
     for (size_t i = 0; i < model->target_count; i++) {
-        Build_Target *t = &model->targets[i];
+        Build_Target *t = model->targets[i];
         for (size_t j = 0; j < t->dependencies.count; j++) {
             if (nob_sv_eq(t->dependencies.items[j], target_name)) return true;
         }
@@ -1710,7 +1710,7 @@ static void generate_from_model(Build_Model *model, String_Builder *sb) {
     } else {
         // Fallback defensivo para manter geraÃ§Ã£o mesmo com dependÃªncias invÃ¡lidas/cÃ­clicas.
         for (size_t i = 0; i < model->target_count; i++) {
-            Build_Target *target = &model->targets[i];
+            Build_Target *target = model->targets[i];
             generate_target_code(model, target, sb);
         }
     }

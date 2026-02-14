@@ -85,6 +85,33 @@ TEST(add_target) {
     TEST_PASS();
 }
 
+TEST(target_pointer_stability_across_growth) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    Build_Target *root = build_model_add_target(model, sv_from_cstr("root"), TARGET_STATIC_LIB);
+    ASSERT(root != NULL);
+    build_target_add_source(root, arena, sv_from_cstr("a.c"));
+
+    for (size_t i = 0; i < 128; i++) {
+        String_View name = sv_from_cstr(nob_temp_sprintf("t_%zu", i));
+        Build_Target *t = build_model_add_target(model, name, TARGET_STATIC_LIB);
+        ASSERT(t != NULL);
+    }
+
+    build_target_add_source(root, arena, sv_from_cstr("b.c"));
+
+    Build_Target *found = build_model_find_target(model, sv_from_cstr("root"));
+    ASSERT(found != NULL);
+    ASSERT(found == root);
+    ASSERT(found->sources.count == 2);
+    ASSERT(nob_sv_eq(found->sources.items[0], sv_from_cstr("a.c")));
+    ASSERT(nob_sv_eq(found->sources.items[1], sv_from_cstr("b.c")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(find_target) {
     Arena *arena = arena_create(1024 * 1024);
     Build_Model *model = build_model_create(arena);
@@ -268,9 +295,9 @@ TEST(multiple_targets) {
     build_model_add_target(model, sv_from_cstr("lib2"), TARGET_SHARED_LIB);
     
     ASSERT(model->target_count == 3);
-    ASSERT(nob_sv_eq(model->targets[0].name, sv_from_cstr("app")));
-    ASSERT(nob_sv_eq(model->targets[1].name, sv_from_cstr("lib1")));
-    ASSERT(nob_sv_eq(model->targets[2].name, sv_from_cstr("lib2")));
+    ASSERT(nob_sv_eq(model->targets[0]->name, sv_from_cstr("app")));
+    ASSERT(nob_sv_eq(model->targets[1]->name, sv_from_cstr("lib1")));
+    ASSERT(nob_sv_eq(model->targets[2]->name, sv_from_cstr("lib2")));
     
     arena_destroy(arena);
     TEST_PASS();
@@ -1165,6 +1192,7 @@ TEST(fase1_add_test_ex_wrapper) {
 void run_build_model_tests(int *passed, int *failed) {
     test_create_model(passed, failed);
     test_add_target(passed, failed);
+    test_target_pointer_stability_across_growth(passed, failed);
     test_find_target(passed, failed);
     test_add_source(passed, failed);
     test_add_source_deduplicates(passed, failed);

@@ -4888,7 +4888,7 @@ static void apply_source_property_to_matching_targets(Evaluator_Context *ctx,
                                                       String_View value) {
     if (!ctx || !ctx->model || !sources || !prop_name) return;
     for (size_t t = 0; t < ctx->model->target_count; t++) {
-        Build_Target *target = &ctx->model->targets[t];
+        Build_Target *target = ctx->model->targets[t];
         for (size_t s = 0; s < sources->count; s++) {
             String_View src = sources->items[s];
             if (src.count == 0) continue;
@@ -4924,7 +4924,7 @@ static void eval_get_source_file_property_command(Evaluator_Context *ctx, Args a
     }
 
     for (size_t t = 0; t < ctx->model->target_count; t++) {
-        Build_Target *target = &ctx->model->targets[t];
+        Build_Target *target = ctx->model->targets[t];
         bool source_found = false;
         for (size_t s = 0; s < target->sources.count; s++) {
             if (nob_sv_eq(target->sources.items[s], source)) {
@@ -5839,7 +5839,7 @@ static void eval_get_property_command(Evaluator_Context *ctx, Args args) {
             String_Builder sb = {0};
             for (size_t i = 0; i < ctx->model->target_count; i++) {
                 if (i > 0) sb_append(&sb, ';');
-                sb_append_buf(&sb, ctx->model->targets[i].name.data, ctx->model->targets[i].name.count);
+                sb_append_buf(&sb, ctx->model->targets[i]->name.data, ctx->model->targets[i]->name.count);
             }
             value = sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count));
             nob_sb_free(sb);

@@ -7,7 +7,9 @@ static void build_model_heap_cleanup(void *userdata) {
     Build_Model *model = (Build_Model*)userdata;
     if (!model) return;
     for (size_t i = 0; i < model->target_count; i++) {
-        ds_shfree(model->targets[i].custom_property_index);
+        if (model->targets[i]) {
+            ds_shfree(model->targets[i]->custom_property_index);
+        }
     }
     ds_shfree(model->target_index_by_name);
     ds_shfree(model->cache_variable_index);
@@ -74,7 +76,7 @@ static Build_Target* build_model_find_target_const(const Build_Model *model, Str
     if (!model) return NULL;
     int idx = build_model_lookup_target_index(model, name);
     if (idx < 0 || (size_t)idx >= model->target_count) return NULL;
-    return (Build_Target*)&model->targets[idx];
+    return model->targets[idx];
 }
 
 int build_model_find_target_index(const Build_Model *model, String_View name) {
@@ -86,7 +88,7 @@ static bool build_model_has_cycle_dfs(const Build_Model *model, size_t idx, uint
     if (state[idx] == 2) return false;
 
     state[idx] = 1;
-    const Build_Target *target = &model->targets[idx];
+    const Build_Target *target = model->targets[idx];
 
     for (size_t j = 0; j < target->dependencies.count; j++) {
         int dep_idx = build_model_find_target_index(model, target->dependencies.items[j]);
@@ -378,7 +380,7 @@ Build_Target* build_model_add_target(Build_Model *model,
     // Verifica se ja existe
     int existing_idx = build_model_lookup_target_index(model, name);
     if (existing_idx >= 0 && (size_t)existing_idx < model->target_count) {
-        Build_Target *existing = &model->targets[existing_idx];
+        Build_Target *existing = model->targets[existing_idx];
         if (existing->type != type) {
             nob_log(NOB_ERROR, "Target '"SV_Fmt"' redefinido com tipo diferente", SV_Arg(name));
             return NULL;
@@ -393,14 +395,15 @@ Build_Target* build_model_add_target(Build_Model *model,
             return NULL;
         }
     }
-    
-    Build_Target *target = &model->targets[model->target_count++];
-    memset(target, 0, sizeof(Build_Target));
+
+    Build_Target *target = arena_alloc_zero(model->arena, sizeof(Build_Target));
+    if (!target) return NULL;
+    model->targets[model->target_count++] = target;
     
     char *name_copy = arena_strndup(model->arena, name.data, name.count);
     if (!name_copy) {
         model->target_count--;
-        memset(target, 0, sizeof(*target));
+        model->targets[model->target_count] = NULL;
         nob_log(NOB_ERROR, "Falha ao copiar nome do target '"SV_Fmt"'", SV_Arg(name));
         return NULL;
     }
@@ -974,7 +977,7 @@ bool build_model_validate_dependencies(Build_Model *model) {
     if (!model) return false;
 
     for (size_t i = 0; i < model->target_count; i++) {
-        Build_Target *target = &model->targets[i];
+        Build_Target *target = model->targets[i];
         for (size_t j = 0; j < target->dependencies.count; j++) {
             String_View dep_name = target->dependencies.items[j];
             if (!build_model_find_target(model, dep_name)) {
@@ -1008,7 +1011,7 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
     if (!in_degree || !queue || !sorted) return NULL;
 
     for (size_t i = 0; i < n; i++) {
-        Build_Target *target = &model->targets[i];
+        Build_Target *target = model->targets[i];
         for (size_t j = 0; j < target->dependencies.count; j++) {
             int dep_idx = build_model_find_target_index(model, target->dependencies.items[j]);
             if (dep_idx >= 0) {
@@ -1028,13 +1031,13 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
     size_t sorted_count = 0;
     while (q_front < q_back) {
         size_t current_idx = queue[q_front++];
-        Build_Target *current = &model->targets[current_idx];
+        Build_Target *current = model->targets[current_idx];
         sorted[sorted_count++] = current;
 
         for (size_t i = 0; i < n; i++) {
             if (in_degree[i] == 0) continue;
 
-            Build_Target *other = &model->targets[i];
+            Build_Target *other = model->targets[i];
             for (size_t j = 0; j < other->dependencies.count; j++) {
                 if (nob_sv_eq(other->dependencies.items[j], current->name)) {
                     in_degree[i]--;
@@ -1069,7 +1072,7 @@ void build_model_dump(Build_Model *model, FILE *output) {
     
     fprintf(output, "Targets (%zu):\n", model->target_count);
     for (size_t i = 0; i < model->target_count; i++) {
-        Build_Target *t = &model->targets[i];
+        Build_Target *t = model->targets[i];
         
         const char *type_str = "UNKNOWN";
         switch (t->type) {

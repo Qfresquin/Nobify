@@ -236,7 +236,7 @@ typedef struct {
     String_List project_languages;  // C, CXX, ASM, etc.
     
     // Targets
-    Build_Target *targets;
+    Build_Target **targets;
     size_t target_count;
     size_t target_capacity;
     Build_Target_Index_Entry *target_index_by_name;
