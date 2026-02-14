@@ -1538,6 +1538,51 @@ TEST(cpack_component_commands_materialize_manifest_and_variables) {
     TEST_PASS();
 }
 
+TEST(fase1_cleanup_getters_regression_targets_install_tests_and_cpack) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "project(Test)\n"
+        "add_executable(app main.c)\n"
+        "add_library(core STATIC core.c)\n"
+        "enable_testing()\n"
+        "add_test(NAME smoke COMMAND app)\n"
+        "set_tests_properties(smoke PROPERTIES TIMEOUT 45)\n"
+        "get_test_property(smoke TIMEOUT TMO)\n"
+        "get_property(TS GLOBAL PROPERTY TARGETS)\n"
+        "string(REPLACE \";\" \"_\" TS_FLAT \"${TS}\")\n"
+        "install(TARGETS app core RUNTIME DESTINATION bin ARCHIVE DESTINATION ar)\n"
+        "cpack_add_install_type(Full DISPLAY_NAME \"Full Install\")\n"
+        "cpack_add_component_group(Runtime DISPLAY_NAME \"Runtime Group\")\n"
+        "cpack_add_component(core_comp GROUP Runtime INSTALL_TYPES Full)\n"
+        "add_executable(aux aux.c)\n"
+        "target_compile_definitions(aux PRIVATE \"TMO_${TMO}\" \"TS_${TS_FLAT}\" \"IT_${CPACK_ALL_INSTALL_TYPES}\" \"CG_${CPACK_COMPONENT_GROUPS_ALL}\" \"CC_${CPACK_COMPONENTS_ALL}\")";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "-DTMO_45") != NULL);
+    ASSERT(strstr(output, "-DIT_Full") != NULL);
+    ASSERT(strstr(output, "-DCG_Runtime") != NULL);
+    ASSERT(strstr(output, "-DCC_core_comp") != NULL);
+    ASSERT(strstr(output, "nob_mkdir_if_not_exists(\"bin\")") != NULL);
+    ASSERT(strstr(output, "nob_mkdir_if_not_exists(\"ar\")") != NULL);
+    ASSERT(strstr(output, "-DTS_app_core_aux") != NULL || strstr(output, "-DTS_app_core") != NULL || strstr(output, "-DTS_core_app") != NULL);
+    ASSERT(diag_telemetry_unsupported_count_for("set_tests_properties") == 0);
+    ASSERT(diag_telemetry_unsupported_count_for("get_test_property") == 0);
+    ASSERT(diag_telemetry_unsupported_count_for("cpack_add_install_type") == 0);
+    ASSERT(diag_telemetry_unsupported_count_for("cpack_add_component_group") == 0);
+    ASSERT(diag_telemetry_unsupported_count_for("cpack_add_component") == 0);
+    ASSERT(diag_has_errors() == false);
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(cpack_archive_module_normalizes_metadata_and_generates_archive_manifest) {
     Arena *arena = arena_create(1024 * 1024);
     write_test_file("temp_pkg_archive.txt", "archive");
@@ -5665,6 +5710,7 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_message_without_type(passed, failed);
     test_compat_noop_commands_are_ignored_without_unsupported(passed, failed);
     test_cpack_component_commands_materialize_manifest_and_variables(passed, failed);
+    test_fase1_cleanup_getters_regression_targets_install_tests_and_cpack(passed, failed);
     test_cpack_archive_module_normalizes_metadata_and_generates_archive_manifest(passed, failed);
     test_cpack_archive_defaults_from_project_when_unset(passed, failed);
     test_cpack_deb_module_normalizes_metadata_and_generates_manifest(passed, failed);

@@ -531,6 +531,16 @@ typedef enum {
     INSTALL_RULE_DIRECTORY,
 } Install_Rule_Type;
 
+typedef enum {
+    BUILD_MODEL_LIST_INCLUDE_DIRS,
+    BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS,
+    BUILD_MODEL_LIST_LINK_DIRS,
+    BUILD_MODEL_LIST_GLOBAL_DEFINITIONS,
+    BUILD_MODEL_LIST_GLOBAL_COMPILE_OPTIONS,
+    BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS,
+    BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES,
+} Build_Model_List_Kind;
+
 void build_model_set_project_info(Build_Model *model, String_View name, String_View version);
 void build_model_set_default_config(Build_Model *model, String_View config);
 void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang);
@@ -557,6 +567,31 @@ void build_model_remove_global_definition(Build_Model *model, String_View def);
 // Config helpers
 Build_Config build_model_config_from_string(String_View cfg);
 String_View build_model_config_suffix(Build_Config cfg);
+String_View build_model_get_default_config(const Build_Model *model);
+bool build_model_is_windows(const Build_Model *model);
+bool build_model_is_unix(const Build_Model *model);
+bool build_model_is_apple(const Build_Model *model);
+bool build_model_is_linux(const Build_Model *model);
+String_View build_model_get_project_name(const Build_Model *model);
+String_View build_model_get_project_version(const Build_Model *model);
+const String_List* build_model_get_string_list(const Build_Model *model, Build_Model_List_Kind kind);
+size_t build_model_get_cache_variable_count(const Build_Model *model);
+String_View build_model_get_cache_variable_name_at(const Build_Model *model, size_t index);
+size_t build_model_get_target_count(const Build_Model *model);
+Build_Target* build_model_get_target_at(Build_Model *model, size_t index);
+String_View build_model_get_install_prefix(const Build_Model *model);
+bool build_model_has_install_prefix(const Build_Model *model);
+bool build_model_is_testing_enabled(const Build_Model *model);
+size_t build_model_get_test_count(const Build_Model *model);
+Build_Test* build_model_get_test_at(Build_Model *model, size_t index);
+Build_Test* build_model_find_test_by_name(Build_Model *model, String_View test_name);
+Custom_Command* build_model_find_output_custom_command_by_output(Build_Model *model, String_View output);
+size_t build_model_get_cpack_install_type_count(const Build_Model *model);
+CPack_Install_Type* build_model_get_cpack_install_type_at(Build_Model *model, size_t index);
+size_t build_model_get_cpack_component_group_count(const Build_Model *model);
+CPack_Component_Group* build_model_get_cpack_component_group_at(Build_Model *model, size_t index);
+size_t build_model_get_cpack_component_count(const Build_Model *model);
+CPack_Component* build_model_get_cpack_component_at(Build_Model *model, size_t index);
 
 // Target property routing helpers
 void build_target_set_property_smart(Build_Target *target,
@@ -566,6 +601,33 @@ void build_target_set_property_smart(Build_Target *target,
 String_View build_target_get_property_computed(Build_Target *target,
                                                String_View key,
                                                String_View default_config);
+String_View build_target_get_name(const Build_Target *target);
+Target_Type build_target_get_type(const Build_Target *target);
+bool build_target_has_source(const Build_Target *target, String_View source);
+
+String_View build_test_get_name(const Build_Test *test);
+String_View build_test_get_command(const Build_Test *test);
+String_View build_test_get_working_directory(const Build_Test *test);
+bool build_test_get_command_expand_lists(const Build_Test *test);
+
+String_View build_cpack_install_type_get_name(const CPack_Install_Type *install_type);
+String_View build_cpack_install_type_get_display_name(const CPack_Install_Type *install_type);
+String_View build_cpack_group_get_name(const CPack_Component_Group *group);
+String_View build_cpack_group_get_display_name(const CPack_Component_Group *group);
+String_View build_cpack_group_get_description(const CPack_Component_Group *group);
+String_View build_cpack_group_get_parent_group(const CPack_Component_Group *group);
+bool build_cpack_group_get_expanded(const CPack_Component_Group *group);
+bool build_cpack_group_get_bold_title(const CPack_Component_Group *group);
+String_View build_cpack_component_get_name(const CPack_Component *component);
+String_View build_cpack_component_get_display_name(const CPack_Component *component);
+String_View build_cpack_component_get_description(const CPack_Component *component);
+String_View build_cpack_component_get_group(const CPack_Component *component);
+const String_List* build_cpack_component_get_depends(const CPack_Component *component);
+const String_List* build_cpack_component_get_install_types(const CPack_Component *component);
+bool build_cpack_component_get_required(const CPack_Component *component);
+bool build_cpack_component_get_hidden(const CPack_Component *component);
+bool build_cpack_component_get_disabled(const CPack_Component *component);
+bool build_cpack_component_get_downloaded(const CPack_Component *component);
 
 // Test helper wrapper (Fase 1 compat)
 Build_Test* build_model_add_test_ex(Build_Model *model,

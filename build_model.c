@@ -3,6 +3,8 @@
 #include "ds_adapter.h"
 #include <ctype.h>
 
+static const String_List g_empty_string_list = {0};
+
 static void build_model_heap_cleanup(void *userdata) {
     Build_Model *model = (Build_Model*)userdata;
     if (!model) return;
@@ -802,6 +804,14 @@ Build_Test* build_model_add_test(Build_Model *model,
     return test;
 }
 
+Build_Test* build_model_find_test_by_name(Build_Model *model, String_View test_name) {
+    if (!model || test_name.count == 0) return NULL;
+    for (size_t i = 0; i < model->test_count; i++) {
+        if (nob_sv_eq(model->tests[i].name, test_name)) return &model->tests[i];
+    }
+    return NULL;
+}
+
 CPack_Component_Group* build_model_add_cpack_component_group(Build_Model *model, String_View name) {
     if (!model || name.count == 0) return NULL;
     for (size_t i = 0; i < model->cpack_component_group_count; i++) {
@@ -1356,6 +1366,118 @@ void build_model_set_default_config(Build_Model *model, String_View config) {
     else model->default_config = config;
 }
 
+String_View build_model_get_default_config(const Build_Model *model) {
+    if (!model) return sv_from_cstr("");
+    return model->default_config;
+}
+
+bool build_model_is_windows(const Build_Model *model) {
+    return model ? model->is_windows : false;
+}
+
+bool build_model_is_unix(const Build_Model *model) {
+    return model ? model->is_unix : false;
+}
+
+bool build_model_is_apple(const Build_Model *model) {
+    return model ? model->is_apple : false;
+}
+
+bool build_model_is_linux(const Build_Model *model) {
+    return model ? model->is_linux : false;
+}
+
+String_View build_model_get_project_name(const Build_Model *model) {
+    if (!model) return sv_from_cstr("");
+    return model->project_name;
+}
+
+String_View build_model_get_project_version(const Build_Model *model) {
+    if (!model) return sv_from_cstr("");
+    return model->project_version;
+}
+
+const String_List* build_model_get_string_list(const Build_Model *model, Build_Model_List_Kind kind) {
+    if (!model) return &g_empty_string_list;
+    switch (kind) {
+        case BUILD_MODEL_LIST_INCLUDE_DIRS: return &model->directories.include_dirs;
+        case BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS: return &model->directories.system_include_dirs;
+        case BUILD_MODEL_LIST_LINK_DIRS: return &model->directories.link_dirs;
+        case BUILD_MODEL_LIST_GLOBAL_DEFINITIONS: return &model->global_definitions;
+        case BUILD_MODEL_LIST_GLOBAL_COMPILE_OPTIONS: return &model->global_compile_options;
+        case BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS: return &model->global_link_options;
+        case BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES: return &model->global_link_libraries;
+        default: return &g_empty_string_list;
+    }
+}
+
+size_t build_model_get_cache_variable_count(const Build_Model *model) {
+    return model ? model->cache_variables.count : 0;
+}
+
+String_View build_model_get_cache_variable_name_at(const Build_Model *model, size_t index) {
+    if (!model || index >= model->cache_variables.count) return sv_from_cstr("");
+    return model->cache_variables.items[index].name;
+}
+
+size_t build_model_get_target_count(const Build_Model *model) {
+    return model ? model->target_count : 0;
+}
+
+Build_Target* build_model_get_target_at(Build_Model *model, size_t index) {
+    if (!model || index >= model->target_count) return NULL;
+    return model->targets[index];
+}
+
+String_View build_model_get_install_prefix(const Build_Model *model) {
+    if (!model) return sv_from_cstr("");
+    return model->install_rules.prefix;
+}
+
+bool build_model_has_install_prefix(const Build_Model *model) {
+    return model && model->install_rules.prefix.count > 0;
+}
+
+bool build_model_is_testing_enabled(const Build_Model *model) {
+    return model ? model->enable_testing : false;
+}
+
+size_t build_model_get_test_count(const Build_Model *model) {
+    return model ? model->test_count : 0;
+}
+
+Build_Test* build_model_get_test_at(Build_Model *model, size_t index) {
+    if (!model || index >= model->test_count) return NULL;
+    return &model->tests[index];
+}
+
+size_t build_model_get_cpack_install_type_count(const Build_Model *model) {
+    return model ? model->cpack_install_type_count : 0;
+}
+
+CPack_Install_Type* build_model_get_cpack_install_type_at(Build_Model *model, size_t index) {
+    if (!model || index >= model->cpack_install_type_count) return NULL;
+    return &model->cpack_install_types[index];
+}
+
+size_t build_model_get_cpack_component_group_count(const Build_Model *model) {
+    return model ? model->cpack_component_group_count : 0;
+}
+
+CPack_Component_Group* build_model_get_cpack_component_group_at(Build_Model *model, size_t index) {
+    if (!model || index >= model->cpack_component_group_count) return NULL;
+    return &model->cpack_component_groups[index];
+}
+
+size_t build_model_get_cpack_component_count(const Build_Model *model) {
+    return model ? model->cpack_component_count : 0;
+}
+
+CPack_Component* build_model_get_cpack_component_at(Build_Model *model, size_t index) {
+    if (!model || index >= model->cpack_component_count) return NULL;
+    return &model->cpack_components[index];
+}
+
 void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang) {
     if (!model || !arena) return;
     lang = bm_sv_trim_ws(lang);
@@ -1552,6 +1674,127 @@ String_View build_target_get_property_computed(Build_Target *target,
     return bm_target_property_for_config(target, active_cfg, nob_temp_sv_to_cstr(key), sv_from_cstr(""));
 }
 
+String_View build_target_get_name(const Build_Target *target) {
+    if (!target) return sv_from_cstr("");
+    return target->name;
+}
+
+Target_Type build_target_get_type(const Build_Target *target) {
+    if (!target) return (Target_Type)0;
+    return target->type;
+}
+
+bool build_target_has_source(const Build_Target *target, String_View source) {
+    if (!target || source.count == 0) return false;
+    for (size_t i = 0; i < target->sources.count; i++) {
+        if (nob_sv_eq(target->sources.items[i], source)) return true;
+    }
+    return false;
+}
+
+String_View build_test_get_name(const Build_Test *test) {
+    if (!test) return sv_from_cstr("");
+    return test->name;
+}
+
+String_View build_test_get_command(const Build_Test *test) {
+    if (!test) return sv_from_cstr("");
+    return test->command;
+}
+
+String_View build_test_get_working_directory(const Build_Test *test) {
+    if (!test) return sv_from_cstr("");
+    return test->working_directory;
+}
+
+bool build_test_get_command_expand_lists(const Build_Test *test) {
+    return test ? test->command_expand_lists : false;
+}
+
+String_View build_cpack_install_type_get_name(const CPack_Install_Type *install_type) {
+    if (!install_type) return sv_from_cstr("");
+    return install_type->name;
+}
+
+String_View build_cpack_install_type_get_display_name(const CPack_Install_Type *install_type) {
+    if (!install_type) return sv_from_cstr("");
+    return install_type->display_name;
+}
+
+String_View build_cpack_group_get_name(const CPack_Component_Group *group) {
+    if (!group) return sv_from_cstr("");
+    return group->name;
+}
+
+String_View build_cpack_group_get_display_name(const CPack_Component_Group *group) {
+    if (!group) return sv_from_cstr("");
+    return group->display_name;
+}
+
+String_View build_cpack_group_get_description(const CPack_Component_Group *group) {
+    if (!group) return sv_from_cstr("");
+    return group->description;
+}
+
+String_View build_cpack_group_get_parent_group(const CPack_Component_Group *group) {
+    if (!group) return sv_from_cstr("");
+    return group->parent_group;
+}
+
+bool build_cpack_group_get_expanded(const CPack_Component_Group *group) {
+    return group ? group->expanded : false;
+}
+
+bool build_cpack_group_get_bold_title(const CPack_Component_Group *group) {
+    return group ? group->bold_title : false;
+}
+
+String_View build_cpack_component_get_name(const CPack_Component *component) {
+    if (!component) return sv_from_cstr("");
+    return component->name;
+}
+
+String_View build_cpack_component_get_display_name(const CPack_Component *component) {
+    if (!component) return sv_from_cstr("");
+    return component->display_name;
+}
+
+String_View build_cpack_component_get_description(const CPack_Component *component) {
+    if (!component) return sv_from_cstr("");
+    return component->description;
+}
+
+String_View build_cpack_component_get_group(const CPack_Component *component) {
+    if (!component) return sv_from_cstr("");
+    return component->group;
+}
+
+const String_List* build_cpack_component_get_depends(const CPack_Component *component) {
+    if (!component) return &g_empty_string_list;
+    return &component->depends;
+}
+
+const String_List* build_cpack_component_get_install_types(const CPack_Component *component) {
+    if (!component) return &g_empty_string_list;
+    return &component->install_types;
+}
+
+bool build_cpack_component_get_required(const CPack_Component *component) {
+    return component ? component->required : false;
+}
+
+bool build_cpack_component_get_hidden(const CPack_Component *component) {
+    return component ? component->hidden : false;
+}
+
+bool build_cpack_component_get_disabled(const CPack_Component *component) {
+    return component ? component->disabled : false;
+}
+
+bool build_cpack_component_get_downloaded(const CPack_Component *component) {
+    return component ? component->downloaded : false;
+}
+
 Build_Test* build_model_add_test_ex(Build_Model *model,
                                     Arena *arena,
                                     String_View name,
@@ -1739,6 +1982,17 @@ Custom_Command* build_model_add_custom_command_output(Build_Model *model,
     if (!cmd) return NULL;
     if (output.count > 0) string_list_add_unique(&cmd->outputs, arena, output);
     return cmd;
+}
+
+Custom_Command* build_model_find_output_custom_command_by_output(Build_Model *model, String_View output) {
+    if (!model || output.count == 0) return NULL;
+    for (size_t i = 0; i < model->output_custom_command_count; i++) {
+        Custom_Command *cmd = &model->output_custom_commands[i];
+        for (size_t j = 0; j < cmd->outputs.count; j++) {
+            if (nob_sv_eq(cmd->outputs.items[j], output)) return cmd;
+        }
+    }
+    return NULL;
 }
 
 bool build_path_is_absolute(String_View path) {

@@ -1188,6 +1188,205 @@ TEST(fase1_add_test_ex_wrapper) {
     TEST_PASS();
 }
 
+TEST(fase1_read_getters_model_target_test_and_cpack) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+
+    build_model_set_project_info(model, sv_from_cstr("Demo"), sv_from_cstr("1.2.3"));
+    build_model_set_default_config(model, sv_from_cstr("Release"));
+    build_model_add_include_directory(model, arena, sv_from_cstr("inc"), false);
+    build_model_add_include_directory(model, arena, sv_from_cstr("sys_inc"), true);
+    build_model_add_link_directory(model, arena, sv_from_cstr("lib"));
+    build_model_add_global_definition(model, arena, sv_from_cstr("DEF=1"));
+    build_model_add_global_compile_option(model, arena, sv_from_cstr("-Wall"));
+    build_model_add_global_link_option(model, arena, sv_from_cstr("-Wl,--as-needed"));
+    build_model_add_global_link_library(model, arena, sv_from_cstr("m"));
+    build_model_set_cache_variable(model, sv_from_cstr("CACHE_X"), sv_from_cstr("ON"), sv_from_cstr("BOOL"), sv_from_cstr(""));
+    build_model_set_install_prefix(model, sv_from_cstr("install_root"));
+    build_model_set_testing_enabled(model, true);
+
+    Build_Target *target = build_model_add_target(model, sv_from_cstr("app"), TARGET_EXECUTABLE);
+    ASSERT(target != NULL);
+    build_target_add_source(target, arena, sv_from_cstr("main.c"));
+
+    Build_Test *test = build_model_add_test_ex(model, arena, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"));
+    ASSERT(test != NULL);
+
+    CPack_Install_Type *install_type = build_model_get_or_create_cpack_install_type(model, arena, sv_from_cstr("Full"));
+    ASSERT(install_type != NULL);
+    build_cpack_install_type_set_display_name(install_type, sv_from_cstr("Full Install"));
+
+    CPack_Component_Group *group = build_model_get_or_create_cpack_group(model, arena, sv_from_cstr("Runtime"));
+    ASSERT(group != NULL);
+    build_cpack_group_set_display_name(group, sv_from_cstr("Runtime Group"));
+    build_cpack_group_set_description(group, sv_from_cstr("Runtime files"));
+    build_cpack_group_set_parent_group(group, sv_from_cstr("Parent"));
+    build_cpack_group_set_expanded(group, true);
+    build_cpack_group_set_bold_title(group, true);
+
+    CPack_Component *component = build_model_get_or_create_cpack_component(model, arena, sv_from_cstr("core"));
+    ASSERT(component != NULL);
+    build_cpack_component_set_display_name(component, sv_from_cstr("Core"));
+    build_cpack_component_set_description(component, sv_from_cstr("Core component"));
+    build_cpack_component_set_group(component, sv_from_cstr("Runtime"));
+    build_cpack_component_add_dependency(component, arena, sv_from_cstr("base"));
+    build_cpack_component_add_install_type(component, arena, sv_from_cstr("Full"));
+    build_cpack_component_set_required(component, true);
+    build_cpack_component_set_hidden(component, true);
+    build_cpack_component_set_disabled(component, true);
+    build_cpack_component_set_downloaded(component, true);
+
+    Custom_Command *cmd = build_model_add_custom_command_output(model, arena, sv_from_cstr("out.txt"), sv_from_cstr("echo out"));
+    ASSERT(cmd != NULL);
+
+    ASSERT(nob_sv_eq(build_model_get_default_config(model), sv_from_cstr("Release")));
+    ASSERT(build_model_is_windows(model) || build_model_is_unix(model));
+    ASSERT(nob_sv_eq(build_model_get_project_name(model), sv_from_cstr("Demo")));
+    ASSERT(nob_sv_eq(build_model_get_project_version(model), sv_from_cstr("1.2.3")));
+
+    const String_List *incs = build_model_get_string_list(model, BUILD_MODEL_LIST_INCLUDE_DIRS);
+    const String_List *sys_incs = build_model_get_string_list(model, BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS);
+    const String_List *link_dirs = build_model_get_string_list(model, BUILD_MODEL_LIST_LINK_DIRS);
+    const String_List *defs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_DEFINITIONS);
+    const String_List *copts = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_COMPILE_OPTIONS);
+    const String_List *lopts = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS);
+    const String_List *llibs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES);
+    ASSERT(incs->count == 1 && nob_sv_eq(incs->items[0], sv_from_cstr("inc")));
+    ASSERT(sys_incs->count == 1 && nob_sv_eq(sys_incs->items[0], sv_from_cstr("sys_inc")));
+    ASSERT(link_dirs->count == 1 && nob_sv_eq(link_dirs->items[0], sv_from_cstr("lib")));
+    ASSERT(defs->count == 1 && nob_sv_eq(defs->items[0], sv_from_cstr("DEF=1")));
+    ASSERT(copts->count == 1 && nob_sv_eq(copts->items[0], sv_from_cstr("-Wall")));
+    ASSERT(lopts->count == 1 && nob_sv_eq(lopts->items[0], sv_from_cstr("-Wl,--as-needed")));
+    ASSERT(llibs->count == 1 && nob_sv_eq(llibs->items[0], sv_from_cstr("m")));
+
+    ASSERT(build_model_get_cache_variable_count(model) == 1);
+    ASSERT(nob_sv_eq(build_model_get_cache_variable_name_at(model, 0), sv_from_cstr("CACHE_X")));
+
+    ASSERT(build_model_get_target_count(model) == 1);
+    Build_Target *target0 = build_model_get_target_at(model, 0);
+    ASSERT(target0 != NULL);
+    ASSERT(nob_sv_eq(build_target_get_name(target0), sv_from_cstr("app")));
+    ASSERT(build_target_get_type(target0) == TARGET_EXECUTABLE);
+    ASSERT(build_target_has_source(target0, sv_from_cstr("main.c")) == true);
+    ASSERT(build_target_has_source(target0, sv_from_cstr("missing.c")) == false);
+
+    ASSERT(build_model_has_install_prefix(model) == true);
+    ASSERT(nob_sv_eq(build_model_get_install_prefix(model), sv_from_cstr("install_root")));
+    ASSERT(build_model_is_testing_enabled(model) == true);
+
+    ASSERT(build_model_get_test_count(model) == 1);
+    Build_Test *test0 = build_model_get_test_at(model, 0);
+    ASSERT(test0 != NULL);
+    ASSERT(nob_sv_eq(build_test_get_name(test0), sv_from_cstr("smoke")));
+    ASSERT(nob_sv_eq(build_test_get_command(test0), sv_from_cstr("app")));
+    ASSERT(nob_sv_eq(build_test_get_working_directory(test0), sv_from_cstr("tests")));
+    ASSERT(build_test_get_command_expand_lists(test0) == false);
+    ASSERT(build_model_find_test_by_name(model, sv_from_cstr("smoke")) == test0);
+    ASSERT(build_model_find_test_by_name(model, sv_from_cstr("missing")) == NULL);
+
+    ASSERT(build_model_find_output_custom_command_by_output(model, sv_from_cstr("out.txt")) == cmd);
+    ASSERT(build_model_find_output_custom_command_by_output(model, sv_from_cstr("missing.txt")) == NULL);
+
+    ASSERT(build_model_get_cpack_install_type_count(model) == 1);
+    CPack_Install_Type *it0 = build_model_get_cpack_install_type_at(model, 0);
+    ASSERT(it0 != NULL);
+    ASSERT(nob_sv_eq(build_cpack_install_type_get_name(it0), sv_from_cstr("Full")));
+    ASSERT(nob_sv_eq(build_cpack_install_type_get_display_name(it0), sv_from_cstr("Full Install")));
+
+    ASSERT(build_model_get_cpack_component_group_count(model) == 1);
+    CPack_Component_Group *g0 = build_model_get_cpack_component_group_at(model, 0);
+    ASSERT(g0 != NULL);
+    ASSERT(nob_sv_eq(build_cpack_group_get_name(g0), sv_from_cstr("Runtime")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_display_name(g0), sv_from_cstr("Runtime Group")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_description(g0), sv_from_cstr("Runtime files")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_parent_group(g0), sv_from_cstr("Parent")));
+    ASSERT(build_cpack_group_get_expanded(g0) == true);
+    ASSERT(build_cpack_group_get_bold_title(g0) == true);
+
+    ASSERT(build_model_get_cpack_component_count(model) == 1);
+    CPack_Component *c0 = build_model_get_cpack_component_at(model, 0);
+    ASSERT(c0 != NULL);
+    ASSERT(nob_sv_eq(build_cpack_component_get_name(c0), sv_from_cstr("core")));
+    ASSERT(nob_sv_eq(build_cpack_component_get_display_name(c0), sv_from_cstr("Core")));
+    ASSERT(nob_sv_eq(build_cpack_component_get_description(c0), sv_from_cstr("Core component")));
+    ASSERT(nob_sv_eq(build_cpack_component_get_group(c0), sv_from_cstr("Runtime")));
+    ASSERT(build_cpack_component_get_depends(c0)->count == 1);
+    ASSERT(nob_sv_eq(build_cpack_component_get_depends(c0)->items[0], sv_from_cstr("base")));
+    ASSERT(build_cpack_component_get_install_types(c0)->count == 1);
+    ASSERT(nob_sv_eq(build_cpack_component_get_install_types(c0)->items[0], sv_from_cstr("Full")));
+    ASSERT(build_cpack_component_get_required(c0) == true);
+    ASSERT(build_cpack_component_get_hidden(c0) == true);
+    ASSERT(build_cpack_component_get_disabled(c0) == true);
+    ASSERT(build_cpack_component_get_downloaded(c0) == true);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_read_getters_null_safe) {
+    ASSERT(nob_sv_eq(build_model_get_default_config(NULL), sv_from_cstr("")));
+    ASSERT(build_model_is_windows(NULL) == false);
+    ASSERT(build_model_is_unix(NULL) == false);
+    ASSERT(build_model_is_apple(NULL) == false);
+    ASSERT(build_model_is_linux(NULL) == false);
+    ASSERT(nob_sv_eq(build_model_get_project_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_model_get_project_version(NULL), sv_from_cstr("")));
+
+    const String_List *empty_list = build_model_get_string_list(NULL, BUILD_MODEL_LIST_INCLUDE_DIRS);
+    ASSERT(empty_list != NULL);
+    ASSERT(empty_list->count == 0);
+
+    ASSERT(build_model_get_cache_variable_count(NULL) == 0);
+    ASSERT(nob_sv_eq(build_model_get_cache_variable_name_at(NULL, 0), sv_from_cstr("")));
+    ASSERT(build_model_get_target_count(NULL) == 0);
+    ASSERT(build_model_get_target_at(NULL, 0) == NULL);
+    ASSERT(nob_sv_eq(build_model_get_install_prefix(NULL), sv_from_cstr("")));
+    ASSERT(build_model_has_install_prefix(NULL) == false);
+    ASSERT(build_model_is_testing_enabled(NULL) == false);
+    ASSERT(build_model_get_test_count(NULL) == 0);
+    ASSERT(build_model_get_test_at(NULL, 0) == NULL);
+    ASSERT(build_model_find_test_by_name(NULL, sv_from_cstr("t")) == NULL);
+    ASSERT(build_model_find_output_custom_command_by_output(NULL, sv_from_cstr("x")) == NULL);
+    ASSERT(build_model_get_cpack_install_type_count(NULL) == 0);
+    ASSERT(build_model_get_cpack_install_type_at(NULL, 0) == NULL);
+    ASSERT(build_model_get_cpack_component_group_count(NULL) == 0);
+    ASSERT(build_model_get_cpack_component_group_at(NULL, 0) == NULL);
+    ASSERT(build_model_get_cpack_component_count(NULL) == 0);
+    ASSERT(build_model_get_cpack_component_at(NULL, 0) == NULL);
+
+    ASSERT(nob_sv_eq(build_target_get_name(NULL), sv_from_cstr("")));
+    ASSERT((int)build_target_get_type(NULL) == 0);
+    ASSERT(build_target_has_source(NULL, sv_from_cstr("x.c")) == false);
+
+    ASSERT(nob_sv_eq(build_test_get_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_test_get_command(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_test_get_working_directory(NULL), sv_from_cstr("")));
+    ASSERT(build_test_get_command_expand_lists(NULL) == false);
+
+    ASSERT(nob_sv_eq(build_cpack_install_type_get_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_install_type_get_display_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_display_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_description(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_group_get_parent_group(NULL), sv_from_cstr("")));
+    ASSERT(build_cpack_group_get_expanded(NULL) == false);
+    ASSERT(build_cpack_group_get_bold_title(NULL) == false);
+    ASSERT(nob_sv_eq(build_cpack_component_get_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_component_get_display_name(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_component_get_description(NULL), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_cpack_component_get_group(NULL), sv_from_cstr("")));
+    ASSERT(build_cpack_component_get_depends(NULL) != NULL);
+    ASSERT(build_cpack_component_get_depends(NULL)->count == 0);
+    ASSERT(build_cpack_component_get_install_types(NULL) != NULL);
+    ASSERT(build_cpack_component_get_install_types(NULL)->count == 0);
+    ASSERT(build_cpack_component_get_required(NULL) == false);
+    ASSERT(build_cpack_component_get_hidden(NULL) == false);
+    ASSERT(build_cpack_component_get_disabled(NULL) == false);
+    ASSERT(build_cpack_component_get_downloaded(NULL) == false);
+
+    TEST_PASS();
+}
+
 
 void run_build_model_tests(int *passed, int *failed) {
     test_create_model(passed, failed);
@@ -1237,4 +1436,6 @@ void run_build_model_tests(int *passed, int *failed) {
     test_fase1_cpack_wrappers_and_setters(passed, failed);
     test_fase1_custom_commands_and_path_helpers(passed, failed);
     test_fase1_add_test_ex_wrapper(passed, failed);
+    test_fase1_read_getters_model_target_test_and_cpack(passed, failed);
+    test_fase1_read_getters_null_safe(passed, failed);
 }

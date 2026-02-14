@@ -54,7 +54,7 @@ static String_View eval_generator_expression(Evaluator_Context *ctx, String_View
     Genex_Eval_Context genex = {0};
     genex.arena = ctx->arena;
     genex.model = ctx->model;
-    genex.default_config = ctx->model->default_config;
+    genex.default_config = build_model_get_default_config(ctx->model);
     genex.get_target_property = genex_target_property_cb;
     genex.userdata = ctx;
     return genex_evaluate(&genex, content);
@@ -580,16 +580,16 @@ static String_View eval_get_var(Evaluator_Context *ctx, String_View key) {
         return sv_from_cstr("cmake");
     }
     if (nob_sv_eq(key, sv_from_cstr("WIN32"))) {
-        return ctx->model->is_windows ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
+        return build_model_is_windows(ctx->model) ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
     }
     if (nob_sv_eq(key, sv_from_cstr("UNIX"))) {
-        return ctx->model->is_unix ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
+        return build_model_is_unix(ctx->model) ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
     }
     if (nob_sv_eq(key, sv_from_cstr("APPLE"))) {
-        return ctx->model->is_apple ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
+        return build_model_is_apple(ctx->model) ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
     }
     if (nob_sv_eq(key, sv_from_cstr("LINUX"))) {
-        return ctx->model->is_linux ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
+        return build_model_is_linux(ctx->model) ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE");
     }
     if (nob_sv_eq(key, sv_from_cstr("MINGW"))) {
 #if defined(__MINGW32__) || defined(__MINGW64__)
@@ -1039,17 +1039,6 @@ static String_View join_command_args(Evaluator_Context *ctx, Args args, size_t s
     String_View out = sb.count > 0 ? sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count)) : sv_from_cstr("");
     nob_sb_free(sb);
     return out;
-}
-
-static Custom_Command *find_output_custom_command_by_output(Build_Model *model, String_View output) {
-    if (!model || output.count == 0) return NULL;
-    for (size_t i = 0; i < model->output_custom_command_count; i++) {
-        Custom_Command *cmd = &model->output_custom_commands[i];
-        for (size_t j = 0; j < cmd->outputs.count; j++) {
-            if (nob_sv_eq(cmd->outputs.items[j], output)) return cmd;
-        }
-    }
-    return NULL;
 }
 
 static void append_custom_command_command(Arena *arena, Custom_Command *cmd, String_View extra) {
@@ -2525,7 +2514,7 @@ static void eval_add_custom_command(Evaluator_Context *ctx, Args args) {
     } else {
         Custom_Command *cmd = NULL;
         if (append_mode) {
-            cmd = find_output_custom_command_by_output(ctx->model, outputs.items[0]);
+            cmd = build_model_find_output_custom_command_by_output(ctx->model, outputs.items[0]);
             if (!cmd) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "add_custom_command",
                     "APPEND sem comando OUTPUT anterior", "criando novo comando para manter compatibilidade");
@@ -4347,8 +4336,9 @@ static void eval_get_cmake_property_command(Evaluator_Context *ctx, Args args) {
     bool first = true;
 
     if (sv_eq_ci(prop, sv_from_cstr("CACHE_VARIABLES"))) {
-        for (size_t i = 0; i < ctx->model->cache_variables.count; i++) {
-            append_list_item(&sb, &first, ctx->model->cache_variables.items[i].name);
+        size_t cache_count = build_model_get_cache_variable_count(ctx->model);
+        for (size_t i = 0; i < cache_count; i++) {
+            append_list_item(&sb, &first, build_model_get_cache_variable_name_at(ctx->model, i));
         }
     } else if (sv_eq_ci(prop, sv_from_cstr("VARIABLES"))) {
         for (size_t s = 0; s < ctx->scope_count; s++) {
@@ -4357,8 +4347,9 @@ static void eval_get_cmake_property_command(Evaluator_Context *ctx, Args args) {
                 append_list_item(&sb, &first, scope->vars.items[i].key);
             }
         }
-        for (size_t i = 0; i < ctx->model->cache_variables.count; i++) {
-            append_list_item(&sb, &first, ctx->model->cache_variables.items[i].name);
+        size_t cache_count = build_model_get_cache_variable_count(ctx->model);
+        for (size_t i = 0; i < cache_count; i++) {
+            append_list_item(&sb, &first, build_model_get_cache_variable_name_at(ctx->model, i));
         }
     } else if (sv_eq_ci(prop, sv_from_cstr("MACROS"))) {
         for (size_t i = 0; i < ctx->macros.count; i++) {
@@ -4877,19 +4868,14 @@ static void apply_source_property_to_matching_targets(Evaluator_Context *ctx,
                                                       const char *prop_name,
                                                       String_View value) {
     if (!ctx || !ctx->model || !sources || !prop_name) return;
-    for (size_t t = 0; t < ctx->model->target_count; t++) {
-        Build_Target *target = ctx->model->targets[t];
+    size_t target_count = build_model_get_target_count(ctx->model);
+    for (size_t t = 0; t < target_count; t++) {
+        Build_Target *target = build_model_get_target_at(ctx->model, t);
+        if (!target) continue;
         for (size_t s = 0; s < sources->count; s++) {
             String_View src = sources->items[s];
             if (src.count == 0) continue;
-            bool source_found = false;
-            for (size_t i = 0; i < target->sources.count; i++) {
-                if (nob_sv_eq(target->sources.items[i], src)) {
-                    source_found = true;
-                    break;
-                }
-            }
-            if (!source_found) continue;
+            if (!build_target_has_source(target, src)) continue;
             String_View key = source_property_internal_key(ctx, src, prop_name);
             build_target_set_property(target, ctx->arena, key, value);
         }
@@ -4913,16 +4899,10 @@ static void eval_get_source_file_property_command(Evaluator_Context *ctx, Args a
         prop_name = "COMPILE_OPTIONS";
     }
 
-    for (size_t t = 0; t < ctx->model->target_count; t++) {
-        Build_Target *target = ctx->model->targets[t];
-        bool source_found = false;
-        for (size_t s = 0; s < target->sources.count; s++) {
-            if (nob_sv_eq(target->sources.items[s], source)) {
-                source_found = true;
-                break;
-            }
-        }
-        if (!source_found) continue;
+    size_t target_count = build_model_get_target_count(ctx->model);
+    for (size_t t = 0; t < target_count; t++) {
+        Build_Target *target = build_model_get_target_at(ctx->model, t);
+        if (!target || !build_target_has_source(target, source)) continue;
 
         String_View key = source_property_internal_key(ctx, source, prop_name);
         String_View value = build_target_get_property(target, key);
@@ -5384,7 +5364,7 @@ static void eval_apply_target_property(Evaluator_Context *ctx, Build_Target *tar
     build_target_set_property_smart(target, ctx->arena, key, final_value);
 }
 
-static String_View target_property_list_to_sv(Evaluator_Context *ctx, String_List *list) {
+static String_View target_property_list_to_sv(Evaluator_Context *ctx, const String_List *list) {
     if (!list || list->count == 0) return sv_from_cstr("");
     String_Builder sb = {0};
     for (size_t i = 0; i < list->count; i++) {
@@ -5397,7 +5377,7 @@ static String_View target_property_list_to_sv(Evaluator_Context *ctx, String_Lis
 }
 
 static String_View eval_get_target_property_value(Evaluator_Context *ctx, Build_Target *target, String_View prop_name) {
-    String_View value = build_target_get_property_computed(target, prop_name, ctx->model->default_config);
+    String_View value = build_target_get_property_computed(target, prop_name, build_model_get_default_config(ctx->model));
     return sv_copy_to_arena(ctx->arena, value);
 }
 
@@ -5711,21 +5691,25 @@ static void eval_get_directory_property_command(Evaluator_Context *ctx, Args arg
     }
 
     String_View value = sv_from_cstr("");
+    const String_List *model_list = NULL;
     if (sv_eq_ci(prop_or_mode, sv_from_cstr("INCLUDE_DIRECTORIES"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->directories.include_dirs);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_INCLUDE_DIRS);
     } else if (sv_eq_ci(prop_or_mode, sv_from_cstr("SYSTEM_INCLUDE_DIRECTORIES"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->directories.system_include_dirs);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS);
     } else if (sv_eq_ci(prop_or_mode, sv_from_cstr("LINK_DIRECTORIES"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->directories.link_dirs);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_LINK_DIRS);
     } else if (sv_eq_ci(prop_or_mode, sv_from_cstr("COMPILE_DEFINITIONS")) ||
                sv_eq_ci(prop_or_mode, sv_from_cstr("DEFINITIONS"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->global_definitions);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_GLOBAL_DEFINITIONS);
     } else if (sv_eq_ci(prop_or_mode, sv_from_cstr("COMPILE_OPTIONS"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->global_compile_options);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_GLOBAL_COMPILE_OPTIONS);
     } else if (sv_eq_ci(prop_or_mode, sv_from_cstr("LINK_OPTIONS"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->global_link_options);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS);
     } else if (sv_eq_ci(prop_or_mode, sv_from_cstr("LINK_LIBRARIES"))) {
-        value = target_property_list_to_sv(ctx, &ctx->model->global_link_libraries);
+        model_list = build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES);
+    }
+    if (model_list) {
+        value = target_property_list_to_sv(ctx, model_list);
     }
 
     eval_set_var(ctx, out_var, value, false, false);
@@ -5827,9 +5811,13 @@ static void eval_get_property_command(Evaluator_Context *ctx, Args args) {
             value = sv_from_cstr("0");
         } else if (sv_eq_ci(prop_name, sv_from_cstr("TARGETS"))) {
             String_Builder sb = {0};
-            for (size_t i = 0; i < ctx->model->target_count; i++) {
+            size_t target_count = build_model_get_target_count(ctx->model);
+            for (size_t i = 0; i < target_count; i++) {
+                Build_Target *target = build_model_get_target_at(ctx->model, i);
+                if (!target) continue;
+                String_View target_name = build_target_get_name(target);
                 if (i > 0) sb_append(&sb, ';');
-                sb_append_buf(&sb, ctx->model->targets[i]->name.data, ctx->model->targets[i]->name.count);
+                sb_append_buf(&sb, target_name.data, target_name.count);
             }
             value = sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count));
             nob_sb_free(sb);
@@ -5904,7 +5892,8 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
         }
         if (targets.count == 0) return;
 
-        String_View general_dest = ctx->model->install_rules.prefix.count > 0 ? ctx->model->install_rules.prefix : sv_from_cstr("install");
+        String_View install_prefix = build_model_get_install_prefix(ctx->model);
+        String_View general_dest = install_prefix.count > 0 ? install_prefix : sv_from_cstr("install");
         String_View runtime_dest = sv_from_cstr("");
         String_View library_dest = sv_from_cstr("");
         String_View archive_dest = sv_from_cstr("");
@@ -5939,7 +5928,7 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
             i++;
         }
 
-        if (ctx->model->install_rules.prefix.count == 0) {
+        if (!build_model_has_install_prefix(ctx->model)) {
             build_model_set_install_prefix(ctx->model, general_dest);
         }
 
@@ -5948,9 +5937,10 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
             String_View destination = general_dest;
             Build_Target *target = build_model_find_target(ctx->model, target_name);
             if (target) {
-                if (target->type == TARGET_EXECUTABLE && runtime_dest.count > 0) destination = runtime_dest;
-                else if (target->type == TARGET_STATIC_LIB && archive_dest.count > 0) destination = archive_dest;
-                else if (target->type == TARGET_SHARED_LIB && library_dest.count > 0) destination = library_dest;
+                Target_Type target_type = build_target_get_type(target);
+                if (target_type == TARGET_EXECUTABLE && runtime_dest.count > 0) destination = runtime_dest;
+                else if (target_type == TARGET_STATIC_LIB && archive_dest.count > 0) destination = archive_dest;
+                else if (target_type == TARGET_SHARED_LIB && library_dest.count > 0) destination = library_dest;
             }
             build_model_add_install_rule(ctx->model, ctx->arena, INSTALL_RULE_TARGET, target_name, destination);
         }
@@ -5989,10 +5979,10 @@ static void eval_install_command(Evaluator_Context *ctx, Args args) {
     String_View destination = sv_from_cstr("install");
     if (dest_idx + 1 < args.count) {
         destination = resolve_arg(ctx, args.items[dest_idx + 1]);
-    } else if (ctx->model->install_rules.prefix.count > 0) {
-        destination = ctx->model->install_rules.prefix;
+    } else if (build_model_has_install_prefix(ctx->model)) {
+        destination = build_model_get_install_prefix(ctx->model);
     }
-    if (ctx->model->install_rules.prefix.count == 0) {
+    if (!build_model_has_install_prefix(ctx->model)) {
         build_model_set_install_prefix(ctx->model, destination);
     }
 
@@ -6107,7 +6097,7 @@ static void eval_ctest_build_command(Evaluator_Context *ctx, Args args) {
 static void eval_ctest_test_command(Evaluator_Context *ctx, Args args) {
     if (!ctx || !ctx->model) return;
     String_View ret_var = ctest_option_value(ctx, args, "RETURN_VALUE");
-    String_View count = sv_from_cstr(nob_temp_sprintf("%zu", ctx->model->test_count));
+    String_View count = sv_from_cstr(nob_temp_sprintf("%zu", build_model_get_test_count(ctx->model)));
     eval_set_var(ctx, sv_from_cstr("CTEST_TEST_RETURN_VALUE"), sv_from_cstr("0"), false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_TESTS_RUN"), count, false, false);
     if (ret_var.count > 0) eval_set_var(ctx, ret_var, sv_from_cstr("0"), false, false);
@@ -6634,7 +6624,7 @@ static void cpack_sync_common_metadata(Evaluator_Context *ctx) {
     String_View package_name = eval_get_var(ctx, sv_from_cstr("CPACK_PACKAGE_NAME"));
     if (package_name.count == 0) package_name = eval_get_var(ctx, sv_from_cstr("PROJECT_NAME"));
     if (package_name.count == 0) package_name = eval_get_var(ctx, sv_from_cstr("CMAKE_PROJECT_NAME"));
-    if (package_name.count == 0 && ctx->model->project_name.count > 0) package_name = ctx->model->project_name;
+    if (package_name.count == 0) package_name = build_model_get_project_name(ctx->model);
     if (package_name.count == 0) package_name = sv_from_cstr("Package");
 
     String_View package_version = eval_get_var(ctx, sv_from_cstr("CPACK_PACKAGE_VERSION"));
@@ -6652,7 +6642,7 @@ static void cpack_sync_common_metadata(Evaluator_Context *ctx) {
     }
     if (package_version.count == 0) package_version = eval_get_var(ctx, sv_from_cstr("PROJECT_VERSION"));
     if (package_version.count == 0) package_version = eval_get_var(ctx, sv_from_cstr("CMAKE_PROJECT_VERSION"));
-    if (package_version.count == 0 && ctx->model->project_version.count > 0) package_version = ctx->model->project_version;
+    if (package_version.count == 0) package_version = build_model_get_project_version(ctx->model);
     if (package_version.count == 0) package_version = sv_from_cstr("0.1.0");
 
     String_View major = sv_from_cstr("0");
@@ -6668,8 +6658,11 @@ static void cpack_sync_common_metadata(Evaluator_Context *ctx) {
                                 /*trim_ws=*/true,
                                 eval_list_add_item,
                                 &ud_components);
-    for (size_t i = 0; i < ctx->model->cpack_component_count; i++) {
-        string_list_add_unique(&components, ctx->arena, ctx->model->cpack_components[i].name);
+    size_t component_count = build_model_get_cpack_component_count(ctx->model);
+    for (size_t i = 0; i < component_count; i++) {
+        CPack_Component *component = build_model_get_cpack_component_at(ctx->model, i);
+        if (!component) continue;
+        string_list_add_unique(&components, ctx->arena, build_cpack_component_get_name(component));
     }
     String_View components_norm = join_string_list_with_semicolon(ctx, &components);
 
@@ -6681,10 +6674,12 @@ static void cpack_sync_common_metadata(Evaluator_Context *ctx) {
                                 /*trim_ws=*/true,
                                 eval_list_add_item,
                                 &ud_depends);
-    for (size_t i = 0; i < ctx->model->cpack_component_count; i++) {
-        CPack_Component *c = &ctx->model->cpack_components[i];
-        for (size_t d = 0; d < c->depends.count; d++) {
-            string_list_add_unique(&depends, ctx->arena, c->depends.items[d]);
+    for (size_t i = 0; i < component_count; i++) {
+        CPack_Component *component = build_model_get_cpack_component_at(ctx->model, i);
+        if (!component) continue;
+        const String_List *component_depends = build_cpack_component_get_depends(component);
+        for (size_t d = 0; d < component_depends->count; d++) {
+            string_list_add_unique(&depends, ctx->arena, component_depends->items[d]);
         }
     }
     String_View depends_norm = join_string_list_with_semicolon(ctx, &depends);
@@ -6812,7 +6807,7 @@ static void cpack_sync_common_metadata(Evaluator_Context *ctx) {
     String_View deb_release = eval_get_var(ctx, sv_from_cstr("CPACK_DEBIAN_PACKAGE_RELEASE"));
     if (deb_release.count == 0) deb_release = sv_from_cstr("1");
     String_View deb_arch = eval_get_var(ctx, sv_from_cstr("CPACK_DEBIAN_PACKAGE_ARCHITECTURE"));
-    if (deb_arch.count == 0) deb_arch = ctx->model->is_linux ? sv_from_cstr("amd64") : sv_from_cstr("amd64");
+    if (deb_arch.count == 0) deb_arch = build_model_is_linux(ctx->model) ? sv_from_cstr("amd64") : sv_from_cstr("amd64");
     String_View deb_depends = eval_get_var(ctx, sv_from_cstr("CPACK_DEBIAN_PACKAGE_DEPENDS"));
     if (deb_depends.count == 0) {
         String_List deps = {0};
@@ -6831,7 +6826,7 @@ static void cpack_sync_common_metadata(Evaluator_Context *ctx) {
     String_View rpm_release = eval_get_var(ctx, sv_from_cstr("CPACK_RPM_PACKAGE_RELEASE"));
     if (rpm_release.count == 0) rpm_release = sv_from_cstr("1");
     String_View rpm_arch = eval_get_var(ctx, sv_from_cstr("CPACK_RPM_PACKAGE_ARCHITECTURE"));
-    if (rpm_arch.count == 0) rpm_arch = ctx->model->is_linux ? sv_from_cstr("x86_64") : sv_from_cstr("x86_64");
+    if (rpm_arch.count == 0) rpm_arch = build_model_is_linux(ctx->model) ? sv_from_cstr("x86_64") : sv_from_cstr("x86_64");
     String_View rpm_license = eval_get_var(ctx, sv_from_cstr("CPACK_RPM_PACKAGE_LICENSE"));
     if (rpm_license.count == 0) rpm_license = sv_from_cstr("unknown");
     String_View rpm_requires = eval_get_var(ctx, sv_from_cstr("CPACK_RPM_PACKAGE_REQUIRES"));
@@ -7203,11 +7198,15 @@ static void eval_cpack_add_install_type_command(Evaluator_Context *ctx, Args arg
         }
     }
 
-    if (ctx->model->cpack_install_type_count > 0) {
+    size_t install_type_count = build_model_get_cpack_install_type_count(ctx->model);
+    if (install_type_count > 0) {
         String_Builder sb = {0};
-        for (size_t i = 0; i < ctx->model->cpack_install_type_count; i++) {
+        for (size_t i = 0; i < install_type_count; i++) {
+            CPack_Install_Type *current = build_model_get_cpack_install_type_at(ctx->model, i);
+            if (!current) continue;
             if (i > 0) sb_append(&sb, ';');
-            sb_append_buf(&sb, ctx->model->cpack_install_types[i].name.data, ctx->model->cpack_install_types[i].name.count);
+            String_View current_name = build_cpack_install_type_get_name(current);
+            sb_append_buf(&sb, current_name.data, current_name.count);
         }
         eval_set_var(ctx, sv_from_cstr("CPACK_ALL_INSTALL_TYPES"),
             sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count)), false, false);
@@ -7215,10 +7214,11 @@ static void eval_cpack_add_install_type_command(Evaluator_Context *ctx, Args arg
     }
 
     String_View upper = cpack_var_token_upper(ctx, name);
-    if (install_type->display_name.count > 0) {
+    String_View install_display_name = build_cpack_install_type_get_display_name(install_type);
+    if (install_display_name.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_INSTALL_TYPE_%s_DISPLAY_NAME", nob_temp_sv_to_cstr(upper))),
-            install_type->display_name, false, false);
+            install_display_name, false, false);
     }
     cpack_sync_common_metadata(ctx);
 }
@@ -7255,11 +7255,15 @@ static void eval_cpack_add_component_group_command(Evaluator_Context *ctx, Args 
         }
     }
 
-    if (ctx->model->cpack_component_group_count > 0) {
+    size_t component_group_count = build_model_get_cpack_component_group_count(ctx->model);
+    if (component_group_count > 0) {
         String_Builder sb = {0};
-        for (size_t i = 0; i < ctx->model->cpack_component_group_count; i++) {
+        for (size_t i = 0; i < component_group_count; i++) {
+            CPack_Component_Group *current = build_model_get_cpack_component_group_at(ctx->model, i);
+            if (!current) continue;
             if (i > 0) sb_append(&sb, ';');
-            sb_append_buf(&sb, ctx->model->cpack_component_groups[i].name.data, ctx->model->cpack_component_groups[i].name.count);
+            String_View current_name = build_cpack_group_get_name(current);
+            sb_append_buf(&sb, current_name.data, current_name.count);
         }
         eval_set_var(ctx, sv_from_cstr("CPACK_COMPONENT_GROUPS_ALL"),
             sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count)), false, false);
@@ -7267,27 +7271,30 @@ static void eval_cpack_add_component_group_command(Evaluator_Context *ctx, Args 
     }
 
     String_View upper = cpack_var_token_upper(ctx, name);
-    if (group->display_name.count > 0) {
+    String_View group_display_name = build_cpack_group_get_display_name(group);
+    if (group_display_name.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_GROUP_%s_DISPLAY_NAME", nob_temp_sv_to_cstr(upper))),
-            group->display_name, false, false);
+            group_display_name, false, false);
     }
-    if (group->description.count > 0) {
+    String_View group_description = build_cpack_group_get_description(group);
+    if (group_description.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_GROUP_%s_DESCRIPTION", nob_temp_sv_to_cstr(upper))),
-            group->description, false, false);
+            group_description, false, false);
     }
-    if (group->parent_group.count > 0) {
+    String_View group_parent_group = build_cpack_group_get_parent_group(group);
+    if (group_parent_group.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_GROUP_%s_PARENT_GROUP", nob_temp_sv_to_cstr(upper))),
-            group->parent_group, false, false);
+            group_parent_group, false, false);
     }
     eval_set_var(ctx,
         sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_GROUP_%s_EXPANDED", nob_temp_sv_to_cstr(upper))),
-        group->expanded ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
+        build_cpack_group_get_expanded(group) ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
     eval_set_var(ctx,
         sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_GROUP_%s_BOLD_TITLE", nob_temp_sv_to_cstr(upper))),
-        group->bold_title ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
+        build_cpack_group_get_bold_title(group) ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
     cpack_sync_common_metadata(ctx);
 }
 
@@ -7313,7 +7320,7 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
         }
         if (sv_eq_ci(tok, sv_from_cstr("GROUP")) && i + 1 < args.count) {
             build_cpack_component_set_group(component, resolve_arg(ctx, args.items[++i]));
-            (void)build_model_get_or_create_cpack_group(ctx->model, ctx->arena, component->group);
+            (void)build_model_get_or_create_cpack_group(ctx->model, ctx->arena, build_cpack_component_get_group(component));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DEPENDS"))) {
@@ -7367,11 +7374,15 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
         }
     }
 
-    if (ctx->model->cpack_component_count > 0) {
+    size_t component_count = build_model_get_cpack_component_count(ctx->model);
+    if (component_count > 0) {
         String_Builder sb = {0};
-        for (size_t i = 0; i < ctx->model->cpack_component_count; i++) {
+        for (size_t i = 0; i < component_count; i++) {
+            CPack_Component *current = build_model_get_cpack_component_at(ctx->model, i);
+            if (!current) continue;
             if (i > 0) sb_append(&sb, ';');
-            sb_append_buf(&sb, ctx->model->cpack_components[i].name.data, ctx->model->cpack_components[i].name.count);
+            String_View current_name = build_cpack_component_get_name(current);
+            sb_append_buf(&sb, current_name.data, current_name.count);
         }
         eval_set_var(ctx, sv_from_cstr("CPACK_COMPONENTS_ALL"),
             sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count)), false, false);
@@ -7379,43 +7390,48 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
     }
 
     String_View upper = cpack_var_token_upper(ctx, name);
-    if (component->display_name.count > 0) {
+    String_View component_display_name = build_cpack_component_get_display_name(component);
+    if (component_display_name.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_DISPLAY_NAME", nob_temp_sv_to_cstr(upper))),
-            component->display_name, false, false);
+            component_display_name, false, false);
     }
-    if (component->description.count > 0) {
+    String_View component_description = build_cpack_component_get_description(component);
+    if (component_description.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_DESCRIPTION", nob_temp_sv_to_cstr(upper))),
-            component->description, false, false);
+            component_description, false, false);
     }
-    if (component->group.count > 0) {
+    String_View component_group = build_cpack_component_get_group(component);
+    if (component_group.count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_GROUP", nob_temp_sv_to_cstr(upper))),
-            component->group, false, false);
+            component_group, false, false);
     }
-    if (component->depends.count > 0) {
+    const String_List *component_depends = build_cpack_component_get_depends(component);
+    if (component_depends->count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_DEPENDS", nob_temp_sv_to_cstr(upper))),
-            join_string_list_with_semicolon(ctx, &component->depends), false, false);
+            join_string_list_with_semicolon(ctx, component_depends), false, false);
     }
-    if (component->install_types.count > 0) {
+    const String_List *component_install_types = build_cpack_component_get_install_types(component);
+    if (component_install_types->count > 0) {
         eval_set_var(ctx,
             sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_INSTALL_TYPES", nob_temp_sv_to_cstr(upper))),
-            join_string_list_with_semicolon(ctx, &component->install_types), false, false);
+            join_string_list_with_semicolon(ctx, component_install_types), false, false);
     }
     eval_set_var(ctx,
         sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_REQUIRED", nob_temp_sv_to_cstr(upper))),
-        component->required ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
+        build_cpack_component_get_required(component) ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
     eval_set_var(ctx,
         sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_HIDDEN", nob_temp_sv_to_cstr(upper))),
-        component->hidden ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
+        build_cpack_component_get_hidden(component) ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
     eval_set_var(ctx,
         sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_DISABLED", nob_temp_sv_to_cstr(upper))),
-        component->disabled ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
+        build_cpack_component_get_disabled(component) ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
     eval_set_var(ctx,
         sv_from_cstr(nob_temp_sprintf("CPACK_COMPONENT_%s_DOWNLOADED", nob_temp_sv_to_cstr(upper))),
-        component->downloaded ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
+        build_cpack_component_get_downloaded(component) ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
     cpack_sync_common_metadata(ctx);
 }
 
@@ -7535,7 +7551,7 @@ static void eval_add_test_command(Evaluator_Context *ctx, Args args) {
     String_View command = join_string_list_with_space_and_expand_semicolons(ctx, &command_items, command_expand_lists);
     build_model_add_test(ctx->model, test_name, command, working_dir, command_expand_lists);
 
-    if (!ctx->model->enable_testing) {
+    if (!build_model_is_testing_enabled(ctx->model)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "add_test",
             "add_test chamado sem enable_testing previo",
             "em CMake real, habilite testes com enable_testing()");
@@ -7543,13 +7559,16 @@ static void eval_add_test_command(Evaluator_Context *ctx, Args args) {
 
     String_List test_names = {0};
     string_list_init(&test_names);
-    for (size_t i = 0; i < ctx->model->test_count; i++) {
-        string_list_add(&test_names, ctx->arena, ctx->model->tests[i].name);
+    size_t test_count = build_model_get_test_count(ctx->model);
+    for (size_t i = 0; i < test_count; i++) {
+        Build_Test *test = build_model_get_test_at(ctx->model, i);
+        if (!test) continue;
+        string_list_add(&test_names, ctx->arena, build_test_get_name(test));
     }
     String_View names_value = join_string_list_with_semicolon(ctx, &test_names);
     eval_set_var(ctx, sv_from_cstr("CMAKE_CTEST_TESTS"), names_value, false, false);
     eval_set_var(ctx, sv_from_cstr("CMAKE_CTEST_TEST_COUNT"),
-        sv_from_cstr(nob_temp_sprintf("%zu", ctx->model->test_count)), false, false);
+        sv_from_cstr(nob_temp_sprintf("%zu", test_count)), false, false);
 }
 
 // Avalia o comando 'build_command'
@@ -7588,14 +7607,6 @@ static void eval_build_command_command(Evaluator_Context *ctx, Args args) {
     eval_set_var(ctx, out_var, cmd, false, false);
 }
 
-static Build_Test* eval_find_test_by_name(Build_Model *model, String_View test_name) {
-    if (!model || test_name.count == 0) return NULL;
-    for (size_t i = 0; i < model->test_count; i++) {
-        if (nob_sv_eq(model->tests[i].name, test_name)) return &model->tests[i];
-    }
-    return NULL;
-}
-
 static String_View internal_test_property_key(Evaluator_Context *ctx, String_View test_name, String_View prop_name) {
     String_Builder sb = {0};
     sb_append_cstr(&sb, "__TEST_PROP__");
@@ -7628,7 +7639,7 @@ static void eval_set_tests_properties_command(Evaluator_Context *ctx, Args args)
 
         for (size_t t = 0; t < props_idx; t++) {
             String_View test_name = resolve_arg(ctx, args.items[t]);
-            Build_Test *test = eval_find_test_by_name(ctx->model, test_name);
+            Build_Test *test = build_model_find_test_by_name(ctx->model, test_name);
             if (!test) continue;
             String_View key = internal_test_property_key(ctx, test_name, prop_name);
             build_model_set_cache_variable(ctx->model, key, prop_value, sv_from_cstr("INTERNAL"), sv_from_cstr(""));
@@ -7644,7 +7655,7 @@ static void eval_get_test_property_command(Evaluator_Context *ctx, Args args) {
     String_View prop_name = resolve_arg(ctx, args.items[1]);
     String_View out_var = resolve_arg(ctx, args.items[2]);
 
-    Build_Test *test = eval_find_test_by_name(ctx->model, test_name);
+    Build_Test *test = build_model_find_test_by_name(ctx->model, test_name);
     if (!test) {
         eval_set_var(ctx, out_var, sv_from_cstr("NOTFOUND"), false, false);
         return;
@@ -7652,13 +7663,13 @@ static void eval_get_test_property_command(Evaluator_Context *ctx, Args args) {
 
     String_View value = sv_from_cstr("");
     if (sv_eq_ci(prop_name, sv_from_cstr("NAME"))) {
-        value = test->name;
+        value = build_test_get_name(test);
     } else if (sv_eq_ci(prop_name, sv_from_cstr("COMMAND"))) {
-        value = test->command;
+        value = build_test_get_command(test);
     } else if (sv_eq_ci(prop_name, sv_from_cstr("WORKING_DIRECTORY"))) {
-        value = test->working_directory;
+        value = build_test_get_working_directory(test);
     } else if (sv_eq_ci(prop_name, sv_from_cstr("COMMAND_EXPAND_LISTS"))) {
-        value = test->command_expand_lists ? sv_from_cstr("ON") : sv_from_cstr("OFF");
+        value = build_test_get_command_expand_lists(test) ? sv_from_cstr("ON") : sv_from_cstr("OFF");
     } else {
         value = build_model_get_cache_variable(ctx->model, internal_test_property_key(ctx, test_name, prop_name));
         if (value.count == 0) value = sv_from_cstr("NOTFOUND");
