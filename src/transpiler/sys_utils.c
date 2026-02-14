@@ -108,6 +108,51 @@ bool sys_write_file(String_View path, String_View content) {
     return nob_write_entire_file(nob_temp_sv_to_cstr(path), content.data ? content.data : "", content.count);
 }
 
+bool sys_write_file_bytes(String_View path, const char *data, size_t count) {
+    if (path.count == 0) return false;
+    return nob_write_entire_file(nob_temp_sv_to_cstr(path), data ? data : "", count);
+}
+
+bool sys_read_file_builder(String_View path, Nob_String_Builder *out) {
+    if (!out || path.count == 0) return false;
+    return nob_read_entire_file(nob_temp_sv_to_cstr(path), out);
+}
+
+bool sys_file_exists(String_View path) {
+    if (path.count == 0) return false;
+    return nob_file_exists(nob_temp_sv_to_cstr(path));
+}
+
+bool sys_mkdir(String_View path) {
+    if (path.count == 0) return false;
+    return nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(path));
+}
+
+bool sys_delete_file(String_View path) {
+    if (path.count == 0) return false;
+    return nob_delete_file(nob_temp_sv_to_cstr(path));
+}
+
+bool sys_copy_file(String_View src, String_View dst) {
+    if (src.count == 0 || dst.count == 0) return false;
+    return nob_copy_file(nob_temp_sv_to_cstr(src), nob_temp_sv_to_cstr(dst));
+}
+
+bool sys_copy_directory_recursive(String_View src, String_View dst) {
+    if (src.count == 0 || dst.count == 0) return false;
+    return nob_copy_directory_recursively(nob_temp_sv_to_cstr(src), nob_temp_sv_to_cstr(dst));
+}
+
+bool sys_read_dir(String_View dir, Nob_File_Paths *out) {
+    if (!out || dir.count == 0) return false;
+    return nob_read_entire_dir(nob_temp_sv_to_cstr(dir), out);
+}
+
+Nob_File_Type sys_get_file_type(String_View path) {
+    if (path.count == 0) return (Nob_File_Type)-1;
+    return nob_get_file_type(nob_temp_sv_to_cstr(path));
+}
+
 static bool sys_path_is_dot_or_dotdot(String_View path) {
     return nob_sv_eq(path, sv_from_cstr(".")) || nob_sv_eq(path, sv_from_cstr(".."));
 }
@@ -116,17 +161,17 @@ bool sys_delete_path_recursive(Arena *arena, String_View path) {
     if (!arena || path.count == 0) return false;
 
     const char *path_c = nob_temp_sv_to_cstr(path);
-    Nob_File_Type file_type = nob_get_file_type(path_c);
+    Nob_File_Type file_type = sys_get_file_type(path);
     if ((int)file_type < 0) return true;
 
     if (file_type == NOB_FILE_REGULAR || file_type == NOB_FILE_SYMLINK || file_type == NOB_FILE_OTHER) {
-        return nob_delete_file(path_c);
+        return sys_delete_file(path);
     }
 
     if (file_type != NOB_FILE_DIRECTORY) return false;
 
     Nob_File_Paths children = {0};
-    if (!nob_read_entire_dir(path_c, &children)) return false;
+    if (!sys_read_dir(path, &children)) return false;
 
     for (size_t i = 0; i < children.count; i++) {
         String_View name = sv_from_cstr(children.items[i]);
@@ -149,8 +194,7 @@ bool sys_delete_path_recursive(Arena *arena, String_View path) {
 bool sys_copy_entry_to_destination(Arena *arena, String_View src, String_View destination) {
     if (!arena || src.count == 0 || destination.count == 0) return false;
 
-    const char *src_c = nob_temp_sv_to_cstr(src);
-    Nob_File_Type file_type = nob_get_file_type(src_c);
+    Nob_File_Type file_type = sys_get_file_type(src);
     if ((int)file_type < 0) return false;
 
     String_View final_dst = destination;
@@ -158,14 +202,14 @@ bool sys_copy_entry_to_destination(Arena *arena, String_View src, String_View de
         String_View name = sys_path_basename(src);
         final_dst = build_path_join(arena, destination, name);
         if (!sys_ensure_parent_dirs(arena, final_dst)) return false;
-        return nob_copy_file(src_c, nob_temp_sv_to_cstr(final_dst));
+        return sys_copy_file(src, final_dst);
     }
 
     if (file_type == NOB_FILE_DIRECTORY) {
         String_View name = sys_path_basename(src);
         final_dst = build_path_join(arena, destination, name);
-        if (!nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(destination))) return false;
-        return nob_copy_directory_recursively(src_c, nob_temp_sv_to_cstr(final_dst));
+        if (!sys_mkdir(destination)) return false;
+        return sys_copy_directory_recursive(src, final_dst);
     }
 
     return false;
@@ -183,7 +227,7 @@ bool sys_download_to_path(Arena *arena, String_View url, String_View out_path, S
 
     if (nob_sv_starts_with(url, sv_from_cstr("file://"))) {
         String_View src = nob_sv_from_parts(url.data + 7, url.count - 7);
-        bool ok = nob_copy_file(nob_temp_sv_to_cstr(src), nob_temp_sv_to_cstr(out_path));
+        bool ok = sys_copy_file(src, out_path);
         if (log_msg) {
             *log_msg = ok ? sv_from_cstr("downloaded via file://")
                           : sv_from_cstr("failed to copy file:// source");
@@ -270,7 +314,7 @@ bool sys_run_process(const Sys_Process_Request *req, Sys_Process_Result *out) {
         scratch_dir = sv_from_cstr(".cmk2nob_exec");
     }
 
-    (void)nob_mkdir_if_not_exists(sys_arena_sv_to_cstr(req->arena, scratch_dir));
+    (void)sys_mkdir(scratch_dir);
 
     static size_t s_sys_process_counter = 0;
     s_sys_process_counter++;
@@ -317,7 +361,7 @@ bool sys_run_process(const Sys_Process_Request *req, Sys_Process_Result *out) {
         if (!text.data) text = sv_from_cstr("");
         if (req->strip_stdout_trailing_ws) text = sys_strip_trailing_ws(req->arena, text);
         out->stdout_text = text;
-        if (nob_file_exists(nob_temp_sv_to_cstr(stdout_path))) (void)nob_delete_file(nob_temp_sv_to_cstr(stdout_path));
+        if (sys_file_exists(stdout_path)) (void)sys_delete_file(stdout_path);
     } else {
         out->stdout_text = sv_from_cstr("");
     }
@@ -327,7 +371,7 @@ bool sys_run_process(const Sys_Process_Request *req, Sys_Process_Result *out) {
         if (!text.data) text = sv_from_cstr("");
         if (req->strip_stderr_trailing_ws) text = sys_strip_trailing_ws(req->arena, text);
         out->stderr_text = text;
-        if (nob_file_exists(nob_temp_sv_to_cstr(stderr_path))) (void)nob_delete_file(nob_temp_sv_to_cstr(stderr_path));
+        if (sys_file_exists(stderr_path)) (void)sys_delete_file(stderr_path);
     } else {
         out->stderr_text = sv_from_cstr("");
     }

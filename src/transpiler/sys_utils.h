@@ -26,6 +26,15 @@ typedef struct {
 bool sys_ensure_parent_dirs(Arena *arena, String_View file_path);
 String_View sys_read_file(Arena *arena, String_View path);
 bool sys_write_file(String_View path, String_View content);
+bool sys_write_file_bytes(String_View path, const char *data, size_t count);
+bool sys_read_file_builder(String_View path, Nob_String_Builder *out);
+bool sys_file_exists(String_View path);
+bool sys_mkdir(String_View path);
+bool sys_delete_file(String_View path);
+bool sys_copy_file(String_View src, String_View dst);
+bool sys_copy_directory_recursive(String_View src, String_View dst);
+bool sys_read_dir(String_View dir, Nob_File_Paths *out);
+Nob_File_Type sys_get_file_type(String_View path);
 bool sys_delete_path_recursive(Arena *arena, String_View path);
 bool sys_copy_entry_to_destination(Arena *arena, String_View src, String_View destination);
 bool sys_download_to_path(Arena *arena, String_View url, String_View out_path, String_View *log_msg);

@@ -6,6 +6,12 @@
 #include "math_parser.h"
 #include "sys_utils.h"
 #include "toolchain_driver.h"
+#include "cmake_path_utils.h"
+#include "cmake_regex_utils.h"
+#include "cmake_glob_utils.h"
+#include "find_search_utils.h"
+#include "cmake_meta_io.h"
+#include "ctest_coverage_utils.h"
 #include "ds_adapter.h"
 #include <ctype.h>
 #include <errno.h>
@@ -50,7 +56,7 @@ void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const c
 
     if (input_path && input_path[0] != '\0') {
         String_View input_sv = sv_from_cstr(input_path);
-        String_View base_dir = path_make_absolute_arena(arena, path_parent_dir_arena(arena, input_sv));
+        String_View base_dir = cmk_path_make_absolute(arena, cmk_path_parent(arena, input_sv));
         ctx->current_source_dir = base_dir;
         ctx->current_binary_dir = base_dir;
         ctx->current_list_dir = base_dir;

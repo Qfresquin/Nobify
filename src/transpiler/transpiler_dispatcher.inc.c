@@ -206,7 +206,7 @@ static void configure_package_variables(Evaluator_Context *ctx,
     char *config_var = nob_temp_sprintf("%s_CONFIG", name_cstr);
     String_View config_path = sv_from_cstr("");
     if (found && pkg_dir.count > 0) {
-        config_path = path_join_arena(ctx->arena, pkg_dir, sv_from_cstr(nob_temp_sprintf("%sConfig.cmake", name_cstr)));
+        config_path = cmk_path_join(ctx->arena, pkg_dir, sv_from_cstr(nob_temp_sprintf("%sConfig.cmake", name_cstr)));
     }
     eval_set_var(ctx, sv_from_cstr(config_var), config_path, false, false);
 

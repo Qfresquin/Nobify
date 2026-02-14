@@ -4,6 +4,12 @@
 #include "../genex_evaluator.h"
 #include "../sys_utils.h"
 #include "../toolchain_driver.h"
+#include "../src/transpiler/cmake_path_utils.h"
+#include "../src/transpiler/cmake_regex_utils.h"
+#include "../src/transpiler/cmake_glob_utils.h"
+#include "../src/transpiler/find_search_utils.h"
+#include "../src/transpiler/cmake_meta_io.h"
+#include "../src/transpiler/ctest_coverage_utils.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -182,9 +188,154 @@ TEST(toolchain_driver_compiler_probe_and_try_run) {
     TEST_PASS();
 }
 
+TEST(cmake_path_utils_basic) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+
+    String_View normalized = cmk_path_normalize(arena, sv_from_cstr("a/./b/../c"));
+    ASSERT(nob_sv_eq(normalized, sv_from_cstr("a/c")));
+
+    String_View rel = cmk_path_relativize(arena, sv_from_cstr("root/sub/file.txt"), sv_from_cstr("root"));
+    ASSERT(nob_sv_eq(rel, sv_from_cstr("sub/file.txt")));
+
+    bool supported = false;
+    String_View comp = cmk_path_get_component(arena, sv_from_cstr("dir/name.ext"), sv_from_cstr("FILENAME"), &supported);
+    ASSERT(supported == true);
+    ASSERT(nob_sv_eq(comp, sv_from_cstr("name.ext")));
+
+    comp = cmk_path_get_component(arena, sv_from_cstr("dir/name.ext"), sv_from_cstr("STEM"), &supported);
+    ASSERT(supported == true);
+    ASSERT(nob_sv_eq(comp, sv_from_cstr("name")));
+
+    comp = cmk_path_get_component(arena, sv_from_cstr("dir/name.ext"), sv_from_cstr("EXTENSION"), &supported);
+    ASSERT(supported == true);
+    ASSERT(nob_sv_eq(comp, sv_from_cstr(".ext")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(cmake_regex_glob_find_utils_basic) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+
+    String_View replaced = cmk_regex_replace_backrefs(arena,
+                                                      sv_from_cstr("([0-9]+\\.[0-9]+\\.[0-9]+).+"),
+                                                      sv_from_cstr("version=1.2.3-beta"),
+                                                      sv_from_cstr("\\1"));
+    ASSERT(nob_sv_eq(replaced, sv_from_cstr("1.2.3")));
+
+    ASSERT(cmk_glob_match(sv_from_cstr("*.txt"), sv_from_cstr("a.txt")) == true);
+    ASSERT(cmk_glob_match(sv_from_cstr("*.txt"), sv_from_cstr("a.c")) == false);
+
+    (void)sys_delete_path_recursive(arena, sv_from_cstr("temp_phase2_glob_mod"));
+    ASSERT(sys_mkdir(sv_from_cstr("temp_phase2_glob_mod")));
+    ASSERT(sys_mkdir(sv_from_cstr("temp_phase2_glob_mod/sub")));
+    ASSERT(sys_write_file(sv_from_cstr("temp_phase2_glob_mod/a.txt"), sv_from_cstr("a")));
+    ASSERT(sys_write_file(sv_from_cstr("temp_phase2_glob_mod/b.c"), sv_from_cstr("b")));
+    ASSERT(sys_write_file(sv_from_cstr("temp_phase2_glob_mod/sub/c.txt"), sv_from_cstr("c")));
+
+    String_Builder list = {0};
+    bool first = true;
+    ASSERT(cmk_glob_collect_recursive(arena,
+                                      sv_from_cstr("temp_phase2_glob_mod"),
+                                      sv_from_cstr(""),
+                                      sv_from_cstr("*.txt"),
+                                      false,
+                                      sv_from_cstr(""),
+                                      &list,
+                                      &first));
+    ASSERT(strstr(list.items ? list.items : "", "a.txt") != NULL);
+    ASSERT(strstr(list.items ? list.items : "", "c.txt") != NULL);
+    nob_sb_free(list);
+
+    String_List dirs = {0};
+    String_List names = {0};
+    string_list_init(&dirs);
+    string_list_init(&names);
+    string_list_add(&dirs, arena, sv_from_cstr("temp_phase2_glob_mod"));
+    string_list_add(&names, arena, sv_from_cstr("a.txt"));
+    String_View found = sv_from_cstr("");
+    ASSERT(find_search_candidates(arena, &dirs, NULL, &names, &found));
+    ASSERT(strstr(nob_temp_sv_to_cstr(found), "a.txt") != NULL);
+
+    (void)sys_delete_path_recursive(arena, sv_from_cstr("temp_phase2_glob_mod"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(cmake_meta_and_ctest_coverage_utils_basic) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+
+    (void)sys_delete_path_recursive(arena, sv_from_cstr("temp_phase2_meta"));
+    ASSERT(sys_mkdir(sv_from_cstr("temp_phase2_meta")));
+
+    String_View query_root = sv_from_cstr("temp_phase2_meta/.cmake/api/v1/query");
+    ASSERT(cmk_meta_emit_file_api_query(arena, query_root, sv_from_cstr("codemodel"), sv_from_cstr("1")));
+    ASSERT(sys_file_exists(sv_from_cstr("temp_phase2_meta/.cmake/api/v1/query/codemodel-v1.json")));
+
+    String_List targets = {0};
+    string_list_init(&targets);
+    string_list_add(&targets, arena, sv_from_cstr("app"));
+    ASSERT(cmk_meta_export_write_targets_file(arena,
+                                              sv_from_cstr("temp_phase2_meta/export/targets.cmake"),
+                                              sv_from_cstr("Demo::"),
+                                              sv_from_cstr("TARGETS"),
+                                              sv_from_cstr(""),
+                                              &targets,
+                                              false));
+    ASSERT(sys_file_exists(sv_from_cstr("temp_phase2_meta/export/targets.cmake")));
+
+    ASSERT(cmk_meta_export_register_package(arena,
+                                            sv_from_cstr("temp_phase2_meta/registry"),
+                                            sv_from_cstr("DemoPkg"),
+                                            sv_from_cstr("DemoPkg_DIR"),
+                                            sv_from_cstr("temp_phase2_meta/install")));
+    ASSERT(sys_file_exists(sv_from_cstr("temp_phase2_meta/registry/DemoPkg.cmake")));
+
+    ASSERT(sys_mkdir(sv_from_cstr("temp_phase2_meta/cov")));
+    ASSERT(sys_mkdir(sv_from_cstr("temp_phase2_meta/cov/build")));
+    ASSERT(sys_write_file(sv_from_cstr("temp_phase2_meta/cov/build/a.gcda"), sv_from_cstr("x")));
+    ASSERT(sys_write_file(sv_from_cstr("temp_phase2_meta/cov/build/b.gcno"), sv_from_cstr("y")));
+
+    String_List gcov_options = {0};
+    string_list_init(&gcov_options);
+    string_list_add(&gcov_options, arena, sv_from_cstr("--preserve-paths"));
+
+    String_View data_json_path = sv_from_cstr("");
+    String_View labels_json_path = sv_from_cstr("");
+    String_View coverage_xml_path = sv_from_cstr("");
+    size_t file_count = 0;
+    ASSERT(ctest_coverage_collect_gcov_bundle(arena,
+                                              sv_from_cstr("temp_phase2_meta/cov/src"),
+                                              sv_from_cstr("temp_phase2_meta/cov/build"),
+                                              sv_from_cstr("gcov"),
+                                              &gcov_options,
+                                              sv_from_cstr("temp_phase2_meta/cov/bundle.tar"),
+                                              sv_from_cstr("FROM_EXT"),
+                                              false,
+                                              &data_json_path,
+                                              &labels_json_path,
+                                              &coverage_xml_path,
+                                              &file_count));
+    ASSERT(file_count >= 2);
+    ASSERT(sys_file_exists(data_json_path));
+    ASSERT(sys_file_exists(labels_json_path));
+    ASSERT(sys_file_exists(coverage_xml_path));
+    ASSERT(sys_file_exists(sv_from_cstr("temp_phase2_meta/cov/bundle.tar")));
+
+    (void)sys_delete_path_recursive(arena, sv_from_cstr("temp_phase2_meta"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 void run_phase2_module_tests(int *passed, int *failed) {
     test_math_parser_precedence_unary_and_errors(passed, failed);
     test_genex_evaluator_basic_paths(passed, failed);
     test_sys_utils_directory_copy_delete_and_file_download(passed, failed);
     test_toolchain_driver_compiler_probe_and_try_run(passed, failed);
+    test_cmake_path_utils_basic(passed, failed);
+    test_cmake_regex_glob_find_utils_basic(passed, failed);
+    test_cmake_meta_and_ctest_coverage_utils_basic(passed, failed);
 }

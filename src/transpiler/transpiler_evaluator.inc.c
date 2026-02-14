@@ -77,14 +77,7 @@ static void list_store_var(Evaluator_Context *ctx, String_View var_name, String_
 static void cpack_sync_common_metadata(Evaluator_Context *ctx);
 static long parse_long_or_default(String_View sv, long fallback);
 static bool list_index_to_offset(size_t count, long idx, size_t *out);
-static String_View regex_replace_with_backrefs(Evaluator_Context *ctx, String_View pattern, String_View input, String_View replacement);
-static bool ensure_parent_dirs_for_path(Arena *arena, String_View file_path);
 static String_View configure_expand_variables(Evaluator_Context *ctx, String_View input, bool at_only);
-static bool path_is_absolute_sv(String_View path);
-static String_View path_join_arena(Arena *arena, String_View base, String_View rel);
-static bool path_has_separator(String_View path);
-static String_View path_basename_sv(String_View path);
-static String_View filename_ext_sv(String_View name);
 static bool eval_real_probes_enabled(Evaluator_Context *ctx);
 static bool eval_real_probe_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers, bool *used_probe);
 static bool eval_real_probe_check_c_source_compiles(Evaluator_Context *ctx, String_View source, bool *used_probe);
@@ -94,11 +87,11 @@ static void eval_append_link_library_value(Evaluator_Context *ctx, Build_Target 
 
 /*static String_View normalize_source_path(Evaluator_Context *ctx, String_View src) {
     if (!ctx || src.count == 0) return src;
-    if (path_is_absolute_sv(src)) return src;
+    if (cmk_path_is_absolute(src)) return src;
     if (nob_sv_starts_with(src, sv_from_cstr("$"))) return src;
     if (nob_sv_starts_with(src, sv_from_cstr("-"))) return src;
     if (ctx->current_source_dir.count == 1 && ctx->current_source_dir.data[0] == '.') return src;
-    return path_join_arena(ctx->arena, ctx->current_source_dir, src);
+    return cmk_path_join(ctx->arena, ctx->current_source_dir, src);
 }*/
 
 static bool sv_bool_is_true(String_View value) {
@@ -537,7 +530,7 @@ static String_View eval_get_var(Evaluator_Context *ctx, String_View key) {
         return ctx->current_list_dir;
     }
     if (nob_sv_eq(key, sv_from_cstr("CMAKE_ROOT"))) {
-        String_View local_builtin = path_join_arena(ctx->arena, ctx->current_source_dir, sv_from_cstr("cmake_builtin"));
+        String_View local_builtin = cmk_path_join(ctx->arena, ctx->current_source_dir, sv_from_cstr("cmake_builtin"));
         if (nob_file_exists(nob_temp_sv_to_cstr(local_builtin))) return local_builtin;
         return sv_from_cstr("");
     }
@@ -1751,9 +1744,9 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
 
     String_View raw_path = resolve_arg(ctx, args.items[0]);
     if (raw_path.count == 0) return;
-    String_View output_path = path_is_absolute_sv(raw_path)
+    String_View output_path = cmk_path_is_absolute(raw_path)
         ? raw_path
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, raw_path);
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, raw_path);
 
     bool append_mode = false;
     String_Builder content = {0};
@@ -1770,14 +1763,14 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
     }
 
     if (!append_mode) {
-        if (!ensure_parent_dirs_for_path(ctx->arena, output_path)) {
+        if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
                 nob_temp_sprintf("falha ao preparar diretorio para escrita: "SV_Fmt, SV_Arg(output_path)),
                 "verifique permissao de escrita e caminho de destino");
             nob_sb_free(content);
             return;
         }
-        if (!nob_write_entire_file(nob_temp_sv_to_cstr(output_path), content.items ? content.items : "", content.count)) {
+        if (!sys_write_file_bytes(output_path, content.items ? content.items : "", content.count)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
                 nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -1801,7 +1794,7 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
     sb_append_buf(&merged, existing.items ? existing.items : "", existing.count);
     sb_append_buf(&merged, content.items ? content.items : "", content.count);
 
-    if (!ensure_parent_dirs_for_path(ctx->arena, output_path)) {
+    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
             nob_temp_sprintf("falha ao preparar diretorio para append: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita e caminho de destino");
@@ -1810,7 +1803,7 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
         nob_sb_free(merged);
         return;
     }
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(output_path), merged.items ? merged.items : "", merged.count)) {
+    if (!sys_write_file_bytes(output_path, merged.items ? merged.items : "", merged.count)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
             nob_temp_sprintf("falha ao gravar append em arquivo: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita e caminho de destino");
@@ -2008,7 +2001,7 @@ static void eval_string_command(Evaluator_Context *ctx, Args args) {
                 sb_append_buf(&input_sb, p.data, p.count);
             }
             input = sb_to_sv(input_sb);
-            String_View replaced = regex_replace_with_backrefs(ctx, pattern, input, replacement);
+            String_View replaced = cmk_regex_replace_backrefs(ctx->arena, pattern, input, replacement);
             eval_set_var(ctx, out_var, replaced, false, false);
         }
 
@@ -2208,63 +2201,6 @@ static bool list_index_to_offset(size_t count, long idx, size_t *out) {
     *out = (size_t)pos;
     return true;
 }
-
-static String_View regex_replace_with_backrefs(Evaluator_Context *ctx, String_View pattern, String_View input, String_View replacement) {
-    if (nob_sv_eq(pattern, sv_from_cstr("[^\"]+\"")) && replacement.count == 0) {
-        for (size_t i = 0; i < input.count; i++) {
-            if (input.data[i] == '"') {
-                return nob_sv_from_parts(input.data + i + 1, input.count - i - 1);
-            }
-        }
-        return input;
-    }
-
-    if (nob_sv_eq(pattern, sv_from_cstr("[^0]+0x")) && replacement.count == 0) {
-        for (size_t i = 0; i + 1 < input.count; i++) {
-            if (input.data[i] == '0' && (input.data[i + 1] == 'x' || input.data[i + 1] == 'X')) {
-                return nob_sv_from_parts(input.data + i, input.count - i);
-            }
-        }
-        return input;
-    }
-
-    if (nob_sv_eq(pattern, sv_from_cstr("([0-9]+\\.[0-9]+\\.[0-9]+).+")) &&
-        nob_sv_eq(replacement, sv_from_cstr("\\1"))) {
-        size_t i = 0;
-        while (i < input.count && !isdigit((unsigned char)input.data[i])) i++;
-        size_t start = i;
-        while (i < input.count && isdigit((unsigned char)input.data[i])) i++;
-        if (i >= input.count || input.data[i] != '.') return input;
-        i++;
-        while (i < input.count && isdigit((unsigned char)input.data[i])) i++;
-        if (i >= input.count || input.data[i] != '.') return input;
-        i++;
-        while (i < input.count && isdigit((unsigned char)input.data[i])) i++;
-        if (i <= start) return input;
-        return nob_sv_from_parts(input.data + start, i - start);
-    }
-
-    if (pattern.count == 0) return input;
-
-    String_Builder out = {0};
-    size_t i = 0;
-    while (i < input.count) {
-        if (i + pattern.count <= input.count &&
-            memcmp(input.data + i, pattern.data, pattern.count) == 0) {
-            sb_append_buf(&out, replacement.data, replacement.count);
-            i += pattern.count;
-        } else {
-            sb_append(&out, input.data[i]);
-            i++;
-        }
-    }
-    String_View result = out.count > 0
-        ? sv_from_cstr(arena_strndup(ctx->arena, out.items, out.count))
-        : sv_from_cstr("");
-    nob_sb_free(out);
-    return result;
-}
-
 
 // Avalia o comando ''add_custom_command''
 static void eval_add_custom_command(Evaluator_Context *ctx, Args args) {
@@ -3238,14 +3174,14 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
 
     try_compile_append_required_settings(ctx, &compile_definitions, &link_libraries);
 
-    String_View bindir = path_is_absolute_sv(bindir_arg)
+    String_View bindir = cmk_path_is_absolute(bindir_arg)
         ? bindir_arg
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, bindir_arg);
-    (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(bindir));
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, bindir_arg);
+    (void)sys_mkdir(bindir);
 
-    String_View src_path = path_is_absolute_sv(src_arg)
+    String_View src_path = cmk_path_is_absolute(src_arg)
         ? src_arg
-        : path_join_arena(ctx->arena, ctx->current_list_dir, src_arg);
+        : cmk_path_join(ctx->arena, ctx->current_list_dir, src_arg);
     if (!nob_file_exists(nob_temp_sv_to_cstr(src_path))) {
         eval_set_var(ctx, out_var, sv_from_cstr("0"), false, false);
         if (output_var.count > 0) {
@@ -3269,9 +3205,9 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
     }
 
     #if defined(_WIN32)
-        String_View out_path = path_join_arena(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_compile.exe"));
+        String_View out_path = cmk_path_join(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_compile.exe"));
     #else
-        String_View out_path = path_join_arena(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_compile"));
+        String_View out_path = cmk_path_join(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_compile"));
     #endif
 
     bool compile_ok = false;
@@ -3281,10 +3217,10 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
     eval_set_var(ctx, out_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
 
     if (compile_ok && copy_file_path.count > 0 && nob_file_exists(nob_temp_sv_to_cstr(out_path))) {
-        String_View copy_path = path_is_absolute_sv(copy_file_path)
+        String_View copy_path = cmk_path_is_absolute(copy_file_path)
             ? copy_file_path
-            : path_join_arena(ctx->arena, ctx->current_binary_dir, copy_file_path);
-        (void)nob_copy_file(nob_temp_sv_to_cstr(out_path), nob_temp_sv_to_cstr(copy_path));
+            : cmk_path_join(ctx->arena, ctx->current_binary_dir, copy_file_path);
+        (void)sys_copy_file(out_path, copy_path);
     }
 
     if (output_var.count > 0) {
@@ -3371,10 +3307,10 @@ static void eval_create_test_sourcelist_command(Evaluator_Context *ctx, Args arg
     }
     eval_set_var(ctx, out_var, sb_to_sv(list_sb), false, false);
 
-    String_View driver_path = path_is_absolute_sv(driver_file)
+    String_View driver_path = cmk_path_is_absolute(driver_file)
         ? driver_file
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, driver_file);
-    if (ensure_parent_dirs_for_path(ctx->arena, driver_path)) {
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, driver_file);
+    if (sys_ensure_parent_dirs(ctx->arena, driver_path)) {
         String_Builder file_sb = {0};
         sb_append_cstr(&file_sb, "/* generated by cmk2nob: create_test_sourcelist */\n");
         if (extra_include.count > 0) {
@@ -3387,7 +3323,7 @@ static void eval_create_test_sourcelist_command(Evaluator_Context *ctx, Args arg
         sb_append_cstr(&file_sb, "    (void)argv;\n");
         sb_append_cstr(&file_sb, "    return 0;\n");
         sb_append_cstr(&file_sb, "}\n");
-        if (!nob_write_entire_file(nob_temp_sv_to_cstr(driver_path), file_sb.items, file_sb.count)) {
+        if (!sys_write_file_bytes(driver_path, file_sb.items, file_sb.count)) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "create_test_sourcelist",
                 nob_temp_sprintf("falha ao gerar driver de teste: "SV_Fmt, SV_Arg(driver_path)),
                 "verifique permissao de escrita no diretorio de build");
@@ -3407,7 +3343,7 @@ static bool qt_wrap_is_keyword(String_View value) {
 
 // Extrai o "stem" do nome do arquivo de origem, para gerar nome de arquivo de saída correspondente
 static String_View qt_wrap_source_stem(String_View input) {
-    String_View base = path_basename_sv(input);
+    String_View base = cmk_path_basename(input);
     size_t dot = SIZE_MAX;
     for (size_t i = 0; i < base.count; i++) {
         if (base.data[i] == '.') dot = i;
@@ -3434,15 +3370,15 @@ static void eval_qt_wrap_cpp_command(Evaluator_Context *ctx, Args args) {
         String_View stem = qt_wrap_source_stem(src);
         String_View generated_name = sv_from_cstr(
             nob_temp_sprintf("moc_%.*s.cxx", (int)stem.count, stem.data));
-        String_View generated_path = path_join_arena(ctx->arena, ctx->current_binary_dir, generated_name);
+        String_View generated_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, generated_name);
 
         if (!first) sb_append(&list_sb, ';');
         sb_append_buf(&list_sb, generated_path.data, generated_path.count);
         first = false;
 
-        if (ensure_parent_dirs_for_path(ctx->arena, generated_path)) {
+        if (sys_ensure_parent_dirs(ctx->arena, generated_path)) {
             const char *content = "/* generated by cmk2nob: qt_wrap_cpp */\n";
-            if (!nob_write_entire_file(nob_temp_sv_to_cstr(generated_path), content, strlen(content))) {
+            if (!sys_write_file_bytes(generated_path, content, strlen(content))) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "qt_wrap_cpp",
                     nob_temp_sprintf("falha ao gerar arquivo MOC: "SV_Fmt, SV_Arg(generated_path)),
                     "verifique permissao de escrita no diretorio de build");
@@ -3472,17 +3408,17 @@ static void eval_qt_wrap_ui_command(Evaluator_Context *ctx, Args args) {
         String_View stem = qt_wrap_source_stem(ui_file);
         String_View generated_name = sv_from_cstr(
             nob_temp_sprintf("ui_%.*s.h", (int)stem.count, stem.data));
-        String_View generated_path = path_join_arena(ctx->arena, ctx->current_binary_dir, generated_name);
+        String_View generated_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, generated_name);
 
         if (!first) sb_append(&list_sb, ';');
         sb_append_buf(&list_sb, generated_path.data, generated_path.count);
         first = false;
 
-        if (ensure_parent_dirs_for_path(ctx->arena, generated_path)) {
+        if (sys_ensure_parent_dirs(ctx->arena, generated_path)) {
             const char *content =
                 "/* generated by cmk2nob: qt_wrap_ui */\n"
                 "#pragma once\n";
-            if (!nob_write_entire_file(nob_temp_sv_to_cstr(generated_path), content, strlen(content))) {
+            if (!sys_write_file_bytes(generated_path, content, strlen(content))) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "qt_wrap_ui",
                     nob_temp_sprintf("falha ao gerar header UI: "SV_Fmt, SV_Arg(generated_path)),
                     "verifique permissao de escrita no diretorio de build");
@@ -3518,17 +3454,17 @@ static void eval_fltk_wrap_ui_command(Evaluator_Context *ctx, Args args) {
         String_View stem = qt_wrap_source_stem(ui_file);
         String_View generated_name = sv_from_cstr(
             nob_temp_sprintf("%.*s.cxx", (int)stem.count, stem.data));
-        String_View generated_path = path_join_arena(ctx->arena, ctx->current_binary_dir, generated_name);
+        String_View generated_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, generated_name);
 
         if (!first) sb_append(&list_sb, ';');
         sb_append_buf(&list_sb, generated_path.data, generated_path.count);
         first = false;
 
-        if (ensure_parent_dirs_for_path(ctx->arena, generated_path)) {
+        if (sys_ensure_parent_dirs(ctx->arena, generated_path)) {
             String_Builder content = {0};
             sb_append_cstr(&content, "/* generated by cmk2nob: fltk_wrap_ui */\n");
             sb_append_cstr(&content, "int cmk2nob_fltk_wrap_ui_stub(void) { return 0; }\n");
-            if (!nob_write_entire_file(nob_temp_sv_to_cstr(generated_path), content.items, content.count)) {
+            if (!sys_write_file_bytes(generated_path, content.items, content.count)) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "fltk_wrap_ui",
                     nob_temp_sprintf("falha ao gerar wrapper FLTK: "SV_Fmt, SV_Arg(generated_path)),
                     "verifique permissao de escrita no diretorio de build");
@@ -3642,12 +3578,12 @@ static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
 
     String_View exec_cwd = ctx->current_binary_dir;
     if (working_dir.count > 0) {
-        exec_cwd = path_is_absolute_sv(working_dir)
+        exec_cwd = cmk_path_is_absolute(working_dir)
             ? working_dir
-            : path_join_arena(ctx->arena, ctx->current_binary_dir, working_dir);
+            : cmk_path_join(ctx->arena, ctx->current_binary_dir, working_dir);
     }
 
-    String_View scratch_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+    String_View scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
 
     Sys_Process_Request req = {0};
     req.arena = ctx->arena;
@@ -3737,12 +3673,12 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
 
     String_View exec_cwd = ctx->current_binary_dir;
     if (working_dir.count > 0) {
-        exec_cwd = path_is_absolute_sv(working_dir)
+        exec_cwd = cmk_path_is_absolute(working_dir)
             ? working_dir
-            : path_join_arena(ctx->arena, ctx->current_binary_dir, working_dir);
+            : cmk_path_join(ctx->arena, ctx->current_binary_dir, working_dir);
     }
 
-    String_View scratch_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+    String_View scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
 
     Sys_Process_Request req = {0};
     req.arena = ctx->arena;
@@ -3786,29 +3722,7 @@ static bool try_run_keyword(String_View tok) {
 }
 
 // Extrai a parte major de um token de versão, retornando fallback se o formato for inválido
-static int cmake_file_api_parse_version_major(String_View tok, int fallback) {
-    if (tok.count == 0) return fallback;
-    const char *text = nob_temp_sv_to_cstr(tok);
-    if ((text[0] == 'v' || text[0] == 'V') && text[1] != '\0') text++;
-    char *end = NULL;
-    long parsed = strtol(text, &end, 10);
-    if (!end || end == text || parsed <= 0) return fallback;
-    return (int)parsed;
-}
 
-static void json_append_escaped(String_Builder *sb, String_View s) {
-    if (!sb) return;
-    for (size_t i = 0; i < s.count; i++) {
-        unsigned char c = (unsigned char)s.data[i];
-        if (c == '\\') sb_append_cstr(sb, "\\\\");
-        else if (c == '"') sb_append_cstr(sb, "\\\"");
-        else if (c == '\n') sb_append_cstr(sb, "\\n");
-        else if (c == '\r') sb_append_cstr(sb, "\\r");
-        else if (c == '\t') sb_append_cstr(sb, "\\t");
-        else if (c < 0x20) sb_append_cstr(sb, "?");
-        else sb_append(sb, (char)c);
-    }
-}
 
 // Verifica se o token é uma keyword de cmake_file_api que indica início de nova seção de argumentos
 static bool cmake_file_api_is_keyword(String_View tok) {
@@ -3818,18 +3732,6 @@ static bool cmake_file_api_is_keyword(String_View tok) {
 }
 
 // Emite um arquivo de consulta para o CMake File API, criando diretórios pai conforme necessário
-static void cmake_file_api_emit_query(Evaluator_Context *ctx,
-                                      String_View query_root,
-                                      String_View kind,
-                                      String_View version_token) {
-    if (!ctx || kind.count == 0) return;
-    int major = cmake_file_api_parse_version_major(version_token, 1);
-    String_View file_name = sv_from_cstr(nob_temp_sprintf("%s-v%d.json", nob_temp_sv_to_cstr(kind), major));
-    String_View out_path = path_join_arena(ctx->arena, query_root, file_name);
-    if (!ensure_parent_dirs_for_path(ctx->arena, out_path)) return;
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(out_path), "", 0);
-}
-
 // Avalia o comando 'cmake_file_api'
 static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
     if (!ctx || args.count < 1) return;
@@ -3842,11 +3744,11 @@ static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    String_View api_root = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmake/api"));
-    String_View v1_root = path_join_arena(ctx->arena, api_root, sv_from_cstr("v1"));
-    String_View query_root = path_join_arena(ctx->arena, v1_root, sv_from_cstr("query"));
-    (void)ensure_parent_dirs_for_path(ctx->arena, path_join_arena(ctx->arena, query_root, sv_from_cstr(".keep")));
-    (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(query_root));
+    String_View api_root = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmake/api"));
+    String_View v1_root = cmk_path_join(ctx->arena, api_root, sv_from_cstr("v1"));
+    String_View query_root = cmk_path_join(ctx->arena, v1_root, sv_from_cstr("query"));
+    (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, query_root, sv_from_cstr(".keep")));
+    (void)sys_mkdir(query_root);
 
     String_View client_name = sv_from_cstr("");
     size_t i = 1;
@@ -3857,7 +3759,7 @@ static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
 
     if (i < args.count && sv_eq_ci(resolve_arg(ctx, args.items[i]), sv_from_cstr("API_VERSION")) && i + 1 < args.count) {
         String_View v = resolve_arg(ctx, args.items[i + 1]);
-        int api_major = cmake_file_api_parse_version_major(v, 1);
+        int api_major = cmk_meta_parse_version_major(v, 1);
         if (api_major != 1) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "cmake_file_api",
                 nob_temp_sprintf("API_VERSION v%d solicitado; usando v1", api_major),
@@ -3868,11 +3770,11 @@ static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
 
     String_View effective_query_root = query_root;
     if (client_name.count > 0) {
-        String_View client_dir = path_join_arena(ctx->arena, query_root,
+        String_View client_dir = cmk_path_join(ctx->arena, query_root,
             sv_from_cstr(nob_temp_sprintf("client-%s", nob_temp_sv_to_cstr(client_name))));
-        effective_query_root = path_join_arena(ctx->arena, client_dir, sv_from_cstr("query"));
-        (void)ensure_parent_dirs_for_path(ctx->arena, path_join_arena(ctx->arena, effective_query_root, sv_from_cstr(".keep")));
-        (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(effective_query_root));
+        effective_query_root = cmk_path_join(ctx->arena, client_dir, sv_from_cstr("query"));
+        (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, effective_query_root, sv_from_cstr(".keep")));
+        (void)sys_mkdir(effective_query_root);
     }
 
     bool emitted_any = false;
@@ -3897,15 +3799,12 @@ static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
             i += 1;
         }
 
-        cmake_file_api_emit_query(ctx, effective_query_root, kind, ver);
+        (void)cmk_meta_emit_file_api_query(ctx->arena, effective_query_root, kind, ver);
         emitted_any = true;
     }
 
     if (!emitted_any) {
-        String_View out_path = path_join_arena(ctx->arena, effective_query_root, sv_from_cstr("query.json"));
-        if (ensure_parent_dirs_for_path(ctx->arena, out_path)) {
-            (void)nob_write_entire_file(nob_temp_sv_to_cstr(out_path), "", 0);
-        }
+        (void)cmk_meta_emit_empty_file_api_query(ctx->arena, effective_query_root);
     }
 
     eval_set_var(ctx, sv_from_cstr("CMAKE_FILE_API"), sv_from_cstr("1"), false, false);
@@ -3962,12 +3861,12 @@ static void eval_cmake_instrumentation_command(Evaluator_Context *ctx, Args args
         String_View tok = resolve_arg(ctx, args.items[i]);
         if (sv_eq_ci(tok, sv_from_cstr("API_VERSION")) && i + 1 < args.count) {
             String_View v = resolve_arg(ctx, args.items[++i]);
-            api_version = cmake_file_api_parse_version_major(v, 0);
+            api_version = cmk_meta_parse_version_major(v, 0);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DATA_VERSION")) && i + 1 < args.count) {
             String_View v = resolve_arg(ctx, args.items[++i]);
-            data_version = cmake_file_api_parse_version_major(v, 0);
+            data_version = cmk_meta_parse_version_major(v, 0);
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("HOOKS"))) {
@@ -4034,50 +3933,19 @@ static void eval_cmake_instrumentation_command(Evaluator_Context *ctx, Args args
             "habilite o gate para refletir o comportamento oficial do CMake");
     }
 
-    String_View root = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmake/instrumentation/v1/query/generated"));
-    (void)ensure_parent_dirs_for_path(ctx->arena, path_join_arena(ctx->arena, root, sv_from_cstr(".keep")));
-    (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(root));
+    String_View root = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmake/instrumentation/v1/query/generated"));
+    (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, root, sv_from_cstr(".keep")));
+    (void)sys_mkdir(root);
 
     static size_t s_instr_query_counter = 0;
     s_instr_query_counter++;
-    String_View out_path = path_join_arena(ctx->arena, root, sv_from_cstr(nob_temp_sprintf("query_%zu.json", s_instr_query_counter)));
-
-    String_Builder json = {0};
-    sb_append_cstr(&json, "{\n");
-    sb_append_cstr(&json, "  \"version\": 1");
-    if (hooks.count > 0) {
-        sb_append_cstr(&json, ",\n  \"hooks\": [");
-        for (size_t i = 0; i < hooks.count; i++) {
-            if (i > 0) sb_append_cstr(&json, ", ");
-            sb_append(&json, '"');
-            json_append_escaped(&json, hooks.items[i]);
-            sb_append(&json, '"');
-        }
-        sb_append(&json, ']');
-    }
-    if (queries.count > 0) {
-        sb_append_cstr(&json, ",\n  \"queries\": [");
-        for (size_t i = 0; i < queries.count; i++) {
-            if (i > 0) sb_append_cstr(&json, ", ");
-            sb_append(&json, '"');
-            json_append_escaped(&json, queries.items[i]);
-            sb_append(&json, '"');
-        }
-        sb_append(&json, ']');
-    }
-    if (callbacks.count > 0) {
-        sb_append_cstr(&json, ",\n  \"callbacks\": [");
-        for (size_t i = 0; i < callbacks.count; i++) {
-            if (i > 0) sb_append_cstr(&json, ", ");
-            sb_append(&json, '"');
-            json_append_escaped(&json, callbacks.items[i]);
-            sb_append(&json, '"');
-        }
-        sb_append(&json, ']');
-    }
-    sb_append_cstr(&json, "\n}\n");
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(out_path), json.items, json.count);
-    nob_sb_free(json);
+    (void)cmk_meta_emit_instrumentation_query(ctx->arena,
+                                              root,
+                                              &hooks,
+                                              &queries,
+                                              &callbacks,
+                                              s_instr_query_counter,
+                                              NULL);
 
     eval_set_var(ctx, sv_from_cstr("CMAKE_INSTRUMENTATION"), sv_from_cstr("ON"), false, false);
     eval_set_var(ctx, sv_from_cstr("CMAKE_INSTRUMENTATION_API_VERSION"), sv_from_cstr("1"), false, false);
@@ -4197,13 +4065,13 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
     }
 
     try_compile_append_required_settings(ctx, &compile_definitions, &link_libraries);
-    String_View bindir = path_is_absolute_sv(bindir_arg)
+    String_View bindir = cmk_path_is_absolute(bindir_arg)
         ? bindir_arg
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, bindir_arg);
-    (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(bindir));
-    String_View src_path = path_is_absolute_sv(src_arg)
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, bindir_arg);
+    (void)sys_mkdir(bindir);
+    String_View src_path = cmk_path_is_absolute(src_arg)
         ? src_arg
-        : path_join_arena(ctx->arena, ctx->current_list_dir, src_arg);
+        : cmk_path_join(ctx->arena, ctx->current_list_dir, src_arg);
 
     if (!nob_file_exists(nob_temp_sv_to_cstr(src_path))) {
         eval_set_var(ctx, compile_result_var, sv_from_cstr("0"), false, false);
@@ -4234,9 +4102,9 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
     }
 
     #if defined(_WIN32)
-        String_View out_path = path_join_arena(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_run.exe"));
+        String_View out_path = cmk_path_join(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_run.exe"));
     #else
-        String_View out_path = path_join_arena(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_run"));
+        String_View out_path = cmk_path_join(ctx->arena, bindir, sv_from_cstr("cmk2nob_try_run"));
     #endif
 
     Toolchain_Compile_Request req = {
@@ -4795,12 +4663,12 @@ static void eval_aux_source_directory_command(Evaluator_Context *ctx, Args args)
     String_View out_var = resolve_arg(ctx, args.items[1]);
     if (out_var.count == 0) return;
 
-    String_View scan_dir = path_is_absolute_sv(input_dir)
+    String_View scan_dir = cmk_path_is_absolute(input_dir)
         ? input_dir
-        : path_join_arena(ctx->arena, ctx->current_source_dir, input_dir);
+        : cmk_path_join(ctx->arena, ctx->current_source_dir, input_dir);
 
     Nob_File_Paths children = {0};
-    if (!nob_read_entire_dir(nob_temp_sv_to_cstr(scan_dir), &children)) {
+    if (!sys_read_dir(scan_dir, &children)) {
         eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
         return;
     }
@@ -4810,10 +4678,10 @@ static void eval_aux_source_directory_command(Evaluator_Context *ctx, Args args)
     for (size_t i = 0; i < children.count; i++) {
         String_View name = sv_from_cstr(children.items[i]);
         if (nob_sv_eq(name, sv_from_cstr(".")) || nob_sv_eq(name, sv_from_cstr(".."))) continue;
-        if (!aux_source_directory_has_supported_extension(filename_ext_sv(name))) continue;
+        if (!aux_source_directory_has_supported_extension(cmk_path_extension(name))) continue;
 
-        String_View full_path = path_join_arena(ctx->arena, scan_dir, name);
-        if (nob_get_file_type(nob_temp_sv_to_cstr(full_path)) != NOB_FILE_REGULAR) continue;
+        String_View full_path = cmk_path_join(ctx->arena, scan_dir, name);
+        if (sys_get_file_type(full_path) != NOB_FILE_REGULAR) continue;
 
         if (!first) sb_append(&list, ';');
         sb_append_buf(&list, full_path.data, full_path.count);
@@ -5255,11 +5123,11 @@ static String_View join_args_with_semicolon(Evaluator_Context *ctx, String_View 
 static void eval_write_basic_package_version_file_command(Evaluator_Context *ctx, Args args) {
     if (!ctx || args.count < 1) return;
     String_View out_arg = resolve_arg(ctx, args.items[0]);
-    String_View out_path = path_is_absolute_sv(out_arg)
+    String_View out_path = cmk_path_is_absolute(out_arg)
         ? out_arg
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, out_arg);
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, out_arg);
 
-    if (!ensure_parent_dirs_for_path(ctx->arena, out_path)) {
+    if (!sys_ensure_parent_dirs(ctx->arena, out_path)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "write_basic_package_version_file",
             nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(out_path)),
             "arquivo de versao de pacote nao sera gerado");
@@ -5270,7 +5138,7 @@ static void eval_write_basic_package_version_file_command(Evaluator_Context *ctx
         "# Generated by cmk2nob (partial support)\n"
         "set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
         "set(PACKAGE_VERSION_EXACT TRUE)\n";
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(out_path), content, strlen(content))) {
+    if (!sys_write_file_bytes(out_path, content, strlen(content))) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "write_basic_package_version_file",
             nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(out_path)),
             "arquivo de versao de pacote nao sera gerado");
@@ -5282,14 +5150,14 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
     if (!ctx || args.count < 2) return;
     String_View input_arg = resolve_arg(ctx, args.items[0]);
     String_View output_arg = resolve_arg(ctx, args.items[1]);
-    String_View input_path = path_is_absolute_sv(input_arg)
+    String_View input_path = cmk_path_is_absolute(input_arg)
         ? input_arg
-        : path_join_arena(ctx->arena, ctx->current_list_dir, input_arg);
-    String_View output_path = path_is_absolute_sv(output_arg)
+        : cmk_path_join(ctx->arena, ctx->current_list_dir, input_arg);
+    String_View output_path = cmk_path_is_absolute(output_arg)
         ? output_arg
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, output_arg);
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, output_arg);
 
-    if (!ensure_parent_dirs_for_path(ctx->arena, output_path)) {
+    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "configure_package_config_file",
             nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(output_path)),
             "arquivo de config de pacote nao sera gerado");
@@ -5301,7 +5169,7 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
         const char *fallback =
             "# Generated by cmk2nob (partial support)\n"
             "set(PACKAGE_INIT_DONE TRUE)\n";
-        if (!nob_write_entire_file(nob_temp_sv_to_cstr(output_path), fallback, strlen(fallback))) {
+        if (!sys_write_file_bytes(output_path, fallback, strlen(fallback))) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "configure_package_config_file",
                 nob_temp_sprintf("falha ao escrever fallback: "SV_Fmt, SV_Arg(output_path)),
                 "arquivo de config de pacote nao sera gerado");
@@ -5310,7 +5178,7 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
     }
 
     String_View rendered = configure_expand_variables(ctx, content, false);
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(output_path), rendered.data, rendered.count)) {
+    if (!sys_write_file_bytes(output_path, rendered.data, rendered.count)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "configure_package_config_file",
             nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
             "arquivo de config de pacote nao sera gerado");
@@ -6000,8 +5868,6 @@ static void eval_enable_testing_command(Evaluator_Context *ctx, Args args) {
     eval_set_var(ctx, sv_from_cstr("CMAKE_TESTING_ENABLED"), sv_from_cstr("ON"), false, false);
 }
 
-static String_View path_parent_dir_arena(Arena *arena, String_View full_path);
-
 static String_View ctest_option_value(Evaluator_Context *ctx, Args args, const char *opt_name) {
     if (!ctx) return sv_from_cstr("");
     String_View opt = sv_from_cstr(opt_name);
@@ -6096,33 +5962,6 @@ static bool ctest_coverage_collect_keyword(String_View tok) {
            sv_eq_ci(tok, sv_from_cstr("DELETE"));
 }
 
-static bool ctest_coverage_is_artifact(String_View name) {
-    String_View ext = filename_ext_sv(name);
-    return sv_eq_ci(ext, sv_from_cstr(".gcda")) ||
-           sv_eq_ci(ext, sv_from_cstr(".gcno")) ||
-           sv_eq_ci(ext, sv_from_cstr(".gcov"));
-}
-
-static void ctest_coverage_collect_recursive(Evaluator_Context *ctx, String_View dir, String_List *files) {
-    if (!ctx || dir.count == 0 || !files) return;
-    Nob_File_Paths children = {0};
-    if (!nob_read_entire_dir(nob_temp_sv_to_cstr(dir), &children)) return;
-    for (size_t i = 0; i < children.count; i++) {
-        String_View name = sv_from_cstr(children.items[i]);
-        if (nob_sv_eq(name, sv_from_cstr(".")) || nob_sv_eq(name, sv_from_cstr(".."))) continue;
-        String_View child = path_join_arena(ctx->arena, dir, name);
-        Nob_File_Type t = nob_get_file_type(nob_temp_sv_to_cstr(child));
-        if (t == NOB_FILE_DIRECTORY) {
-            ctest_coverage_collect_recursive(ctx, child, files);
-            continue;
-        }
-        if (t == NOB_FILE_REGULAR && ctest_coverage_is_artifact(name)) {
-            string_list_add(files, ctx->arena, child);
-        }
-    }
-    nob_da_free(children);
-}
-
 // Avalia o comando 'ctest_coverage_collect_gcov'
 static void eval_ctest_coverage_collect_gcov_command(Evaluator_Context *ctx, Args args) {
     if (!ctx) return;
@@ -6136,9 +5975,7 @@ static void eval_ctest_coverage_collect_gcov_command(Evaluator_Context *ctx, Arg
     bool delete_after = false;
 
     String_List gcov_options = {0};
-    String_List files = {0};
     string_list_init(&gcov_options);
-    string_list_init(&files);
 
     for (size_t i = 0; i < args.count; i++) {
         String_View tok = resolve_arg(ctx, args.items[i]);
@@ -6201,101 +6038,33 @@ static void eval_ctest_coverage_collect_gcov_command(Evaluator_Context *ctx, Arg
     if (source_dir.count == 0) source_dir = ctx->current_source_dir;
     if (gcov_command.count == 0) gcov_command = sv_from_cstr("gcov");
 
-    if (!path_is_absolute_sv(build_dir)) build_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, build_dir);
-    if (!path_is_absolute_sv(source_dir)) source_dir = path_join_arena(ctx->arena, ctx->current_source_dir, source_dir);
+    if (!cmk_path_is_absolute(build_dir)) build_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, build_dir);
+    if (!cmk_path_is_absolute(source_dir)) source_dir = cmk_path_join(ctx->arena, ctx->current_source_dir, source_dir);
 
-    ctest_coverage_collect_recursive(ctx, build_dir, &files);
+    String_View tarball_path = cmk_path_is_absolute(tarball) ? tarball : cmk_path_join(ctx->arena, ctx->current_binary_dir, tarball);
+    String_View data_json_path = sv_from_cstr("");
+    String_View labels_json_path = sv_from_cstr("");
+    String_View coverage_xml_path = sv_from_cstr("");
+    size_t file_count = 0;
 
-    String_View coverage_dir = path_join_arena(ctx->arena, build_dir, sv_from_cstr("Testing/CoverageInfo"));
-    String_View data_json_path = path_join_arena(ctx->arena, coverage_dir, sv_from_cstr("data.json"));
-    String_View labels_json_path = path_join_arena(ctx->arena, coverage_dir, sv_from_cstr("Labels.json"));
-    String_View coverage_xml_path = path_join_arena(ctx->arena, coverage_dir, sv_from_cstr("Coverage.xml"));
-
-    if (!ensure_parent_dirs_for_path(ctx->arena, path_join_arena(ctx->arena, coverage_dir, sv_from_cstr(".keep"))) ||
-        !nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(coverage_dir))) {
+    bool bundled = ctest_coverage_collect_gcov_bundle(ctx->arena,
+                                                      source_dir,
+                                                      build_dir,
+                                                      gcov_command,
+                                                      &gcov_options,
+                                                      tarball_path,
+                                                      tarball_compression,
+                                                      delete_after,
+                                                      &data_json_path,
+                                                      &labels_json_path,
+                                                      &coverage_xml_path,
+                                                      &file_count);
+    if (!bundled) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "ctest_coverage_collect_gcov",
-            nob_temp_sprintf("falha ao preparar diretorio de cobertura: "SV_Fmt, SV_Arg(coverage_dir)),
-            "verifique permissao de escrita no diretorio de build");
+            "falha ao gerar bundle de cobertura",
+            "verifique caminhos SOURCE/BUILD/TARBALL e permissao de escrita");
         eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_RETURN_VALUE"), sv_from_cstr("1"), false, false);
         return;
-    }
-
-    String_Builder data_json = {0};
-    sb_append_cstr(&data_json, "{\n");
-    sb_append_cstr(&data_json, "  \"format\": \"cmk2nob-cdash-gcov-v1\",\n");
-    sb_append_cstr(&data_json, "  \"source\": \"");
-    json_append_escaped(&data_json, source_dir);
-    sb_append_cstr(&data_json, "\",\n  \"build\": \"");
-    json_append_escaped(&data_json, build_dir);
-    sb_append_cstr(&data_json, "\",\n  \"gcov_command\": \"");
-    json_append_escaped(&data_json, gcov_command);
-    sb_append_cstr(&data_json, "\",\n  \"gcov_options\": [");
-    for (size_t i = 0; i < gcov_options.count; i++) {
-        if (i > 0) sb_append_cstr(&data_json, ", ");
-        sb_append(&data_json, '"');
-        json_append_escaped(&data_json, gcov_options.items[i]);
-        sb_append(&data_json, '"');
-    }
-    sb_append_cstr(&data_json, "],\n  \"files\": [");
-    for (size_t i = 0; i < files.count; i++) {
-        if (i > 0) sb_append_cstr(&data_json, ", ");
-        sb_append(&data_json, '"');
-        json_append_escaped(&data_json, files.items[i]);
-        sb_append(&data_json, '"');
-    }
-    sb_append_cstr(&data_json, "]\n}\n");
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(data_json_path), data_json.items ? data_json.items : "", data_json.count);
-    nob_sb_free(data_json);
-
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(labels_json_path), "{}\n", 3);
-
-    String_Builder coverage_xml = {0};
-    sb_append_cstr(&coverage_xml, "<Site BuildName=\"cmk2nob\" Name=\"cmk2nob\">\n");
-    sb_append_cstr(&coverage_xml, "  <Coverage>\n");
-    sb_append_cstr(&coverage_xml, "    <CoverageLog>\n");
-    for (size_t i = 0; i < files.count; i++) {
-        sb_append_cstr(&coverage_xml, "      <File>");
-        json_append_escaped(&coverage_xml, files.items[i]);
-        sb_append_cstr(&coverage_xml, "</File>\n");
-    }
-    sb_append_cstr(&coverage_xml, "    </CoverageLog>\n");
-    sb_append_cstr(&coverage_xml, "  </Coverage>\n");
-    sb_append_cstr(&coverage_xml, "</Site>\n");
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(coverage_xml_path), coverage_xml.items ? coverage_xml.items : "", coverage_xml.count);
-    nob_sb_free(coverage_xml);
-
-    String_View tarball_path = path_is_absolute_sv(tarball) ? tarball : path_join_arena(ctx->arena, ctx->current_binary_dir, tarball);
-    if (!ensure_parent_dirs_for_path(ctx->arena, tarball_path)) {
-        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "ctest_coverage_collect_gcov",
-            nob_temp_sprintf("falha ao preparar TARBALL: "SV_Fmt, SV_Arg(tarball_path)),
-            "verifique permissao de escrita e caminho de destino");
-        eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_RETURN_VALUE"), sv_from_cstr("1"), false, false);
-        return;
-    }
-
-    String_Builder tar_manifest = {0};
-    sb_append_cstr(&tar_manifest, "# cmk2nob-cdash-gcov-bundle-v1\n");
-    sb_append_cstr(&tar_manifest, "source=");
-    sb_append_buf(&tar_manifest, source_dir.data, source_dir.count);
-    sb_append_cstr(&tar_manifest, "\nbuild=");
-    sb_append_buf(&tar_manifest, build_dir.data, build_dir.count);
-    sb_append_cstr(&tar_manifest, "\ncompression=");
-    sb_append_buf(&tar_manifest, tarball_compression.data, tarball_compression.count);
-    sb_append_cstr(&tar_manifest, "\ngcov_command=");
-    sb_append_buf(&tar_manifest, gcov_command.data, gcov_command.count);
-    sb_append_cstr(&tar_manifest, "\nmetadata=data.json;Labels.json;Coverage.xml\n");
-    for (size_t i = 0; i < files.count; i++) {
-        sb_append_cstr(&tar_manifest, "file=");
-        sb_append_buf(&tar_manifest, files.items[i].data, files.items[i].count);
-        sb_append(&tar_manifest, '\n');
-    }
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(tarball_path), tar_manifest.items ? tar_manifest.items : "", tar_manifest.count);
-    nob_sb_free(tar_manifest);
-
-    if (delete_after) {
-        for (size_t i = 0; i < files.count; i++) {
-            (void)nob_delete_file(nob_temp_sv_to_cstr(files.items[i]));
-        }
     }
 
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV"), sv_from_cstr("ON"), false, false);
@@ -6303,13 +6072,13 @@ static void eval_ctest_coverage_collect_gcov_command(Evaluator_Context *ctx, Arg
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_BUILD"), build_dir, false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_SOURCE"), source_dir, false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_FILE_COUNT"),
-                 sv_from_cstr(nob_temp_sprintf("%zu", files.count)), false, false);
+                 sv_from_cstr(nob_temp_sprintf("%zu", file_count)), false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_DATA_JSON"), data_json_path, false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_LABELS_JSON"), labels_json_path, false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_COVERAGE_XML"), coverage_xml_path, false, false);
     eval_set_var(ctx, sv_from_cstr("CTEST_COVERAGE_COLLECT_GCOV_RETURN_VALUE"), sv_from_cstr("0"), false, false);
     if (!quiet) {
-        nob_log(NOB_INFO, "ctest_coverage_collect_gcov: %zu arquivos de cobertura empacotados", files.count);
+        nob_log(NOB_INFO, "ctest_coverage_collect_gcov: %zu arquivos de cobertura empacotados", file_count);
     }
 }
 
@@ -6346,7 +6115,7 @@ static void eval_ctest_run_script_command(Evaluator_Context *ctx, Args args) {
             continue;
         }
 
-        String_View script = path_is_absolute_sv(tok) ? tok : path_join_arena(ctx->arena, ctx->current_list_dir, tok);
+        String_View script = cmk_path_is_absolute(tok) ? tok : cmk_path_join(ctx->arena, ctx->current_list_dir, tok);
         if (!nob_file_exists(nob_temp_sv_to_cstr(script))) {
             ok = false;
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "ctest_run_script",
@@ -6367,7 +6136,7 @@ static void eval_ctest_run_script_command(Evaluator_Context *ctx, Args args) {
         }
         Ast_Root root = parse_tokens(ctx->arena, tokens);
         String_View old_list = ctx->current_list_dir;
-        ctx->current_list_dir = path_parent_dir_arena(ctx->arena, script);
+        ctx->current_list_dir = cmk_path_parent(ctx->arena, script);
         for (size_t n = 0; n < root.count; n++) eval_node(ctx, root.items[n]);
         ctx->current_list_dir = old_list;
     }
@@ -6382,7 +6151,7 @@ static void eval_ctest_read_custom_files_command(Evaluator_Context *ctx, Args ar
     if (!ctx || args.count < 1) return;
     String_View dir = resolve_arg(ctx, args.items[0]);
     if (dir.count == 0) return;
-    String_View resolved = path_is_absolute_sv(dir) ? dir : path_join_arena(ctx->arena, ctx->current_list_dir, dir);
+    String_View resolved = cmk_path_is_absolute(dir) ? dir : cmk_path_join(ctx->arena, ctx->current_list_dir, dir);
     eval_set_var(ctx, sv_from_cstr("CTEST_CUSTOM_FILES_DIRECTORY"), resolved, false, false);
 }
 
@@ -6395,8 +6164,8 @@ static void eval_ctest_empty_binary_directory_command(Evaluator_Context *ctx, Ar
     if (!ctx || args.count < 1) return;
     String_View dir = resolve_arg(ctx, args.items[0]);
     if (dir.count == 0) return;
-    String_View resolved = path_is_absolute_sv(dir) ? dir : path_join_arena(ctx->arena, ctx->current_binary_dir, dir);
-    (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(resolved));
+    String_View resolved = cmk_path_is_absolute(dir) ? dir : cmk_path_join(ctx->arena, ctx->current_binary_dir, dir);
+    (void)sys_mkdir(resolved);
     eval_set_var(ctx, sv_from_cstr("CTEST_BINARY_DIRECTORY"), resolved, false, false);
 }
 
@@ -7120,8 +6889,8 @@ static void eval_cpack_ifw_configure_file_command(Evaluator_Context *ctx, Args a
     String_View output_arg = resolve_arg(ctx, args.items[1]);
     if (input_arg.count == 0 || output_arg.count == 0) return;
 
-    String_View input_path = path_is_absolute_sv(input_arg) ? input_arg : path_join_arena(ctx->arena, ctx->current_list_dir, input_arg);
-    String_View output_path = path_is_absolute_sv(output_arg) ? output_arg : path_join_arena(ctx->arena, ctx->current_binary_dir, output_arg);
+    String_View input_path = cmk_path_is_absolute(input_arg) ? input_arg : cmk_path_join(ctx->arena, ctx->current_list_dir, input_arg);
+    String_View output_path = cmk_path_is_absolute(output_arg) ? output_arg : cmk_path_join(ctx->arena, ctx->current_binary_dir, output_arg);
 
     bool copy_only = false;
     bool at_only = false;
@@ -7140,13 +6909,13 @@ static void eval_cpack_ifw_configure_file_command(Evaluator_Context *ctx, Args a
     }
 
     String_View rendered = copy_only ? content : configure_expand_variables(ctx, content, at_only);
-    if (!ensure_parent_dirs_for_path(ctx->arena, output_path)) {
+    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cpack_ifw_configure_file",
                  nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(output_path)),
                  "verifique permissao de escrita");
         return;
     }
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(output_path), rendered.data, rendered.count)) {
+    if (!sys_write_file_bytes(output_path, rendered.data, rendered.count)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cpack_ifw_configure_file",
                  nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
                  "verifique permissao de escrita");
@@ -7652,271 +7421,6 @@ static void eval_get_test_property_command(Evaluator_Context *ctx, Args args) {
     eval_set_var(ctx, out_var, value, false, false);
 }
 
-static bool path_is_absolute_sv(String_View path) {
-    return build_path_is_absolute(path);
-}
-
-static String_View path_join_arena(Arena *arena, String_View base, String_View rel) {
-    return build_path_join(arena, base, rel);
-}
-
-static String_View path_parent_dir_arena(Arena *arena, String_View full_path) {
-    return build_path_parent_dir(arena, full_path);
-}
-
-static bool path_has_separator(String_View path) {
-    for (size_t i = 0; i < path.count; i++) {
-        if (path.data[i] == '/' || path.data[i] == '\\') return true;
-    }
-    return false;
-}
-
-static bool ensure_parent_dirs_for_path(Arena *arena, String_View file_path) {
-    return sys_ensure_parent_dirs(arena, file_path);
-}
-
-static String_View path_make_absolute_arena(Arena *arena, String_View path) {
-    return build_path_make_absolute(arena, path);
-}
-
-static size_t path_last_separator_index(String_View path) {
-    for (size_t i = path.count; i > 0; i--) {
-        char c = path.data[i - 1];
-        if (c == '/' || c == '\\') return i - 1;
-    }
-    return SIZE_MAX;
-}
-
-static String_View path_basename_sv(String_View path) {
-    size_t sep = path_last_separator_index(path);
-    if (sep == SIZE_MAX) return path;
-    return nob_sv_from_parts(path.data + sep + 1, path.count - (sep + 1));
-}
-
-static String_View filename_ext_sv(String_View name) {
-    size_t dot = SIZE_MAX;
-    for (size_t i = 0; i < name.count; i++) {
-        if (name.data[i] == '.') dot = i;
-    }
-    if (dot == SIZE_MAX || dot == 0) return sv_from_cstr("");
-    return nob_sv_from_parts(name.data + dot, name.count - dot);
-}
-
-static String_View filename_without_ext_sv(String_View name) {
-    size_t dot = SIZE_MAX;
-    for (size_t i = 0; i < name.count; i++) {
-        if (name.data[i] == '.') dot = i;
-    }
-    if (dot == SIZE_MAX || dot == 0) return name;
-    return nob_sv_from_parts(name.data, dot);
-}
-
-static String_View cmake_path_normalize(Evaluator_Context *ctx, String_View input) {
-    if (!ctx) return sv_from_cstr("");
-    if (input.count == 0) return sv_from_cstr(".");
-
-    bool has_drive = input.count >= 2 &&
-                     isalpha((unsigned char)input.data[0]) &&
-                     input.data[1] == ':';
-    bool absolute = false;
-    size_t pos = 0;
-    if (has_drive) {
-        pos = 2;
-        if (pos < input.count && (input.data[pos] == '/' || input.data[pos] == '\\')) {
-            absolute = true;
-            while (pos < input.count && (input.data[pos] == '/' || input.data[pos] == '\\')) pos++;
-        }
-    } else if (input.data[0] == '/' || input.data[0] == '\\') {
-        absolute = true;
-        while (pos < input.count && (input.data[pos] == '/' || input.data[pos] == '\\')) pos++;
-    }
-
-    String_List segments = {0};
-    string_list_init(&segments);
-    while (pos < input.count) {
-        size_t start = pos;
-        while (pos < input.count && input.data[pos] != '/' && input.data[pos] != '\\') pos++;
-        String_View seg = nob_sv_from_parts(input.data + start, pos - start);
-        while (pos < input.count && (input.data[pos] == '/' || input.data[pos] == '\\')) pos++;
-        if (seg.count == 0 || nob_sv_eq(seg, sv_from_cstr("."))) continue;
-        if (nob_sv_eq(seg, sv_from_cstr(".."))) {
-            if (segments.count > 0 && !nob_sv_eq(segments.items[segments.count - 1], sv_from_cstr(".."))) {
-                segments.count--;
-            } else if (!absolute) {
-                string_list_add(&segments, ctx->arena, seg);
-            }
-            continue;
-        }
-        string_list_add(&segments, ctx->arena, seg);
-    }
-
-    String_Builder sb = {0};
-    if (has_drive) {
-        sb_append(&sb, input.data[0]);
-        sb_append(&sb, ':');
-    }
-    if (absolute) sb_append(&sb, '/');
-
-    for (size_t i = 0; i < segments.count; i++) {
-        if ((absolute || has_drive) && sb.count > 0 && sb.items[sb.count - 1] != '/') sb_append(&sb, '/');
-        if (!absolute && !has_drive && i > 0) sb_append(&sb, '/');
-        sb_append_buf(&sb, segments.items[i].data, segments.items[i].count);
-    }
-
-    if (sb.count == 0) {
-        if (has_drive && absolute) {
-            sb_append(&sb, input.data[0]);
-            sb_append_cstr(&sb, ":/");
-        } else if (has_drive) {
-            sb_append(&sb, input.data[0]);
-            sb_append(&sb, ':');
-        } else if (absolute) {
-            sb_append(&sb, '/');
-        } else {
-            sb_append(&sb, '.');
-        }
-    }
-
-    String_View out = sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count));
-    nob_sb_free(sb);
-    return out;
-}
-
-static String_View cmake_path_root_name(String_View path) {
-    bool has_drive = path.count >= 2 &&
-                     isalpha((unsigned char)path.data[0]) &&
-                     path.data[1] == ':';
-    if (has_drive) return nob_sv_from_parts(path.data, 2);
-    return sv_from_cstr("");
-}
-
-static String_View cmake_path_root_directory(String_View path) {
-    if (path.count == 0) return sv_from_cstr("");
-    if ((path.count >= 1 && (path.data[0] == '/' || path.data[0] == '\\')) ||
-        (path.count >= 3 && isalpha((unsigned char)path.data[0]) && path.data[1] == ':' &&
-         (path.data[2] == '/' || path.data[2] == '\\'))) {
-        return sv_from_cstr("/");
-    }
-    return sv_from_cstr("");
-}
-
-static String_View cmake_path_root_path(Evaluator_Context *ctx, String_View path) {
-    String_View root_name = cmake_path_root_name(path);
-    String_View root_dir = cmake_path_root_directory(path);
-    if (root_name.count == 0) return root_dir;
-    if (root_dir.count == 0) return root_name;
-    String_Builder sb = {0};
-    sb_append_buf(&sb, root_name.data, root_name.count);
-    sb_append_buf(&sb, root_dir.data, root_dir.count);
-    String_View out = sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count));
-    nob_sb_free(sb);
-    return out;
-}
-
-static String_View cmake_path_relative_part(Evaluator_Context *ctx, String_View path) {
-    String_View root = cmake_path_root_path(ctx, path);
-    if (root.count == 0) return path;
-    if (path.count <= root.count) return sv_from_cstr("");
-    String_View rel = nob_sv_from_parts(path.data + root.count, path.count - root.count);
-    while (rel.count > 0 && (rel.data[0] == '/' || rel.data[0] == '\\')) {
-        rel = nob_sv_from_parts(rel.data + 1, rel.count - 1);
-    }
-    return rel;
-}
-
-static String_View cmake_path_parent_path(Evaluator_Context *ctx, String_View path) {
-    (void)ctx;
-    size_t sep = path_last_separator_index(path);
-    if (sep == SIZE_MAX) return sv_from_cstr("");
-    if (sep == 0) return sv_from_cstr("/");
-    if (sep == 2 && path.count >= 3 && path.data[1] == ':') {
-        return nob_sv_from_parts(path.data, 3);
-    }
-    return nob_sv_from_parts(path.data, sep);
-}
-
-static String_View cmake_path_get_component_value(Evaluator_Context *ctx, String_View input, String_View component, bool *supported) {
-    if (supported) *supported = true;
-    if (sv_eq_ci(component, sv_from_cstr("ROOT_NAME"))) {
-        return cmake_path_root_name(input);
-    }
-    if (sv_eq_ci(component, sv_from_cstr("ROOT_DIRECTORY"))) {
-        return cmake_path_root_directory(input);
-    }
-    if (sv_eq_ci(component, sv_from_cstr("ROOT_PATH"))) {
-        return cmake_path_root_path(ctx, input);
-    }
-    if (sv_eq_ci(component, sv_from_cstr("FILENAME"))) {
-        return path_basename_sv(input);
-    }
-    if (sv_eq_ci(component, sv_from_cstr("STEM"))) {
-        return filename_without_ext_sv(path_basename_sv(input));
-    }
-    if (sv_eq_ci(component, sv_from_cstr("EXTENSION"))) {
-        return filename_ext_sv(path_basename_sv(input));
-    }
-    if (sv_eq_ci(component, sv_from_cstr("RELATIVE_PART"))) {
-        return cmake_path_relative_part(ctx, input);
-    }
-    if (sv_eq_ci(component, sv_from_cstr("PARENT_PATH"))) {
-        return cmake_path_parent_path(ctx, input);
-    }
-    if (supported) *supported = false;
-    return sv_from_cstr("");
-}
-
-static String_View cmake_path_relativize(Evaluator_Context *ctx, String_View path, String_View base_dir) {
-    String_View a = cmake_path_normalize(ctx, path);
-    String_View b = cmake_path_normalize(ctx, base_dir);
-
-    String_List seg_a = {0}, seg_b = {0};
-    string_list_init(&seg_a);
-    string_list_init(&seg_b);
-
-    size_t start_a = 0;
-    size_t start_b = 0;
-    String_View root_a = cmake_path_root_path(ctx, a);
-    String_View root_b = cmake_path_root_path(ctx, b);
-    if (!nob_sv_eq(root_a, root_b)) return a;
-    if (root_a.count > 0) {
-        start_a = root_a.count;
-        start_b = root_b.count;
-    }
-
-    for (size_t i = start_a; i <= a.count; i++) {
-        bool sep = (i == a.count) || a.data[i] == '/' || a.data[i] == '\\';
-        if (!sep) continue;
-        if (i > start_a) string_list_add(&seg_a, ctx->arena, nob_sv_from_parts(a.data + start_a, i - start_a));
-        start_a = i + 1;
-    }
-    for (size_t i = start_b; i <= b.count; i++) {
-        bool sep = (i == b.count) || b.data[i] == '/' || b.data[i] == '\\';
-        if (!sep) continue;
-        if (i > start_b) string_list_add(&seg_b, ctx->arena, nob_sv_from_parts(b.data + start_b, i - start_b));
-        start_b = i + 1;
-    }
-
-    size_t common = 0;
-    while (common < seg_a.count && common < seg_b.count && nob_sv_eq(seg_a.items[common], seg_b.items[common])) {
-        common++;
-    }
-
-    String_Builder sb = {0};
-    for (size_t i = common; i < seg_b.count; i++) {
-        if (sb.count > 0) sb_append(&sb, '/');
-        sb_append_cstr(&sb, "..");
-    }
-    for (size_t i = common; i < seg_a.count; i++) {
-        if (sb.count > 0) sb_append(&sb, '/');
-        sb_append_buf(&sb, seg_a.items[i].data, seg_a.items[i].count);
-    }
-    if (sb.count == 0) sb_append(&sb, '.');
-    String_View out = sv_from_cstr(arena_strndup(ctx->arena, sb.items, sb.count));
-    nob_sb_free(sb);
-    return out;
-}
-
-
 // ============================================================================
 // FUNÇÕES AUXILIARES
 // ============================================================================
@@ -7937,12 +7441,12 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
             // fallback de compatibilidade: trata argumento como caminho literal
             raw_input = input_var;
         }
-        String_View input = cmake_path_normalize(ctx, raw_input);
+        String_View input = cmk_path_normalize(ctx->arena, raw_input);
         String_View component = resolve_arg(ctx, args.items[2]);
         String_View out_var = resolve_arg(ctx, args.items[3]);
         String_View result = sv_from_cstr("");
         bool supported = false;
-        result = cmake_path_get_component_value(ctx, input, component, &supported);
+        result = cmk_path_get_component(ctx->arena, input, component, &supported);
         if (!supported) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "cmake_path",
                 nob_temp_sprintf("componente GET nao suportado: "SV_Fmt, SV_Arg(component)),
@@ -7965,7 +7469,7 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
             value = tok;
             break;
         }
-        if (normalize) value = cmake_path_normalize(ctx, value);
+        if (normalize) value = cmk_path_normalize(ctx->arena, value);
         eval_set_var(ctx, out_var, value, false, false);
         return;
     }
@@ -7987,9 +7491,9 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
                 out_var = resolve_arg(ctx, args.items[++i]);
                 continue;
             }
-            current = path_join_arena(ctx->arena, current, tok);
+            current = cmk_path_join(ctx->arena, current, tok);
         }
-        if (normalize) current = cmake_path_normalize(ctx, current);
+        if (normalize) current = cmk_path_normalize(ctx->arena, current);
         eval_set_var(ctx, out_var, current, false, false);
         return;
     }
@@ -8005,7 +7509,7 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
                 out_var = resolve_arg(ctx, args.items[++i]);
             }
         }
-        value = cmake_path_normalize(ctx, value);
+        value = cmk_path_normalize(ctx->arena, value);
         eval_set_var(ctx, out_var, value, false, false);
         return;
     }
@@ -8027,15 +7531,15 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
                 continue;
             }
         }
-        String_View rel = cmake_path_relativize(ctx, value, base_dir);
+        String_View rel = cmk_path_relativize(ctx->arena, value, base_dir);
         eval_set_var(ctx, out_var, rel, false, false);
         return;
     }
 
     if (sv_eq_ci(mode, sv_from_cstr("COMPARE")) && args.count >= 5) {
-        String_View lhs = cmake_path_normalize(ctx, resolve_arg(ctx, args.items[1]));
+        String_View lhs = cmk_path_normalize(ctx->arena, resolve_arg(ctx, args.items[1]));
         String_View op = resolve_arg(ctx, args.items[2]);
-        String_View rhs = cmake_path_normalize(ctx, resolve_arg(ctx, args.items[3]));
+        String_View rhs = cmk_path_normalize(ctx->arena, resolve_arg(ctx, args.items[3]));
         String_View out_var = resolve_arg(ctx, args.items[4]);
         int cmp = strcmp(nob_temp_sv_to_cstr(lhs), nob_temp_sv_to_cstr(rhs));
         bool ok = false;
@@ -8053,11 +7557,11 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
         String_View path_var = resolve_arg(ctx, args.items[1]);
         String_View value = eval_get_var(ctx, path_var);
         if (value.count == 0) value = path_var;
-        String_View input = cmake_path_normalize(ctx, value);
+        String_View input = cmk_path_normalize(ctx->arena, value);
         String_View out_var = resolve_arg(ctx, args.items[2]);
         String_View component = nob_sv_from_parts(mode.data + 4, mode.count - 4);
         bool supported = false;
-        String_View comp = cmake_path_get_component_value(ctx, input, component, &supported);
+        String_View comp = cmk_path_get_component(ctx->arena, input, component, &supported);
         bool has = supported && comp.count > 0;
         eval_set_var(ctx, out_var, has ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
         return;
@@ -8067,13 +7571,13 @@ static void eval_cmake_path_command(Evaluator_Context *ctx, Args args) {
         String_View path_var = resolve_arg(ctx, args.items[1]);
         String_View value = eval_get_var(ctx, path_var);
         if (value.count == 0) value = path_var;
-        value = cmake_path_normalize(ctx, value);
+        value = cmk_path_normalize(ctx->arena, value);
         String_View out_var = resolve_arg(ctx, args.items[2]);
         bool result = false;
         if (sv_eq_ci(mode, sv_from_cstr("IS_ABSOLUTE"))) {
-            result = path_is_absolute_sv(value);
+            result = cmk_path_is_absolute(value);
         } else if (sv_eq_ci(mode, sv_from_cstr("IS_RELATIVE"))) {
-            result = !path_is_absolute_sv(value);
+            result = !cmk_path_is_absolute(value);
         }
         eval_set_var(ctx, out_var, result ? sv_from_cstr("ON") : sv_from_cstr("OFF"), false, false);
         return;
@@ -8102,20 +7606,18 @@ static void eval_get_filename_component_command(Evaluator_Context *ctx, Args arg
 
     String_View result = sv_from_cstr("");
     if (sv_eq_ci(mode, sv_from_cstr("DIRECTORY")) || sv_eq_ci(mode, sv_from_cstr("PATH"))) {
-        size_t sep = path_last_separator_index(input);
-        if (sep == SIZE_MAX) result = sv_from_cstr("");
-        else result = sv_from_cstr(arena_strndup(ctx->arena, input.data, sep));
+        result = cmk_path_parent(ctx->arena, input);
     } else if (sv_eq_ci(mode, sv_from_cstr("NAME"))) {
-        result = path_basename_sv(input);
+        result = cmk_path_basename(input);
     } else if (sv_eq_ci(mode, sv_from_cstr("EXT")) || sv_eq_ci(mode, sv_from_cstr("LAST_EXT"))) {
-        result = filename_ext_sv(path_basename_sv(input));
+        result = cmk_path_extension(cmk_path_basename(input));
     } else if (sv_eq_ci(mode, sv_from_cstr("NAME_WE")) || sv_eq_ci(mode, sv_from_cstr("NAME_WLE"))) {
-        result = filename_without_ext_sv(path_basename_sv(input));
+        result = cmk_path_stem(cmk_path_basename(input));
     } else if (sv_eq_ci(mode, sv_from_cstr("ABSOLUTE")) || sv_eq_ci(mode, sv_from_cstr("REALPATH"))) {
-        String_View candidate = path_is_absolute_sv(input) ? input : path_join_arena(ctx->arena, base_dir, input);
-        result = path_make_absolute_arena(ctx->arena, candidate);
+        String_View candidate = cmk_path_is_absolute(input) ? input : cmk_path_join(ctx->arena, base_dir, input);
+        result = cmk_path_make_absolute(ctx->arena, candidate);
     } else {
-        result = path_basename_sv(input);
+        result = cmk_path_basename(input);
     }
 
     eval_set_var(ctx, out_var, result, false, false);
@@ -8147,58 +7649,7 @@ static void export_collect_targets_from_install_set(Evaluator_Context *ctx, Stri
     eval_foreach_semicolon_item(ctx, set_targets, /*trim_ws=*/true, eval_list_add_item, &ud_targets);
 }
 
-static void export_write_targets_file(Evaluator_Context *ctx,
-                                      String_View out_path,
-                                      String_View ns,
-                                      String_View signature,
-                                      String_View export_set_name,
-                                      const String_List *targets,
-                                      bool append_mode) {
-    if (!ctx || out_path.count == 0 || !targets) return;
-    if (!ensure_parent_dirs_for_path(ctx->arena, out_path)) return;
-
-    Nob_String_Builder existing = {0};
-    if (append_mode && nob_file_exists(nob_temp_sv_to_cstr(out_path))) {
-        nob_read_entire_file(nob_temp_sv_to_cstr(out_path), &existing);
-    }
-
-    String_Builder sb = {0};
-    if (existing.items && existing.count > 0) {
-        sb_append_buf(&sb, existing.items, existing.count);
-        if (existing.items[existing.count - 1] != '\n') sb_append(&sb, '\n');
-    }
-    sb_append_cstr(&sb, "# cmk2nob export support\n");
-    sb_append_cstr(&sb, "# signature: ");
-    sb_append_buf(&sb, signature.data, signature.count);
-    sb_append(&sb, '\n');
-    if (export_set_name.count > 0) {
-        sb_append_cstr(&sb, "# export-set: ");
-        sb_append_buf(&sb, export_set_name.data, export_set_name.count);
-        sb_append(&sb, '\n');
-    }
-    if (ns.count > 0) {
-        sb_append_cstr(&sb, "# namespace: ");
-        sb_append_buf(&sb, ns.data, ns.count);
-        sb_append(&sb, '\n');
-    }
-    sb_append_cstr(&sb, "set(_CMK2NOB_EXPORTED_TARGETS ");
-    for (size_t i = 0; i < targets->count; i++) {
-        if (i > 0) sb_append(&sb, ';');
-        sb_append_buf(&sb, targets->items[i].data, targets->items[i].count);
-    }
-    sb_append_cstr(&sb, ")\n");
-    if (ns.count > 0) {
-        sb_append_cstr(&sb, "set(_CMK2NOB_EXPORTED_NAMESPACE \"");
-        sb_append_buf(&sb, ns.data, ns.count);
-        sb_append_cstr(&sb, "\")\n");
-    }
-
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(out_path), sb.items, sb.count);
-    nob_sb_free(existing);
-    nob_sb_free(sb);
-}
-
-static void export_register_package(Evaluator_Context *ctx, String_View package_name) {
+static void eval_export_package_mode(Evaluator_Context *ctx, String_View package_name) {
     if (!ctx || !ctx->model || package_name.count == 0) return;
     String_View no_registry = eval_get_var(ctx, sv_from_cstr("CMAKE_EXPORT_NO_PACKAGE_REGISTRY"));
     if (sv_bool_is_true(no_registry)) return;
@@ -8223,24 +7674,12 @@ static void export_register_package(Evaluator_Context *ctx, String_View package_
     nob_sb_free(key_sb);
     eval_set_var(ctx, dir_key, ctx->current_binary_dir, false, false);
 
-    String_View registry_dir = path_join_arena(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_package_registry"));
-    if (!nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(registry_dir))) return;
-    String_Builder reg_name_sb = {0};
-    sb_append_buf(&reg_name_sb, package_name.data, package_name.count);
-    sb_append_cstr(&reg_name_sb, ".cmake");
-    String_View reg_name = sv_from_cstr(arena_strndup(ctx->arena, reg_name_sb.items, reg_name_sb.count));
-    nob_sb_free(reg_name_sb);
-    String_View reg_file = path_join_arena(ctx->arena, registry_dir, reg_name);
-
-    String_Builder sb = {0};
-    sb_append_cstr(&sb, "# cmk2nob package registry entry\n");
-    sb_append_cstr(&sb, "set(");
-    sb_append_buf(&sb, dir_key.data, dir_key.count);
-    sb_append_cstr(&sb, " \"");
-    sb_append_buf(&sb, ctx->current_binary_dir.data, ctx->current_binary_dir.count);
-    sb_append_cstr(&sb, "\")\n");
-    (void)nob_write_entire_file(nob_temp_sv_to_cstr(reg_file), sb.items, sb.count);
-    nob_sb_free(sb);
+    String_View registry_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_package_registry"));
+    (void)cmk_meta_export_register_package(ctx->arena,
+                                           registry_dir,
+                                           package_name,
+                                           dir_key,
+                                           ctx->current_binary_dir);
 }
 
 static void eval_export_command(Evaluator_Context *ctx, Args args) {
@@ -8249,7 +7688,7 @@ static void eval_export_command(Evaluator_Context *ctx, Args args) {
     String_View first = resolve_arg(ctx, args.items[0]);
     if (sv_eq_ci(first, sv_from_cstr("PACKAGE")) && args.count >= 2) {
         String_View package_name = resolve_arg(ctx, args.items[1]);
-        export_register_package(ctx, package_name);
+        eval_export_package_mode(ctx, package_name);
         return;
     }
 
@@ -8325,10 +7764,14 @@ static void eval_export_command(Evaluator_Context *ctx, Args args) {
             return;
         }
     }
-    String_View out_path = path_is_absolute_sv(file_path) ? file_path : path_join_arena(ctx->arena, ctx->current_binary_dir, file_path);
-    export_write_targets_file(ctx, out_path, ns,
-        mode_export_set ? sv_from_cstr("EXPORT_SET") : sv_from_cstr("TARGETS"),
-        export_set_name, &targets, append_mode);
+    String_View out_path = cmk_path_is_absolute(file_path) ? file_path : cmk_path_join(ctx->arena, ctx->current_binary_dir, file_path);
+    (void)cmk_meta_export_write_targets_file(ctx->arena,
+                                             out_path,
+                                             ns,
+                                             mode_export_set ? sv_from_cstr("EXPORT_SET") : sv_from_cstr("TARGETS"),
+                                             export_set_name,
+                                             &targets,
+                                             append_mode);
 }
 
 static bool find_command_keyword(String_View arg) {
@@ -8347,27 +7790,7 @@ static bool find_command_keyword(String_View arg) {
 // SISTEMA DE BUSCA (Find)
 // ============================================================================
 
-static void find_split_env_path(Arena *arena, String_View value, String_List *out_dirs) {
-    if (!arena || !out_dirs || value.count == 0) return;
-    bool semicolon_sep = false;
-    for (size_t i = 0; i < value.count; i++) {
-        if (value.data[i] == ';') {
-            semicolon_sep = true;
-            break;
-        }
-    }
-    char sep = semicolon_sep ? ';' : ':';
-    size_t start = 0;
-    for (size_t i = 0; i <= value.count; i++) {
-        bool at_sep = (i == value.count) || value.data[i] == sep;
-        if (!at_sep) continue;
-        if (i > start) {
-            String_View d = genex_trim(nob_sv_from_parts(value.data + start, i - start));
-            if (d.count > 0) string_list_add_unique(out_dirs, arena, d);
-        }
-        start = i + 1;
-    }
-}
+
 
 static void find_collect_var_paths(Evaluator_Context *ctx, const char *var_name, String_List *out_dirs) {
     if (!ctx || !out_dirs) return;
@@ -8381,81 +7804,13 @@ static void find_collect_var_paths(Evaluator_Context *ctx, const char *var_name,
                                 &ud_dirs);
 }
 
-static bool path_has_extension(String_View path) {
-    String_View base = path_basename_sv(path);
-    for (size_t i = 0; i < base.count; i++) {
-        if (base.data[i] == '.') return true;
-    }
-    return false;
-}
 
-static void find_collect_program_name_variants(Evaluator_Context *ctx, String_View name, String_List *out_names) {
-    if (!ctx || !out_names || name.count == 0) return;
-    string_list_add_unique(out_names, ctx->arena, name);
-#if defined(_WIN32)
-    if (!path_has_extension(name)) {
-        string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf(SV_Fmt ".exe", SV_Arg(name))));
-        string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf(SV_Fmt ".cmd", SV_Arg(name))));
-        string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf(SV_Fmt ".bat", SV_Arg(name))));
-        string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf(SV_Fmt ".com", SV_Arg(name))));
-    }
-#endif
-}
 
-static void find_collect_library_name_variants(Evaluator_Context *ctx, String_View name, String_List *out_names) {
-    if (!ctx || !out_names || name.count == 0) return;
-    string_list_add_unique(out_names, ctx->arena, name);
-    if (path_has_extension(name)) return;
-#if defined(_WIN32)
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf(SV_Fmt ".lib", SV_Arg(name))));
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf("lib" SV_Fmt ".lib", SV_Arg(name))));
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf(SV_Fmt ".dll", SV_Arg(name))));
-#elif defined(__APPLE__)
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf("lib" SV_Fmt ".dylib", SV_Arg(name))));
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf("lib" SV_Fmt ".a", SV_Arg(name))));
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf("lib" SV_Fmt ".so", SV_Arg(name))));
-#else
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf("lib" SV_Fmt ".so", SV_Arg(name))));
-    string_list_add_unique(out_names, ctx->arena, sv_from_cstr(nob_temp_sprintf("lib" SV_Fmt ".a", SV_Arg(name))));
-#endif
-}
 
-static bool find_search_candidates(Evaluator_Context *ctx, String_List *dirs, String_List *suffixes, String_List *names, String_View *out_path) {
-    if (!ctx || !dirs || !names || !out_path) return false;
-    for (size_t n = 0; n < names->count; n++) {
-        String_View name = names->items[n];
-        if (path_is_absolute_sv(name) && nob_file_exists(nob_temp_sv_to_cstr(name))) {
-            *out_path = path_make_absolute_arena(ctx->arena, name);
-            return true;
-        }
-    }
 
-    bool no_suffixes = !suffixes || suffixes->count == 0;
-    for (size_t d = 0; d < dirs->count; d++) {
-        String_View dir = dirs->items[d];
-        if (no_suffixes) {
-            for (size_t n = 0; n < names->count; n++) {
-                String_View candidate = path_join_arena(ctx->arena, dir, names->items[n]);
-                if (nob_file_exists(nob_temp_sv_to_cstr(candidate))) {
-                    *out_path = path_make_absolute_arena(ctx->arena, candidate);
-                    return true;
-                }
-            }
-        } else {
-            for (size_t s = 0; s < suffixes->count; s++) {
-                String_View base = path_join_arena(ctx->arena, dir, suffixes->items[s]);
-                for (size_t n = 0; n < names->count; n++) {
-                    String_View candidate = path_join_arena(ctx->arena, base, names->items[n]);
-                    if (nob_file_exists(nob_temp_sv_to_cstr(candidate))) {
-                        *out_path = path_make_absolute_arena(ctx->arena, candidate);
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    return false;
-}
+
+
+
 
 typedef enum Find_Command_Kind {
     FIND_COMMAND_PROGRAM = 0,
@@ -8552,9 +7907,9 @@ static void find_collect_name_variants(Evaluator_Context *ctx, Find_Command_Kind
     if (!ctx || !names || !variants) return;
     for (size_t n = 0; n < names->count; n++) {
         if (kind == FIND_COMMAND_PROGRAM) {
-            find_collect_program_name_variants(ctx, names->items[n], variants);
+            find_search_collect_program_name_variants(ctx->arena, names->items[n], variants);
         } else if (kind == FIND_COMMAND_LIBRARY) {
-            find_collect_library_name_variants(ctx, names->items[n], variants);
+            find_search_collect_library_name_variants(ctx->arena, names->items[n], variants);
         } else {
             string_list_add_unique(variants, ctx->arena, names->items[n]);
         }
@@ -8567,7 +7922,7 @@ static void find_collect_default_search_dirs(Evaluator_Context *ctx, Find_Comman
     if (kind == FIND_COMMAND_PROGRAM) {
         find_collect_var_paths(ctx, "CMAKE_PROGRAM_PATH", search_dirs);
         const char *env_path = getenv("PATH");
-        if (env_path) find_split_env_path(ctx->arena, sv_from_cstr(env_path), search_dirs);
+        if (env_path) find_search_split_env_path(ctx->arena, sv_from_cstr(env_path), search_dirs);
 #if defined(_WIN32)
         string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows/System32"));
         string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows"));
@@ -8585,8 +7940,8 @@ static void find_collect_default_search_dirs(Evaluator_Context *ctx, Find_Comman
     find_collect_var_paths(ctx, "CMAKE_PREFIX_PATH", &prefixes);
     if (kind == FIND_COMMAND_LIBRARY) {
         for (size_t k = 0; k < prefixes.count; k++) {
-            string_list_add_unique(search_dirs, ctx->arena, path_join_arena(ctx->arena, prefixes.items[k], sv_from_cstr("lib")));
-            string_list_add_unique(search_dirs, ctx->arena, path_join_arena(ctx->arena, prefixes.items[k], sv_from_cstr("lib64")));
+            string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("lib")));
+            string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("lib64")));
         }
 #if defined(_WIN32)
         string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows/System32"));
@@ -8601,8 +7956,8 @@ static void find_collect_default_search_dirs(Evaluator_Context *ctx, Find_Comman
     if (kind == FIND_COMMAND_FILE || kind == FIND_COMMAND_PATH) {
         find_collect_var_paths(ctx, "CMAKE_INCLUDE_PATH", search_dirs);
         for (size_t k = 0; k < prefixes.count; k++) {
-            string_list_add_unique(search_dirs, ctx->arena, path_join_arena(ctx->arena, prefixes.items[k], sv_from_cstr("include")));
-            string_list_add_unique(search_dirs, ctx->arena, path_join_arena(ctx->arena, prefixes.items[k], sv_from_cstr("share")));
+            string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("include")));
+            string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("share")));
         }
         string_list_add_unique(search_dirs, ctx->arena, ctx->current_list_dir);
         string_list_add_unique(search_dirs, ctx->arena, ctx->current_source_dir);
@@ -8642,35 +7997,7 @@ static void find_report_required_failure(Evaluator_Context *ctx, Find_Command_Ki
         quiet ? "" : "adicione PATHS/HINTS ou ajuste CMAKE_INCLUDE_PATH");
 }
 
-static bool find_search_path_candidates(Evaluator_Context *ctx, String_List *dirs, String_List *suffixes, String_List *names, String_View *out_dir) {
-    if (!ctx || !dirs || !names || !out_dir) return false;
 
-    bool no_suffixes = !suffixes || suffixes->count == 0;
-    for (size_t d = 0; d < dirs->count; d++) {
-        String_View dir = dirs->items[d];
-        if (no_suffixes) {
-            for (size_t n = 0; n < names->count; n++) {
-                String_View candidate = path_join_arena(ctx->arena, dir, names->items[n]);
-                if (nob_file_exists(nob_temp_sv_to_cstr(candidate))) {
-                    *out_dir = path_make_absolute_arena(ctx->arena, dir);
-                    return true;
-                }
-            }
-        } else {
-            for (size_t s = 0; s < suffixes->count; s++) {
-                String_View base = path_join_arena(ctx->arena, dir, suffixes->items[s]);
-                for (size_t n = 0; n < names->count; n++) {
-                    String_View candidate = path_join_arena(ctx->arena, base, names->items[n]);
-                    if (nob_file_exists(nob_temp_sv_to_cstr(candidate))) {
-                        *out_dir = path_make_absolute_arena(ctx->arena, base);
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    return false;
-}
 
 static void eval_find_common_command(Evaluator_Context *ctx, Args args, Find_Command_Kind kind) {
     if (!ctx) return;
@@ -8694,9 +8021,9 @@ static void eval_find_common_command(Evaluator_Context *ctx, Args args, Find_Com
     String_View found = sv_from_cstr("");
     bool ok = false;
     if (kind == FIND_COMMAND_PATH) {
-        ok = find_search_path_candidates(ctx, &search_dirs, &params.suffixes, &variants, &found);
+        ok = find_search_path_candidates(ctx->arena, &search_dirs, &params.suffixes, &variants, &found);
     } else {
-        ok = find_search_candidates(ctx, &search_dirs, &params.suffixes, &variants, &found);
+        ok = find_search_candidates(ctx->arena, &search_dirs, &params.suffixes, &variants, &found);
     }
     if (ok) {
         eval_set_var(ctx, params.out_var, found, false, false);
@@ -8729,7 +8056,7 @@ static void eval_find_path_command(Evaluator_Context *ctx, Args args) {
 }
 
 static bool include_try_candidate(Evaluator_Context *ctx, String_View base_dir, String_View requested, String_View *out_final_path) {
-    String_View candidate = path_join_arena(ctx->arena, base_dir, requested);
+    String_View candidate = cmk_path_join(ctx->arena, base_dir, requested);
     const char *candidate_c = nob_temp_sv_to_cstr(candidate);
     if (nob_file_exists(candidate_c)) {
         *out_final_path = candidate;
@@ -8746,7 +8073,7 @@ static bool include_try_candidate(Evaluator_Context *ctx, String_View base_dir, 
 
 static String_View include_module_name_from_requested(Evaluator_Context *ctx, String_View requested) {
     (void)ctx;
-    String_View name = path_basename_sv(requested);
+    String_View name = cmk_path_basename(requested);
     if (nob_sv_end_with(name, ".cmake") && name.count > 6) {
         name = nob_sv_from_parts(name.data, name.count - 6);
     }
@@ -9008,7 +8335,7 @@ static void eval_include_command(Evaluator_Context *ctx, Args args) {
     String_View final_path = {0};
     bool found = false;
 
-    if (path_is_absolute_sv(requested)) {
+    if (cmk_path_is_absolute(requested)) {
         const char *req_c = nob_temp_sv_to_cstr(requested);
         if (nob_file_exists(req_c)) {
             final_path = requested;
@@ -9043,7 +8370,7 @@ static void eval_include_command(Evaluator_Context *ctx, Args args) {
         if (!found) {
             String_View cmake_root = eval_get_var(ctx, sv_from_cstr("CMAKE_ROOT"));
             if (cmake_root.count > 0) {
-                String_View modules_dir = path_join_arena(ctx->arena, cmake_root, sv_from_cstr("Modules"));
+                String_View modules_dir = cmk_path_join(ctx->arena, cmake_root, sv_from_cstr("Modules"));
                 if (include_try_candidate(ctx, modules_dir, requested, &final_path)) {
                     found = true;
                 } else {
@@ -9054,10 +8381,10 @@ static void eval_include_command(Evaluator_Context *ctx, Args args) {
     }
 
     if (!found) {
-        if (!path_has_separator(requested) && include_handle_builtin_module(ctx, requested)) {
+        if (!sys_path_has_separator(requested) && include_handle_builtin_module(ctx, requested)) {
             return;
         }
-        if (optional || !path_has_separator(requested)) {
+        if (optional || !sys_path_has_separator(requested)) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "include",
                 nob_temp_sprintf("arquivo de include nao encontrado: "SV_Fmt, SV_Arg(requested)),
                 "ignorando include ausente (compatibilidade)");
@@ -9069,7 +8396,7 @@ static void eval_include_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    String_View normalized = path_make_absolute_arena(ctx->arena, final_path);
+    String_View normalized = cmk_path_make_absolute(ctx->arena, final_path);
     if (eval_include_stack_contains(ctx, normalized)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "include",
             nob_temp_sprintf("include ciclico detectado e ignorado: "SV_Fmt, SV_Arg(normalized)),
@@ -9096,7 +8423,7 @@ static void eval_include_command(Evaluator_Context *ctx, Args args) {
     Ast_Root root = parse_tokens(ctx->arena, tokens);
 
     String_View old_list = ctx->current_list_dir;
-    ctx->current_list_dir = path_parent_dir_arena(ctx->arena, normalized);
+    ctx->current_list_dir = cmk_path_parent(ctx->arena, normalized);
     for (size_t i = 0; i < root.count; i++) eval_node(ctx, root.items[i]);
     ctx->current_list_dir = old_list;
     eval_include_stack_pop(ctx);
@@ -9135,13 +8462,13 @@ static String_View configure_expand_variables(Evaluator_Context *ctx, String_Vie
 }
 
 static String_View try_resolve_cmake_template(Evaluator_Context *ctx, String_View requested) {
-    String_View name = path_basename_sv(requested);
+    String_View name = cmk_path_basename(requested);
     if (name.count == 0) return sv_from_cstr("");
 
     String_View cmake_root = eval_get_var(ctx, sv_from_cstr("CMAKE_ROOT"));
     if (cmake_root.count > 0) {
-        String_View candidate = path_join_arena(ctx->arena, cmake_root, sv_from_cstr("Templates"));
-        candidate = path_join_arena(ctx->arena, candidate, name);
+        String_View candidate = cmk_path_join(ctx->arena, cmake_root, sv_from_cstr("Templates"));
+        candidate = cmk_path_join(ctx->arena, candidate, name);
         if (nob_file_exists(nob_temp_sv_to_cstr(candidate))) return candidate;
     }
     return sv_from_cstr("");
@@ -9150,8 +8477,8 @@ static String_View try_resolve_cmake_template(Evaluator_Context *ctx, String_Vie
 static void eval_configure_file_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 2) return;
     String_View input_arg = resolve_arg(ctx, args.items[0]);
-    String_View input_path = path_join_arena(ctx->arena, ctx->current_list_dir, input_arg);
-    String_View output_path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
+    String_View input_path = cmk_path_join(ctx->arena, ctx->current_list_dir, input_arg);
+    String_View output_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
 
     bool copy_only = false;
     bool at_only = false;
@@ -9161,7 +8488,7 @@ static void eval_configure_file_command(Evaluator_Context *ctx, Args args) {
         if (nob_sv_eq(a, sv_from_cstr("@ONLY"))) at_only = true;
     }
 
-    if (path_is_absolute_sv(input_arg)) input_path = input_arg;
+    if (cmk_path_is_absolute(input_arg)) input_path = input_arg;
 
     String_View content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(input_path));
     if (!content.data) {
@@ -9173,7 +8500,7 @@ static void eval_configure_file_command(Evaluator_Context *ctx, Args args) {
     }
 
     if (!content.data) {
-        String_View base = path_basename_sv(input_arg);
+        String_View base = cmk_path_basename(input_arg);
         bool cpack_template = nob_sv_eq(base, sv_from_cstr("CPackConfig.cmake.in")) ||
                               nob_sv_eq(base, sv_from_cstr("CPackSourceConfig.cmake.in"));
         if (cpack_template) {
@@ -9190,33 +8517,17 @@ static void eval_configure_file_command(Evaluator_Context *ctx, Args args) {
     }
 
     String_View rendered = copy_only ? content : configure_expand_variables(ctx, content, at_only);
-    if (!ensure_parent_dirs_for_path(ctx->arena, output_path)) {
+    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "configure_file",
             nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita");
         return;
     }
-    if (!nob_write_entire_file(nob_temp_sv_to_cstr(output_path), rendered.data, rendered.count)) {
+    if (!sys_write_file_bytes(output_path, rendered.data, rendered.count)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "configure_file",
             nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita");
     }
-}
-
-static bool simple_glob_match(String_View pattern, String_View path) {
-    // Pratico: suporta '*' e compara por sufixo/prefixo simples.
-    const char *star = memchr(pattern.data, '*', pattern.count);
-    if (!star) return nob_sv_eq(pattern, path);
-    size_t left = (size_t)(star - pattern.data);
-    size_t right = pattern.count - left - 1;
-    if (path.count < left + right) return false;
-    if (left > 0 && memcmp(pattern.data, path.data, left) != 0) return false;
-    if (right > 0 && memcmp(pattern.data + pattern.count - right, path.data + path.count - right, right) != 0) return false;
-    return true;
-}
-
-static bool file_path_is_dot_or_dotdot(String_View p) {
-    return nob_sv_eq(p, sv_from_cstr(".")) || nob_sv_eq(p, sv_from_cstr(".."));
 }
 
 static bool file_delete_path_recursive(Evaluator_Context *ctx, String_View path) {
@@ -9229,71 +8540,33 @@ static bool file_copy_entry_to_destination(Evaluator_Context *ctx, String_View s
     return sys_copy_entry_to_destination(ctx->arena, src, destination);
 }
 
-static bool file_collect_glob_recursive(Evaluator_Context *ctx,
-                                        String_View base_dir,
-                                        String_View rel_prefix,
-                                        String_View pattern,
-                                        bool list_directories,
-                                        String_View relative_base,
-                                        String_Builder *list,
-                                        bool *first) {
-    if (!ctx || !list || !first) return false;
-    Nob_File_Paths children = {0};
-    if (!nob_read_entire_dir(nob_temp_sv_to_cstr(base_dir), &children)) return false;
-    for (size_t i = 0; i < children.count; i++) {
-        String_View name = sv_from_cstr(children.items[i]);
-        if (file_path_is_dot_or_dotdot(name)) continue;
-
-        String_View child_abs = path_join_arena(ctx->arena, base_dir, name);
-        String_View child_rel = rel_prefix.count > 0 ? path_join_arena(ctx->arena, rel_prefix, name) : name;
-        Nob_File_Type type = nob_get_file_type(nob_temp_sv_to_cstr(child_abs));
-
-        bool can_emit = (type == NOB_FILE_REGULAR || type == NOB_FILE_SYMLINK || type == NOB_FILE_OTHER) ||
-                        (list_directories && type == NOB_FILE_DIRECTORY);
-        if (can_emit && simple_glob_match(pattern, child_rel)) {
-            String_View emit = child_abs;
-            if (relative_base.count > 0) {
-                emit = cmake_path_relativize(ctx, child_abs, relative_base);
-            }
-            if (!*first) sb_append(list, ';');
-            sb_append_buf(list, emit.data, emit.count);
-            *first = false;
-        }
-        if (type == NOB_FILE_DIRECTORY) {
-            (void)file_collect_glob_recursive(ctx, child_abs, child_rel, pattern, list_directories, relative_base, list, first);
-        }
-    }
-    nob_da_free(children);
-    return true;
-}
-
 static void eval_file_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 1) return;
     String_View mode = resolve_arg(ctx, args.items[0]);
 
     if (nob_sv_eq(mode, sv_from_cstr("READ")) && args.count >= 3) {
-        String_View path = path_join_arena(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[1]));
+        String_View path = cmk_path_join(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[1]));
         String_View out_var = resolve_arg(ctx, args.items[2]);
         String_View content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(path));
         if (content.data) eval_set_var(ctx, out_var, content, false, false);
         return;
     }
     if (nob_sv_eq(mode, sv_from_cstr("WRITE")) && args.count >= 3) {
-        String_View path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
+        String_View path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
         String_Builder b = {0};
         for (size_t i = 2; i < args.count; i++) {
             if (i > 2) sb_append(&b, ' ');
             String_View v = resolve_arg(ctx, args.items[i]);
             sb_append_buf(&b, v.data, v.count);
         }
-        if (!ensure_parent_dirs_for_path(ctx->arena, path)) {
+        if (!sys_ensure_parent_dirs(ctx->arena, path)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao preparar diretorio para escrita: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
             nob_sb_free(b);
             return;
         }
-        if (!nob_write_entire_file(nob_temp_sv_to_cstr(path), b.items, b.count)) {
+        if (!sys_write_file_bytes(path, b.items, b.count)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -9302,7 +8575,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         return;
     }
     if (nob_sv_eq(mode, sv_from_cstr("APPEND")) && args.count >= 3) {
-        String_View path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
+        String_View path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
         Nob_String_Builder existing = {0};
         if (nob_file_exists(nob_temp_sv_to_cstr(path))) {
             if (!nob_read_entire_file(nob_temp_sv_to_cstr(path), &existing)) {
@@ -9318,7 +8591,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             String_View v = resolve_arg(ctx, args.items[i]);
             sb_append_buf(&b, v.data, v.count);
         }
-        if (!ensure_parent_dirs_for_path(ctx->arena, path)) {
+        if (!sys_ensure_parent_dirs(ctx->arena, path)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao preparar diretorio para append: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -9326,7 +8599,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             nob_sb_free(b);
             return;
         }
-        if (!nob_write_entire_file(nob_temp_sv_to_cstr(path), b.items, b.count)) {
+        if (!sys_write_file_bytes(path, b.items, b.count)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao gravar append em arquivo: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -9337,8 +8610,8 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
     }
     if (nob_sv_eq(mode, sv_from_cstr("MAKE_DIRECTORY")) && args.count >= 2) {
         for (size_t i = 1; i < args.count; i++) {
-            String_View d = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i]));
-            if (!nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(d))) {
+            String_View d = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i]));
+            if (!sys_mkdir(d)) {
                 diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                     nob_temp_sprintf("falha ao criar diretorio: "SV_Fmt, SV_Arg(d)),
                     "verifique permissao de escrita no diretorio pai");
@@ -9351,7 +8624,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         String_Builder list = {0};
         bool first = true;
         for (size_t p = 2; p < args.count; p++) {
-            String_View pat = path_join_arena(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[p]));
+            String_View pat = cmk_path_join(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[p]));
             String_View base = pat;
             size_t cut = pat.count;
             while (cut > 0) {
@@ -9361,10 +8634,10 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             }
             if (cut > 0) base = nob_sv_from_parts(pat.data, cut - 1);
             Nob_File_Paths children = {0};
-            if (!nob_read_entire_dir(nob_temp_sv_to_cstr(base), &children)) continue;
+            if (!sys_read_dir(base, &children)) continue;
             for (size_t i = 0; i < children.count; i++) {
                 String_View child = sv_from_cstr(children.items[i]);
-                if (simple_glob_match(pat, child)) {
+                if (cmk_glob_match(pat, child)) {
                     if (!first) sb_append(&list, ';');
                     sb_append_buf(&list, child.data, child.count);
                     first = false;
@@ -9390,7 +8663,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
                 continue;
             }
             if (sv_eq_ci(tok, sv_from_cstr("RELATIVE")) && p + 1 < args.count) {
-                relative_base = path_join_arena(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[++p]));
+                relative_base = cmk_path_join(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[++p]));
                 p++;
                 continue;
             }
@@ -9416,10 +8689,10 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             }
             if (cut > 0) {
                 String_View prefix = nob_sv_from_parts(raw_pat.data, cut - 1);
-                base = path_join_arena(ctx->arena, ctx->current_list_dir, prefix);
+                base = cmk_path_join(ctx->arena, ctx->current_list_dir, prefix);
                 pat = nob_sv_from_parts(raw_pat.data + cut, raw_pat.count - cut);
             }
-            (void)file_collect_glob_recursive(ctx, base, sv_from_cstr(""), pat, list_directories, relative_base, &list, &first);
+            (void)cmk_glob_collect_recursive(ctx->arena, base, sv_from_cstr(""), pat, list_directories, relative_base, &list, &first);
         }
         eval_set_var(ctx, out_var, sb_to_sv(list), false, false);
         nob_sb_free(list);
@@ -9433,16 +8706,16 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         while (i < args.count) {
             String_View tok = resolve_arg(ctx, args.items[i]);
             if (sv_eq_ci(tok, sv_from_cstr("DESTINATION"))) {
-                if (i + 1 < args.count) destination = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i + 1]));
+                if (i + 1 < args.count) destination = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i + 1]));
                 break;
             }
             string_list_add(&sources, ctx->arena, tok);
             i++;
         }
         if (destination.count == 0) return;
-        (void)nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(destination));
+        (void)sys_mkdir(destination);
         for (size_t s = 0; s < sources.count; s++) {
-            String_View src = path_join_arena(ctx->arena, ctx->current_list_dir, sources.items[s]);
+            String_View src = cmk_path_join(ctx->arena, ctx->current_list_dir, sources.items[s]);
             if (!file_copy_entry_to_destination(ctx, src, destination)) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "file",
                     nob_temp_sprintf("falha ao copiar: "SV_Fmt, SV_Arg(src)),
@@ -9452,8 +8725,8 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         return;
     }
     if (nob_sv_eq(mode, sv_from_cstr("RENAME")) && args.count >= 3) {
-        String_View old_path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
-        String_View new_path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[2]));
+        String_View old_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[1]));
+        String_View new_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[2]));
         bool no_replace = false;
         String_View result_var = sv_from_cstr("");
         for (size_t i = 3; i < args.count; i++) {
@@ -9467,7 +8740,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         if (no_replace && nob_file_exists(nob_temp_sv_to_cstr(new_path))) {
             ok = false;
         } else {
-            if (!ensure_parent_dirs_for_path(ctx->arena, new_path)) ok = false;
+            if (!sys_ensure_parent_dirs(ctx->arena, new_path)) ok = false;
             else ok = nob_rename(nob_temp_sv_to_cstr(old_path), nob_temp_sv_to_cstr(new_path));
         }
         if (result_var.count > 0) {
@@ -9478,8 +8751,8 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
     if (nob_sv_eq(mode, sv_from_cstr("REMOVE")) || nob_sv_eq(mode, sv_from_cstr("REMOVE_RECURSE"))) {
         bool recursive = nob_sv_eq(mode, sv_from_cstr("REMOVE_RECURSE"));
         for (size_t i = 1; i < args.count; i++) {
-            String_View path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i]));
-            Nob_File_Type t = nob_get_file_type(nob_temp_sv_to_cstr(path));
+            String_View path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i]));
+            Nob_File_Type t = sys_get_file_type(path);
             if ((int)t < 0) continue;
             bool ok = true;
             if (recursive) {
@@ -9487,7 +8760,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             } else if (t == NOB_FILE_DIRECTORY) {
                 ok = remove(nob_temp_sv_to_cstr(path)) == 0;
             } else {
-                ok = nob_delete_file(nob_temp_sv_to_cstr(path));
+                ok = sys_delete_file(path);
             }
             if (!ok) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "file",
@@ -9499,7 +8772,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
     }
     if (nob_sv_eq(mode, sv_from_cstr("DOWNLOAD")) && args.count >= 3) {
         String_View url = resolve_arg(ctx, args.items[1]);
-        String_View out_path = path_join_arena(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[2]));
+        String_View out_path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[2]));
         String_View status_var = sv_from_cstr("");
         String_View log_var = sv_from_cstr("");
         for (size_t i = 3; i < args.count; i++) {
@@ -9529,9 +8802,9 @@ static void eval_make_directory_command(Evaluator_Context *ctx, Args args) {
     for (size_t i = 0; i < args.count; i++) {
         String_View raw = resolve_arg(ctx, args.items[i]);
         if (raw.count == 0) continue;
-        String_View path = path_is_absolute_sv(raw) ? raw : path_join_arena(ctx->arena, ctx->current_binary_dir, raw);
-        (void)ensure_parent_dirs_for_path(ctx->arena, path_join_arena(ctx->arena, path, sv_from_cstr(".keep")));
-        if (!nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(path))) {
+        String_View path = cmk_path_is_absolute(raw) ? raw : cmk_path_join(ctx->arena, ctx->current_binary_dir, raw);
+        (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, path, sv_from_cstr(".keep")));
+        if (!sys_mkdir(path)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "make_directory",
                 nob_temp_sprintf("falha ao criar diretorio: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita no diretorio pai");
@@ -9546,14 +8819,14 @@ static void eval_use_mangled_mesa_command(Evaluator_Context *ctx, Args args) {
     String_View out_arg = resolve_arg(ctx, args.items[1]);
     if (mesa_arg.count == 0 || out_arg.count == 0) return;
 
-    String_View mesa_dir = path_is_absolute_sv(mesa_arg)
+    String_View mesa_dir = cmk_path_is_absolute(mesa_arg)
         ? mesa_arg
-        : path_join_arena(ctx->arena, ctx->current_list_dir, mesa_arg);
-    String_View out_dir = path_is_absolute_sv(out_arg)
+        : cmk_path_join(ctx->arena, ctx->current_list_dir, mesa_arg);
+    String_View out_dir = cmk_path_is_absolute(out_arg)
         ? out_arg
-        : path_join_arena(ctx->arena, ctx->current_binary_dir, out_arg);
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, out_arg);
 
-    Nob_File_Type mesa_type = nob_get_file_type(nob_temp_sv_to_cstr(mesa_dir));
+    Nob_File_Type mesa_type = sys_get_file_type(mesa_dir);
     if (mesa_type != NOB_FILE_DIRECTORY) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
             nob_temp_sprintf("diretorio Mesa invalido: "SV_Fmt, SV_Arg(mesa_dir)),
@@ -9561,8 +8834,8 @@ static void eval_use_mangled_mesa_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    String_View gl_mangle_root = path_join_arena(ctx->arena, mesa_dir, sv_from_cstr("gl_mangle.h"));
-    String_View gl_mangle_gl = path_join_arena(ctx->arena, path_join_arena(ctx->arena, mesa_dir, sv_from_cstr("GL")), sv_from_cstr("gl_mangle.h"));
+    String_View gl_mangle_root = cmk_path_join(ctx->arena, mesa_dir, sv_from_cstr("gl_mangle.h"));
+    String_View gl_mangle_gl = cmk_path_join(ctx->arena, cmk_path_join(ctx->arena, mesa_dir, sv_from_cstr("GL")), sv_from_cstr("gl_mangle.h"));
     if (!nob_file_exists(nob_temp_sv_to_cstr(gl_mangle_root)) &&
         !nob_file_exists(nob_temp_sv_to_cstr(gl_mangle_gl))) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
@@ -9570,13 +8843,13 @@ static void eval_use_mangled_mesa_command(Evaluator_Context *ctx, Args args) {
             "confira se PATH_TO_MESA aponta para os headers Mesa mangled");
     }
 
-    if (!nob_mkdir_if_not_exists(nob_temp_sv_to_cstr(out_dir))) {
+    if (!sys_mkdir(out_dir)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
             nob_temp_sprintf("falha ao criar diretorio de saida: "SV_Fmt, SV_Arg(out_dir)),
             "verifique permissao de escrita no diretorio pai");
         return;
     }
-    if (!nob_copy_directory_recursively(nob_temp_sv_to_cstr(mesa_dir), nob_temp_sv_to_cstr(out_dir))) {
+    if (!sys_copy_directory_recursive(mesa_dir, out_dir)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
             nob_temp_sprintf("falha ao copiar headers Mesa de "SV_Fmt " para "SV_Fmt, SV_Arg(mesa_dir), SV_Arg(out_dir)),
             "verifique permissoes e estrutura de diretorios");
@@ -9593,7 +8866,7 @@ static void eval_add_subdirectory_impl(Evaluator_Context *ctx, String_View sub_d
     const char *curr_dir_cstr = nob_temp_sv_to_cstr(ctx->current_source_dir);
     const char *sub_dir_cstr  = nob_temp_sv_to_cstr(sub_dir);
 
-    const char *full_path = path_is_absolute_sv(sub_dir)
+    const char *full_path = cmk_path_is_absolute(sub_dir)
         ? nob_temp_sprintf("%s/CMakeLists.txt", sub_dir_cstr)
         : nob_temp_sprintf("%s/%s/CMakeLists.txt", curr_dir_cstr, sub_dir_cstr);
 
@@ -9619,7 +8892,7 @@ static void eval_add_subdirectory_impl(Evaluator_Context *ctx, String_View sub_d
     String_View old_binary = ctx->current_binary_dir;
     String_View old_list   = ctx->current_list_dir;
 
-    const char *new_path_cstr = path_is_absolute_sv(sub_dir)
+    const char *new_path_cstr = cmk_path_is_absolute(sub_dir)
         ? sub_dir_cstr
         : nob_temp_sprintf("%s/%s", curr_dir_cstr, sub_dir_cstr);
     String_View new_path = sv_from_cstr(arena_strdup(ctx->arena, new_path_cstr));

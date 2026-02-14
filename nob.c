@@ -10,10 +10,11 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "build") == 0) {
         Nob_Cmd cmd = {0};
         nob_cmd_append(&cmd, "cc");
-        nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
+        nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb", "-I.", "-Isrc/transpiler");
         nob_cmd_append(&cmd, "-o", program_name);
-        nob_cmd_append(&cmd, "main.c", "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
-            "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c");
+        nob_cmd_append(&cmd, "main.c", "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
+            "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c",
+            "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c");
         
         if (!nob_cmd_run_sync(cmd)) return 1;
         return 0;
@@ -26,7 +27,7 @@ int main(int argc, char **argv) {
         
         nob_log(NOB_INFO, "--- Building Test Runner ---");
         nob_cmd_append(&cmd, "cc");
-        nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
+        nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb", "-I.", "-Isrc/transpiler");
         nob_cmd_append(&cmd, "-o", test_binary);
         
         // Inclui arquivos de teste
@@ -40,8 +41,9 @@ int main(int argc, char **argv) {
         nob_cmd_append(&cmd, "test/test_logic_model.c");
         
         // Inclui implementação dos módulos (sem main.c do programa principal)
-        nob_cmd_append(&cmd, "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
-            "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c");
+        nob_cmd_append(&cmd, "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
+            "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c",
+            "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c");
         
         if (!nob_cmd_run_sync(cmd)) return 1;
 
@@ -56,9 +58,10 @@ int main(int argc, char **argv) {
 
     // Default: build
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "cc", "-Wall", "-Wextra", "-o", program_name);
-    nob_cmd_append(&cmd, "main.c", "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
-        "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c");
+    nob_cmd_append(&cmd, "cc", "-Wall", "-Wextra", "-I.", "-Isrc/transpiler", "-o", program_name);
+    nob_cmd_append(&cmd, "main.c", "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
+        "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c",
+        "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c");
     if (!nob_cmd_run_sync(cmd)) return 1;
 
     return 0;

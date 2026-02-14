@@ -1,21 +1,25 @@
 #if defined(_WIN32)
 #if defined(_MSC_VER) && !defined(__clang__)
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "cl.exe", nob_temp_sprintf("/Fe:%s", (binary_path)), \
-    (source_path), "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c"
+    "cl.exe", "/I.", "/Isrc\\transpiler", nob_temp_sprintf("/Fe:%s", (binary_path)), \
+    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
+    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
 #elif defined(__clang__)
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "clang", "-x", "c", "-o", (binary_path), \
-    (source_path), "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c"
+    "clang", "-I.", "-Isrc/transpiler", "-x", "c", "-o", (binary_path), \
+    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
+    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
 #else
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "gcc", "-x", "c", "-o", (binary_path), \
-    (source_path), "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c"
+    "gcc", "-I.", "-Isrc/transpiler", "-x", "c", "-o", (binary_path), \
+    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
+    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
 #endif
 #else
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "cc", "-x", "c", "-o", (binary_path), \
-    (source_path), "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c"
+    "cc", "-I.", "-Isrc/transpiler", "-x", "c", "-o", (binary_path), \
+    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
+    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
 #endif
 
 #define NOB_IMPLEMENTATION
@@ -42,7 +46,9 @@ static bool main_token_list_append(Arena *arena, Token_List *list, Token item) {
 int main(int argc, char **argv) {
     // 1. Sistema de Rebuild Próprio do NOB (Bootstrapping)
     NOB_GO_REBUILD_URSELF_PLUS(argc, argv,
-        "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "logic_model.c", "ds_adapter.c");
+        "-I.", "-Isrc/transpiler",
+        "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c",
+        "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c");
 
     bool strict_mode = false;
     bool continue_on_fatal_error = false;
