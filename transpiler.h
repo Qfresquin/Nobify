@@ -6,14 +6,18 @@
 #include "build_model.h"
 
 // ============================================================================
-// CONTEXTO DE AVALIAÇÃO
+// CONTEXTO DE AVALIACAO
 // ============================================================================
 
-// Escopo de variáveis (armazenamento temporário durante avaliação)
+typedef struct {
+    String_View key;
+    String_View value;
+} Eval_Scope_Var;
+
+// Escopo de variaveis (armazenamento temporario durante avaliacao)
 typedef struct {
     struct {
-        String_View *keys;
-        String_View *values;
+        Eval_Scope_Var *items;
         size_t count;
         size_t capacity;
     } vars;
@@ -40,22 +44,22 @@ typedef struct {
     size_t count;
 } Eval_Check_State_Frame;
 
-// Contexto de avaliação (substitui o antigo Transpiler_Context)
+// Contexto de avaliacao (substitui o antigo Transpiler_Context)
 typedef struct {
-    Arena *arena;           // Arena para todas as alocações
-    Build_Model *model;     // Modelo do build sendo construído
-    
-    // Escopos de variáveis
+    Arena *arena;           // Arena para todas as alocacoes
+    Build_Model *model;     // Modelo do build sendo construido
+
+    // Escopos de variaveis
     Eval_Scope *scopes;
     size_t scope_count;
     size_t scope_capacity;
-    
-    // Diretórios atuais (para resolução de caminhos)
+
+    // Diretorios atuais (para resolucao de caminhos)
     String_View current_source_dir;
     String_View current_binary_dir;
     String_View current_list_dir;
-    
-    // Estado da avaliação
+
+    // Estado da avaliacao
     bool skip_evaluation;  // Para IFs falsos
     bool in_function_call;
     size_t loop_depth;
@@ -63,7 +67,7 @@ typedef struct {
     bool continue_requested;
     bool return_requested;
     bool continue_on_fatal_error;
-    
+
     // Pilha de chamadas (para recursion)
     struct {
         String_View *names;
@@ -95,18 +99,16 @@ typedef struct {
 } Evaluator_Context;
 
 // ============================================================================
-// FUNÇÕES PÚBLICAS
+// FUNCOES PUBLICAS
 // ============================================================================
 
-// Transpila uma AST para código C (nob.h)
+// Transpila uma AST para codigo C (nob.h)
 void transpile_datree(Ast_Root root, String_Builder *sb);
 void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const char *input_path);
 void transpiler_set_continue_on_fatal_error(bool enabled);
 
-// Funções auxiliares para testes e debug
+// Funcoes auxiliares para testes e debug
 void define_cache_var_build_model(Build_Model *model, const char *key, const char *val);
 void dump_evaluation_context(const Evaluator_Context *ctx);
 
 #endif // TRANSPILER_H_
-
-

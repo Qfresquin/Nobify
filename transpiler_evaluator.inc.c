@@ -447,20 +447,18 @@ static void eval_set_var(Evaluator_Context *ctx, String_View key,
     Eval_Scope *scope = &ctx->scopes[target_idx];
     
     for (size_t i = 0; i < scope->vars.count; i++) {
-        if (nob_sv_eq(scope->vars.keys[i], safe_key)) {
-            scope->vars.values[i] = safe_val;
+        if (nob_sv_eq(scope->vars.items[i].key, safe_key)) {
+            scope->vars.items[i].value = safe_val;
             return;
         }
     }
     
     if (scope->vars.count >= scope->vars.capacity) {
-        if (!arena_da_reserve_pair(
+        if (!arena_da_reserve(
                 ctx->arena,
-                (void**)&scope->vars.keys,
-                sizeof(*scope->vars.keys),
-                (void**)&scope->vars.values,
-                sizeof(*scope->vars.values),
+                (void**)&scope->vars.items,
                 &scope->vars.capacity,
+                sizeof(*scope->vars.items),
                 scope->vars.count + 1)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "set",
                 "falha de alocacao ao expandir variaveis de escopo",
@@ -469,8 +467,8 @@ static void eval_set_var(Evaluator_Context *ctx, String_View key,
         }
     }
     
-    scope->vars.keys[scope->vars.count] = safe_key;
-    scope->vars.values[scope->vars.count] = safe_val;
+    scope->vars.items[scope->vars.count].key = safe_key;
+    scope->vars.items[scope->vars.count].value = safe_val;
     scope->vars.count++;
 }
 
@@ -496,10 +494,9 @@ static void eval_unset_var(Evaluator_Context *ctx, String_View key, bool cache_v
     if (ctx->scope_count == 0) return;
     Eval_Scope *scope = &ctx->scopes[ctx->scope_count - 1];
     for (size_t i = 0; i < scope->vars.count; i++) {
-        if (nob_sv_eq(scope->vars.keys[i], key)) {
+        if (nob_sv_eq(scope->vars.items[i].key, key)) {
             for (size_t j = i + 1; j < scope->vars.count; j++) {
-                scope->vars.keys[j - 1] = scope->vars.keys[j];
-                scope->vars.values[j - 1] = scope->vars.values[j];
+                scope->vars.items[j - 1] = scope->vars.items[j];
             }
             scope->vars.count--;
             return;
@@ -513,8 +510,8 @@ static String_View eval_get_var(Evaluator_Context *ctx, String_View key) {
     for (size_t i = ctx->scope_count; i > 0; i--) {
         Eval_Scope *scope = &ctx->scopes[i - 1];
         for (size_t j = 0; j < scope->vars.count; j++) {
-            if (nob_sv_eq(scope->vars.keys[j], key)) {
-                return scope->vars.values[j];
+            if (nob_sv_eq(scope->vars.items[j].key, key)) {
+                return scope->vars.items[j].value;
             }
         }
     }
@@ -669,7 +666,7 @@ static bool eval_has_var(Evaluator_Context *ctx, String_View key) {
     for (size_t i = ctx->scope_count; i > 0; i--) {
         Eval_Scope *scope = &ctx->scopes[i - 1];
         for (size_t j = 0; j < scope->vars.count; j++) {
-            if (nob_sv_eq(scope->vars.keys[j], key)) {
+            if (nob_sv_eq(scope->vars.items[j].key, key)) {
                 return true;
             }
         }
@@ -4367,7 +4364,7 @@ static void eval_get_cmake_property_command(Evaluator_Context *ctx, Args args) {
         for (size_t s = 0; s < ctx->scope_count; s++) {
             Eval_Scope *scope = &ctx->scopes[s];
             for (size_t i = 0; i < scope->vars.count; i++) {
-                append_list_item(&sb, &first, scope->vars.keys[i]);
+                append_list_item(&sb, &first, scope->vars.items[i].key);
             }
         }
         for (size_t i = 0; i < ctx->model->cache_variables.count; i++) {

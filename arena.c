@@ -31,6 +31,10 @@ struct Arena {
     Arena_Cleanup_Node *cleanup_head;
 };
 
+static Arena_Block* arena_find_block(Arena *arena, Arena_Block *target);
+static void arena_run_cleanups_until(Arena *arena, Arena_Cleanup_Node *stop_head);
+static void arena_reset_blocks_only(Arena *arena);
+
 // Alinhamento para todos os tipos
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define ARENA_ALIGNMENT _Alignof(max_align_t)
@@ -89,12 +93,7 @@ Arena* arena_create(size_t initial_capacity) {
 void arena_destroy(Arena* arena) {
     if (!arena) return;
 
-    while (arena->cleanup_head) {
-        Arena_Cleanup_Node *node = arena->cleanup_head;
-        arena->cleanup_head = node->next;
-        if (node->fn) node->fn(node->userdata);
-        free(node);
-    }
+    arena_run_cleanups_until(arena, NULL);
     
     Arena_Block* block = arena->first;
     while (block) {
@@ -108,7 +107,7 @@ void arena_destroy(Arena* arena) {
 
 bool arena_on_destroy(Arena *arena, Arena_Cleanup_Fn fn, void *userdata) {
     if (!arena || !fn) return false;
-    Arena_Cleanup_Node *node = (Arena_Cleanup_Node*)malloc(sizeof(*node));
+    Arena_Cleanup_Node *node = (Arena_Cleanup_Node*)arena_alloc(arena, sizeof(*node));
     if (!node) return false;
     node->fn = fn;
     node->userdata = userdata;
@@ -149,6 +148,38 @@ static Arena_Block* arena_find_last_block(Arena_Block *first) {
         block = block->next;
     }
     return block;
+}
+
+static Arena_Block* arena_find_block(Arena *arena, Arena_Block *target) {
+    if (!arena || !target) return NULL;
+
+    Arena_Block *block = arena->first;
+    while (block) {
+        if (block == target) return block;
+        block = block->next;
+    }
+    return NULL;
+}
+
+static void arena_run_cleanups_until(Arena *arena, Arena_Cleanup_Node *stop_head) {
+    if (!arena) return;
+
+    while (arena->cleanup_head && arena->cleanup_head != stop_head) {
+        Arena_Cleanup_Node *node = arena->cleanup_head;
+        arena->cleanup_head = node->next;
+        if (node->fn) node->fn(node->userdata);
+    }
+}
+
+static void arena_reset_blocks_only(Arena *arena) {
+    if (!arena) return;
+
+    Arena_Block* block = arena->first;
+    while (block) {
+        block->used = 0;
+        block = block->next;
+    }
+    arena->current = arena->first;
 }
 
 void* arena_alloc(Arena* arena, size_t size) {
@@ -251,13 +282,9 @@ void* arena_realloc_last(Arena* arena, void* ptr, size_t old_size, size_t new_si
 
 void arena_reset(Arena* arena) {
     if (!arena) return;
-    
-    Arena_Block* block = arena->first;
-    while (block) {
-        block->used = 0;
-        block = block->next;
-    }
-    arena->current = arena->first;
+
+    arena_run_cleanups_until(arena, NULL);
+    arena_reset_blocks_only(arena);
 }
 
 size_t arena_total_allocated(const Arena* arena) {
@@ -287,47 +314,33 @@ size_t arena_total_capacity(const Arena* arena) {
 Arena_Mark arena_mark(Arena* arena) {
     Arena_Mark mark = {0};
     if (arena && arena->current) {
-        // Calcula offset global
-        size_t offset = 0;
-        Arena_Block* block = arena->first;
-        while (block && block != arena->current) {
-            offset += block->capacity;
-            block = block->next;
-        }
-        if (block) { // block == arena->current
-            offset += arena->current->used;
-        }
-        mark.offset = offset;
+        mark.block = arena->current;
+        mark.used = arena->current->used;
+        mark.cleanup_head = arena->cleanup_head;
     }
     return mark;
 }
 
 void arena_rewind(Arena* arena, Arena_Mark mark) {
     if (!arena) return;
-    
-    // Encontra o bloco correto e a posição dentro dele
-    size_t remaining = mark.offset;
-    Arena_Block* block = arena->first;
-    
-    while (block && remaining >= block->capacity) {
-        remaining -= block->capacity;
-        block->used = block->capacity; // Bloco completamente usado
-        block = block->next;
+
+    arena_run_cleanups_until(arena, (Arena_Cleanup_Node*)mark.cleanup_head);
+
+    Arena_Block *target = arena_find_block(arena, (Arena_Block*)mark.block);
+    if (!target || mark.used > target->capacity) {
+        arena_run_cleanups_until(arena, NULL);
+        arena_reset_blocks_only(arena);
+        return;
     }
-    
-    if (block) {
-        block->used = remaining;
-        arena->current = block;
-        
-        // Zera os blocos seguintes
-        Arena_Block* next = block->next;
-        while (next) {
-            next->used = 0;
-            next = next->next;
-        }
-    } else {
-        // Mark além do alocado, reseta tudo
-        arena_reset(arena);
+
+    target->used = mark.used;
+    arena->current = target;
+
+    // Libera apenas o que foi alocado apos a marca.
+    Arena_Block* next = target->next;
+    while (next) {
+        next->used = 0;
+        next = next->next;
     }
 }
 

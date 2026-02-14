@@ -21,6 +21,41 @@
     (*passed)++; \
 } while(0)
 
+typedef struct {
+    int *value_ptr;
+    int calls;
+    int observed_sum;
+} Cleanup_Int_State;
+
+static void cleanup_read_int_and_count(void *userdata) {
+    Cleanup_Int_State *state = (Cleanup_Int_State*)userdata;
+    if (!state) return;
+    state->calls++;
+    if (state->value_ptr) state->observed_sum += *state->value_ptr;
+}
+
+typedef struct {
+    int call_count;
+    int order[8];
+    int order_count;
+} Cleanup_Order_State;
+
+typedef struct {
+    Cleanup_Order_State *state;
+    int id;
+} Cleanup_Order_Event;
+
+static void cleanup_record_order(void *userdata) {
+    Cleanup_Order_Event *event = (Cleanup_Order_Event*)userdata;
+    if (!event || !event->state) return;
+
+    Cleanup_Order_State *state = event->state;
+    state->call_count++;
+    if (state->order_count < (int)(sizeof(state->order) / sizeof(state->order[0]))) {
+        state->order[state->order_count++] = event->id;
+    }
+}
+
 TEST(create_and_destroy) {
     Arena *arena = arena_create(1024);
     ASSERT(arena != NULL);
@@ -145,6 +180,80 @@ TEST(mark_and_rewind) {
     // O tamanho exato depende do alinhamento interno
     ASSERT(after_rewind >= 100); 
     
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(reset_runs_cleanups_once_and_not_on_destroy_again) {
+    Arena *arena = arena_create(1024);
+    ASSERT(arena != NULL);
+
+    int *value = arena_alloc_array(arena, int, 1);
+    ASSERT(value != NULL);
+    *value = 42;
+
+    Cleanup_Int_State cleanup_state = {0};
+    cleanup_state.value_ptr = value;
+
+    ASSERT(arena_on_destroy(arena, cleanup_read_int_and_count, &cleanup_state));
+
+    arena_reset(arena);
+    ASSERT(cleanup_state.calls == 1);
+    ASSERT(cleanup_state.observed_sum == 42);
+
+    int *reused = arena_alloc_array(arena, int, 1);
+    ASSERT(reused != NULL);
+    *reused = 777;
+
+    arena_destroy(arena);
+    ASSERT(cleanup_state.calls == 1);
+    ASSERT(cleanup_state.observed_sum == 42);
+    TEST_PASS();
+}
+
+TEST(rewind_runs_only_cleanups_after_mark) {
+    Arena *arena = arena_create(1024);
+    ASSERT(arena != NULL);
+
+    Cleanup_Order_State state = {0};
+    Cleanup_Order_Event first = {&state, 1};
+    Cleanup_Order_Event second = {&state, 2};
+
+    ASSERT(arena_on_destroy(arena, cleanup_record_order, &first));
+    Arena_Mark mark = arena_mark(arena);
+    ASSERT(arena_on_destroy(arena, cleanup_record_order, &second));
+
+    arena_rewind(arena, mark);
+    ASSERT(state.call_count == 1);
+    ASSERT(state.order_count == 1);
+    ASSERT(state.order[0] == 2);
+
+    arena_destroy(arena);
+    ASSERT(state.call_count == 2);
+    ASSERT(state.order_count == 2);
+    ASSERT(state.order[1] == 1);
+    TEST_PASS();
+}
+
+TEST(rewind_restores_exact_mark_usage_across_blocks) {
+    Arena *arena = arena_create(128);
+    ASSERT(arena != NULL);
+
+    void *first = arena_alloc(arena, 3000);
+    void *second = arena_alloc(arena, 3000);
+    ASSERT(first != NULL);
+    ASSERT(second != NULL);
+
+    size_t allocated_at_mark = arena_total_allocated(arena);
+    Arena_Mark mark = arena_mark(arena);
+
+    void *third = arena_alloc(arena, 5000);
+    ASSERT(third != NULL);
+    ASSERT(arena_total_allocated(arena) > allocated_at_mark);
+
+    arena_rewind(arena, mark);
+    ASSERT(arena_total_allocated(arena) == allocated_at_mark);
+
     arena_destroy(arena);
     TEST_PASS();
 }
@@ -443,57 +552,6 @@ TEST(dyn_reserve_invalid_and_overflow) {
     TEST_PASS();
 }
 
-TEST(dyn_reserve_pair_basic_and_preserves_data) {
-    Arena *arena = arena_create(2048);
-    ASSERT(arena != NULL);
-
-    int *a = NULL;
-    uint32_t *b = NULL;
-    size_t cap = 0;
-
-    ASSERT(arena_da_reserve_pair(arena, (void**)&a, sizeof(int), (void**)&b, sizeof(uint32_t), &cap, 1));
-    ASSERT(a != NULL && b != NULL);
-    ASSERT(cap == 8);
-
-    for (int i = 0; i < 8; i++) {
-        a[i] = i + 1;
-        b[i] = (uint32_t)(1000 + i);
-    }
-
-    ASSERT(arena_da_reserve_pair(arena, (void**)&a, sizeof(int), (void**)&b, sizeof(uint32_t), &cap, 9));
-    ASSERT(cap == 16);
-    for (int i = 0; i < 8; i++) {
-        ASSERT(a[i] == i + 1);
-        ASSERT(b[i] == (uint32_t)(1000 + i));
-    }
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(dyn_reserve_pair_invalid_and_overflow) {
-    Arena *arena = arena_create(1024);
-    ASSERT(arena != NULL);
-
-    int *a = NULL;
-    int *b = NULL;
-    size_t cap = 0;
-
-    ASSERT(!arena_da_reserve_pair(NULL, (void**)&a, sizeof(int), (void**)&b, sizeof(int), &cap, 1));
-    ASSERT(!arena_da_reserve_pair(arena, NULL, sizeof(int), (void**)&b, sizeof(int), &cap, 1));
-    ASSERT(!arena_da_reserve_pair(arena, (void**)&a, 0, (void**)&b, sizeof(int), &cap, 1));
-    ASSERT(!arena_da_reserve_pair(arena, (void**)&a, sizeof(int), NULL, sizeof(int), &cap, 1));
-    ASSERT(!arena_da_reserve_pair(arena, (void**)&a, sizeof(int), (void**)&b, 0, &cap, 1));
-    ASSERT(!arena_da_reserve_pair(arena, (void**)&a, sizeof(int), (void**)&b, sizeof(int), NULL, 1));
-
-    // overflow (min_capacity > cap, mas new_cap * item_size estoura)
-    cap = (SIZE_MAX / sizeof(int));
-    ASSERT(!arena_da_reserve_pair(arena, (void**)&a, sizeof(int), (void**)&b, sizeof(int), &cap, cap + 1));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
 void run_arena_tests(int *passed, int *failed) {
     test_create_and_destroy(passed, failed);
     test_basic_allocation(passed, failed);
@@ -502,6 +560,9 @@ void run_arena_tests(int *passed, int *failed) {
     test_multiple_blocks(passed, failed);
     test_reset(passed, failed);
     test_mark_and_rewind(passed, failed);
+    test_reset_runs_cleanups_once_and_not_on_destroy_again(passed, failed);
+    test_rewind_runs_only_cleanups_after_mark(passed, failed);
+    test_rewind_restores_exact_mark_usage_across_blocks(passed, failed);
     test_strdup(passed, failed);
     test_strndup(passed, failed);
     test_memdup(passed, failed);
@@ -516,6 +577,4 @@ void run_arena_tests(int *passed, int *failed) {
     test_overflow_alloc_returns_null_and_does_not_break_arena(passed, failed);
     test_dyn_reserve_basic_and_preserves_data(passed, failed);
     test_dyn_reserve_invalid_and_overflow(passed, failed);
-    test_dyn_reserve_pair_basic_and_preserves_data(passed, failed);
-    test_dyn_reserve_pair_invalid_and_overflow(passed, failed);
 }

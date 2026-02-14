@@ -15,7 +15,8 @@ Arena* arena_create(size_t initial_capacity);
 // Destroi a arena, liberando toda a memoria
 void arena_destroy(Arena* arena);
 
-// Registra um callback para executar durante arena_destroy (ordem LIFO)
+// Registra um callback de cleanup (ordem LIFO)
+// Os callbacks podem ser executados por arena_rewind, arena_reset ou arena_destroy.
 bool arena_on_destroy(Arena *arena, Arena_Cleanup_Fn fn, void *userdata);
 
 // Aloca memoria na arena (alinhada para 8 bytes)
@@ -36,7 +37,8 @@ void* arena_alloc_zero(Arena* arena, size_t size);
 // So funciona se ptr for a ultima alocacao!
 void* arena_realloc_last(Arena* arena, void* ptr, size_t old_size, size_t new_size);
 
-// Reinicia a arena (libera todas as alocacoes, mantendo a memoria)
+// Reinicia a arena (executa cleanups pendentes e libera todas as alocacoes,
+// mantendo os blocos de memoria)
 void arena_reset(Arena* arena);
 
 // Retorna o tamanho total alocado na arena
@@ -47,7 +49,9 @@ size_t arena_total_capacity(const Arena* arena);
 
 // Salva a posicao atual da arena para restaurar depois
 typedef struct {
-    size_t offset;
+    void *block;
+    size_t used;
+    void *cleanup_head;
 } Arena_Mark;
 
 // Marca a posicao atual
