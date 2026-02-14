@@ -1371,6 +1371,11 @@ String_View build_model_get_default_config(const Build_Model *model) {
     return model->default_config;
 }
 
+Arena* build_model_get_arena(Build_Model *model) {
+    if (!model) return NULL;
+    return model->arena;
+}
+
 bool build_model_is_windows(const Build_Model *model) {
     return model ? model->is_windows : false;
 }
@@ -1385,6 +1390,15 @@ bool build_model_is_apple(const Build_Model *model) {
 
 bool build_model_is_linux(const Build_Model *model) {
     return model ? model->is_linux : false;
+}
+
+String_View build_model_get_system_name(const Build_Model *model) {
+    if (!model) return sv_from_cstr("");
+    if (model->is_windows) return sv_from_cstr("Windows");
+    if (model->is_apple) return sv_from_cstr("Darwin");
+    if (model->is_linux) return sv_from_cstr("Linux");
+    if (model->is_unix) return sv_from_cstr("Unix");
+    return sv_from_cstr("");
 }
 
 String_View build_model_get_project_name(const Build_Model *model) {
@@ -1407,6 +1421,17 @@ const String_List* build_model_get_string_list(const Build_Model *model, Build_M
         case BUILD_MODEL_LIST_GLOBAL_COMPILE_OPTIONS: return &model->global_compile_options;
         case BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS: return &model->global_link_options;
         case BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES: return &model->global_link_libraries;
+        default: return &g_empty_string_list;
+    }
+}
+
+const String_List* build_model_get_install_rule_list(const Build_Model *model, Install_Rule_Type type) {
+    if (!model) return &g_empty_string_list;
+    switch (type) {
+        case INSTALL_RULE_TARGET: return &model->install_rules.targets;
+        case INSTALL_RULE_FILE: return &model->install_rules.files;
+        case INSTALL_RULE_PROGRAM: return &model->install_rules.programs;
+        case INSTALL_RULE_DIRECTORY: return &model->install_rules.directories;
         default: return &g_empty_string_list;
     }
 }
@@ -1476,6 +1501,13 @@ size_t build_model_get_cpack_component_count(const Build_Model *model) {
 CPack_Component* build_model_get_cpack_component_at(Build_Model *model, size_t index) {
     if (!model || index >= model->cpack_component_count) return NULL;
     return &model->cpack_components[index];
+}
+
+const Custom_Command* build_model_get_output_custom_commands(const Build_Model *model, size_t *out_count) {
+    if (out_count) *out_count = 0;
+    if (!model || !model->output_custom_commands) return NULL;
+    if (out_count) *out_count = model->output_custom_command_count;
+    return model->output_custom_commands;
 }
 
 void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang) {
@@ -1690,6 +1722,37 @@ bool build_target_has_source(const Build_Target *target, String_View source) {
         if (nob_sv_eq(target->sources.items[i], source)) return true;
     }
     return false;
+}
+
+const String_List* build_target_get_string_list(const Build_Target *target, Build_Target_List_Kind kind) {
+    if (!target) return &g_empty_string_list;
+    switch (kind) {
+        case BUILD_TARGET_LIST_SOURCES: return &target->sources;
+        case BUILD_TARGET_LIST_DEPENDENCIES: return &target->dependencies;
+        case BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES: return &target->interface_dependencies;
+        case BUILD_TARGET_LIST_INTERFACE_LIBS: return &target->interface_libs;
+        case BUILD_TARGET_LIST_INTERFACE_COMPILE_DEFINITIONS: return &target->interface_compile_definitions;
+        case BUILD_TARGET_LIST_INTERFACE_COMPILE_OPTIONS: return &target->interface_compile_options;
+        case BUILD_TARGET_LIST_INTERFACE_INCLUDE_DIRECTORIES: return &target->interface_include_directories;
+        case BUILD_TARGET_LIST_INTERFACE_LINK_OPTIONS: return &target->interface_link_options;
+        case BUILD_TARGET_LIST_INTERFACE_LINK_DIRECTORIES: return &target->interface_link_directories;
+        default: return &g_empty_string_list;
+    }
+}
+
+bool build_target_is_exclude_from_all(const Build_Target *target) {
+    return target ? target->exclude_from_all : false;
+}
+
+const Custom_Command* build_target_get_custom_commands(const Build_Target *target, bool pre_build, size_t *out_count) {
+    if (out_count) *out_count = 0;
+    if (!target) return NULL;
+    if (pre_build) {
+        if (out_count) *out_count = target->pre_build_count;
+        return target->pre_build_commands;
+    }
+    if (out_count) *out_count = target->post_build_count;
+    return target->post_build_commands;
 }
 
 String_View build_test_get_name(const Build_Test *test) {

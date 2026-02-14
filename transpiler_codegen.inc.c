@@ -1,5 +1,5 @@
-﻿// ============================================================================
-// GERAÃ‡ÃƒO DE CÃ“DIGO A PARTIR DO MODELO
+// ============================================================================
+// GERACAO DE CODIGO A PARTIR DO MODELO
 // ============================================================================
 
 static void append_sanitized_identifier(String_Builder *sb, String_View input) {
@@ -23,7 +23,7 @@ static void append_sanitized_identifier(String_Builder *sb, String_View input) {
     }
 }
 
-// Gera cÃ³digo C para um target
+// Gera codigo C para um target
 static void sb_append_c_string_literal(String_Builder *sb, String_View s) {
     sb_append(sb, '"');
     for (size_t i = 0; i < s.count; i++) {
@@ -128,32 +128,29 @@ static String_View codegen_logic_get_var(void *userdata, String_View name, bool 
 
     if (nob_sv_eq(name, sv_from_cstr("CMAKE_BUILD_TYPE"))) {
         if (is_set) *is_set = true;
-        if (model->default_config.count > 0) return model->default_config;
+        String_View default_cfg = build_model_get_default_config(model);
+        if (default_cfg.count > 0) return default_cfg;
         return codegen_active_config_name(vars->active_cfg);
     }
     if (nob_sv_eq(name, sv_from_cstr("WIN32"))) {
         if (is_set) *is_set = true;
-        return model->is_windows ? sv_from_cstr("1") : sv_from_cstr("0");
+        return build_model_is_windows(model) ? sv_from_cstr("1") : sv_from_cstr("0");
     }
     if (nob_sv_eq(name, sv_from_cstr("UNIX"))) {
         if (is_set) *is_set = true;
-        return model->is_unix ? sv_from_cstr("1") : sv_from_cstr("0");
+        return build_model_is_unix(model) ? sv_from_cstr("1") : sv_from_cstr("0");
     }
     if (nob_sv_eq(name, sv_from_cstr("APPLE"))) {
         if (is_set) *is_set = true;
-        return model->is_apple ? sv_from_cstr("1") : sv_from_cstr("0");
+        return build_model_is_apple(model) ? sv_from_cstr("1") : sv_from_cstr("0");
     }
     if (nob_sv_eq(name, sv_from_cstr("LINUX"))) {
         if (is_set) *is_set = true;
-        return model->is_linux ? sv_from_cstr("1") : sv_from_cstr("0");
+        return build_model_is_linux(model) ? sv_from_cstr("1") : sv_from_cstr("0");
     }
     if (nob_sv_eq(name, sv_from_cstr("CMAKE_SYSTEM_NAME"))) {
         if (is_set) *is_set = true;
-        if (model->is_windows) return sv_from_cstr("Windows");
-        if (model->is_apple) return sv_from_cstr("Darwin");
-        if (model->is_linux) return sv_from_cstr("Linux");
-        if (model->is_unix) return sv_from_cstr("Unix");
-        return sv_from_cstr("");
+        return build_model_get_system_name(model);
     }
 
     String_View cache_val = build_model_get_cache_variable(model, name);
@@ -171,13 +168,16 @@ static String_View codegen_logic_get_var(void *userdata, String_View name, bool 
 
 static bool target_has_dependents(Build_Model *model, String_View target_name) {
     if (!model || target_name.count == 0) return false;
-    for (size_t i = 0; i < model->target_count; i++) {
-        Build_Target *t = model->targets[i];
-        for (size_t j = 0; j < t->dependencies.count; j++) {
-            if (nob_sv_eq(t->dependencies.items[j], target_name)) return true;
+    size_t target_count = build_model_get_target_count(model);
+    for (size_t i = 0; i < target_count; i++) {
+        Build_Target *t = build_model_get_target_at(model, i);
+        const String_List *deps = build_target_get_string_list(t, BUILD_TARGET_LIST_DEPENDENCIES);
+        for (size_t j = 0; j < deps->count; j++) {
+            if (nob_sv_eq(deps->items[j], target_name)) return true;
         }
-        for (size_t j = 0; j < t->interface_dependencies.count; j++) {
-            if (nob_sv_eq(t->interface_dependencies.items[j], target_name)) return true;
+        const String_List *iface_deps = build_target_get_string_list(t, BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES);
+        for (size_t j = 0; j < iface_deps->count; j++) {
+            if (nob_sv_eq(iface_deps->items[j], target_name)) return true;
         }
     }
     return false;
@@ -186,9 +186,9 @@ static bool target_has_dependents(Build_Model *model, String_View target_name) {
 static void sb_append_target_output_path_literal(String_Builder *sb, Build_Target *target, Build_Config active_cfg);
 static Build_Target *resolve_alias_target(Build_Model *model, Build_Target *target);
 
-static void generate_custom_commands(Build_Model *model, Custom_Command *commands, size_t count, Build_Config active_cfg, String_Builder *sb) {
+static void generate_custom_commands(Build_Model *model, const Custom_Command *commands, size_t count, Build_Config active_cfg, String_Builder *sb) {
     for (size_t i = 0; i < count; i++) {
-        Custom_Command *cmd = &commands[i];
+        const Custom_Command *cmd = &commands[i];
         if (cmd->command.count == 0) continue;
 
         String_Builder shell_builder = {0};
@@ -227,7 +227,7 @@ static void generate_custom_commands(Build_Model *model, Custom_Command *command
                 sb_append_cstr(sb, ")) run_custom = true;\n");
             }
             if (cmd->depends.count > 0 && (cmd->outputs.count > 0 || cmd->byproducts.count > 0)) {
-                String_List *rebuild_outputs = cmd->outputs.count > 0 ? &cmd->outputs : &cmd->byproducts;
+                const String_List *rebuild_outputs = cmd->outputs.count > 0 ? &cmd->outputs : &cmd->byproducts;
                 sb_appendf(sb, "        const char *deps_custom_%zu[] = {", i);
                 for (size_t j = 0; j < cmd->depends.count; j++) {
                     if (j > 0) sb_append_cstr(sb, ", ");
@@ -314,16 +314,18 @@ static void split_source_property_values(String_View value, bool split_whitespac
 
 static Build_Target *resolve_alias_target(Build_Model *model, Build_Target *target) {
     Build_Target *current = target;
-    for (int depth = 0; current && current->type == TARGET_ALIAS && depth < 16; depth++) {
-        if (current->dependencies.count == 0) break;
-        current = build_model_find_target(model, current->dependencies.items[0]);
+    for (int depth = 0; current && build_target_get_type(current) == TARGET_ALIAS && depth < 16; depth++) {
+        const String_List *deps = build_target_get_string_list(current, BUILD_TARGET_LIST_DEPENDENCIES);
+        if (deps->count == 0) break;
+        current = build_model_find_target(model, deps->items[0]);
     }
     return current;
 }
 
 static bool target_is_linkable_artifact(Build_Target *target) {
     if (!target) return false;
-    return target->type == TARGET_STATIC_LIB || target->type == TARGET_SHARED_LIB || target->type == TARGET_IMPORTED;
+    Target_Type type = build_target_get_type(target);
+    return type == TARGET_STATIC_LIB || type == TARGET_SHARED_LIB || type == TARGET_IMPORTED;
 }
 
 static String_View target_property_for_config(Build_Target *target, Build_Config cfg, const char *base_key, String_View fallback) {
@@ -359,42 +361,51 @@ static void collect_interface_usage_recursive(
     String_List *link_targets
 ) {
     if (!model || !target) return;
+    Arena *arena = build_model_get_arena(model);
+    if (!arena) return;
     Build_Target *base = resolve_alias_target(model, target);
     if (!base) return;
 
-    int idx = build_model_find_target_index(model, base->name);
+    int idx = build_model_find_target_index(model, build_target_get_name(base));
     if (idx >= 0) {
         if (visited[idx]) return;
         visited[idx] = 1;
     }
 
-    for (size_t i = 0; i < base->interface_compile_definitions.count; i++) {
-        string_list_add_unique_fast(compile_defs, model->arena, compile_defs_set, base->interface_compile_definitions.items[i]);
+    const String_List *base_iface_defs = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_COMPILE_DEFINITIONS);
+    for (size_t i = 0; i < base_iface_defs->count; i++) {
+        string_list_add_unique_fast(compile_defs, arena, compile_defs_set, base_iface_defs->items[i]);
     }
-    for (size_t i = 0; i < base->interface_compile_options.count; i++) {
-        string_list_add_unique_fast(compile_opts, model->arena, compile_opts_set, base->interface_compile_options.items[i]);
+    const String_List *base_iface_opts = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_COMPILE_OPTIONS);
+    for (size_t i = 0; i < base_iface_opts->count; i++) {
+        string_list_add_unique_fast(compile_opts, arena, compile_opts_set, base_iface_opts->items[i]);
     }
-    for (size_t i = 0; i < base->interface_include_directories.count; i++) {
-        string_list_add_unique_fast(include_dirs, model->arena, include_dirs_set, base->interface_include_directories.items[i]);
+    const String_List *base_iface_includes = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_INCLUDE_DIRECTORIES);
+    for (size_t i = 0; i < base_iface_includes->count; i++) {
+        string_list_add_unique_fast(include_dirs, arena, include_dirs_set, base_iface_includes->items[i]);
     }
-    for (size_t i = 0; i < base->interface_link_options.count; i++) {
-        string_list_add_unique_fast(link_opts, model->arena, link_opts_set, base->interface_link_options.items[i]);
+    const String_List *base_iface_link_opts = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_LINK_OPTIONS);
+    for (size_t i = 0; i < base_iface_link_opts->count; i++) {
+        string_list_add_unique_fast(link_opts, arena, link_opts_set, base_iface_link_opts->items[i]);
     }
-    for (size_t i = 0; i < base->interface_link_directories.count; i++) {
-        string_list_add_unique_fast(link_dirs, model->arena, link_dirs_set, base->interface_link_directories.items[i]);
+    const String_List *base_iface_link_dirs = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_LINK_DIRECTORIES);
+    for (size_t i = 0; i < base_iface_link_dirs->count; i++) {
+        string_list_add_unique_fast(link_dirs, arena, link_dirs_set, base_iface_link_dirs->items[i]);
     }
-    for (size_t i = 0; i < base->interface_libs.count; i++) {
-        string_list_add_unique_fast(link_libs, model->arena, link_libs_set, base->interface_libs.items[i]);
+    const String_List *base_iface_libs = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_LIBS);
+    for (size_t i = 0; i < base_iface_libs->count; i++) {
+        string_list_add_unique_fast(link_libs, arena, link_libs_set, base_iface_libs->items[i]);
     }
 
-    for (size_t i = 0; i < base->interface_dependencies.count; i++) {
-        String_View dep_name = base->interface_dependencies.items[i];
+    const String_List *base_iface_deps = build_target_get_string_list(base, BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES);
+    for (size_t i = 0; i < base_iface_deps->count; i++) {
+        String_View dep_name = base_iface_deps->items[i];
         Build_Target *dep = build_model_find_target(model, dep_name);
         dep = resolve_alias_target(model, dep);
         if (!dep) continue;
 
         if (target_is_linkable_artifact(dep)) {
-            string_list_add_unique_fast(link_targets, model->arena, link_targets_set, dep->name);
+            string_list_add_unique_fast(link_targets, arena, link_targets_set, build_target_get_name(dep));
         }
         collect_interface_usage_recursive(
             model, dep, visited,
@@ -406,14 +417,23 @@ static void collect_interface_usage_recursive(
     }
 }
 
+static String_View codegen_copy_builder_to_model_arena(Build_Model *model, const String_Builder *sb) {
+    if (!model || !sb) return sv_from_cstr("");
+    Arena *arena = build_model_get_arena(model);
+    if (!arena) return sv_from_cstr("");
+    return sv_from_cstr(arena_strndup(arena, sb->items ? sb->items : "", sb->count));
+}
+
 static void generate_output_custom_commands(Build_Model *model, String_Builder *sb) {
-    if (!model || model->output_custom_command_count == 0) return;
+    size_t output_custom_count = 0;
+    const Custom_Command *output_commands = build_model_get_output_custom_commands(model, &output_custom_count);
+    if (!model || output_custom_count == 0 || !output_commands) return;
 
-    Build_Config active_cfg = build_model_config_from_string(model->default_config);
-    sb_appendf(sb, "    // Custom commands: OUTPUT (%zu)\n", model->output_custom_command_count);
+    Build_Config active_cfg = build_model_config_from_string(build_model_get_default_config(model));
+    sb_appendf(sb, "    // Custom commands: OUTPUT (%zu)\n", output_custom_count);
 
-    for (size_t i = 0; i < model->output_custom_command_count; i++) {
-        Custom_Command *cmd = &model->output_custom_commands[i];
+    for (size_t i = 0; i < output_custom_count; i++) {
+        const Custom_Command *cmd = &output_commands[i];
         if (cmd->command.count == 0 || cmd->outputs.count == 0) continue;
 
         if (cmd->comment.count > 0) {
@@ -491,7 +511,9 @@ static void generate_output_custom_commands(Build_Model *model, String_Builder *
 }
 
 static void sb_append_target_output_path_literal(String_Builder *sb, Build_Target *target, Build_Config active_cfg) {
-    if (target->type == TARGET_IMPORTED) {
+    Target_Type target_type = build_target_get_type(target);
+    String_View default_cfg = codegen_active_config_name(active_cfg);
+    if (target_type == TARGET_IMPORTED) {
         String_View imported_location = target_property_for_config(target, active_cfg, "IMPORTED_LOCATION", sv_from_cstr(""));
         if (imported_location.count > 0) {
             sb_append_c_string_literal(sb, imported_location);
@@ -500,23 +522,25 @@ static void sb_append_target_output_path_literal(String_Builder *sb, Build_Targe
         sb_append_c_string_literal(sb, sv_from_cstr(""));
         return;
     }
-    if (target->type == TARGET_INTERFACE_LIB || target->type == TARGET_ALIAS || target->type == TARGET_OBJECT_LIB) {
+    if (target_type == TARGET_INTERFACE_LIB || target_type == TARGET_ALIAS || target_type == TARGET_OBJECT_LIB) {
         sb_append_c_string_literal(sb, sv_from_cstr(""));
         return;
     }
 
-    String_View artifact_name = target_property_for_config(target, active_cfg, "OUTPUT_NAME",
-        target->output_name.count > 0 ? target->output_name : target->name);
-    String_View out_dir = target_property_for_config(target, active_cfg, "OUTPUT_DIRECTORY", sv_from_cstr("build"));
-    if (target->type == TARGET_EXECUTABLE) {
-        out_dir = target_property_for_config(target, active_cfg, "RUNTIME_OUTPUT_DIRECTORY",
-            target->runtime_output_directory.count > 0 ? target->runtime_output_directory : out_dir);
-    } else if (target->type == TARGET_STATIC_LIB) {
-        out_dir = target_property_for_config(target, active_cfg, "ARCHIVE_OUTPUT_DIRECTORY",
-            target->archive_output_directory.count > 0 ? target->archive_output_directory : out_dir);
+    String_View target_name = build_target_get_name(target);
+    String_View artifact_name = build_target_get_property_computed(target, sv_from_cstr("OUTPUT_NAME"), default_cfg);
+    if (artifact_name.count == 0) artifact_name = target_name;
+    String_View out_dir = build_target_get_property_computed(target, sv_from_cstr("OUTPUT_DIRECTORY"), default_cfg);
+    if (out_dir.count == 0) out_dir = sv_from_cstr("build");
+    if (target_type == TARGET_EXECUTABLE) {
+        String_View runtime_dir = build_target_get_property_computed(target, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"), default_cfg);
+        if (runtime_dir.count > 0) out_dir = runtime_dir;
+    } else if (target_type == TARGET_STATIC_LIB) {
+        String_View archive_dir = build_target_get_property_computed(target, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"), default_cfg);
+        if (archive_dir.count > 0) out_dir = archive_dir;
     }
-    String_View prefix = target_property_for_config(target, active_cfg, "PREFIX", target->prefix);
-    String_View suffix = target_property_for_config(target, active_cfg, "SUFFIX", target->suffix);
+    String_View prefix = build_target_get_property_computed(target, sv_from_cstr("PREFIX"), default_cfg);
+    String_View suffix = build_target_get_property_computed(target, sv_from_cstr("SUFFIX"), default_cfg);
 
     String_Builder path = {0};
     sb_append_buf(&path, out_dir.data, out_dir.count);
@@ -530,70 +554,85 @@ static void sb_append_target_output_path_literal(String_Builder *sb, Build_Targe
 
 static String_View cpack_manifest_text(Build_Model *model) {
     if (!model) return sv_from_cstr("");
-    if (model->cpack_component_count == 0 &&
-        model->cpack_component_group_count == 0 &&
-        model->cpack_install_type_count == 0) {
+    size_t component_count = build_model_get_cpack_component_count(model);
+    size_t component_group_count = build_model_get_cpack_component_group_count(model);
+    size_t install_type_count = build_model_get_cpack_install_type_count(model);
+    if (component_count == 0 &&
+        component_group_count == 0 &&
+        install_type_count == 0) {
         return sv_from_cstr("");
     }
 
     String_Builder manifest = {0};
     sb_append_cstr(&manifest, "# cmk2nob CPack component manifest\n");
-    for (size_t i = 0; i < model->cpack_install_type_count; i++) {
-        CPack_Install_Type *it = &model->cpack_install_types[i];
+    for (size_t i = 0; i < install_type_count; i++) {
+        CPack_Install_Type *it = build_model_get_cpack_install_type_at(model, i);
         sb_append_cstr(&manifest, "install_type:");
-        sb_append_buf(&manifest, it->name.data, it->name.count);
+        String_View install_type_name = build_cpack_install_type_get_name(it);
+        sb_append_buf(&manifest, install_type_name.data, install_type_name.count);
         sb_append_cstr(&manifest, "|display=");
-        sb_append_buf(&manifest, it->display_name.data, it->display_name.count);
+        String_View install_type_display_name = build_cpack_install_type_get_display_name(it);
+        sb_append_buf(&manifest, install_type_display_name.data, install_type_display_name.count);
         sb_append(&manifest, '\n');
     }
-    for (size_t i = 0; i < model->cpack_component_group_count; i++) {
-        CPack_Component_Group *g = &model->cpack_component_groups[i];
+    for (size_t i = 0; i < component_group_count; i++) {
+        CPack_Component_Group *g = build_model_get_cpack_component_group_at(model, i);
         sb_append_cstr(&manifest, "group:");
-        sb_append_buf(&manifest, g->name.data, g->name.count);
+        String_View group_name = build_cpack_group_get_name(g);
+        sb_append_buf(&manifest, group_name.data, group_name.count);
         sb_append_cstr(&manifest, "|display=");
-        sb_append_buf(&manifest, g->display_name.data, g->display_name.count);
+        String_View group_display_name = build_cpack_group_get_display_name(g);
+        sb_append_buf(&manifest, group_display_name.data, group_display_name.count);
         sb_append_cstr(&manifest, "|description=");
-        sb_append_buf(&manifest, g->description.data, g->description.count);
+        String_View group_description = build_cpack_group_get_description(g);
+        sb_append_buf(&manifest, group_description.data, group_description.count);
         sb_append_cstr(&manifest, "|parent=");
-        sb_append_buf(&manifest, g->parent_group.data, g->parent_group.count);
+        String_View parent_group = build_cpack_group_get_parent_group(g);
+        sb_append_buf(&manifest, parent_group.data, parent_group.count);
         sb_append_cstr(&manifest, "|expanded=");
-        sb_append_cstr(&manifest, g->expanded ? "ON" : "OFF");
+        sb_append_cstr(&manifest, build_cpack_group_get_expanded(g) ? "ON" : "OFF");
         sb_append_cstr(&manifest, "|bold=");
-        sb_append_cstr(&manifest, g->bold_title ? "ON" : "OFF");
+        sb_append_cstr(&manifest, build_cpack_group_get_bold_title(g) ? "ON" : "OFF");
         sb_append(&manifest, '\n');
     }
-    for (size_t i = 0; i < model->cpack_component_count; i++) {
-        CPack_Component *c = &model->cpack_components[i];
+    for (size_t i = 0; i < component_count; i++) {
+        CPack_Component *c = build_model_get_cpack_component_at(model, i);
         sb_append_cstr(&manifest, "component:");
-        sb_append_buf(&manifest, c->name.data, c->name.count);
+        String_View component_name = build_cpack_component_get_name(c);
+        sb_append_buf(&manifest, component_name.data, component_name.count);
         sb_append_cstr(&manifest, "|display=");
-        sb_append_buf(&manifest, c->display_name.data, c->display_name.count);
+        String_View component_display_name = build_cpack_component_get_display_name(c);
+        sb_append_buf(&manifest, component_display_name.data, component_display_name.count);
         sb_append_cstr(&manifest, "|description=");
-        sb_append_buf(&manifest, c->description.data, c->description.count);
+        String_View component_description = build_cpack_component_get_description(c);
+        sb_append_buf(&manifest, component_description.data, component_description.count);
         sb_append_cstr(&manifest, "|group=");
-        sb_append_buf(&manifest, c->group.data, c->group.count);
+        String_View component_group = build_cpack_component_get_group(c);
+        sb_append_buf(&manifest, component_group.data, component_group.count);
         sb_append_cstr(&manifest, "|required=");
-        sb_append_cstr(&manifest, c->required ? "ON" : "OFF");
+        sb_append_cstr(&manifest, build_cpack_component_get_required(c) ? "ON" : "OFF");
         sb_append_cstr(&manifest, "|hidden=");
-        sb_append_cstr(&manifest, c->hidden ? "ON" : "OFF");
+        sb_append_cstr(&manifest, build_cpack_component_get_hidden(c) ? "ON" : "OFF");
         sb_append_cstr(&manifest, "|disabled=");
-        sb_append_cstr(&manifest, c->disabled ? "ON" : "OFF");
+        sb_append_cstr(&manifest, build_cpack_component_get_disabled(c) ? "ON" : "OFF");
         sb_append_cstr(&manifest, "|downloaded=");
-        sb_append_cstr(&manifest, c->downloaded ? "ON" : "OFF");
+        sb_append_cstr(&manifest, build_cpack_component_get_downloaded(c) ? "ON" : "OFF");
         sb_append_cstr(&manifest, "|depends=");
-        for (size_t d = 0; d < c->depends.count; d++) {
+        const String_List *depends = build_cpack_component_get_depends(c);
+        for (size_t d = 0; d < depends->count; d++) {
             if (d > 0) sb_append(&manifest, ';');
-            sb_append_buf(&manifest, c->depends.items[d].data, c->depends.items[d].count);
+            sb_append_buf(&manifest, depends->items[d].data, depends->items[d].count);
         }
         sb_append_cstr(&manifest, "|install_types=");
-        for (size_t t = 0; t < c->install_types.count; t++) {
+        const String_List *install_types = build_cpack_component_get_install_types(c);
+        for (size_t t = 0; t < install_types->count; t++) {
             if (t > 0) sb_append(&manifest, ';');
-            sb_append_buf(&manifest, c->install_types.items[t].data, c->install_types.items[t].count);
+            sb_append_buf(&manifest, install_types->items[t].data, install_types->items[t].count);
         }
         sb_append(&manifest, '\n');
     }
 
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static bool cpack_codegen_string_is_false(String_View value) {
@@ -643,7 +682,7 @@ static String_View cpack_archive_manifest_text(Build_Model *model) {
     sb_append_buf(&manifest, depends.data, depends.count);
     sb_append(&manifest, '\n');
 
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_deb_manifest_text(Build_Model *model) {
@@ -679,7 +718,7 @@ static String_View cpack_deb_manifest_text(Build_Model *model) {
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
 
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_rpm_manifest_text(Build_Model *model) {
@@ -719,7 +758,7 @@ static String_View cpack_rpm_manifest_text(Build_Model *model) {
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
 
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_nsis_manifest_text(Build_Model *model) {
@@ -756,7 +795,7 @@ static String_View cpack_nsis_manifest_text(Build_Model *model) {
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
 
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_wix_manifest_text(Build_Model *model) {
@@ -793,7 +832,7 @@ static String_View cpack_wix_manifest_text(Build_Model *model) {
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
 
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_dmg_manifest_text(Build_Model *model) {
@@ -825,7 +864,7 @@ static String_View cpack_dmg_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_bundle_manifest_text(Build_Model *model) {
@@ -851,7 +890,7 @@ static String_View cpack_bundle_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_productbuild_manifest_text(Build_Model *model) {
@@ -882,7 +921,7 @@ static String_View cpack_productbuild_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_ifw_manifest_text(Build_Model *model) {
@@ -910,7 +949,7 @@ static String_View cpack_ifw_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_nuget_manifest_text(Build_Model *model) {
@@ -942,7 +981,7 @@ static String_View cpack_nuget_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_freebsd_manifest_text(Build_Model *model) {
@@ -973,7 +1012,7 @@ static String_View cpack_freebsd_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static String_View cpack_cygwin_manifest_text(Build_Model *model) {
@@ -1000,12 +1039,17 @@ static String_View cpack_cygwin_manifest_text(Build_Model *model) {
     sb_append_cstr(&manifest, "\nfile_name=");
     sb_append_buf(&manifest, file_name.data, file_name.count);
     sb_append(&manifest, '\n');
-    return sv_from_cstr(arena_strndup(model->arena, manifest.items, manifest.count));
+    return codegen_copy_builder_to_model_arena(model, &manifest);
 }
 
 static void generate_install_code(Build_Model *model, String_Builder *sb) {
-    size_t total_rules = model->install_rules.targets.count + model->install_rules.files.count +
-                         model->install_rules.directories.count + model->install_rules.programs.count;
+    if (!model || !sb) return;
+    const String_List *install_targets = build_model_get_install_rule_list(model, INSTALL_RULE_TARGET);
+    const String_List *install_files = build_model_get_install_rule_list(model, INSTALL_RULE_FILE);
+    const String_List *install_programs = build_model_get_install_rule_list(model, INSTALL_RULE_PROGRAM);
+    const String_List *install_directories = build_model_get_install_rule_list(model, INSTALL_RULE_DIRECTORY);
+    size_t total_rules = install_targets->count + install_files->count +
+                         install_directories->count + install_programs->count;
     String_View cpack_manifest = cpack_manifest_text(model);
     String_View cpack_archive_manifest = cpack_archive_manifest_text(model);
     String_View cpack_deb_manifest = cpack_deb_manifest_text(model);
@@ -1026,18 +1070,19 @@ static void generate_install_code(Build_Model *model, String_Builder *sb) {
         cpack_productbuild_manifest.count == 0 && cpack_ifw_manifest.count == 0 &&
         cpack_nuget_manifest.count == 0 && cpack_freebsd_manifest.count == 0 &&
         cpack_cygwin_manifest.count == 0) return;
-    Build_Config active_cfg = build_model_config_from_string(model->default_config);
+    Build_Config active_cfg = build_model_config_from_string(build_model_get_default_config(model));
 
-    String_View default_dest = model->install_rules.prefix.count > 0 ? model->install_rules.prefix : sv_from_cstr("install");
+    String_View default_dest = build_model_has_install_prefix(model) ? build_model_get_install_prefix(model) : sv_from_cstr("install");
     sb_append_cstr(sb, "    if (argc > 1 && strcmp(argv[1], \"install\") == 0) {\n");
 
-    for (size_t i = 0; i < model->install_rules.targets.count; i++) {
+    for (size_t i = 0; i < install_targets->count; i++) {
         String_View target_name = {0}, destination = {0};
-        split_install_entry(model->install_rules.targets.items[i], default_dest, &target_name, &destination);
+        split_install_entry(install_targets->items[i], default_dest, &target_name, &destination);
         Build_Target *target = build_model_find_target(model, target_name);
         if (!target) continue;
-        if (target->type == TARGET_INTERFACE_LIB || target->type == TARGET_ALIAS || target->type == TARGET_OBJECT_LIB) continue;
-        if (target->type == TARGET_IMPORTED &&
+        Target_Type target_type = build_target_get_type(target);
+        if (target_type == TARGET_INTERFACE_LIB || target_type == TARGET_ALIAS || target_type == TARGET_OBJECT_LIB) continue;
+        if (target_type == TARGET_IMPORTED &&
             target_property_for_config(target, active_cfg, "IMPORTED_LOCATION", sv_from_cstr("")).count == 0) continue;
 
         sb_append_cstr(sb, "        if (!nob_mkdir_if_not_exists(");
@@ -1054,9 +1099,9 @@ static void generate_install_code(Build_Model *model, String_Builder *sb) {
         sb_append_cstr(sb, "        }\n");
     }
 
-    for (size_t i = 0; i < model->install_rules.files.count; i++) {
+    for (size_t i = 0; i < install_files->count; i++) {
         String_View src = {0}, destination = {0};
-        split_install_entry(model->install_rules.files.items[i], default_dest, &src, &destination);
+        split_install_entry(install_files->items[i], default_dest, &src, &destination);
         sb_append_cstr(sb, "        if (!nob_mkdir_if_not_exists(");
         sb_append_c_string_literal(sb, destination);
         sb_append_cstr(sb, ")) return 1;\n");
@@ -1071,9 +1116,9 @@ static void generate_install_code(Build_Model *model, String_Builder *sb) {
         sb_append_cstr(sb, "        }\n");
     }
 
-    for (size_t i = 0; i < model->install_rules.programs.count; i++) {
+    for (size_t i = 0; i < install_programs->count; i++) {
         String_View src = {0}, destination = {0};
-        split_install_entry(model->install_rules.programs.items[i], default_dest, &src, &destination);
+        split_install_entry(install_programs->items[i], default_dest, &src, &destination);
         sb_append_cstr(sb, "        if (!nob_mkdir_if_not_exists(");
         sb_append_c_string_literal(sb, destination);
         sb_append_cstr(sb, ")) return 1;\n");
@@ -1088,9 +1133,9 @@ static void generate_install_code(Build_Model *model, String_Builder *sb) {
         sb_append_cstr(sb, "        }\n");
     }
 
-    for (size_t i = 0; i < model->install_rules.directories.count; i++) {
+    for (size_t i = 0; i < install_directories->count; i++) {
         String_View src = {0}, destination = {0};
-        split_install_entry(model->install_rules.directories.items[i], default_dest, &src, &destination);
+        split_install_entry(install_directories->items[i], default_dest, &src, &destination);
         sb_append_cstr(sb, "        if (!nob_mkdir_if_not_exists(");
         sb_append_c_string_literal(sb, destination);
         sb_append_cstr(sb, ")) return 1;\n");
@@ -1328,31 +1373,39 @@ static void generate_install_code(Build_Model *model, String_Builder *sb) {
     sb_append_cstr(sb, "    }\n\n");
 }
 static void generate_target_code(Build_Model *model, Build_Target *target, String_Builder *sb) {
+    if (!model || !target || !sb) return;
+    Arena *arena = build_model_get_arena(model);
+    if (!arena) return;
+    String_View target_name = build_target_get_name(target);
+    Target_Type target_type = build_target_get_type(target);
+
     String_Builder ident_builder = {0};
-    append_sanitized_identifier(&ident_builder, target->name);
+    append_sanitized_identifier(&ident_builder, target_name);
     String_View ident = sb_to_sv(ident_builder);
 
-    sb_appendf(sb, "    // --- Target: "SV_Fmt" ---\n", SV_Arg(target->name));
-    if (target->type == TARGET_UTILITY && target->exclude_from_all && !target_has_dependents(model, target->name)) {
-        sb_appendf(sb, "    // Skipping EXCLUDE_FROM_ALL utility target: "SV_Fmt"\n\n", SV_Arg(target->name));
+    sb_appendf(sb, "    // --- Target: "SV_Fmt" ---\n", SV_Arg(target_name));
+    if (target_type == TARGET_UTILITY && build_target_is_exclude_from_all(target) && !target_has_dependents(model, target_name)) {
+        sb_appendf(sb, "    // Skipping EXCLUDE_FROM_ALL utility target: "SV_Fmt"\n\n", SV_Arg(target_name));
         nob_sb_free(ident_builder);
         return;
     }
     sb_appendf(sb, "    Nob_Cmd cmd_"SV_Fmt" = {0};\n", SV_Arg(ident));
     sb_appendf(sb, "    Nob_File_Paths objs_"SV_Fmt" = {0};\n\n", SV_Arg(ident));
-    Build_Config active_cfg = build_model_config_from_string(model->default_config);
+    Build_Config active_cfg = build_model_config_from_string(build_model_get_default_config(model));
 
-    if (target->pre_build_count > 0) {
-        sb_appendf(sb, "    // Custom commands: PRE_BUILD (%zu)\n", target->pre_build_count);
-        generate_custom_commands(model, target->pre_build_commands, target->pre_build_count, active_cfg, sb);
+    size_t pre_build_count = 0;
+    const Custom_Command *pre_build_commands = build_target_get_custom_commands(target, true, &pre_build_count);
+    if (pre_build_count > 0 && pre_build_commands) {
+        sb_appendf(sb, "    // Custom commands: PRE_BUILD (%zu)\n", pre_build_count);
+        generate_custom_commands(model, pre_build_commands, pre_build_count, active_cfg, sb);
         sb_appendf(sb, "\n");
     }
 
     bool can_compile_sources =
-        target->type == TARGET_EXECUTABLE ||
-        target->type == TARGET_STATIC_LIB ||
-        target->type == TARGET_SHARED_LIB ||
-        target->type == TARGET_OBJECT_LIB;
+        target_type == TARGET_EXECUTABLE ||
+        target_type == TARGET_STATIC_LIB ||
+        target_type == TARGET_SHARED_LIB ||
+        target_type == TARGET_OBJECT_LIB;
     String_List all_compile_defs = {0};
     String_List all_compile_opts = {0};
     String_List all_include_dirs = {0};
@@ -1383,63 +1436,84 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         .get_var = codegen_logic_get_var,
         .userdata = &logic_vars,
     };
+    const String_List *global_defs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_DEFINITIONS);
+    const String_List *global_compile_opts = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_COMPILE_OPTIONS);
+    const String_List *global_link_opts = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS);
+    const String_List *global_link_libs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES);
+    const String_List *global_include_dirs = build_model_get_string_list(model, BUILD_MODEL_LIST_INCLUDE_DIRS);
+    const String_List *global_system_include_dirs = build_model_get_string_list(model, BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS);
+    const String_List *global_link_dirs = build_model_get_string_list(model, BUILD_MODEL_LIST_LINK_DIRS);
+    const String_List *target_dependencies = build_target_get_string_list(target, BUILD_TARGET_LIST_DEPENDENCIES);
+    const String_List *target_sources = build_target_get_string_list(target, BUILD_TARGET_LIST_SOURCES);
 
     String_List effective_compile_defs = {0};
     string_list_init(&effective_compile_defs);
-    build_target_collect_effective_compile_definitions(target, model->arena, &logic_ctx, &effective_compile_defs);
-    string_list_add_all_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, &effective_compile_defs);
-    for (size_t i = 0; i < model->global_definitions.count; i++) {
-        string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, model->global_definitions.items[i]);
+    build_target_collect_effective_compile_definitions(target, arena, &logic_ctx, &effective_compile_defs);
+    string_list_add_all_unique_fast(&all_compile_defs, arena, &all_compile_defs_set, &effective_compile_defs);
+    for (size_t i = 0; i < global_defs->count; i++) {
+        string_list_add_unique_fast(&all_compile_defs, arena, &all_compile_defs_set, global_defs->items[i]);
     }
 
     String_List effective_compile_opts = {0};
     string_list_init(&effective_compile_opts);
-    build_target_collect_effective_compile_options(target, model->arena, &logic_ctx, &effective_compile_opts);
-    string_list_add_all_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, &effective_compile_opts);
-    for (size_t i = 0; i < model->global_compile_options.count; i++) {
-        string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, model->global_compile_options.items[i]);
+    build_target_collect_effective_compile_options(target, arena, &logic_ctx, &effective_compile_opts);
+    string_list_add_all_unique_fast(&all_compile_opts, arena, &all_compile_opts_set, &effective_compile_opts);
+    for (size_t i = 0; i < global_compile_opts->count; i++) {
+        string_list_add_unique_fast(&all_compile_opts, arena, &all_compile_opts_set, global_compile_opts->items[i]);
     }
 
     String_List effective_include_dirs = {0};
     string_list_init(&effective_include_dirs);
-    build_target_collect_effective_include_directories(target, model->arena, &logic_ctx, &effective_include_dirs);
-    string_list_add_all_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, &effective_include_dirs);
-    for (size_t i = 0; i < model->directories.include_dirs.count; i++) {
-        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.include_dirs.items[i]);
+    build_target_collect_effective_include_directories(target, arena, &logic_ctx, &effective_include_dirs);
+    string_list_add_all_unique_fast(&all_include_dirs, arena, &all_include_dirs_set, &effective_include_dirs);
+    for (size_t i = 0; i < global_include_dirs->count; i++) {
+        string_list_add_unique_fast(&all_include_dirs, arena, &all_include_dirs_set, global_include_dirs->items[i]);
     }
-    for (size_t i = 0; i < model->directories.system_include_dirs.count; i++) {
-        string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.system_include_dirs.items[i]);
+    for (size_t i = 0; i < global_system_include_dirs->count; i++) {
+        string_list_add_unique_fast(&all_include_dirs, arena, &all_include_dirs_set, global_system_include_dirs->items[i]);
     }
     String_List effective_link_opts = {0};
     string_list_init(&effective_link_opts);
-    build_target_collect_effective_link_options(target, model->arena, &logic_ctx, &effective_link_opts);
-    string_list_add_all_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, &effective_link_opts);
-    for (size_t i = 0; i < model->global_link_options.count; i++) {
-        string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, model->global_link_options.items[i]);
+    build_target_collect_effective_link_options(target, arena, &logic_ctx, &effective_link_opts);
+    string_list_add_all_unique_fast(&all_link_opts, arena, &all_link_opts_set, &effective_link_opts);
+    for (size_t i = 0; i < global_link_opts->count; i++) {
+        string_list_add_unique_fast(&all_link_opts, arena, &all_link_opts_set, global_link_opts->items[i]);
     }
     String_List effective_link_dirs = {0};
     string_list_init(&effective_link_dirs);
-    build_target_collect_effective_link_directories(target, model->arena, &logic_ctx, &effective_link_dirs);
-    string_list_add_all_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, &effective_link_dirs);
-    for (size_t i = 0; i < model->directories.link_dirs.count; i++) {
-        string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, model->directories.link_dirs.items[i]);
+    build_target_collect_effective_link_directories(target, arena, &logic_ctx, &effective_link_dirs);
+    string_list_add_all_unique_fast(&all_link_dirs, arena, &all_link_dirs_set, &effective_link_dirs);
+    for (size_t i = 0; i < global_link_dirs->count; i++) {
+        string_list_add_unique_fast(&all_link_dirs, arena, &all_link_dirs_set, global_link_dirs->items[i]);
     }
 
     String_List effective_link_libs = {0};
     string_list_init(&effective_link_libs);
-    build_target_collect_effective_link_libraries(target, model->arena, &logic_ctx, &effective_link_libs);
-    string_list_add_all_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, &effective_link_libs);
-    for (size_t i = 0; i < model->global_link_libraries.count; i++) {
-        string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, model->global_link_libraries.items[i]);
+    build_target_collect_effective_link_libraries(target, arena, &logic_ctx, &effective_link_libs);
+    string_list_add_all_unique_fast(&all_link_libs, arena, &all_link_libs_set, &effective_link_libs);
+    for (size_t i = 0; i < global_link_libs->count; i++) {
+        string_list_add_unique_fast(&all_link_libs, arena, &all_link_libs_set, global_link_libs->items[i]);
     }
 
-    uint8_t *visited = arena_alloc_zero(model->arena, model->target_count * sizeof(uint8_t));
-    for (size_t i = 0; i < target->dependencies.count; i++) {
-        Build_Target *dep = build_model_find_target(model, target->dependencies.items[i]);
+    size_t target_count = build_model_get_target_count(model);
+    uint8_t *visited = target_count > 0 ? arena_alloc_zero(arena, target_count * sizeof(uint8_t)) : NULL;
+    if (target_count > 0 && !visited) {
+        ds_shfree(all_compile_defs_set);
+        ds_shfree(all_compile_opts_set);
+        ds_shfree(all_include_dirs_set);
+        ds_shfree(all_link_opts_set);
+        ds_shfree(all_link_dirs_set);
+        ds_shfree(all_link_libs_set);
+        ds_shfree(all_link_targets_set);
+        nob_sb_free(ident_builder);
+        return;
+    }
+    for (size_t i = 0; i < target_dependencies->count; i++) {
+        Build_Target *dep = build_model_find_target(model, target_dependencies->items[i]);
         dep = resolve_alias_target(model, dep);
         if (!dep) continue;
         if (target_is_linkable_artifact(dep)) {
-            string_list_add_unique_fast(&all_link_targets, model->arena, &all_link_targets_set, dep->name);
+            string_list_add_unique_fast(&all_link_targets, arena, &all_link_targets_set, build_target_get_name(dep));
         }
         collect_interface_usage_recursive(
             model, dep, visited,
@@ -1453,8 +1527,8 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     // Compilar fontes
     if (can_compile_sources) {
         sb_appendf(sb, "    // Compilar fontes\n");
-        for (size_t i = 0; i < target->sources.count; i++) {
-            String_View src = target->sources.items[i];
+        for (size_t i = 0; i < target_sources->count; i++) {
+            String_View src = target_sources->items[i];
             if (!source_should_compile(src)) continue;
             sb_appendf(sb, "    {\n");
             sb_appendf(sb, "        Nob_Cmd cc_cmd = {0};\n");
@@ -1486,7 +1560,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
             String_List source_compile_defs = {0};
             string_list_init(&source_compile_defs);
             String_View src_defs_value = build_target_get_property(target, source_property_internal_key_temp(src, "COMPILE_DEFINITIONS"));
-            split_source_property_values(src_defs_value, false, model->arena, &source_compile_defs);
+            split_source_property_values(src_defs_value, false, arena, &source_compile_defs);
             for (size_t j = 0; j < source_compile_defs.count; j++) {
                 String_View def = source_compile_defs.items[j];
                 sb_append_cstr(sb, "        #if defined(_MSC_VER) && !defined(__clang__)\n");
@@ -1512,7 +1586,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
             String_List source_compile_opts = {0};
             string_list_init(&source_compile_opts);
             String_View src_opts_value = build_target_get_property(target, source_property_internal_key_temp(src, "COMPILE_OPTIONS"));
-            split_source_property_values(src_opts_value, true, model->arena, &source_compile_opts);
+            split_source_property_values(src_opts_value, true, arena, &source_compile_opts);
             for (size_t j = 0; j < source_compile_opts.count; j++) {
                 String_View opt = source_compile_opts.items[j];
                 sb_appendf(sb, "        nob_cmd_append(&cc_cmd, \""SV_Fmt"\");\n", SV_Arg(opt));
@@ -1526,11 +1600,11 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     }
     
     bool can_link_target =
-        target->type == TARGET_EXECUTABLE ||
-        target->type == TARGET_STATIC_LIB ||
-        target->type == TARGET_SHARED_LIB;
-    bool is_object_lib = target->type == TARGET_OBJECT_LIB;
-    bool archive_only_target = target->type == TARGET_STATIC_LIB;
+        target_type == TARGET_EXECUTABLE ||
+        target_type == TARGET_STATIC_LIB ||
+        target_type == TARGET_SHARED_LIB;
+    bool is_object_lib = target_type == TARGET_OBJECT_LIB;
+    bool archive_only_target = target_type == TARGET_STATIC_LIB;
 
     // Linkagem
     if (can_link_target) {
@@ -1538,20 +1612,21 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         sb_appendf(sb, "    cmd_"SV_Fmt".count = 0;\n", SV_Arg(ident));
     }
 
-    String_View artifact_name = target_property_for_config(target, active_cfg, "OUTPUT_NAME",
-        target->output_name.count > 0 ? target->output_name : target->name);
-    String_View output_dir = target_property_for_config(target, active_cfg, "OUTPUT_DIRECTORY",
-        target->output_directory.count > 0 ? target->output_directory : sv_from_cstr("build"));
-    String_View runtime_dir = target_property_for_config(target, active_cfg, "RUNTIME_OUTPUT_DIRECTORY",
-        target->runtime_output_directory.count > 0 ? target->runtime_output_directory : output_dir);
-    String_View archive_dir = target_property_for_config(target, active_cfg, "ARCHIVE_OUTPUT_DIRECTORY",
-        target->archive_output_directory.count > 0 ? target->archive_output_directory : output_dir);
+    String_View default_cfg = build_model_get_default_config(model);
+    String_View artifact_name = build_target_get_property_computed(target, sv_from_cstr("OUTPUT_NAME"), default_cfg);
+    if (artifact_name.count == 0) artifact_name = target_name;
+    String_View output_dir = build_target_get_property_computed(target, sv_from_cstr("OUTPUT_DIRECTORY"), default_cfg);
+    if (output_dir.count == 0) output_dir = sv_from_cstr("build");
+    String_View runtime_dir = build_target_get_property_computed(target, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"), default_cfg);
+    if (runtime_dir.count == 0) runtime_dir = output_dir;
+    String_View archive_dir = build_target_get_property_computed(target, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"), default_cfg);
+    if (archive_dir.count == 0) archive_dir = output_dir;
     String_View library_dir = output_dir;
-    String_View artifact_prefix = target_property_for_config(target, active_cfg, "PREFIX", target->prefix);
-    String_View artifact_suffix = target_property_for_config(target, active_cfg, "SUFFIX", target->suffix);
+    String_View artifact_prefix = build_target_get_property_computed(target, sv_from_cstr("PREFIX"), default_cfg);
+    String_View artifact_suffix = build_target_get_property_computed(target, sv_from_cstr("SUFFIX"), default_cfg);
     
     if (can_link_target) {
-        switch (target->type) {
+        switch (target_type) {
             case TARGET_EXECUTABLE:
                 sb_appendf(sb, "    nob_cc(&cmd_"SV_Fmt");\n", SV_Arg(ident));
                 sb_append_cstr(sb, "    #if defined(_MSC_VER) && !defined(__clang__)\n");
@@ -1621,7 +1696,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
             dep = resolve_alias_target(model, dep);
             if (!dep || !target_is_linkable_artifact(dep)) continue;
             sb_appendf(sb, "    nob_cmd_append(&cmd_"SV_Fmt", ", SV_Arg(ident));
-            sb_append_target_output_path_literal(sb, dep, build_model_config_from_string(model->default_config));
+            sb_append_target_output_path_literal(sb, dep, active_cfg);
             sb_append_cstr(sb, ");\n");
         }
         for (size_t i = 0; i < all_link_libs.count; i++) {
@@ -1672,9 +1747,11 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         sb_appendf(sb, "    if (!nob_cmd_run_sync(cmd_"SV_Fmt")) return 1;\n\n", SV_Arg(ident));
     }
 
-    if (target->post_build_count > 0) {
-        sb_appendf(sb, "    // Custom commands: POST_BUILD (%zu)\n", target->post_build_count);
-        generate_custom_commands(model, target->post_build_commands, target->post_build_count, active_cfg, sb);
+    size_t post_build_count = 0;
+    const Custom_Command *post_build_commands = build_target_get_custom_commands(target, false, &post_build_count);
+    if (post_build_count > 0 && post_build_commands) {
+        sb_appendf(sb, "    // Custom commands: POST_BUILD (%zu)\n", post_build_count);
+        generate_custom_commands(model, post_build_commands, post_build_count, active_cfg, sb);
         sb_appendf(sb, "\n");
     }
 
@@ -1689,7 +1766,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     nob_sb_free(ident_builder);
 }
 
-// Gera cÃ³digo C completo a partir do modelo
+// Gera código C completo a partir do modelo
 static void generate_from_model(Build_Model *model, String_Builder *sb) {
     sb_append_cstr(sb, "#define NOB_IMPLEMENTATION\n");
     sb_append_cstr(sb, "#include \"nob.h\"\n\n");
@@ -1699,7 +1776,7 @@ static void generate_from_model(Build_Model *model, String_Builder *sb) {
 
     generate_output_custom_commands(model, sb);
     
-    // Gera cÃ³digo em ordem topolÃ³gica para respeitar dependÃªncias.
+    // Gera código em ordem topológica para respeitar dependências.
     size_t sorted_count = 0;
     Build_Target **sorted = build_model_topological_sort(model, &sorted_count);
     if (sorted) {
@@ -1708,9 +1785,10 @@ static void generate_from_model(Build_Model *model, String_Builder *sb) {
             generate_target_code(model, target, sb);
         }
     } else {
-        // Fallback defensivo para manter geraÃ§Ã£o mesmo com dependÃªncias invÃ¡lidas/cÃ­clicas.
-        for (size_t i = 0; i < model->target_count; i++) {
-            Build_Target *target = model->targets[i];
+        // Fallback defensivo para manter geração mesmo com dependências inválidas/cíclicas.
+        size_t target_count = build_model_get_target_count(model);
+        for (size_t i = 0; i < target_count; i++) {
+            Build_Target *target = build_model_get_target_at(model, i);
             generate_target_code(model, target, sb);
         }
     }
@@ -1719,5 +1797,7 @@ static void generate_from_model(Build_Model *model, String_Builder *sb) {
     sb_append_cstr(sb, "    return 0;\n");
     sb_append_cstr(sb, "}\n");
 }
+
+
 
 

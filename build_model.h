@@ -541,6 +541,18 @@ typedef enum {
     BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES,
 } Build_Model_List_Kind;
 
+typedef enum {
+    BUILD_TARGET_LIST_SOURCES,
+    BUILD_TARGET_LIST_DEPENDENCIES,
+    BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES,
+    BUILD_TARGET_LIST_INTERFACE_LIBS,
+    BUILD_TARGET_LIST_INTERFACE_COMPILE_DEFINITIONS,
+    BUILD_TARGET_LIST_INTERFACE_COMPILE_OPTIONS,
+    BUILD_TARGET_LIST_INTERFACE_INCLUDE_DIRECTORIES,
+    BUILD_TARGET_LIST_INTERFACE_LINK_OPTIONS,
+    BUILD_TARGET_LIST_INTERFACE_LINK_DIRECTORIES,
+} Build_Target_List_Kind;
+
 void build_model_set_project_info(Build_Model *model, String_View name, String_View version);
 void build_model_set_default_config(Build_Model *model, String_View config);
 void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang);
@@ -568,13 +580,16 @@ void build_model_remove_global_definition(Build_Model *model, String_View def);
 Build_Config build_model_config_from_string(String_View cfg);
 String_View build_model_config_suffix(Build_Config cfg);
 String_View build_model_get_default_config(const Build_Model *model);
+Arena* build_model_get_arena(Build_Model *model);
 bool build_model_is_windows(const Build_Model *model);
 bool build_model_is_unix(const Build_Model *model);
 bool build_model_is_apple(const Build_Model *model);
 bool build_model_is_linux(const Build_Model *model);
+String_View build_model_get_system_name(const Build_Model *model);
 String_View build_model_get_project_name(const Build_Model *model);
 String_View build_model_get_project_version(const Build_Model *model);
 const String_List* build_model_get_string_list(const Build_Model *model, Build_Model_List_Kind kind);
+const String_List* build_model_get_install_rule_list(const Build_Model *model, Install_Rule_Type type);
 size_t build_model_get_cache_variable_count(const Build_Model *model);
 String_View build_model_get_cache_variable_name_at(const Build_Model *model, size_t index);
 size_t build_model_get_target_count(const Build_Model *model);
@@ -592,6 +607,7 @@ size_t build_model_get_cpack_component_group_count(const Build_Model *model);
 CPack_Component_Group* build_model_get_cpack_component_group_at(Build_Model *model, size_t index);
 size_t build_model_get_cpack_component_count(const Build_Model *model);
 CPack_Component* build_model_get_cpack_component_at(Build_Model *model, size_t index);
+const Custom_Command* build_model_get_output_custom_commands(const Build_Model *model, size_t *out_count);
 
 // Target property routing helpers
 void build_target_set_property_smart(Build_Target *target,
@@ -604,6 +620,9 @@ String_View build_target_get_property_computed(Build_Target *target,
 String_View build_target_get_name(const Build_Target *target);
 Target_Type build_target_get_type(const Build_Target *target);
 bool build_target_has_source(const Build_Target *target, String_View source);
+const String_List* build_target_get_string_list(const Build_Target *target, Build_Target_List_Kind kind);
+bool build_target_is_exclude_from_all(const Build_Target *target);
+const Custom_Command* build_target_get_custom_commands(const Build_Target *target, bool pre_build, size_t *out_count);
 
 String_View build_test_get_name(const Build_Test *test);
 String_View build_test_get_command(const Build_Test *test);

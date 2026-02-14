@@ -1208,6 +1208,16 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
     Build_Target *target = build_model_add_target(model, sv_from_cstr("app"), TARGET_EXECUTABLE);
     ASSERT(target != NULL);
     build_target_add_source(target, arena, sv_from_cstr("main.c"));
+    Build_Target *lib = build_model_add_target(model, sv_from_cstr("core"), TARGET_STATIC_LIB);
+    ASSERT(lib != NULL);
+    build_target_add_dependency(target, arena, sv_from_cstr("core"));
+    build_target_add_interface_dependency(target, arena, sv_from_cstr("iface_dep"));
+    build_target_add_library(target, arena, sv_from_cstr("iface_lib"), VISIBILITY_INTERFACE);
+    build_target_add_definition(target, arena, sv_from_cstr("IFACE_DEF=1"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    build_target_add_compile_option(target, arena, sv_from_cstr("-Wconversion"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    build_target_add_include_directory(target, arena, sv_from_cstr("iface_inc"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    build_target_add_link_option(target, arena, sv_from_cstr("-Wl,--iface"), VISIBILITY_INTERFACE, CONFIG_ALL);
+    build_target_add_link_directory(target, arena, sv_from_cstr("iface_link_dir"), VISIBILITY_INTERFACE, CONFIG_ALL);
 
     Build_Test *test = build_model_add_test_ex(model, arena, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"));
     ASSERT(test != NULL);
@@ -1238,9 +1248,21 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
 
     Custom_Command *cmd = build_model_add_custom_command_output(model, arena, sv_from_cstr("out.txt"), sv_from_cstr("echo out"));
     ASSERT(cmd != NULL);
+    Custom_Command *pre = build_target_add_custom_command(target, arena, true, sv_from_cstr("echo pre"));
+    ASSERT(pre != NULL);
+    Custom_Command *post = build_target_add_custom_command(target, arena, false, sv_from_cstr("echo post"));
+    ASSERT(post != NULL);
+
+    build_model_add_install_rule(model, arena, INSTALL_RULE_TARGET, sv_from_cstr("app"), sv_from_cstr("bin"));
+    build_model_add_install_rule(model, arena, INSTALL_RULE_FILE, sv_from_cstr("README.md"), sv_from_cstr("doc"));
+    build_model_add_install_rule(model, arena, INSTALL_RULE_PROGRAM, sv_from_cstr("tool.sh"), sv_from_cstr("bin"));
+    build_model_add_install_rule(model, arena, INSTALL_RULE_DIRECTORY, sv_from_cstr("assets"), sv_from_cstr("share"));
 
     ASSERT(nob_sv_eq(build_model_get_default_config(model), sv_from_cstr("Release")));
     ASSERT(build_model_is_windows(model) || build_model_is_unix(model));
+    ASSERT(build_model_get_arena(model) == arena);
+    String_View system_name = build_model_get_system_name(model);
+    ASSERT(system_name.count > 0);
     ASSERT(nob_sv_eq(build_model_get_project_name(model), sv_from_cstr("Demo")));
     ASSERT(nob_sv_eq(build_model_get_project_version(model), sv_from_cstr("1.2.3")));
 
@@ -1259,16 +1281,58 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
     ASSERT(lopts->count == 1 && nob_sv_eq(lopts->items[0], sv_from_cstr("-Wl,--as-needed")));
     ASSERT(llibs->count == 1 && nob_sv_eq(llibs->items[0], sv_from_cstr("m")));
 
+    const String_List *install_targets = build_model_get_install_rule_list(model, INSTALL_RULE_TARGET);
+    const String_List *install_files = build_model_get_install_rule_list(model, INSTALL_RULE_FILE);
+    const String_List *install_programs = build_model_get_install_rule_list(model, INSTALL_RULE_PROGRAM);
+    const String_List *install_dirs2 = build_model_get_install_rule_list(model, INSTALL_RULE_DIRECTORY);
+    ASSERT(install_targets->count == 1);
+    ASSERT(install_files->count == 1);
+    ASSERT(install_programs->count == 1);
+    ASSERT(install_dirs2->count == 1);
+    ASSERT(build_model_get_install_rule_list(model, (Install_Rule_Type)999)->count == 0);
+
     ASSERT(build_model_get_cache_variable_count(model) == 1);
     ASSERT(nob_sv_eq(build_model_get_cache_variable_name_at(model, 0), sv_from_cstr("CACHE_X")));
 
-    ASSERT(build_model_get_target_count(model) == 1);
+    ASSERT(build_model_get_target_count(model) == 2);
     Build_Target *target0 = build_model_get_target_at(model, 0);
     ASSERT(target0 != NULL);
     ASSERT(nob_sv_eq(build_target_get_name(target0), sv_from_cstr("app")));
     ASSERT(build_target_get_type(target0) == TARGET_EXECUTABLE);
     ASSERT(build_target_has_source(target0, sv_from_cstr("main.c")) == true);
     ASSERT(build_target_has_source(target0, sv_from_cstr("missing.c")) == false);
+    ASSERT(build_target_is_exclude_from_all(target0) == false);
+
+    const String_List *target_sources = build_target_get_string_list(target0, BUILD_TARGET_LIST_SOURCES);
+    const String_List *target_deps = build_target_get_string_list(target0, BUILD_TARGET_LIST_DEPENDENCIES);
+    const String_List *target_iface_deps = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES);
+    const String_List *target_iface_libs = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_LIBS);
+    const String_List *target_iface_defs = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_COMPILE_DEFINITIONS);
+    const String_List *target_iface_opts = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_COMPILE_OPTIONS);
+    const String_List *target_iface_includes = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_INCLUDE_DIRECTORIES);
+    const String_List *target_iface_link_opts = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_LINK_OPTIONS);
+    const String_List *target_iface_link_dirs = build_target_get_string_list(target0, BUILD_TARGET_LIST_INTERFACE_LINK_DIRECTORIES);
+    ASSERT(target_sources->count == 1 && nob_sv_eq(target_sources->items[0], sv_from_cstr("main.c")));
+    ASSERT(target_deps->count == 1 && nob_sv_eq(target_deps->items[0], sv_from_cstr("core")));
+    ASSERT(target_iface_deps->count == 1 && nob_sv_eq(target_iface_deps->items[0], sv_from_cstr("iface_dep")));
+    ASSERT(target_iface_libs->count == 1 && nob_sv_eq(target_iface_libs->items[0], sv_from_cstr("iface_lib")));
+    ASSERT(target_iface_defs->count == 1 && nob_sv_eq(target_iface_defs->items[0], sv_from_cstr("IFACE_DEF=1")));
+    ASSERT(target_iface_opts->count == 1 && nob_sv_eq(target_iface_opts->items[0], sv_from_cstr("-Wconversion")));
+    ASSERT(target_iface_includes->count == 1 && nob_sv_eq(target_iface_includes->items[0], sv_from_cstr("iface_inc")));
+    ASSERT(target_iface_link_opts->count == 1 && nob_sv_eq(target_iface_link_opts->items[0], sv_from_cstr("-Wl,--iface")));
+    ASSERT(target_iface_link_dirs->count == 1 && nob_sv_eq(target_iface_link_dirs->items[0], sv_from_cstr("iface_link_dir")));
+    ASSERT(build_target_get_string_list(target0, (Build_Target_List_Kind)999)->count == 0);
+
+    size_t pre_count = 0;
+    const Custom_Command *pre_cmds = build_target_get_custom_commands(target0, true, &pre_count);
+    ASSERT(pre_cmds != NULL);
+    ASSERT(pre_count == 1);
+    ASSERT(nob_sv_eq(pre_cmds[0].command, sv_from_cstr("echo pre")));
+    size_t post_count = 0;
+    const Custom_Command *post_cmds = build_target_get_custom_commands(target0, false, &post_count);
+    ASSERT(post_cmds != NULL);
+    ASSERT(post_count == 1);
+    ASSERT(nob_sv_eq(post_cmds[0].command, sv_from_cstr("echo post")));
 
     ASSERT(build_model_has_install_prefix(model) == true);
     ASSERT(nob_sv_eq(build_model_get_install_prefix(model), sv_from_cstr("install_root")));
@@ -1286,6 +1350,11 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
 
     ASSERT(build_model_find_output_custom_command_by_output(model, sv_from_cstr("out.txt")) == cmd);
     ASSERT(build_model_find_output_custom_command_by_output(model, sv_from_cstr("missing.txt")) == NULL);
+    size_t output_custom_count = 0;
+    const Custom_Command *output_custom = build_model_get_output_custom_commands(model, &output_custom_count);
+    ASSERT(output_custom != NULL);
+    ASSERT(output_custom_count == 1);
+    ASSERT(nob_sv_eq(output_custom[0].command, sv_from_cstr("echo out")));
 
     ASSERT(build_model_get_cpack_install_type_count(model) == 1);
     CPack_Install_Type *it0 = build_model_get_cpack_install_type_at(model, 0);
@@ -1325,10 +1394,12 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
 
 TEST(fase1_read_getters_null_safe) {
     ASSERT(nob_sv_eq(build_model_get_default_config(NULL), sv_from_cstr("")));
+    ASSERT(build_model_get_arena(NULL) == NULL);
     ASSERT(build_model_is_windows(NULL) == false);
     ASSERT(build_model_is_unix(NULL) == false);
     ASSERT(build_model_is_apple(NULL) == false);
     ASSERT(build_model_is_linux(NULL) == false);
+    ASSERT(nob_sv_eq(build_model_get_system_name(NULL), sv_from_cstr("")));
     ASSERT(nob_sv_eq(build_model_get_project_name(NULL), sv_from_cstr("")));
     ASSERT(nob_sv_eq(build_model_get_project_version(NULL), sv_from_cstr("")));
 
@@ -1340,6 +1411,7 @@ TEST(fase1_read_getters_null_safe) {
     ASSERT(nob_sv_eq(build_model_get_cache_variable_name_at(NULL, 0), sv_from_cstr("")));
     ASSERT(build_model_get_target_count(NULL) == 0);
     ASSERT(build_model_get_target_at(NULL, 0) == NULL);
+    ASSERT(build_model_get_install_rule_list(NULL, INSTALL_RULE_TARGET)->count == 0);
     ASSERT(nob_sv_eq(build_model_get_install_prefix(NULL), sv_from_cstr("")));
     ASSERT(build_model_has_install_prefix(NULL) == false);
     ASSERT(build_model_is_testing_enabled(NULL) == false);
@@ -1353,10 +1425,18 @@ TEST(fase1_read_getters_null_safe) {
     ASSERT(build_model_get_cpack_component_group_at(NULL, 0) == NULL);
     ASSERT(build_model_get_cpack_component_count(NULL) == 0);
     ASSERT(build_model_get_cpack_component_at(NULL, 0) == NULL);
+    size_t output_custom_count = 1;
+    ASSERT(build_model_get_output_custom_commands(NULL, &output_custom_count) == NULL);
+    ASSERT(output_custom_count == 0);
 
     ASSERT(nob_sv_eq(build_target_get_name(NULL), sv_from_cstr("")));
     ASSERT((int)build_target_get_type(NULL) == 0);
     ASSERT(build_target_has_source(NULL, sv_from_cstr("x.c")) == false);
+    ASSERT(build_target_get_string_list(NULL, BUILD_TARGET_LIST_SOURCES)->count == 0);
+    ASSERT(build_target_is_exclude_from_all(NULL) == false);
+    size_t target_cmd_count = 1;
+    ASSERT(build_target_get_custom_commands(NULL, true, &target_cmd_count) == NULL);
+    ASSERT(target_cmd_count == 0);
 
     ASSERT(nob_sv_eq(build_test_get_name(NULL), sv_from_cstr("")));
     ASSERT(nob_sv_eq(build_test_get_command(NULL), sv_from_cstr("")));
