@@ -10,11 +10,7 @@ struct Arena_Block {
     Arena_Block* next;
     size_t capacity;
     size_t used;
-    // Garante que (block + 1) esteja alinhado para max_align_t quando C11+
-    // (o sizeof(struct) é múltiplo do alinhamento da struct).
     max_align_t _align;
-    // Os dados seguem imediatamente após esta estrutura
-    // (alinhamento garantido por malloc)
 };
 
 typedef struct Arena_Cleanup_Node Arena_Cleanup_Node;
