@@ -191,8 +191,9 @@ TEST(add_definition) {
                                 VISIBILITY_PRIVATE,
                                 CONFIG_ALL);
     
-    ASSERT(target->properties[CONFIG_ALL].compile_definitions.count == 1);
-    ASSERT(nob_sv_eq(target->properties[CONFIG_ALL].compile_definitions.items[0], 
+    ASSERT(target->conditional_compile_definitions.count == 1);
+    ASSERT(target->conditional_compile_definitions.items[0].condition == NULL);
+    ASSERT(nob_sv_eq(target->conditional_compile_definitions.items[0].value, 
                      sv_from_cstr("DEBUG")));
     
     arena_destroy(arena);
@@ -212,8 +213,9 @@ TEST(add_include_directory) {
                                        VISIBILITY_PUBLIC,
                                        CONFIG_ALL);
     
-    ASSERT(target->properties[CONFIG_ALL].include_directories.count == 1);
-    ASSERT(nob_sv_eq(target->properties[CONFIG_ALL].include_directories.items[0], 
+    ASSERT(target->conditional_include_directories.count == 1);
+    ASSERT(target->conditional_include_directories.items[0].condition == NULL);
+    ASSERT(nob_sv_eq(target->conditional_include_directories.items[0].value, 
                      sv_from_cstr("include")));
     
     arena_destroy(arena);
@@ -533,20 +535,21 @@ TEST(compile_options_visibility) {
 
     // PRIVATE: only target properties
     build_target_add_compile_option(t, arena, sv_from_cstr("-DPRIV"), VISIBILITY_PRIVATE, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].compile_options.count == 1);
-    ASSERT(nob_sv_eq(t->properties[CONFIG_ALL].compile_options.items[0], sv_from_cstr("-DPRIV")));
+    ASSERT(t->conditional_compile_options.count == 1);
+    ASSERT(t->conditional_compile_options.items[0].condition == NULL);
+    ASSERT(nob_sv_eq(t->conditional_compile_options.items[0].value, sv_from_cstr("-DPRIV")));
     ASSERT(t->interface_compile_options.count == 0);
 
     // INTERFACE: only interface list
     build_target_add_compile_option(t, arena, sv_from_cstr("-DIFACE"), VISIBILITY_INTERFACE, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].compile_options.count == 1);
+    ASSERT(t->conditional_compile_options.count == 1);
     ASSERT(t->interface_compile_options.count == 1);
     ASSERT(nob_sv_eq(t->interface_compile_options.items[0], sv_from_cstr("-DIFACE")));
 
     // PUBLIC: both
     build_target_add_compile_option(t, arena, sv_from_cstr("-DPUB"), VISIBILITY_PUBLIC, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].compile_options.count == 2);
-    ASSERT(nob_sv_eq(t->properties[CONFIG_ALL].compile_options.items[1], sv_from_cstr("-DPUB")));
+    ASSERT(t->conditional_compile_options.count == 2);
+    ASSERT(nob_sv_eq(t->conditional_compile_options.items[1].value, sv_from_cstr("-DPUB")));
     ASSERT(t->interface_compile_options.count == 2);
     ASSERT(nob_sv_eq(t->interface_compile_options.items[1], sv_from_cstr("-DPUB")));
 
@@ -561,15 +564,18 @@ TEST(link_options_visibility) {
     ASSERT(t != NULL);
 
     build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--as-needed"), VISIBILITY_PRIVATE, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].link_options.count == 1);
+    ASSERT(t->conditional_link_options.count == 1);
+    ASSERT(t->conditional_link_options.items[0].condition == NULL);
+    ASSERT(nob_sv_eq(t->conditional_link_options.items[0].value, sv_from_cstr("-Wl,--as-needed")));
     ASSERT(t->interface_link_options.count == 0);
 
     build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--no-undefined"), VISIBILITY_INTERFACE, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].link_options.count == 1);
+    ASSERT(t->conditional_link_options.count == 1);
     ASSERT(t->interface_link_options.count == 1);
 
     build_target_add_link_option(t, arena, sv_from_cstr("-Wl,-rpath,$ORIGIN"), VISIBILITY_PUBLIC, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].link_options.count == 2);
+    ASSERT(t->conditional_link_options.count == 2);
+    ASSERT(nob_sv_eq(t->conditional_link_options.items[1].value, sv_from_cstr("-Wl,-rpath,$ORIGIN")));
     ASSERT(t->interface_link_options.count == 2);
 
     arena_destroy(arena);
@@ -583,15 +589,18 @@ TEST(link_directories_visibility) {
     ASSERT(t != NULL);
 
     build_target_add_link_directory(t, arena, sv_from_cstr("priv_dir"), VISIBILITY_PRIVATE, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].link_directories.count == 1);
+    ASSERT(t->conditional_link_directories.count == 1);
+    ASSERT(t->conditional_link_directories.items[0].condition == NULL);
+    ASSERT(nob_sv_eq(t->conditional_link_directories.items[0].value, sv_from_cstr("priv_dir")));
     ASSERT(t->interface_link_directories.count == 0);
 
     build_target_add_link_directory(t, arena, sv_from_cstr("iface_dir"), VISIBILITY_INTERFACE, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].link_directories.count == 1);
+    ASSERT(t->conditional_link_directories.count == 1);
     ASSERT(t->interface_link_directories.count == 1);
 
     build_target_add_link_directory(t, arena, sv_from_cstr("pub_dir"), VISIBILITY_PUBLIC, CONFIG_ALL);
-    ASSERT(t->properties[CONFIG_ALL].link_directories.count == 2);
+    ASSERT(t->conditional_link_directories.count == 2);
+    ASSERT(nob_sv_eq(t->conditional_link_directories.items[1].value, sv_from_cstr("pub_dir")));
     ASSERT(t->interface_link_directories.count == 2);
 
     arena_destroy(arena);
@@ -771,11 +780,17 @@ TEST(conditional_dual_write_legacy_apis) {
     build_target_add_compile_option(t, arena, sv_from_cstr("-Wall"), VISIBILITY_PRIVATE, CONFIG_ALL);
     build_target_add_include_directory(t, arena, sv_from_cstr("include"), VISIBILITY_PRIVATE, CONFIG_ALL);
     build_target_add_library(t, arena, sv_from_cstr("m"), VISIBILITY_PRIVATE);
+    build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--base"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--dbg"), VISIBILITY_PRIVATE, CONFIG_DEBUG);
+    build_target_add_link_directory(t, arena, sv_from_cstr("lib"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    build_target_add_link_directory(t, arena, sv_from_cstr("libdbg"), VISIBILITY_PRIVATE, CONFIG_DEBUG);
 
     ASSERT(t->conditional_compile_definitions.count == 2);
     ASSERT(t->conditional_compile_options.count == 1);
     ASSERT(t->conditional_include_directories.count == 1);
     ASSERT(t->conditional_link_libraries.count == 1);
+    ASSERT(t->conditional_link_options.count == 2);
+    ASSERT(t->conditional_link_directories.count == 2);
     ASSERT(t->conditional_compile_definitions.items[0].condition == NULL);
     ASSERT(t->conditional_compile_definitions.items[1].condition != NULL);
 
@@ -788,6 +803,20 @@ TEST(conditional_dual_write_legacy_apis) {
     ASSERT(string_list_contains(&debug_defs, sv_from_cstr("BASE_DEF")));
     ASSERT(string_list_contains(&debug_defs, sv_from_cstr("DBG_DEF")));
 
+    String_List debug_link_opts = {0};
+    string_list_init(&debug_link_opts);
+    build_target_collect_effective_link_options(t, arena, &debug_ctx, &debug_link_opts);
+    ASSERT(debug_link_opts.count == 2);
+    ASSERT(string_list_contains(&debug_link_opts, sv_from_cstr("-Wl,--base")));
+    ASSERT(string_list_contains(&debug_link_opts, sv_from_cstr("-Wl,--dbg")));
+
+    String_List debug_link_dirs = {0};
+    string_list_init(&debug_link_dirs);
+    build_target_collect_effective_link_directories(t, arena, &debug_ctx, &debug_link_dirs);
+    ASSERT(debug_link_dirs.count == 2);
+    ASSERT(string_list_contains(&debug_link_dirs, sv_from_cstr("lib")));
+    ASSERT(string_list_contains(&debug_link_dirs, sv_from_cstr("libdbg")));
+
     Build_Model_Logic_Test_Vars release_vars = { .build_type = sv_from_cstr("Release") };
     Logic_Eval_Context release_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &release_vars };
     String_List release_defs = {0};
@@ -796,6 +825,20 @@ TEST(conditional_dual_write_legacy_apis) {
     ASSERT(release_defs.count == 1);
     ASSERT(string_list_contains(&release_defs, sv_from_cstr("BASE_DEF")));
     ASSERT(!string_list_contains(&release_defs, sv_from_cstr("DBG_DEF")));
+
+    String_List release_link_opts = {0};
+    string_list_init(&release_link_opts);
+    build_target_collect_effective_link_options(t, arena, &release_ctx, &release_link_opts);
+    ASSERT(release_link_opts.count == 1);
+    ASSERT(string_list_contains(&release_link_opts, sv_from_cstr("-Wl,--base")));
+    ASSERT(!string_list_contains(&release_link_opts, sv_from_cstr("-Wl,--dbg")));
+
+    String_List release_link_dirs = {0};
+    string_list_init(&release_link_dirs);
+    build_target_collect_effective_link_directories(t, arena, &release_ctx, &release_link_dirs);
+    ASSERT(release_link_dirs.count == 1);
+    ASSERT(string_list_contains(&release_link_dirs, sv_from_cstr("lib")));
+    ASSERT(!string_list_contains(&release_link_dirs, sv_from_cstr("libdbg")));
 
     arena_destroy(arena);
     TEST_PASS();
@@ -809,13 +852,27 @@ TEST(conditional_sync_from_property_smart) {
 
     build_target_add_definition(t, arena, sv_from_cstr("BASE"), VISIBILITY_PRIVATE, CONFIG_ALL);
     ASSERT(t->conditional_compile_definitions.count == 1);
+    build_target_add_link_option(t, arena, sv_from_cstr("-Wl,--base"), VISIBILITY_PRIVATE, CONFIG_ALL);
+    build_target_add_link_directory(t, arena, sv_from_cstr("base_lib"), VISIBILITY_PRIVATE, CONFIG_ALL);
 
     build_target_set_property_smart(
         t, arena,
         sv_from_cstr("COMPILE_DEFINITIONS_DEBUG"),
         sv_from_cstr("DBG_ONE;DBG_TWO")
     );
+    build_target_set_property_smart(
+        t, arena,
+        sv_from_cstr("LINK_OPTIONS_DEBUG"),
+        sv_from_cstr("-Wl,--dbg-a;-Wl,--dbg-b")
+    );
+    build_target_set_property_smart(
+        t, arena,
+        sv_from_cstr("LINK_DIRECTORIES_DEBUG"),
+        sv_from_cstr("dbg_lib")
+    );
     ASSERT(t->conditional_compile_definitions.count == 3);
+    ASSERT(t->conditional_link_options.count == 3);
+    ASSERT(t->conditional_link_directories.count == 2);
 
     Build_Model_Logic_Test_Vars debug_vars = { .build_type = sv_from_cstr("Debug") };
     Logic_Eval_Context debug_ctx = { .get_var = build_model_test_logic_get_var, .userdata = &debug_vars };
@@ -834,6 +891,33 @@ TEST(conditional_sync_from_property_smart) {
     build_target_collect_effective_compile_definitions(t, arena, &release_ctx, &release_defs);
     ASSERT(release_defs.count == 1);
     ASSERT(string_list_contains(&release_defs, sv_from_cstr("BASE")));
+
+    String_List debug_link_opts = {0};
+    string_list_init(&debug_link_opts);
+    build_target_collect_effective_link_options(t, arena, &debug_ctx, &debug_link_opts);
+    ASSERT(debug_link_opts.count == 3);
+    ASSERT(string_list_contains(&debug_link_opts, sv_from_cstr("-Wl,--base")));
+    ASSERT(string_list_contains(&debug_link_opts, sv_from_cstr("-Wl,--dbg-a")));
+    ASSERT(string_list_contains(&debug_link_opts, sv_from_cstr("-Wl,--dbg-b")));
+
+    String_List release_link_opts = {0};
+    string_list_init(&release_link_opts);
+    build_target_collect_effective_link_options(t, arena, &release_ctx, &release_link_opts);
+    ASSERT(release_link_opts.count == 1);
+    ASSERT(string_list_contains(&release_link_opts, sv_from_cstr("-Wl,--base")));
+
+    String_List debug_link_dirs = {0};
+    string_list_init(&debug_link_dirs);
+    build_target_collect_effective_link_directories(t, arena, &debug_ctx, &debug_link_dirs);
+    ASSERT(debug_link_dirs.count == 2);
+    ASSERT(string_list_contains(&debug_link_dirs, sv_from_cstr("base_lib")));
+    ASSERT(string_list_contains(&debug_link_dirs, sv_from_cstr("dbg_lib")));
+
+    String_List release_link_dirs = {0};
+    string_list_init(&release_link_dirs);
+    build_target_collect_effective_link_directories(t, arena, &release_ctx, &release_link_dirs);
+    ASSERT(release_link_dirs.count == 1);
+    ASSERT(string_list_contains(&release_link_dirs, sv_from_cstr("base_lib")));
 
     arena_destroy(arena);
     TEST_PASS();
@@ -945,18 +1029,25 @@ TEST(fase1_property_smart_and_computed) {
     build_target_set_property_smart(t, arena, sv_from_cstr("SUFFIX"), sv_from_cstr(".ext"));
     build_target_set_property_smart(t, arena, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("A=1;B=2"));
     build_target_set_property_smart(t, arena, sv_from_cstr("COMPILE_DEFINITIONS_DEBUG"), sv_from_cstr("DBG=1"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("LINK_OPTIONS"), sv_from_cstr("-Wl,--base"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("LINK_OPTIONS_DEBUG"), sv_from_cstr("-Wl,--dbg"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("LINK_DIRECTORIES"), sv_from_cstr("lib"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("LINK_DIRECTORIES_DEBUG"), sv_from_cstr("libdbg"));
 
     ASSERT(nob_sv_eq(t->output_name, sv_from_cstr("core_out")));
     ASSERT(nob_sv_eq(t->prefix, sv_from_cstr("pre_")));
     ASSERT(nob_sv_eq(t->suffix, sv_from_cstr(".ext")));
-    ASSERT(t->properties[CONFIG_ALL].compile_definitions.count == 2);
-    ASSERT(t->properties[CONFIG_DEBUG].compile_definitions.count == 1);
+    ASSERT(t->conditional_compile_definitions.count == 3);
 
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("NAME"), sv_from_cstr("Debug")), sv_from_cstr("core")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("TYPE"), sv_from_cstr("Debug")), sv_from_cstr("STATIC_LIBRARY")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("OUTPUT_NAME"), sv_from_cstr("Debug")), sv_from_cstr("core_out")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("Debug")), sv_from_cstr("A=1;B=2")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS_DEBUG"), sv_from_cstr("Debug")), sv_from_cstr("DBG=1")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("LINK_OPTIONS"), sv_from_cstr("Debug")), sv_from_cstr("-Wl,--base")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("LINK_OPTIONS_DEBUG"), sv_from_cstr("Debug")), sv_from_cstr("-Wl,--dbg")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("LINK_DIRECTORIES"), sv_from_cstr("Debug")), sv_from_cstr("lib")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("LINK_DIRECTORIES_DEBUG"), sv_from_cstr("Debug")), sv_from_cstr("libdbg")));
 
     arena_destroy(arena);
     TEST_PASS();

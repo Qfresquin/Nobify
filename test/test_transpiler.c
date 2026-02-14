@@ -2526,10 +2526,14 @@ TEST(conditional_target_properties_dual_read_debug) {
         "target_compile_definitions(app PRIVATE BASE=1)\n"
         "target_compile_options(app PRIVATE -Wall)\n"
         "target_include_directories(app PRIVATE inc_all)\n"
+        "target_link_options(app PRIVATE -Wl,--base)\n"
+        "target_link_directories(app PRIVATE link_all)\n"
         "set_target_properties(app PROPERTIES "
         "COMPILE_DEFINITIONS_DEBUG DBG=1 "
         "COMPILE_OPTIONS_DEBUG -Og "
-        "INCLUDE_DIRECTORIES_DEBUG debug_inc)";
+        "INCLUDE_DIRECTORIES_DEBUG debug_inc "
+        "LINK_OPTIONS_DEBUG -Wl,--dbg "
+        "LINK_DIRECTORIES_DEBUG debug_link)";
 
     Ast_Root root = parse_cmake(arena, input);
     Nob_String_Builder sb = {0};
@@ -2542,6 +2546,10 @@ TEST(conditional_target_properties_dual_read_debug) {
     ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Og\");") != NULL);
     ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Iinc_all\");") != NULL);
     ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Idebug_inc\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Wl,--base\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Wl,--dbg\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Llink_all\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Ldebug_link\");") != NULL);
 
     nob_sb_free(sb);
     arena_destroy(arena);
@@ -2557,10 +2565,14 @@ TEST(conditional_target_properties_dual_read_release) {
         "target_compile_definitions(app PRIVATE BASE=1)\n"
         "target_compile_options(app PRIVATE -Wall)\n"
         "target_include_directories(app PRIVATE inc_all)\n"
+        "target_link_options(app PRIVATE -Wl,--base)\n"
+        "target_link_directories(app PRIVATE link_all)\n"
         "set_target_properties(app PROPERTIES "
         "COMPILE_DEFINITIONS_DEBUG DBG=1 "
         "COMPILE_OPTIONS_DEBUG -Og "
-        "INCLUDE_DIRECTORIES_DEBUG debug_inc)";
+        "INCLUDE_DIRECTORIES_DEBUG debug_inc "
+        "LINK_OPTIONS_DEBUG -Wl,--dbg "
+        "LINK_DIRECTORIES_DEBUG debug_link)";
 
     Ast_Root root = parse_cmake(arena, input);
     Nob_String_Builder sb = {0};
@@ -2573,6 +2585,10 @@ TEST(conditional_target_properties_dual_read_release) {
     ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-DDBG=1\");") == NULL);
     ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Og\");") == NULL);
     ASSERT(strstr(output, "nob_cmd_append(&cc_cmd, \"-Idebug_inc\");") == NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Wl,--base\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Llink_all\");") != NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Wl,--dbg\");") == NULL);
+    ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"-Ldebug_link\");") == NULL);
 
     nob_sb_free(sb);
     arena_destroy(arena);

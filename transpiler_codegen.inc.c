@@ -1353,8 +1353,6 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         target->type == TARGET_STATIC_LIB ||
         target->type == TARGET_SHARED_LIB ||
         target->type == TARGET_OBJECT_LIB;
-    size_t cfg_idx = active_cfg == CONFIG_ALL ? (size_t)CONFIG_DEBUG : (size_t)active_cfg;
-
     String_List all_compile_defs = {0};
     String_List all_compile_opts = {0};
     String_List all_include_dirs = {0};
@@ -1386,88 +1384,51 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         .userdata = &logic_vars,
     };
 
-    if (target->conditional_compile_definitions.count > 0) {
-        String_List effective_compile_defs = {0};
-        string_list_init(&effective_compile_defs);
-        build_target_collect_effective_compile_definitions(target, model->arena, &logic_ctx, &effective_compile_defs);
-        string_list_add_all_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, &effective_compile_defs);
-    } else {
-        for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_definitions.count; i++) {
-            string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[CONFIG_ALL].compile_definitions.items[i]);
-        }
-        for (size_t i = 0; i < target->properties[cfg_idx].compile_definitions.count; i++) {
-            string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, target->properties[cfg_idx].compile_definitions.items[i]);
-        }
-    }
+    String_List effective_compile_defs = {0};
+    string_list_init(&effective_compile_defs);
+    build_target_collect_effective_compile_definitions(target, model->arena, &logic_ctx, &effective_compile_defs);
+    string_list_add_all_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, &effective_compile_defs);
     for (size_t i = 0; i < model->global_definitions.count; i++) {
         string_list_add_unique_fast(&all_compile_defs, model->arena, &all_compile_defs_set, model->global_definitions.items[i]);
     }
 
-    if (target->conditional_compile_options.count > 0) {
-        String_List effective_compile_opts = {0};
-        string_list_init(&effective_compile_opts);
-        build_target_collect_effective_compile_options(target, model->arena, &logic_ctx, &effective_compile_opts);
-        string_list_add_all_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, &effective_compile_opts);
-    } else {
-        for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_options.count; i++) {
-            string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[CONFIG_ALL].compile_options.items[i]);
-        }
-        for (size_t i = 0; i < target->properties[cfg_idx].compile_options.count; i++) {
-            string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, target->properties[cfg_idx].compile_options.items[i]);
-        }
-    }
+    String_List effective_compile_opts = {0};
+    string_list_init(&effective_compile_opts);
+    build_target_collect_effective_compile_options(target, model->arena, &logic_ctx, &effective_compile_opts);
+    string_list_add_all_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, &effective_compile_opts);
     for (size_t i = 0; i < model->global_compile_options.count; i++) {
         string_list_add_unique_fast(&all_compile_opts, model->arena, &all_compile_opts_set, model->global_compile_options.items[i]);
     }
 
-    if (target->conditional_include_directories.count > 0) {
-        String_List effective_include_dirs = {0};
-        string_list_init(&effective_include_dirs);
-        build_target_collect_effective_include_directories(target, model->arena, &logic_ctx, &effective_include_dirs);
-        string_list_add_all_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, &effective_include_dirs);
-    } else {
-        for (size_t i = 0; i < target->properties[CONFIG_ALL].include_directories.count; i++) {
-            string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[CONFIG_ALL].include_directories.items[i]);
-        }
-        for (size_t i = 0; i < target->properties[cfg_idx].include_directories.count; i++) {
-            string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, target->properties[cfg_idx].include_directories.items[i]);
-        }
-    }
+    String_List effective_include_dirs = {0};
+    string_list_init(&effective_include_dirs);
+    build_target_collect_effective_include_directories(target, model->arena, &logic_ctx, &effective_include_dirs);
+    string_list_add_all_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, &effective_include_dirs);
     for (size_t i = 0; i < model->directories.include_dirs.count; i++) {
         string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.include_dirs.items[i]);
     }
     for (size_t i = 0; i < model->directories.system_include_dirs.count; i++) {
         string_list_add_unique_fast(&all_include_dirs, model->arena, &all_include_dirs_set, model->directories.system_include_dirs.items[i]);
     }
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].link_options.count; i++) {
-        string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, target->properties[CONFIG_ALL].link_options.items[i]);
-    }
-    for (size_t i = 0; i < target->properties[cfg_idx].link_options.count; i++) {
-        string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, target->properties[cfg_idx].link_options.items[i]);
-    }
+    String_List effective_link_opts = {0};
+    string_list_init(&effective_link_opts);
+    build_target_collect_effective_link_options(target, model->arena, &logic_ctx, &effective_link_opts);
+    string_list_add_all_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, &effective_link_opts);
     for (size_t i = 0; i < model->global_link_options.count; i++) {
         string_list_add_unique_fast(&all_link_opts, model->arena, &all_link_opts_set, model->global_link_options.items[i]);
     }
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].link_directories.count; i++) {
-        string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, target->properties[CONFIG_ALL].link_directories.items[i]);
-    }
-    for (size_t i = 0; i < target->properties[cfg_idx].link_directories.count; i++) {
-        string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, target->properties[cfg_idx].link_directories.items[i]);
-    }
+    String_List effective_link_dirs = {0};
+    string_list_init(&effective_link_dirs);
+    build_target_collect_effective_link_directories(target, model->arena, &logic_ctx, &effective_link_dirs);
+    string_list_add_all_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, &effective_link_dirs);
     for (size_t i = 0; i < model->directories.link_dirs.count; i++) {
         string_list_add_unique_fast(&all_link_dirs, model->arena, &all_link_dirs_set, model->directories.link_dirs.items[i]);
     }
 
-    if (target->conditional_link_libraries.count > 0) {
-        String_List effective_link_libs = {0};
-        string_list_init(&effective_link_libs);
-        build_target_collect_effective_link_libraries(target, model->arena, &logic_ctx, &effective_link_libs);
-        string_list_add_all_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, &effective_link_libs);
-    } else {
-        for (size_t i = 0; i < target->link_libraries.count; i++) {
-            string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, target->link_libraries.items[i]);
-        }
-    }
+    String_List effective_link_libs = {0};
+    string_list_init(&effective_link_libs);
+    build_target_collect_effective_link_libraries(target, model->arena, &logic_ctx, &effective_link_libs);
+    string_list_add_all_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, &effective_link_libs);
     for (size_t i = 0; i < model->global_link_libraries.count; i++) {
         string_list_add_unique_fast(&all_link_libs, model->arena, &all_link_libs_set, model->global_link_libraries.items[i]);
     }

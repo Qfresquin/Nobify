@@ -101,7 +101,7 @@ static bool build_model_has_cycle_dfs(const Build_Model *model, size_t idx, uint
 }
 
 // ============================================================================
-// FUNÇÕES AUXILIARES
+// FUNCOES AUXILIARES
 // ============================================================================
 
 void string_list_init(String_List *list) {
@@ -199,70 +199,92 @@ static Logic_Node *bm_condition_for_config(Arena *arena, Build_Config config) {
     return logic_compare(arena, LOGIC_CMP_STREQUAL, lhs, rhs);
 }
 
-static void bm_sync_conditional_compile_definitions_from_legacy(Build_Target *target, Arena *arena) {
-    if (!target || !arena) return;
-    target->conditional_compile_definitions.count = 0;
+static String_View bm_trim_ws_simple(String_View sv) {
+    size_t b = 0;
+    size_t e = sv.count;
+    while (b < e && isspace((unsigned char)sv.data[b])) b++;
+    while (e > b && isspace((unsigned char)sv.data[e - 1])) e--;
+    return nob_sv_from_parts(sv.data + b, e - b);
+}
 
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_definitions.count; i++) {
-        conditional_property_list_add(&target->conditional_compile_definitions,
-                                      arena,
-                                      target->properties[CONFIG_ALL].compile_definitions.items[i],
-                                      NULL);
-    }
-    for (Build_Config cfg = CONFIG_DEBUG; cfg < CONFIG_ALL; cfg = (Build_Config)(cfg + 1)) {
-        Logic_Node *condition = bm_condition_for_config(arena, cfg);
-        String_List *src = &target->properties[cfg].compile_definitions;
-        for (size_t i = 0; i < src->count; i++) {
-            conditional_property_list_add(&target->conditional_compile_definitions,
-                                          arena,
-                                          src->items[i],
-                                          condition);
+static bool bm_condition_extract_config(const Logic_Node *condition, Build_Config *out_cfg) {
+    if (!condition || !out_cfg) return false;
+    if (condition->type != LOGIC_OP_COMPARE) return false;
+    if (condition->as.cmp.op != LOGIC_CMP_STREQUAL) return false;
+
+    Logic_Operand lhs = condition->as.cmp.lhs;
+    Logic_Operand rhs = condition->as.cmp.rhs;
+    if (lhs.quoted) return false;
+    if (!nob_sv_eq(lhs.token, sv_from_cstr("CMAKE_BUILD_TYPE"))) return false;
+
+    Build_Config cfg = build_model_config_from_string(rhs.token);
+    if (cfg == CONFIG_ALL) return false;
+    *out_cfg = cfg;
+    return true;
+}
+
+static void bm_conditional_list_clear_for_config(Conditional_Property_List *list, Build_Config cfg) {
+    if (!list) return;
+    size_t out = 0;
+    for (size_t i = 0; i < list->count; i++) {
+        Conditional_Property item = list->items[i];
+        bool remove = false;
+        if (cfg == CONFIG_ALL) {
+            remove = (item.condition == NULL);
+        } else {
+            Build_Config item_cfg = CONFIG_ALL;
+            if (bm_condition_extract_config(item.condition, &item_cfg) && item_cfg == cfg) {
+                remove = true;
+            }
         }
+        if (!remove) {
+            list->items[out++] = item;
+        }
+    }
+    list->count = out;
+}
+
+static void bm_conditional_list_append_from_semicolon(Conditional_Property_List *list,
+                                                      Arena *arena,
+                                                      String_View value,
+                                                      Build_Config cfg) {
+    if (!list || !arena) return;
+    Logic_Node *condition = bm_condition_for_config(arena, cfg);
+    size_t start = 0;
+    for (size_t i = 0; i <= value.count; i++) {
+        bool sep = (i == value.count) || (value.data[i] == ';');
+        if (!sep) continue;
+        if (i > start) {
+            String_View item = bm_trim_ws_simple(nob_sv_from_parts(value.data + start, i - start));
+            if (item.count > 0) {
+                conditional_property_list_add(list, arena, item, condition);
+            }
+        }
+        start = i + 1;
     }
 }
 
-static void bm_sync_conditional_compile_options_from_legacy(Build_Target *target, Arena *arena) {
-    if (!target || !arena) return;
-    target->conditional_compile_options.count = 0;
-
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].compile_options.count; i++) {
-        conditional_property_list_add(&target->conditional_compile_options,
-                                      arena,
-                                      target->properties[CONFIG_ALL].compile_options.items[i],
-                                      NULL);
-    }
-    for (Build_Config cfg = CONFIG_DEBUG; cfg < CONFIG_ALL; cfg = (Build_Config)(cfg + 1)) {
-        Logic_Node *condition = bm_condition_for_config(arena, cfg);
-        String_List *src = &target->properties[cfg].compile_options;
-        for (size_t i = 0; i < src->count; i++) {
-            conditional_property_list_add(&target->conditional_compile_options,
-                                          arena,
-                                          src->items[i],
-                                          condition);
+static String_View bm_join_conditional_list_by_config_temp(const Conditional_Property_List *list, Build_Config cfg) {
+    if (!list || list->count == 0) return sv_from_cstr("");
+    String_Builder sb = {0};
+    bool first = true;
+    for (size_t i = 0; i < list->count; i++) {
+        Conditional_Property item = list->items[i];
+        bool include = false;
+        if (cfg == CONFIG_ALL) {
+            include = (item.condition == NULL);
+        } else {
+            Build_Config item_cfg = CONFIG_ALL;
+            include = bm_condition_extract_config(item.condition, &item_cfg) && (item_cfg == cfg);
         }
+        if (!include) continue;
+        if (!first) nob_sb_append(&sb, ';');
+        first = false;
+        nob_sb_append_buf(&sb, item.value.data, item.value.count);
     }
-}
-
-static void bm_sync_conditional_include_directories_from_legacy(Build_Target *target, Arena *arena) {
-    if (!target || !arena) return;
-    target->conditional_include_directories.count = 0;
-
-    for (size_t i = 0; i < target->properties[CONFIG_ALL].include_directories.count; i++) {
-        conditional_property_list_add(&target->conditional_include_directories,
-                                      arena,
-                                      target->properties[CONFIG_ALL].include_directories.items[i],
-                                      NULL);
-    }
-    for (Build_Config cfg = CONFIG_DEBUG; cfg < CONFIG_ALL; cfg = (Build_Config)(cfg + 1)) {
-        Logic_Node *condition = bm_condition_for_config(arena, cfg);
-        String_List *src = &target->properties[cfg].include_directories;
-        for (size_t i = 0; i < src->count; i++) {
-            conditional_property_list_add(&target->conditional_include_directories,
-                                          arena,
-                                          src->items[i],
-                                          condition);
-        }
-    }
+    String_View out = sv_from_cstr(nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : ""));
+    nob_sb_free(sb);
+    return out;
 }
 
 static void bm_collect_effective_conditional(const Conditional_Property_List *list,
@@ -289,7 +311,7 @@ static void bm_collect_effective_conditional(const Conditional_Property_List *li
 }
 
 // ============================================================================
-// IMPLEMENTAÇÃO PÚBLICA
+// IMPLEMENTACAO PUBLICA
 // ============================================================================
 
 Build_Model* build_model_create(Arena *arena) {
@@ -320,12 +342,12 @@ Build_Model* build_model_create(Arena *arena) {
     string_list_init(&model->install_rules.directories);
     string_list_init(&model->install_rules.programs);
     
-    // Configurações padrão
+    // Configuracoes padrao
     model->default_config = sv_from_cstr("Debug");
     model->config_debug = true;
     model->config_release = true;
     
-    // Padrões de linguagem
+    // Padroes de linguagem
     model->language_standards.c_standard = sv_from_cstr("11");
     model->language_standards.cxx_standard = sv_from_cstr("11");
     model->language_standards.c_extensions = true;
@@ -364,7 +386,7 @@ Build_Target* build_model_add_target(Build_Model *model,
         return existing;
     }
     
-    // Expande array se necessário
+    // Expande array se necessario
     if (model->target_count >= model->target_capacity) {
         if (!arena_da_reserve(model->arena, (void**)&model->targets, &model->target_capacity,
                 sizeof(*model->targets), model->target_count + 1)) {
@@ -402,17 +424,10 @@ Build_Target* build_model_add_target(Build_Model *model,
     conditional_property_list_init(&target->conditional_compile_options);
     conditional_property_list_init(&target->conditional_include_directories);
     conditional_property_list_init(&target->conditional_link_libraries);
+    conditional_property_list_init(&target->conditional_link_options);
+    conditional_property_list_init(&target->conditional_link_directories);
     
-    // Inicializa propriedades por configuração
-    for (int i = 0; i <= CONFIG_ALL; i++) {
-        string_list_init(&target->properties[i].compile_definitions);
-        string_list_init(&target->properties[i].compile_options);
-        string_list_init(&target->properties[i].include_directories);
-        string_list_init(&target->properties[i].link_options);
-        string_list_init(&target->properties[i].link_directories);
-    }
-    
-    // Prefixos e sufixos padrão
+    // Prefixos e sufixos padrao
     switch (type) {
         case TARGET_EXECUTABLE:
             target->prefix = sv_from_cstr("");
@@ -489,7 +504,6 @@ void build_target_add_definition(Build_Target *target,
     if (!target || !arena || config > CONFIG_ALL) return;
     Logic_Node *condition = bm_condition_for_config(arena, config);
     if (visibility == VISIBILITY_PRIVATE || visibility == VISIBILITY_PUBLIC) {
-        string_list_add(&target->properties[config].compile_definitions, arena, definition);
         build_target_add_conditional_compile_definition(target, arena, definition, condition);
     }
     if (visibility == VISIBILITY_INTERFACE || visibility == VISIBILITY_PUBLIC) {
@@ -505,7 +519,6 @@ void build_target_add_include_directory(Build_Target *target,
     if (!target || !arena || config > CONFIG_ALL) return;
     Logic_Node *condition = bm_condition_for_config(arena, config);
     if (visibility == VISIBILITY_PRIVATE || visibility == VISIBILITY_PUBLIC) {
-        string_list_add(&target->properties[config].include_directories, arena, directory);
         build_target_add_conditional_include_directory(target, arena, directory, condition);
     }
     if (visibility == VISIBILITY_INTERFACE || visibility == VISIBILITY_PUBLIC) {
@@ -536,7 +549,6 @@ void build_target_add_compile_option(Build_Target *target,
     if (!target || !arena || config > CONFIG_ALL) return;
     Logic_Node *condition = bm_condition_for_config(arena, config);
     if (visibility == VISIBILITY_PRIVATE || visibility == VISIBILITY_PUBLIC) {
-        string_list_add(&target->properties[config].compile_options, arena, option);
         build_target_add_conditional_compile_option(target, arena, option, condition);
     }
     if (visibility == VISIBILITY_INTERFACE || visibility == VISIBILITY_PUBLIC) {
@@ -576,6 +588,22 @@ void build_target_add_conditional_link_library(Build_Target *target,
     conditional_property_list_add(&target->conditional_link_libraries, arena, library, condition);
 }
 
+void build_target_add_conditional_link_option(Build_Target *target,
+                                              Arena *arena,
+                                              String_View option,
+                                              Logic_Node *condition) {
+    if (!target || !arena) return;
+    conditional_property_list_add(&target->conditional_link_options, arena, option, condition);
+}
+
+void build_target_add_conditional_link_directory(Build_Target *target,
+                                                 Arena *arena,
+                                                 String_View directory,
+                                                 Logic_Node *condition) {
+    if (!target || !arena) return;
+    conditional_property_list_add(&target->conditional_link_directories, arena, directory, condition);
+}
+
 void build_target_collect_effective_compile_definitions(Build_Target *target,
                                                         Arena *arena,
                                                         const Logic_Eval_Context *logic_ctx,
@@ -608,14 +636,31 @@ void build_target_collect_effective_link_libraries(Build_Target *target,
     bm_collect_effective_conditional(&target->conditional_link_libraries, arena, logic_ctx, out);
 }
 
+void build_target_collect_effective_link_options(Build_Target *target,
+                                                 Arena *arena,
+                                                 const Logic_Eval_Context *logic_ctx,
+                                                 String_List *out) {
+    if (!target) return;
+    bm_collect_effective_conditional(&target->conditional_link_options, arena, logic_ctx, out);
+}
+
+void build_target_collect_effective_link_directories(Build_Target *target,
+                                                     Arena *arena,
+                                                     const Logic_Eval_Context *logic_ctx,
+                                                     String_List *out) {
+    if (!target) return;
+    bm_collect_effective_conditional(&target->conditional_link_directories, arena, logic_ctx, out);
+}
+
 void build_target_add_link_option(Build_Target *target,
                                   Arena *arena,
                                   String_View option,
                                   Visibility visibility,
                                   Build_Config config) {
     if (!target || !arena || config > CONFIG_ALL) return;
+    Logic_Node *condition = bm_condition_for_config(arena, config);
     if (visibility == VISIBILITY_PRIVATE || visibility == VISIBILITY_PUBLIC) {
-        string_list_add(&target->properties[config].link_options, arena, option);
+        build_target_add_conditional_link_option(target, arena, option, condition);
     }
     if (visibility == VISIBILITY_INTERFACE || visibility == VISIBILITY_PUBLIC) {
         string_list_add(&target->interface_link_options, arena, option);
@@ -628,8 +673,9 @@ void build_target_add_link_directory(Build_Target *target,
                                      Visibility visibility,
                                      Build_Config config) {
     if (!target || !arena || config > CONFIG_ALL) return;
+    Logic_Node *condition = bm_condition_for_config(arena, config);
     if (visibility == VISIBILITY_PRIVATE || visibility == VISIBILITY_PUBLIC) {
-        string_list_add(&target->properties[config].link_directories, arena, directory);
+        build_target_add_conditional_link_directory(target, arena, directory, condition);
     }
     if (visibility == VISIBILITY_INTERFACE || visibility == VISIBILITY_PUBLIC) {
         string_list_add(&target->interface_link_directories, arena, directory);
@@ -690,14 +736,14 @@ Found_Package* build_model_add_package(Build_Model *model,
                                        String_View name,
                                        bool found) {
     if (!model) return NULL;
-    // Verifica se já existe
+    // Verifica se ja existe
     for (size_t i = 0; i < model->package_count; i++) {
         if (nob_sv_eq(model->found_packages[i].name, name)) {
             return &model->found_packages[i];
         }
     }
     
-    // Expande array se necessário
+    // Expande array se necessario
     if (model->package_count >= model->package_capacity) {
         if (!arena_da_reserve(model->arena, (void**)&model->found_packages, &model->package_capacity,
                 sizeof(*model->found_packages), model->package_count + 1)) {
@@ -1168,59 +1214,35 @@ static String_View bm_target_type_to_cmake_name(Target_Type type) {
     }
 }
 
-static String_View bm_join_list_semicolon_temp(const String_List *list) {
-    if (!list || list->count == 0) return sv_from_cstr("");
-    String_Builder sb = {0};
-    for (size_t i = 0; i < list->count; i++) {
-        if (i > 0) nob_sb_append(&sb, ';');
-        nob_sb_append_buf(&sb, list->items[i].data, list->items[i].count);
-    }
-    String_View out = sv_from_cstr(nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : ""));
-    nob_sb_free(sb);
-    return out;
-}
-
-static void bm_replace_list_from_semicolon(Arena *arena, String_List *list, String_View value) {
-    if (!arena || !list) return;
-    list->count = 0;
-    size_t start = 0;
-    for (size_t i = 0; i <= value.count; i++) {
-        bool sep = (i == value.count) || (value.data[i] == ';');
-        if (!sep) continue;
-        if (i > start) {
-            String_View item = bm_sv_trim_ws(nob_sv_from_parts(value.data + start, i - start));
-            if (item.count > 0) string_list_add(list, arena, item);
-        }
-        start = i + 1;
-    }
-}
-
-static bool bm_parse_target_property_list_key(String_View key, Build_Config *out_cfg, String_List **out_list, Build_Target *target) {
+static bool bm_parse_target_conditional_property_key(String_View key,
+                                                     Build_Config *out_cfg,
+                                                     Conditional_Property_List **out_list,
+                                                     Build_Target *target) {
     if (!out_cfg || !out_list || !target) return false;
 
     if (nob_sv_eq(key, sv_from_cstr("COMPILE_DEFINITIONS"))) {
         *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].compile_definitions;
+        *out_list = &target->conditional_compile_definitions;
         return true;
     }
     if (nob_sv_eq(key, sv_from_cstr("COMPILE_OPTIONS"))) {
         *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].compile_options;
+        *out_list = &target->conditional_compile_options;
         return true;
     }
     if (nob_sv_eq(key, sv_from_cstr("INCLUDE_DIRECTORIES"))) {
         *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].include_directories;
+        *out_list = &target->conditional_include_directories;
         return true;
     }
     if (nob_sv_eq(key, sv_from_cstr("LINK_OPTIONS"))) {
         *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].link_options;
+        *out_list = &target->conditional_link_options;
         return true;
     }
     if (nob_sv_eq(key, sv_from_cstr("LINK_DIRECTORIES"))) {
         *out_cfg = CONFIG_ALL;
-        *out_list = &target->properties[CONFIG_ALL].link_directories;
+        *out_list = &target->conditional_link_directories;
         return true;
     }
 
@@ -1236,27 +1258,27 @@ static bool bm_parse_target_property_list_key(String_View key, Build_Config *out
 
     if (nob_sv_starts_with(key, sv_from_cstr("COMPILE_DEFINITIONS_"))) {
         *out_cfg = cfg;
-        *out_list = &target->properties[cfg].compile_definitions;
+        *out_list = &target->conditional_compile_definitions;
         return true;
     }
     if (nob_sv_starts_with(key, sv_from_cstr("COMPILE_OPTIONS_"))) {
         *out_cfg = cfg;
-        *out_list = &target->properties[cfg].compile_options;
+        *out_list = &target->conditional_compile_options;
         return true;
     }
     if (nob_sv_starts_with(key, sv_from_cstr("INCLUDE_DIRECTORIES_"))) {
         *out_cfg = cfg;
-        *out_list = &target->properties[cfg].include_directories;
+        *out_list = &target->conditional_include_directories;
         return true;
     }
     if (nob_sv_starts_with(key, sv_from_cstr("LINK_OPTIONS_"))) {
         *out_cfg = cfg;
-        *out_list = &target->properties[cfg].link_options;
+        *out_list = &target->conditional_link_options;
         return true;
     }
     if (nob_sv_starts_with(key, sv_from_cstr("LINK_DIRECTORIES_"))) {
         *out_cfg = cfg;
-        *out_list = &target->properties[cfg].link_directories;
+        *out_list = &target->conditional_link_directories;
         return true;
     }
 
@@ -1473,17 +1495,10 @@ void build_target_set_property_smart(Build_Target *target,
     }
 
     Build_Config cfg = CONFIG_ALL;
-    String_List *list = NULL;
-    if (bm_parse_target_property_list_key(key, &cfg, &list, target) && list) {
-        bm_replace_list_from_semicolon(arena, list, value);
-
-        if (list == &target->properties[cfg].compile_definitions) {
-            bm_sync_conditional_compile_definitions_from_legacy(target, arena);
-        } else if (list == &target->properties[cfg].compile_options) {
-            bm_sync_conditional_compile_options_from_legacy(target, arena);
-        } else if (list == &target->properties[cfg].include_directories) {
-            bm_sync_conditional_include_directories_from_legacy(target, arena);
-        }
+    Conditional_Property_List *list = NULL;
+    if (bm_parse_target_conditional_property_key(key, &cfg, &list, target) && list) {
+        bm_conditional_list_clear_for_config(list, cfg);
+        bm_conditional_list_append_from_semicolon(list, arena, value, cfg);
     }
 }
 
@@ -1526,9 +1541,9 @@ String_View build_target_get_property_computed(Build_Target *target,
     }
 
     Build_Config cfg = CONFIG_ALL;
-    String_List *list = NULL;
-    if (bm_parse_target_property_list_key(key, &cfg, &list, target) && list) {
-        return bm_join_list_semicolon_temp(list);
+    Conditional_Property_List *list = NULL;
+    if (bm_parse_target_conditional_property_key(key, &cfg, &list, target) && list) {
+        return bm_join_conditional_list_by_config_temp(list, cfg);
     }
 
     return bm_target_property_for_config(target, active_cfg, nob_temp_sv_to_cstr(key), sv_from_cstr(""));
@@ -1761,3 +1776,4 @@ String_View build_path_make_absolute(Arena *arena, String_View path) {
     if (build_path_is_absolute(path)) return bm_sv_copy_to_arena(arena, path);
     return build_path_join(arena, sv_from_cstr(nob_get_current_dir_temp()), path);
 }
+
