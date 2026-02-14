@@ -200,6 +200,11 @@ typedef struct {
     Property_List properties;
 } Found_Package;
 
+typedef struct Build_Target_Index_Entry {
+    char *key;
+    int value;
+} Build_Target_Index_Entry;
+
 // ============================================================================
 // MODELO COMPLETO DO BUILD
 // ============================================================================
@@ -217,6 +222,7 @@ typedef struct {
     Build_Target *targets;
     size_t target_count;
     size_t target_capacity;
+    Build_Target_Index_Entry *target_index_by_name;
     
     // Diretórios
     Directory_Info directories;

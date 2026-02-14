@@ -1,25 +1,37 @@
 #include "build_model.h"
 #include "arena_dyn.h"
+#include "ds_adapter.h"
 #include <ctype.h>
+
+static void build_model_heap_cleanup(void *userdata) {
+    Build_Model *model = (Build_Model*)userdata;
+    if (!model) return;
+    ds_shfree(model->target_index_by_name);
+}
+
+static int build_model_lookup_target_index(const Build_Model *model, String_View name) {
+    if (!model || !model->target_index_by_name) return -1;
+    Build_Target_Index_Entry *index_map = model->target_index_by_name;
+    Build_Target_Index_Entry *entry = ds_shgetp_null(index_map, nob_temp_sv_to_cstr(name));
+    if (!entry) return -1;
+    return entry->value;
+}
+
+static bool build_model_put_target_index(Build_Model *model, char *key, int index) {
+    if (!model || !key || key[0] == '\0') return false;
+    ds_shput(model->target_index_by_name, key, index);
+    return true;
+}
 
 static Build_Target* build_model_find_target_const(const Build_Model *model, String_View name) {
     if (!model) return NULL;
-    for (size_t i = 0; i < model->target_count; i++) {
-        if (nob_sv_eq(model->targets[i].name, name)) {
-            return (Build_Target*)&model->targets[i];
-        }
-    }
-    return NULL;
+    int idx = build_model_lookup_target_index(model, name);
+    if (idx < 0 || (size_t)idx >= model->target_count) return NULL;
+    return (Build_Target*)&model->targets[idx];
 }
 
 int build_model_find_target_index(const Build_Model *model, String_View name) {
-    if (!model) return -1;
-    for (size_t i = 0; i < model->target_count; i++) {
-        if (nob_sv_eq(model->targets[i].name, name)) {
-            return (int)i;
-        }
-    }
-    return -1;
+    return build_model_lookup_target_index(model, name);
 }
 
 static bool build_model_has_cycle_dfs(const Build_Model *model, size_t idx, uint8_t *state) {
@@ -104,6 +116,9 @@ Build_Model* build_model_create(Arena *arena) {
     Build_Model *model = arena_alloc_zero(arena, sizeof(Build_Model));
     if (!model) return NULL;
     model->arena = arena;
+    if (!arena_on_destroy(arena, build_model_heap_cleanup, model)) {
+        nob_log(NOB_WARNING, "Falha ao registrar cleanup de heap do Build_Model");
+    }
     
     // Inicializa listas
     string_list_init(&model->project_languages);
@@ -157,15 +172,15 @@ Build_Target* build_model_add_target(Build_Model *model,
                                      String_View name, 
                                      Target_Type type) {
     if (!model) return NULL;
-    // Verifica se já existe
-    for (size_t i = 0; i < model->target_count; i++) {
-        if (nob_sv_eq(model->targets[i].name, name)) {
-            if (model->targets[i].type != type) {
-                nob_log(NOB_ERROR, "Target '"SV_Fmt"' redefinido com tipo diferente", SV_Arg(name));
-                return NULL;
-            }
-            return &model->targets[i];
+    // Verifica se ja existe
+    int existing_idx = build_model_lookup_target_index(model, name);
+    if (existing_idx >= 0 && (size_t)existing_idx < model->target_count) {
+        Build_Target *existing = &model->targets[existing_idx];
+        if (existing->type != type) {
+            nob_log(NOB_ERROR, "Target '"SV_Fmt"' redefinido com tipo diferente", SV_Arg(name));
+            return NULL;
         }
+        return existing;
     }
     
     // Expande array se necessário
@@ -179,7 +194,14 @@ Build_Target* build_model_add_target(Build_Model *model,
     Build_Target *target = &model->targets[model->target_count++];
     memset(target, 0, sizeof(Build_Target));
     
-    target->name = name;
+    char *name_copy = arena_strndup(model->arena, name.data, name.count);
+    if (!name_copy) {
+        model->target_count--;
+        memset(target, 0, sizeof(*target));
+        nob_log(NOB_ERROR, "Falha ao copiar nome do target '"SV_Fmt"'", SV_Arg(name));
+        return NULL;
+    }
+    target->name = sv_from_cstr(name_copy);
     target->type = type;
     
     // Inicializa listas
@@ -245,6 +267,13 @@ Build_Target* build_model_add_target(Build_Model *model,
             target->suffix = sv_from_cstr("");
     }
     
+    if (!build_model_put_target_index(model, name_copy, (int)(model->target_count - 1))) {
+        model->target_count--;
+        memset(target, 0, sizeof(*target));
+        nob_log(NOB_ERROR, "Falha ao indexar target '"SV_Fmt"'", SV_Arg(name));
+        return NULL;
+    }
+
     return target;
 }
 

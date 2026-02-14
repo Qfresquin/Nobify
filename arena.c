@@ -17,10 +17,18 @@ struct Arena_Block {
     // (alinhamento garantido por malloc)
 };
 
+typedef struct Arena_Cleanup_Node Arena_Cleanup_Node;
+struct Arena_Cleanup_Node {
+    Arena_Cleanup_Fn fn;
+    void *userdata;
+    Arena_Cleanup_Node *next;
+};
+
 struct Arena {
     Arena_Block* first;
     Arena_Block* current;
     size_t min_block_size;
+    Arena_Cleanup_Node *cleanup_head;
 };
 
 // Alinhamento para todos os tipos
@@ -74,11 +82,19 @@ Arena* arena_create(size_t initial_capacity) {
     }
     
     arena->current = arena->first;
+    arena->cleanup_head = NULL;
     return arena;
 }
 
 void arena_destroy(Arena* arena) {
     if (!arena) return;
+
+    while (arena->cleanup_head) {
+        Arena_Cleanup_Node *node = arena->cleanup_head;
+        arena->cleanup_head = node->next;
+        if (node->fn) node->fn(node->userdata);
+        free(node);
+    }
     
     Arena_Block* block = arena->first;
     while (block) {
@@ -88,6 +104,17 @@ void arena_destroy(Arena* arena) {
     }
     
     free(arena);
+}
+
+bool arena_on_destroy(Arena *arena, Arena_Cleanup_Fn fn, void *userdata) {
+    if (!arena || !fn) return false;
+    Arena_Cleanup_Node *node = (Arena_Cleanup_Node*)malloc(sizeof(*node));
+    if (!node) return false;
+    node->fn = fn;
+    node->userdata = userdata;
+    node->next = arena->cleanup_head;
+    arena->cleanup_head = node;
+    return true;
 }
 
 static void* arena_alloc_from_block(Arena_Block* block, size_t size) {

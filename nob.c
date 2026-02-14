@@ -13,7 +13,7 @@ int main(int argc, char **argv) {
         nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
         nob_cmd_append(&cmd, "-o", program_name);
         nob_cmd_append(&cmd, "main.c", "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
-            "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c");
+            "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "ds_adapter.c");
         
         if (!nob_cmd_run_sync(cmd)) return 1;
         return 0;
@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
         
         // Inclui implementação dos módulos (sem main.c do programa principal)
         nob_cmd_append(&cmd, "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
-            "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c");
+            "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "ds_adapter.c");
         
         if (!nob_cmd_run_sync(cmd)) return 1;
 
@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "cc", "-Wall", "-Wextra", "-o", program_name);
     nob_cmd_append(&cmd, "main.c", "lexer.c", "parser.c", "transpiler.c", "arena.c", "build_model.c", "diagnostics.c",
-        "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c");
+        "sys_utils.c", "toolchain_driver.c", "math_parser.c", "genex_evaluator.c", "ds_adapter.c");
     if (!nob_cmd_run_sync(cmd)) return 1;
 
     return 0;
