@@ -12,7 +12,7 @@
 - [x] Q3 (concluido): dispatcher declarativo com `Command_Spec` por dominio (`commands_control`, `commands_target`, `commands_find`, `commands_file`), no-op de compat via flags e politica de diagnostico de aridade centralizada.
 - [x] Q4 (concluido): camada `transpiler_effects` integrada em subprocess/toolchain e filesystem para `file(...)`, `configure_file`, `try_compile/try_run`, `cmake_file_api`, `cmake_instrumentation`, `qt/fltk wrap`, geracao de arquivos de pacote e varredura de diretorios (`aux_source_directory`/`file(GLOB)`).
 - [x] Q5 (concluido): `build_model.h` convertido em umbrella header enxuto com segregacao por dominio (`build_model_core.h`, `build_model_cpack.h`, `build_model_custom_command.h`, `build_model_collections.h`), ownership padronizado para strings persistidas no modelo e wrappers legados marcados para deprecacao.
-- [ ] Q6: split completo da suite `test/test_transpiler.c` em suites tematicas.
+- [x] Q6 (concluido): suite `test/test_transpiler.c` dividida em suites tematicas (`test_transpiler_01..08`) com harness compartilhado em `test/test_transpiler_shared.h` e orquestracao central no `run_transpiler_tests`.
 
 ### Objetivos tecnicos
 - Eliminar dependencias de estado global mutavel no fluxo principal do transpiler.
