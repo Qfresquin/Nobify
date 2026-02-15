@@ -1,9 +1,12 @@
 #include "sys_utils.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "subprocess.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -12,6 +15,7 @@
 #include <direct.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -33,6 +37,199 @@ static String_View sys_strip_trailing_ws(Arena *arena, String_View value) {
     size_t end = value.count;
     while (end > 0 && isspace((unsigned char)value.data[end - 1])) end--;
     return sv_from_cstr(arena_strndup(arena, value.data, end));
+}
+
+typedef struct {
+    int exit_code_raw;
+    bool timed_out;
+    String_View stdout_text;
+    String_View stderr_text;
+} Sys_Subprocess_Run_Result;
+
+static uint64_t sys_now_nanos(void) {
+    return nob_nanos_since_unspecified_epoch();
+}
+
+static void sys_sleep_ms(unsigned long ms) {
+    if (ms == 0) return;
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
+    usleep((useconds_t)(ms * 1000UL));
+#endif
+}
+
+static String_View sys_builder_to_arena_sv(Arena *arena, const String_Builder *sb) {
+    if (!arena) return sv_from_cstr("");
+    const char *src = (sb && sb->items) ? sb->items : "";
+    size_t count = sb ? sb->count : 0;
+    const char *dup = arena_strndup(arena, src, count);
+    if (!dup) return sv_from_cstr("");
+    return sv_from_cstr(dup);
+}
+
+static size_t sys_subprocess_drain_stdout(struct subprocess_s *process, bool capture, String_Builder *out) {
+    if (!process || !subprocess_stdout(process)) return 0;
+    char chunk[4096];
+    unsigned n = subprocess_read_stdout(process, chunk, (unsigned)sizeof(chunk));
+    if (n > 0 && capture) sb_append_buf(out, chunk, (size_t)n);
+    return (size_t)n;
+}
+
+static size_t sys_subprocess_drain_stderr(struct subprocess_s *process, bool capture, String_Builder *out) {
+    if (!process || !subprocess_stderr(process)) return 0;
+    char chunk[4096];
+    unsigned n = subprocess_read_stderr(process, chunk, (unsigned)sizeof(chunk));
+    if (n > 0 && capture) sb_append_buf(out, chunk, (size_t)n);
+    return (size_t)n;
+}
+
+static void sys_subprocess_set_nonblocking_stream(FILE *stream) {
+#if defined(_WIN32)
+    (void)stream;
+#else
+    if (!stream) return;
+    int fd = fileno(stream);
+    if (fd < 0) return;
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return;
+    (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+}
+
+static bool sys_run_subprocess_argv(Arena *arena,
+                                    String_View working_dir,
+                                    const String_View *argv,
+                                    size_t argv_count,
+                                    unsigned long timeout_ms,
+                                    bool capture_stdout,
+                                    bool capture_stderr,
+                                    Sys_Subprocess_Run_Result *out) {
+    if (!arena || !argv || argv_count == 0 || !out) return false;
+
+    memset(out, 0, sizeof(*out));
+    out->exit_code_raw = 1;
+    out->stdout_text = sv_from_cstr("");
+    out->stderr_text = sv_from_cstr("");
+
+    const char **command_line = arena_alloc_array(arena, const char *, argv_count + 1);
+    if (!command_line) return false;
+
+    for (size_t i = 0; i < argv_count; i++) {
+        command_line[i] = sys_arena_sv_to_cstr(arena, argv[i]);
+    }
+    command_line[argv_count] = NULL;
+
+    const char *old_cwd = NULL;
+    bool cwd_switched = false;
+    if (working_dir.count > 0) {
+        old_cwd = arena_strdup(arena, nob_get_current_dir_temp());
+        if (!old_cwd) return false;
+        if (!nob_set_current_dir(sys_arena_sv_to_cstr(arena, working_dir))) return false;
+        cwd_switched = true;
+    }
+
+    struct subprocess_s process = {0};
+    int options = subprocess_option_inherit_environment |
+                  subprocess_option_search_user_path |
+                  subprocess_option_enable_async;
+#if defined(_WIN32)
+    options |= subprocess_option_no_window;
+#endif
+
+    int create_rc = subprocess_create(command_line, options, &process);
+
+    if (cwd_switched && old_cwd) {
+        (void)nob_set_current_dir(old_cwd);
+    }
+    if (create_rc != 0) return false;
+
+    sys_subprocess_set_nonblocking_stream(subprocess_stdout(&process));
+    sys_subprocess_set_nonblocking_stream(subprocess_stderr(&process));
+
+    String_Builder stdout_sb = {0};
+    String_Builder stderr_sb = {0};
+    bool timed_out = false;
+    bool alive_error = false;
+    int exit_code_raw = 1;
+
+    uint64_t started_ns = sys_now_nanos();
+    const unsigned long poll_ms = 10;
+
+    for (;;) {
+        size_t drained = 0;
+        drained += sys_subprocess_drain_stdout(&process, capture_stdout, &stdout_sb);
+        drained += sys_subprocess_drain_stderr(&process, capture_stderr, &stderr_sb);
+
+        int alive = subprocess_alive(&process);
+        if (alive < 0) {
+            alive_error = true;
+            break;
+        }
+        if (!alive) break;
+
+        if (timeout_ms > 0) {
+            uint64_t elapsed_ms = (sys_now_nanos() - started_ns) / 1000000ULL;
+            if (elapsed_ms >= (uint64_t)timeout_ms) {
+                timed_out = true;
+                (void)subprocess_terminate(&process);
+                break;
+            }
+        }
+
+        if (drained == 0) {
+            sys_sleep_ms(poll_ms);
+        }
+    }
+
+    if (alive_error) {
+        (void)subprocess_terminate(&process);
+    }
+
+    int join_rc = subprocess_join(&process, &exit_code_raw);
+    if (timed_out) exit_code_raw = 124;
+
+    for (;;) {
+        size_t drained = 0;
+        drained += sys_subprocess_drain_stdout(&process, capture_stdout, &stdout_sb);
+        drained += sys_subprocess_drain_stderr(&process, capture_stderr, &stderr_sb);
+        if (drained == 0) break;
+    }
+
+    int destroy_rc = subprocess_destroy(&process);
+
+    out->timed_out = timed_out;
+    out->exit_code_raw = exit_code_raw;
+    out->stdout_text = capture_stdout ? sys_builder_to_arena_sv(arena, &stdout_sb) : sv_from_cstr("");
+    out->stderr_text = capture_stderr ? sys_builder_to_arena_sv(arena, &stderr_sb) : sv_from_cstr("");
+
+    nob_sb_free(stdout_sb);
+    nob_sb_free(stderr_sb);
+
+    return (join_rc == 0) && (destroy_rc == 0) && !alive_error;
+}
+
+static char *sys_escape_powershell_single_quoted(Arena *arena, String_View value) {
+    if (!arena) return NULL;
+    size_t extra = 0;
+    for (size_t i = 0; i < value.count; i++) {
+        if (value.data[i] == '\'') extra++;
+    }
+    char *out = arena_alloc(arena, value.count + extra + 1);
+    if (!out) return NULL;
+
+    size_t j = 0;
+    for (size_t i = 0; i < value.count; i++) {
+        char c = value.data[i];
+        if (c == '\'') {
+            out[j++] = '\'';
+            out[j++] = '\'';
+        } else {
+            out[j++] = c;
+        }
+    }
+    out[j] = '\0';
+    return out;
 }
 
 bool sys_path_has_separator(String_View path) {
@@ -235,19 +432,59 @@ bool sys_download_to_path(Arena *arena, String_View url, String_View out_path, S
         return ok;
     }
 
+    Sys_Subprocess_Run_Result run = {0};
+    bool ran = false;
 #if defined(_WIN32)
-    int rc = system(nob_temp_sprintf(
-        "powershell -NoProfile -Command \"try {(New-Object Net.WebClient).DownloadFile('%s','%s'); exit 0} catch { exit 1 }\"",
-        nob_temp_sv_to_cstr(url),
-        nob_temp_sv_to_cstr(out_path)));
+    char *escaped_url = sys_escape_powershell_single_quoted(arena, url);
+    char *escaped_out = sys_escape_powershell_single_quoted(arena, out_path);
+    if (!escaped_url || !escaped_out) {
+        if (log_msg) *log_msg = sv_from_cstr("download failed");
+        return false;
+    }
+
+    const char *script = arena_strdup(arena,
+        nob_temp_sprintf("try {(New-Object Net.WebClient).DownloadFile('%s','%s'); exit 0} catch { exit 1 }",
+                         escaped_url,
+                         escaped_out));
+    if (!script) {
+        if (log_msg) *log_msg = sv_from_cstr("download failed");
+        return false;
+    }
+
+    String_View argv[] = {
+        sv_from_cstr("powershell"),
+        sv_from_cstr("-NoProfile"),
+        sv_from_cstr("-Command"),
+        sv_from_cstr(script),
+    };
+    ran = sys_run_subprocess_argv(arena,
+                                  sv_from_cstr(""),
+                                  argv,
+                                  sizeof(argv) / sizeof(argv[0]),
+                                  0,
+                                  false,
+                                  false,
+                                  &run);
 #else
-    int rc = system(nob_temp_sprintf(
-        "curl -L --fail -o '%s' '%s' >/dev/null 2>&1",
-        nob_temp_sv_to_cstr(out_path),
-        nob_temp_sv_to_cstr(url)));
+    String_View argv[] = {
+        sv_from_cstr("curl"),
+        sv_from_cstr("-L"),
+        sv_from_cstr("--fail"),
+        sv_from_cstr("-o"),
+        out_path,
+        url,
+    };
+    ran = sys_run_subprocess_argv(arena,
+                                  sv_from_cstr(""),
+                                  argv,
+                                  sizeof(argv) / sizeof(argv[0]),
+                                  0,
+                                  false,
+                                  false,
+                                  &run);
 #endif
 
-    bool ok = (rc == 0);
+    bool ok = ran && !run.timed_out && run.exit_code_raw == 0;
     if (log_msg) {
         *log_msg = ok ? sv_from_cstr("downloaded via external tool")
                       : sv_from_cstr("download failed");
@@ -259,48 +496,65 @@ int sys_run_shell_with_timeout(Arena *arena, String_View cmdline, unsigned long 
     if (timed_out) *timed_out = false;
     if (!arena) return -1;
 
-    char *cmd = arena_strndup(arena, cmdline.data ? cmdline.data : "", cmdline.count);
-    if (!cmd) return -1;
+    Sys_Subprocess_Run_Result run = {0};
 
 #if defined(_WIN32)
-    String_Builder full = {0};
-    sb_append_cstr(&full, "cmd.exe /C ");
-    sb_append_cstr(&full, cmd);
-    sb_append(&full, '\0');
+    static size_t s_sys_shell_script_counter = 0;
+    s_sys_shell_script_counter++;
 
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    ZeroMemory(&pi, sizeof(pi));
-    si.cb = sizeof(si);
+    String_View script_dir = sv_from_cstr(".cmk2nob_exec");
+    (void)sys_mkdir(script_dir);
+    const char *script_path_c = arena_strdup(
+        arena,
+        nob_temp_sprintf(".cmk2nob_exec\\shell_%zu.bat", s_sys_shell_script_counter));
+    if (!script_path_c) return -1;
+    String_View script_path = sv_from_cstr(script_path_c);
 
-    BOOL created = CreateProcessA(NULL, full.items, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    if (!created) {
-        nob_sb_free(full);
+    String_Builder script = {0};
+    sb_append_buf(&script, cmdline.data ? cmdline.data : "", cmdline.count);
+    sb_append_cstr(&script, "\r\n");
+    if (!sys_write_file_bytes(script_path, script.items ? script.items : "", script.count)) {
+        nob_sb_free(script);
         return -1;
     }
+    nob_sb_free(script);
 
-    DWORD wait_ms = timeout_ms > 0 ? (DWORD)timeout_ms : INFINITE;
-    DWORD wait_rc = WaitForSingleObject(pi.hProcess, wait_ms);
-    int rc = 1;
-    if (wait_rc == WAIT_TIMEOUT) {
-        if (timed_out) *timed_out = true;
-        (void)TerminateProcess(pi.hProcess, 124);
-        rc = 124;
-    } else {
-        DWORD exit_code = 1;
-        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) exit_code = 1;
-        rc = (int)exit_code;
-    }
+    String_View argv[] = {
+        sv_from_cstr("cmd.exe"),
+        sv_from_cstr("/C"),
+        script_path,
+    };
 
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    nob_sb_free(full);
-    return rc;
+    bool ran = sys_run_subprocess_argv(arena,
+                                       sv_from_cstr(""),
+                                       argv,
+                                       sizeof(argv) / sizeof(argv[0]),
+                                       timeout_ms,
+                                       false,
+                                       false,
+                                       &run);
+    if (sys_file_exists(script_path)) (void)sys_delete_file(script_path);
+    if (!ran) return -1;
 #else
-    (void)timeout_ms;
-    return system(cmd);
+    String_View argv[] = {
+        sv_from_cstr("sh"),
+        sv_from_cstr("-c"),
+        cmdline,
+    };
+
+    bool ran = sys_run_subprocess_argv(arena,
+                                       sv_from_cstr(""),
+                                       argv,
+                                       sizeof(argv) / sizeof(argv[0]),
+                                       timeout_ms,
+                                       false,
+                                       false,
+                                       &run);
+    if (!ran) return -1;
 #endif
+
+    if (timed_out) *timed_out = run.timed_out;
+    return run.exit_code_raw;
 }
 
 bool sys_run_process(const Sys_Process_Request *req, Sys_Process_Result *out) {
@@ -308,70 +562,45 @@ bool sys_run_process(const Sys_Process_Request *req, Sys_Process_Result *out) {
 
     memset(out, 0, sizeof(*out));
     out->exit_code = 1;
+    out->stdout_text = sv_from_cstr("");
+    out->stderr_text = sv_from_cstr("");
+    out->timed_out = false;
 
     String_View scratch_dir = req->scratch_dir;
     if (scratch_dir.count == 0) {
         scratch_dir = sv_from_cstr(".cmk2nob_exec");
     }
-
+    String_View scratch_marker = build_path_join(req->arena, scratch_dir, sv_from_cstr(".keep"));
+    (void)sys_ensure_parent_dirs(req->arena, scratch_marker);
     (void)sys_mkdir(scratch_dir);
+    (void)scratch_dir;
 
-    static size_t s_sys_process_counter = 0;
-    s_sys_process_counter++;
+    Sys_Subprocess_Run_Result run = {0};
+    bool ran = sys_run_subprocess_argv(req->arena,
+                                       req->working_dir,
+                                       req->argv,
+                                       req->argv_count,
+                                       req->timeout_ms,
+                                       req->capture_stdout,
+                                       req->capture_stderr,
+                                       &run);
+    if (!ran) return false;
 
-    String_View stdout_path = sv_from_cstr("");
-    String_View stderr_path = sv_from_cstr("");
-    const char *stdout_path_c = NULL;
-    const char *stderr_path_c = NULL;
-
-    if (req->capture_stdout) {
-        stdout_path = build_path_join(req->arena, scratch_dir,
-            sv_from_cstr(nob_temp_sprintf("proc_%zu.out", s_sys_process_counter)));
-        stdout_path_c = sys_arena_sv_to_cstr(req->arena, stdout_path);
-    }
-    if (req->capture_stderr) {
-        stderr_path = build_path_join(req->arena, scratch_dir,
-            sv_from_cstr(nob_temp_sprintf("proc_%zu.err", s_sys_process_counter)));
-        stderr_path_c = sys_arena_sv_to_cstr(req->arena, stderr_path);
-    }
-
-    Nob_Cmd cmd = {0};
-    cmd.items = arena_alloc_array(req->arena, const char *, req->argv_count);
-    if (!cmd.items) return false;
-    cmd.count = req->argv_count;
-    cmd.capacity = req->argv_count;
-
-    for (size_t i = 0; i < req->argv_count; i++) {
-        cmd.items[i] = sys_arena_sv_to_cstr(req->arena, req->argv[i]);
-    }
-
-    String_View old_cwd = sv_from_cstr(arena_strdup(req->arena, nob_get_current_dir_temp()));
-    if (req->working_dir.count > 0) {
-        (void)nob_set_current_dir(sys_arena_sv_to_cstr(req->arena, req->working_dir));
-    }
-
-    bool ok = nob_cmd_run(&cmd, .stdout_path = stdout_path_c, .stderr_path = stderr_path_c);
-    (void)nob_set_current_dir(sys_arena_sv_to_cstr(req->arena, old_cwd));
-
-    out->exit_code = ok ? 0 : 1;
-    out->timed_out = false;
+    out->timed_out = run.timed_out;
+    out->exit_code = (run.exit_code_raw == 0 && !run.timed_out) ? 0 : 1;
 
     if (req->capture_stdout) {
-        String_View text = sys_read_file(req->arena, stdout_path);
-        if (!text.data) text = sv_from_cstr("");
+        String_View text = run.stdout_text;
         if (req->strip_stdout_trailing_ws) text = sys_strip_trailing_ws(req->arena, text);
         out->stdout_text = text;
-        if (sys_file_exists(stdout_path)) (void)sys_delete_file(stdout_path);
     } else {
         out->stdout_text = sv_from_cstr("");
     }
 
     if (req->capture_stderr) {
-        String_View text = sys_read_file(req->arena, stderr_path);
-        if (!text.data) text = sv_from_cstr("");
+        String_View text = run.stderr_text;
         if (req->strip_stderr_trailing_ws) text = sys_strip_trailing_ws(req->arena, text);
         out->stderr_text = text;
-        if (sys_file_exists(stderr_path)) (void)sys_delete_file(stderr_path);
     } else {
         out->stderr_text = sv_from_cstr("");
     }

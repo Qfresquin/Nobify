@@ -112,6 +112,153 @@ TEST(sys_utils_directory_copy_delete_and_file_download) {
     TEST_PASS();
 }
 
+TEST(sys_utils_process_capture_and_timeout) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+    ASSERT(sys_mkdir(sv_from_cstr("temp_phase2_sys")));
+
+    Sys_Process_Result result = {0};
+
+#if defined(_WIN32)
+    String_View stdout_argv[] = {
+        sv_from_cstr("cmd"),
+        sv_from_cstr("/C"),
+        sv_from_cstr("echo phase2_out"),
+    };
+#else
+    String_View stdout_argv[] = {
+        sv_from_cstr("sh"),
+        sv_from_cstr("-c"),
+        sv_from_cstr("echo phase2_out"),
+    };
+#endif
+
+    Sys_Process_Request stdout_req = {0};
+    stdout_req.arena = arena;
+    stdout_req.working_dir = sv_from_cstr(".");
+    stdout_req.timeout_ms = 0;
+    stdout_req.argv = stdout_argv;
+    stdout_req.argv_count = sizeof(stdout_argv) / sizeof(stdout_argv[0]);
+    stdout_req.capture_stdout = true;
+    stdout_req.capture_stderr = false;
+    stdout_req.strip_stdout_trailing_ws = true;
+    stdout_req.strip_stderr_trailing_ws = false;
+    stdout_req.scratch_dir = sv_from_cstr("temp_phase2_sys");
+
+    ASSERT(sys_run_process(&stdout_req, &result));
+    ASSERT(result.exit_code == 0);
+    ASSERT(result.timed_out == false);
+    ASSERT(nob_sv_eq(result.stdout_text, sv_from_cstr("phase2_out")));
+
+#if defined(_WIN32)
+    String_View stderr_argv[] = {
+        sv_from_cstr("cmd"),
+        sv_from_cstr("/C"),
+        sv_from_cstr("echo phase2_err 1>&2"),
+    };
+#else
+    String_View stderr_argv[] = {
+        sv_from_cstr("sh"),
+        sv_from_cstr("-c"),
+        sv_from_cstr("echo phase2_err 1>&2"),
+    };
+#endif
+
+    Sys_Process_Request stderr_req = {0};
+    stderr_req.arena = arena;
+    stderr_req.working_dir = sv_from_cstr(".");
+    stderr_req.timeout_ms = 0;
+    stderr_req.argv = stderr_argv;
+    stderr_req.argv_count = sizeof(stderr_argv) / sizeof(stderr_argv[0]);
+    stderr_req.capture_stdout = false;
+    stderr_req.capture_stderr = true;
+    stderr_req.strip_stdout_trailing_ws = false;
+    stderr_req.strip_stderr_trailing_ws = true;
+    stderr_req.scratch_dir = sv_from_cstr("temp_phase2_sys");
+
+    ASSERT(sys_run_process(&stderr_req, &result));
+    ASSERT(result.exit_code == 0);
+    ASSERT(result.timed_out == false);
+    ASSERT(nob_sv_eq(result.stderr_text, sv_from_cstr("phase2_err")));
+
+#if defined(_WIN32)
+    String_View fail_argv[] = {
+        sv_from_cstr("cmd"),
+        sv_from_cstr("/C"),
+        sv_from_cstr("exit 1"),
+    };
+#else
+    String_View fail_argv[] = {
+        sv_from_cstr("sh"),
+        sv_from_cstr("-c"),
+        sv_from_cstr("exit 1"),
+    };
+#endif
+
+    Sys_Process_Request fail_req = {0};
+    fail_req.arena = arena;
+    fail_req.working_dir = sv_from_cstr(".");
+    fail_req.timeout_ms = 0;
+    fail_req.argv = fail_argv;
+    fail_req.argv_count = sizeof(fail_argv) / sizeof(fail_argv[0]);
+    fail_req.capture_stdout = false;
+    fail_req.capture_stderr = false;
+    fail_req.strip_stdout_trailing_ws = false;
+    fail_req.strip_stderr_trailing_ws = false;
+    fail_req.scratch_dir = sv_from_cstr("temp_phase2_sys");
+
+    ASSERT(sys_run_process(&fail_req, &result));
+    ASSERT(result.exit_code == 1);
+    ASSERT(result.timed_out == false);
+
+#if defined(_WIN32)
+    String_View timeout_argv[] = {
+        sv_from_cstr("cmd"),
+        sv_from_cstr("/C"),
+        sv_from_cstr("ping -n 6 127.0.0.1 >nul"),
+    };
+#else
+    String_View timeout_argv[] = {
+        sv_from_cstr("sh"),
+        sv_from_cstr("-c"),
+        sv_from_cstr("sleep 2"),
+    };
+#endif
+
+    Sys_Process_Request timeout_req = {0};
+    timeout_req.arena = arena;
+    timeout_req.working_dir = sv_from_cstr(".");
+    timeout_req.timeout_ms = 100;
+    timeout_req.argv = timeout_argv;
+    timeout_req.argv_count = sizeof(timeout_argv) / sizeof(timeout_argv[0]);
+    timeout_req.capture_stdout = false;
+    timeout_req.capture_stderr = false;
+    timeout_req.strip_stdout_trailing_ws = false;
+    timeout_req.strip_stderr_trailing_ws = false;
+    timeout_req.scratch_dir = sv_from_cstr("temp_phase2_sys");
+
+    ASSERT(sys_run_process(&timeout_req, &result));
+    ASSERT(result.exit_code == 1);
+    ASSERT(result.timed_out == true);
+
+    bool timed_out = false;
+    int shell_rc = sys_run_shell_with_timeout(arena, sv_from_cstr("exit 0"), 1000, &timed_out);
+    ASSERT(shell_rc == 0);
+    ASSERT(timed_out == false);
+
+#if defined(_WIN32)
+    shell_rc = sys_run_shell_with_timeout(arena, sv_from_cstr("ping -n 6 127.0.0.1 >nul"), 100, &timed_out);
+#else
+    shell_rc = sys_run_shell_with_timeout(arena, sv_from_cstr("sleep 2"), 100, &timed_out);
+#endif
+    ASSERT(shell_rc == 124);
+    ASSERT(timed_out == true);
+
+    (void)sys_delete_path_recursive(arena, sv_from_cstr("temp_phase2_sys"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(toolchain_driver_compiler_probe_and_try_run) {
     Arena *arena = arena_create(1024 * 1024);
     ASSERT(arena != NULL);
@@ -334,6 +481,7 @@ void run_phase2_module_tests(int *passed, int *failed) {
     test_math_parser_precedence_unary_and_errors(passed, failed);
     test_genex_evaluator_basic_paths(passed, failed);
     test_sys_utils_directory_copy_delete_and_file_download(passed, failed);
+    test_sys_utils_process_capture_and_timeout(passed, failed);
     test_toolchain_driver_compiler_probe_and_try_run(passed, failed);
     test_cmake_path_utils_basic(passed, failed);
     test_cmake_regex_glob_find_utils_basic(passed, failed);
