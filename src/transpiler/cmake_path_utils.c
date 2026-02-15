@@ -1,4 +1,5 @@
 #include "cmake_path_utils.h"
+#include "build_model.h"
 
 #include <ctype.h>
 #include <stddef.h>

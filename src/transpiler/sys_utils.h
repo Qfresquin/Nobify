@@ -1,7 +1,7 @@
 #ifndef SYS_UTILS_H_
 #define SYS_UTILS_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 typedef struct {
     int exit_code;

@@ -1,7 +1,7 @@
 #ifndef TOOLCHAIN_DRIVER_H_
 #define TOOLCHAIN_DRIVER_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 typedef struct {
     Arena *arena;

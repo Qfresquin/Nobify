@@ -1,7 +1,7 @@
 #ifndef CMAKE_META_IO_H_
 #define CMAKE_META_IO_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 int cmk_meta_parse_version_major(String_View tok, int fallback);
 bool cmk_meta_emit_file_api_query(Arena *arena, String_View query_root, String_View kind, String_View version_token);

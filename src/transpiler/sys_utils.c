@@ -1,4 +1,5 @@
 #include "sys_utils.h"
+#include "build_model.h"
 
 #include <ctype.h>
 #include <errno.h>

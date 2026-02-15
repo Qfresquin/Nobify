@@ -1,7 +1,7 @@
 #ifndef GENEX_EVALUATOR_H_
 #define GENEX_EVALUATOR_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 typedef String_View (*Genex_Target_Property_Fn)(void *ud, Build_Target *target, String_View prop_name);
 

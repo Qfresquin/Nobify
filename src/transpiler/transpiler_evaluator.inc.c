@@ -3478,22 +3478,19 @@ static bool eval_real_probe_from_source(Evaluator_Context *ctx,
         .link_libraries = &link_libraries,
     };
 
-    Toolchain_Compile_Result compile_out = {0};
-    bool ok = false;
-    if (run_binary) {
-        int run_rc = 1;
-        String_View run_output = sv_from_cstr("");
-        bool invoked = toolchain_try_run(&drv, &req, NULL, &compile_out, &run_rc, &run_output);
-        ok = invoked && compile_out.ok && run_rc == 0;
-        if (out_run_rc) *out_run_rc = run_rc;
-        if (out_run_output) *out_run_output = run_output;
-    } else {
-        bool invoked = toolchain_try_compile(&drv, &req, &compile_out);
-        ok = invoked && compile_out.ok;
-        if (out_run_rc) *out_run_rc = 0;
-    }
+    Effect_Toolchain_Request effect_req = {0};
+    effect_req.driver = &drv;
+    effect_req.compile_request = &req;
+    effect_req.run_args = NULL;
+    effect_req.run_binary = run_binary;
 
-    if (out_compile_output) *out_compile_output = compile_out.output;
+    Effect_Toolchain_Result effect_result = {0};
+    bool invoked = effect_toolchain_invoke(&effect_req, &effect_result);
+    bool ok = invoked && effect_result.compile_ok && (!run_binary || effect_result.run_exit_code == 0);
+
+    if (out_compile_output) *out_compile_output = effect_result.compile_output;
+    if (out_run_rc) *out_run_rc = run_binary ? effect_result.run_exit_code : 0;
+    if (out_run_output) *out_run_output = run_binary ? effect_result.run_output : sv_from_cstr("");
     eval_probe_cleanup_outputs(base, msvc);
     eval_pop_cc_override(&ov);
     return ok;
@@ -3950,11 +3947,17 @@ static String_View try_compile_run_compile(Evaluator_Context *ctx,
         .link_options = link_options,
         .link_libraries = link_libraries,
     };
-    Toolchain_Compile_Result result = {0};
-    bool invoked = toolchain_try_compile(&drv, &req, &result);
-    if (out_ok) *out_ok = invoked && result.ok;
+    Effect_Toolchain_Request effect_req = {0};
+    effect_req.driver = &drv;
+    effect_req.compile_request = &req;
+    effect_req.run_binary = false;
+    effect_req.run_args = NULL;
+
+    Effect_Toolchain_Result effect_result = {0};
+    bool invoked = effect_toolchain_invoke(&effect_req, &effect_result);
+    if (out_ok) *out_ok = invoked && effect_result.compile_ok;
     if (!invoked) return sv_from_cstr("");
-    return result.output;
+    return effect_result.compile_output;
 }
 
 static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
@@ -4457,7 +4460,7 @@ static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
 
     String_View scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
 
-    Sys_Process_Request req = {0};
+    Effect_Request req = {0};
     req.arena = ctx->arena;
     req.working_dir = exec_cwd;
     req.timeout_ms = timeout_ms;
@@ -4469,14 +4472,21 @@ static void eval_execute_process_command(Evaluator_Context *ctx, Args args) {
     req.strip_stderr_trailing_ws = error_strip;
     req.scratch_dir = scratch_dir;
 
-    Sys_Process_Result result = {0};
-    bool ran = sys_run_process(&req, &result);
-    if (!ran) {
+    Effect_Result result = {0};
+    bool invoked = effect_execute(&req, &result);
+    bool run_failed = (!invoked) ||
+                      (result.status == EFFECT_STATUS_INVALID_INPUT) ||
+                      (result.status == EFFECT_STATUS_EXEC_ERROR) ||
+                      (result.status == EFFECT_STATUS_TIMEOUT);
+    if (run_failed) {
         if (result_var.count > 0) eval_set_var(ctx, result_var, sv_from_cstr("1"), false, false);
         if (output_var.count > 0) eval_set_var(ctx, output_var, sv_from_cstr(""), false, false);
         if (error_var.count > 0) eval_set_var(ctx, error_var, sv_from_cstr(""), false, false);
+        const char *cause = result.status == EFFECT_STATUS_TIMEOUT
+            ? "falha ao executar processo: timeout"
+            : "falha ao executar processo";
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "execute_process",
-                 "falha ao executar processo",
+                 cause,
                  "verifique comando e diretorio de trabalho");
         return;
     }
@@ -4552,7 +4562,7 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
 
     String_View scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
 
-    Sys_Process_Request req = {0};
+    Effect_Request req = {0};
     req.arena = ctx->arena;
     req.working_dir = exec_cwd;
     req.timeout_ms = 0;
@@ -4564,13 +4574,20 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
     req.strip_stderr_trailing_ws = false;
     req.scratch_dir = scratch_dir;
 
-    Sys_Process_Result result = {0};
-    bool ran = sys_run_process(&req, &result);
-    if (!ran) {
+    Effect_Result result = {0};
+    bool invoked = effect_execute(&req, &result);
+    bool run_failed = (!invoked) ||
+                      (result.status == EFFECT_STATUS_INVALID_INPUT) ||
+                      (result.status == EFFECT_STATUS_EXEC_ERROR) ||
+                      (result.status == EFFECT_STATUS_TIMEOUT);
+    if (run_failed) {
         if (output_var.count > 0) eval_set_var(ctx, output_var, sv_from_cstr(""), false, false);
         if (return_var.count > 0) eval_set_var(ctx, return_var, sv_from_cstr("1"), false, false);
+        const char *cause = result.status == EFFECT_STATUS_TIMEOUT
+            ? "falha ao executar processo: timeout"
+            : "falha ao executar processo";
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "exec_program",
-                 "falha ao executar processo",
+                 cause,
                  "verifique comando e diretorio de trabalho");
         return;
     }
@@ -4679,7 +4696,7 @@ static bool eval_pkgconfig_run(Evaluator_Context *ctx,
         argv_items[argv_count++] = modules->items[i];
     }
 
-    Sys_Process_Request req = {0};
+    Effect_Request req = {0};
     req.arena = ctx->arena;
     req.working_dir = ctx->current_binary_dir;
     req.timeout_ms = 15000;
@@ -4691,9 +4708,9 @@ static bool eval_pkgconfig_run(Evaluator_Context *ctx,
     req.strip_stderr_trailing_ws = true;
     req.scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
 
-    Sys_Process_Result result = {0};
-    bool ran = sys_run_process(&req, &result);
-    if (!ran || result.exit_code != 0) return false;
+    Effect_Result result = {0};
+    if (!effect_execute(&req, &result)) return false;
+    if (result.status != EFFECT_STATUS_OK) return false;
     if (out_stdout && capture_stdout) *out_stdout = result.stdout_text;
     return true;
 }
@@ -4708,7 +4725,7 @@ static bool eval_pkgconfig_detect_executable(Evaluator_Context *ctx, String_View
         string_list_init(&probe_mod);
         string_list_add(&probe_mod, ctx->arena, sv_from_cstr("--version"));
         String_View argv_items[2] = { configured, sv_from_cstr("--version") };
-        Sys_Process_Request req = {0};
+        Effect_Request req = {0};
         req.arena = ctx->arena;
         req.working_dir = ctx->current_binary_dir;
         req.timeout_ms = 5000;
@@ -4719,8 +4736,8 @@ static bool eval_pkgconfig_detect_executable(Evaluator_Context *ctx, String_View
         req.strip_stdout_trailing_ws = true;
         req.strip_stderr_trailing_ws = true;
         req.scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
-        Sys_Process_Result result = {0};
-        if (sys_run_process(&req, &result) && result.exit_code == 0) {
+        Effect_Result result = {0};
+        if (effect_execute(&req, &result) && result.status == EFFECT_STATUS_OK) {
             *out_executable = configured;
             return true;
         }
@@ -4729,7 +4746,7 @@ static bool eval_pkgconfig_detect_executable(Evaluator_Context *ctx, String_View
     String_View candidates[] = { sv_from_cstr("pkg-config"), sv_from_cstr("pkgconf") };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         String_View argv_items[2] = { candidates[i], sv_from_cstr("--version") };
-        Sys_Process_Request req = {0};
+        Effect_Request req = {0};
         req.arena = ctx->arena;
         req.working_dir = ctx->current_binary_dir;
         req.timeout_ms = 5000;
@@ -4740,8 +4757,8 @@ static bool eval_pkgconfig_detect_executable(Evaluator_Context *ctx, String_View
         req.strip_stdout_trailing_ws = true;
         req.strip_stderr_trailing_ws = true;
         req.scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
-        Sys_Process_Result result = {0};
-        if (sys_run_process(&req, &result) && result.exit_code == 0) {
+        Effect_Result result = {0};
+        if (effect_execute(&req, &result) && result.status == EFFECT_STATUS_OK) {
             eval_set_var(ctx, sv_from_cstr("PKG_CONFIG_EXECUTABLE"), candidates[i], false, false);
             *out_executable = candidates[i];
             return true;
@@ -5491,12 +5508,18 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
     bool cross_compiling = (cross.count > 0) && !cmake_string_is_false(cross);
 
     if (cross_compiling) {
-        Toolchain_Compile_Result compile_out = {0};
-        bool invoked = toolchain_try_compile(&drv, &req, &compile_out);
-        bool compile_ok = invoked && compile_out.ok;
+        Effect_Toolchain_Request effect_req = {0};
+        effect_req.driver = &drv;
+        effect_req.compile_request = &req;
+        effect_req.run_binary = false;
+        effect_req.run_args = NULL;
+
+        Effect_Toolchain_Result effect_result = {0};
+        bool invoked = effect_toolchain_invoke(&effect_req, &effect_result);
+        bool compile_ok = invoked && effect_result.compile_ok;
         eval_set_var(ctx, compile_result_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
         if (compile_output_var.count > 0) {
-            eval_set_var(ctx, compile_output_var, compile_out.output, false, false);
+            eval_set_var(ctx, compile_output_var, effect_result.compile_output, false, false);
         }
 
         eval_set_var(ctx, run_result_var, sv_from_cstr("FAILED_TO_RUN"), false, false);
@@ -5508,15 +5531,21 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
         return;
     }
 
-    Toolchain_Compile_Result compile_out = {0};
-    int run_rc = 1;
-    String_View run_output = sv_from_cstr("");
-    bool invoked = toolchain_try_run(&drv, &req, &run_args, &compile_out, &run_rc, &run_output);
-    bool compile_ok = invoked && compile_out.ok;
+    Effect_Toolchain_Request effect_req = {0};
+    effect_req.driver = &drv;
+    effect_req.compile_request = &req;
+    effect_req.run_binary = true;
+    effect_req.run_args = &run_args;
+
+    Effect_Toolchain_Result effect_result = {0};
+    bool invoked = effect_toolchain_invoke(&effect_req, &effect_result);
+    bool compile_ok = invoked && effect_result.compile_ok;
+    int run_rc = effect_result.run_exit_code;
+    String_View run_output = effect_result.run_output;
 
     eval_set_var(ctx, compile_result_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
     if (compile_output_var.count > 0) {
-        eval_set_var(ctx, compile_output_var, compile_out.output, false, false);
+        eval_set_var(ctx, compile_output_var, effect_result.compile_output, false, false);
     }
 
     if (!compile_ok) {

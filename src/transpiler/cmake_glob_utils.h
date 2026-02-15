@@ -1,7 +1,7 @@
 #ifndef CMAKE_GLOB_UTILS_H_
 #define CMAKE_GLOB_UTILS_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 bool cmk_glob_match(String_View pattern, String_View path);
 bool cmk_glob_collect_recursive(Arena *arena,

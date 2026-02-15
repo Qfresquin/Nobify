@@ -1,4 +1,5 @@
 #include "toolchain_driver.h"
+#include "build_model.h"
 
 #include "sys_utils.h"
 

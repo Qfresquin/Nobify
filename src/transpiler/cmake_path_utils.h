@@ -1,7 +1,7 @@
 #ifndef CMAKE_PATH_UTILS_H_
 #define CMAKE_PATH_UTILS_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 bool cmk_path_is_absolute(String_View path);
 String_View cmk_path_make_absolute(Arena *arena, String_View path);

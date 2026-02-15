@@ -10,8 +10,8 @@
 - [x] Q1 (parcial): `Transpiler_Run_Options` + entrada `transpile_datree_ex` + adaptacao do app para injecao de contexto.
 - [x] Q2 (parcial): generalizacao do rebuild de `INTERFACE_*` via spec unica + facade no `Build_Model`.
 - [x] Q3 (foundation): introducao de `Command_Spec` com validacao de aridade no dispatcher.
-- [ ] Q4: isolamento completo de efeitos (`Effect_Request`/`Effect_Result`).
-- [ ] Q5: segregacao de headers e enxugamento estrutural do `Build_Model`.
+- [x] Q4 (parcial): camada `transpiler_effects` criada e integrada em `execute_process`, `exec_program`, fluxo `pkg-config` e probes/toolchain.
+- [x] Q5 (parcial): `build_model_types.h` extraido de `build_model.h` e headers utilitarios do transpiler migrados para dependencia por tipos.
 - [ ] Q6: split completo da suite `test/test_transpiler.c` em suites tematicas.
 
 ### Objetivos tecnicos

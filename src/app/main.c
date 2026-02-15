@@ -33,6 +33,7 @@
     "src/diagnostics/diagnostics.c", \
     "src/transpiler/sys_utils.c", \
     "src/transpiler/toolchain_driver.c", \
+    "src/transpiler/transpiler_effects.c", \
     "src/transpiler/math_parser.c", \
     "src/transpiler/genex_evaluator.c", \
     "src/logic_model/logic_model.c", \

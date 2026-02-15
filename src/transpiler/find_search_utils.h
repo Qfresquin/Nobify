@@ -1,7 +1,7 @@
 #ifndef FIND_SEARCH_UTILS_H_
 #define FIND_SEARCH_UTILS_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 void find_search_split_env_path(Arena *arena, String_View value, String_List *out_dirs);
 void find_search_collect_program_name_variants(Arena *arena, String_View name, String_List *out_names);

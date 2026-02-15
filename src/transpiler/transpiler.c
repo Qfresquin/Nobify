@@ -6,6 +6,7 @@
 #include "math_parser.h"
 #include "sys_utils.h"
 #include "toolchain_driver.h"
+#include "transpiler_effects.h"
 #include "cmake_path_utils.h"
 #include "cmake_regex_utils.h"
 #include "cmake_glob_utils.h"

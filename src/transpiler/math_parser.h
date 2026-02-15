@@ -1,7 +1,7 @@
 #ifndef MATH_PARSER_H_
 #define MATH_PARSER_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 typedef enum {
     MATH_EVAL_OK,

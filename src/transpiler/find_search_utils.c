@@ -1,4 +1,5 @@
 #include "find_search_utils.h"
+#include "build_model.h"
 
 #include "cmake_path_utils.h"
 #include "sys_utils.h"

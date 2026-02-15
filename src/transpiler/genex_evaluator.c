@@ -1,4 +1,5 @@
 #include "genex_evaluator.h"
+#include "build_model.h"
 
 #include <ctype.h>
 #include <string.h>

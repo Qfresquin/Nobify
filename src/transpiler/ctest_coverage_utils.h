@@ -1,7 +1,7 @@
 #ifndef CTEST_COVERAGE_UTILS_H_
 #define CTEST_COVERAGE_UTILS_H_
 
-#include "build_model.h"
+#include "build_model_types.h"
 
 bool ctest_coverage_collect_gcov_bundle(Arena *arena,
                                         String_View source_dir,
