@@ -3,3 +3,8 @@
 /test_runner.exe
 /curl-8.18.0
 /cmk2nob.exe
+/cmk2nob.exe.old
+/cmk2nob_unsupported_commands.log
+/nob_generated_runner_abs.exe
+/nob_generated_runner.exe
+/nob_generated.c

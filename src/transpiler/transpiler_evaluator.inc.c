@@ -2089,6 +2089,30 @@ static void eval_target_compile_options_command(Evaluator_Context *ctx, Args arg
     }
 }
 
+typedef struct Target_Source_Add_Ud {
+    Build_Target *target;
+} Target_Source_Add_Ud;
+
+static void eval_add_target_source_item(Evaluator_Context *ctx, String_View src, void *ud) {
+    Target_Source_Add_Ud *u = (Target_Source_Add_Ud*)ud;
+    if (!u || !u->target) return;
+    src = genex_trim(src);
+    if (src.count == 0) return;
+    if (!nob_sv_starts_with(src, sv_from_cstr("$<"))) {
+        if (!cmk_path_is_absolute(src)) {
+            src = cmk_path_join(ctx->arena, ctx->current_source_dir, src);
+        }
+        src = cmk_path_normalize(ctx->arena, src);
+    }
+    build_target_add_source(u->target, ctx->arena, src);
+}
+
+static void eval_add_target_source_list(Evaluator_Context *ctx, Build_Target *target, String_View raw_sources) {
+    if (!ctx || !target || raw_sources.count == 0) return;
+    Target_Source_Add_Ud ud = { .target = target };
+    eval_foreach_semicolon_item(ctx, raw_sources, /*trim_ws=*/true, eval_add_target_source_item, &ud);
+}
+
 static void eval_target_sources_command(Evaluator_Context *ctx, Args args) {
     Target_Vis_Args tv;
     // no seu código atual: args.count < 2 retorna.
@@ -2100,7 +2124,7 @@ static void eval_target_sources_command(Evaluator_Context *ctx, Args args) {
     for (size_t i = tv.start_idx; i < args.count; i++) {
         String_View src = resolve_arg(ctx, args.items[i]);
         if (tv.visibility != VISIBILITY_INTERFACE) {
-            build_target_add_source(tv.target, ctx->arena, src);
+            eval_add_target_source_list(ctx, tv.target, src);
         }
     }
 }
@@ -2671,15 +2695,22 @@ static void eval_check_type_size_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 2) return;
     String_View type_name = resolve_arg(ctx, args.items[0]);
     String_View out_var = resolve_arg(ctx, args.items[1]);
+    String_View out_code_var = sv_from_cstr(nob_temp_sprintf("%s_CODE", nob_temp_sv_to_cstr(out_var)));
 
     size_t size_val = 0;
     bool ok = eval_check_type_size_value(type_name, &size_val);
     if (ok) {
         eval_set_var(ctx, out_var, sv_from_cstr(nob_temp_sprintf("%zu", size_val)), false, false);
         eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("HAVE_%s", nob_temp_sv_to_cstr(out_var))), sv_from_cstr("1"), false, false);
+        eval_set_var(ctx, out_code_var,
+                     sv_from_cstr(nob_temp_sprintf("#define %s %zu", nob_temp_sv_to_cstr(out_var), size_val)),
+                     false, false);
     } else {
         eval_set_var(ctx, out_var, sv_from_cstr("0"), false, false);
         eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("HAVE_%s", nob_temp_sv_to_cstr(out_var))), sv_from_cstr("0"), false, false);
+        eval_set_var(ctx, out_code_var,
+                     sv_from_cstr(nob_temp_sprintf("/* #undef %s */", nob_temp_sv_to_cstr(out_var))),
+                     false, false);
     }
 }
 
@@ -4325,7 +4356,7 @@ static void eval_add_executable_command(Evaluator_Context *ctx, Args args) {
         } else if (nob_sv_eq(arg, sv_from_cstr("IMPORTED"))) {
             // Ja tratado acima.
         } else if (!imported) {
-            build_target_add_source(target, ctx->arena, arg);
+            eval_add_target_source_list(ctx, target, arg);
         }
     }
 
@@ -4425,7 +4456,7 @@ static void eval_add_library_command(Evaluator_Context *ctx, Args args) {
         if (is_library_type_keyword(arg) || is_common_target_keyword(arg)) {
             continue;
         }
-        build_target_add_source(target, ctx->arena, arg);
+        eval_add_target_source_list(ctx, target, arg);
     }
 }
 
@@ -5457,6 +5488,17 @@ static void eval_set_property_command(Evaluator_Context *ctx, Args args) {
             String_View final_value = append_property_value(ctx, curr, value, append, append_string);
             build_model_set_cache_variable(ctx->model, k, final_value, sv_from_cstr("INTERNAL"), sv_from_cstr(""));
         }
+        return;
+    }
+
+    if (sv_eq_ci(scope, sv_from_cstr("DIRECTORY"))) {
+        // Compat: aplica no contexto de diretorio atual. Caminhos explicitos de
+        // diretorio sao ignorados nesta implementacao e tratados como escopo global
+        // da avaliacao corrente.
+        if (!is_directory_property_key(prop_name)) return;
+
+        DirProp_Ud ud = { .prop = prop_name };
+        eval_foreach_semicolon_item(ctx, value, /*trim_ws=*/true, eval_dirprop_on_item, &ud);
         return;
     }
 
@@ -8429,8 +8471,38 @@ static void eval_include_command(Evaluator_Context *ctx, Args args) {
     eval_include_stack_pop(ctx);
 }
 
-static String_View configure_expand_variables(Evaluator_Context *ctx, String_View input, bool at_only) {
-    String_Builder out = {0};
+static void configure_append_unescaped_value(String_Builder *out, String_View val) {
+    if (!out) return;
+    for (size_t i = 0; i < val.count; i++) {
+        if (val.data[i] == '\\' && i + 1 < val.count) {
+            char n = val.data[i + 1];
+            if (n == '"' || n == '\\') {
+                sb_append(out, n);
+                i++;
+                continue;
+            }
+            if (n == 'n') {
+                sb_append(out, '\n');
+                i++;
+                continue;
+            }
+            if (n == 'r') {
+                sb_append(out, '\r');
+                i++;
+                continue;
+            }
+            if (n == 't') {
+                sb_append(out, '\t');
+                i++;
+                continue;
+            }
+        }
+        sb_append(out, val.data[i]);
+    }
+}
+
+static void configure_expand_plain_fragment(Evaluator_Context *ctx, String_View input, bool at_only, String_Builder *out) {
+    if (!ctx || !out) return;
     for (size_t i = 0; i < input.count; i++) {
         if (input.data[i] == '@') {
             size_t j = i + 1;
@@ -8438,7 +8510,7 @@ static String_View configure_expand_variables(Evaluator_Context *ctx, String_Vie
             if (j < input.count && j > i + 1) {
                 String_View key = nob_sv_from_parts(input.data + i + 1, j - (i + 1));
                 String_View val = eval_get_var(ctx, key);
-                sb_append_buf(&out, val.data, val.count);
+                configure_append_unescaped_value(out, val);
                 i = j;
                 continue;
             }
@@ -8449,14 +8521,104 @@ static String_View configure_expand_variables(Evaluator_Context *ctx, String_Vie
             if (j < input.count) {
                 String_View key = nob_sv_from_parts(input.data + i + 2, j - (i + 2));
                 String_View val = eval_get_var(ctx, key);
-                sb_append_buf(&out, val.data, val.count);
+                configure_append_unescaped_value(out, val);
                 i = j;
                 continue;
             }
         }
-        sb_append(&out, input.data[i]);
+        sb_append(out, input.data[i]);
     }
-    String_View result = sv_from_cstr(arena_strndup(ctx->arena, out.items, out.count));
+}
+
+static bool configure_var_truthy(Evaluator_Context *ctx, String_View var_name) {
+    String_View v = eval_get_var(ctx, var_name);
+    return v.count > 0 && !cmake_string_is_false(v);
+}
+
+static String_View configure_expand_variables(Evaluator_Context *ctx, String_View input, bool at_only) {
+    String_Builder out = {0};
+    size_t pos = 0;
+    while (pos < input.count) {
+        size_t line_start = pos;
+        while (pos < input.count && input.data[pos] != '\n') pos++;
+        size_t line_end = pos;
+        bool has_newline = (pos < input.count && input.data[pos] == '\n');
+        if (has_newline) pos++;
+
+        if (line_end > line_start && input.data[line_end - 1] == '\r') line_end--;
+        String_View line = nob_sv_from_parts(input.data + line_start, line_end - line_start);
+
+        size_t lead = 0;
+        while (lead < line.count && (line.data[lead] == ' ' || line.data[lead] == '\t')) lead++;
+        String_View content = nob_sv_from_parts(line.data + lead, line.count - lead);
+
+        bool handled_cmakedefine = false;
+        String_View tag01 = sv_from_cstr("#cmakedefine01 ");
+        String_View tag = sv_from_cstr("#cmakedefine ");
+
+        if (nob_sv_starts_with(content, tag01)) {
+            String_View tail = nob_sv_from_parts(content.data + tag01.count, content.count - tag01.count);
+            size_t n = 0;
+            while (n < tail.count && ((tail.data[n] >= 'A' && tail.data[n] <= 'Z') ||
+                                      (tail.data[n] >= 'a' && tail.data[n] <= 'z') ||
+                                      (tail.data[n] >= '0' && tail.data[n] <= '9') ||
+                                      tail.data[n] == '_')) {
+                n++;
+            }
+            if (n > 0) {
+                String_View var = nob_sv_from_parts(tail.data, n);
+                bool on = configure_var_truthy(ctx, var);
+                sb_append_buf(&out, line.data, lead);
+                sb_append_cstr(&out, "#define ");
+                sb_append_buf(&out, var.data, var.count);
+                sb_append_cstr(&out, on ? " 1" : " 0");
+                handled_cmakedefine = true;
+            }
+        } else if (nob_sv_starts_with(content, tag)) {
+            String_View tail = nob_sv_from_parts(content.data + tag.count, content.count - tag.count);
+            size_t n = 0;
+            while (n < tail.count && ((tail.data[n] >= 'A' && tail.data[n] <= 'Z') ||
+                                      (tail.data[n] >= 'a' && tail.data[n] <= 'z') ||
+                                      (tail.data[n] >= '0' && tail.data[n] <= '9') ||
+                                      tail.data[n] == '_')) {
+                n++;
+            }
+            if (n > 0) {
+                String_View var = nob_sv_from_parts(tail.data, n);
+                String_View rest = nob_sv_from_parts(tail.data + n, tail.count - n);
+                while (rest.count > 0 && (rest.data[0] == ' ' || rest.data[0] == '\t')) {
+                    rest = nob_sv_from_parts(rest.data + 1, rest.count - 1);
+                }
+
+                if (configure_var_truthy(ctx, var)) {
+                    sb_append_buf(&out, line.data, lead);
+                    sb_append_cstr(&out, "#define ");
+                    sb_append_buf(&out, var.data, var.count);
+                    if (rest.count > 0) {
+                        String_View rest_expanded = configure_expand_variables(ctx, rest, at_only);
+                        if (rest_expanded.count > 0) {
+                            sb_append(&out, ' ');
+                            sb_append_buf(&out, rest_expanded.data, rest_expanded.count);
+                        }
+                    }
+                } else {
+                    sb_append_buf(&out, line.data, lead);
+                    sb_append_cstr(&out, "/* #undef ");
+                    sb_append_buf(&out, var.data, var.count);
+                    sb_append_cstr(&out, " */");
+                }
+                handled_cmakedefine = true;
+            }
+        }
+
+        if (!handled_cmakedefine) {
+            configure_expand_plain_fragment(ctx, line, at_only, &out);
+        }
+
+        if (has_newline || pos >= input.count) sb_append(&out, '\n');
+    }
+
+    String_View result = sv_from_cstr(arena_strndup(ctx->arena, out.items ? out.items : "", out.count));
     nob_sb_free(out);
     return result;
 }

@@ -88,6 +88,10 @@ static bool infer_package_link_name(String_View name, String_View *out_link_name
         *out_link_name = sv_from_cstr("SDL2");
         return true;
     }
+    if (sv_eq_ci(name, sv_from_cstr("Libpsl"))) {
+        *out_link_name = sv_from_cstr("psl");
+        return true;
+    }
     return false;
 }
 
@@ -110,6 +114,7 @@ static String_View infer_default_package_version(String_View name) {
     if (sv_eq_ci(name, sv_from_cstr("OpenGL"))) return sv_from_cstr("4.6");
     if (sv_eq_ci(name, sv_from_cstr("Threads"))) return sv_from_cstr("1.0");
     if (sv_eq_ci(name, sv_from_cstr("SDL2"))) return sv_from_cstr("2.30.0");
+    if (sv_eq_ci(name, sv_from_cstr("Libpsl"))) return sv_from_cstr("0.21.0");
     return sv_from_cstr("1.0.0");
 }
 
@@ -653,6 +658,180 @@ static void eval_cmake_pkg_config_command(Evaluator_Context *ctx, Args args) {
     cmake_pkg_config_configure_variables(ctx, &req, found, libs, include_dirs, cflags, ldflags, version);
     cmake_pkg_config_create_imported_target(ctx, &req, found, libs, include_dirs, cflags, ldflags);
 }
+
+static bool makefile_inc_is_ident_start(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
+static bool makefile_inc_is_ident_char(char c) {
+    return makefile_inc_is_ident_start(c) || (c >= '0' && c <= '9');
+}
+
+static String_View makefile_inc_replace_all(Arena *arena, String_View input, String_View needle, String_View repl) {
+    if (!arena || needle.count == 0) return input;
+    String_Builder out = {0};
+    size_t i = 0;
+    while (i < input.count) {
+        if (i + needle.count <= input.count &&
+            memcmp(input.data + i, needle.data, needle.count) == 0) {
+            sb_append_buf(&out, repl.data, repl.count);
+            i += needle.count;
+            continue;
+        }
+        sb_append(&out, input.data[i]);
+        i++;
+    }
+    String_View result = sv_from_cstr(arena_strndup(arena, out.items ? out.items : "", out.count));
+    nob_sb_free(out);
+    return result;
+}
+
+static String_View makefile_inc_convert_variable_refs(Arena *arena, String_View input) {
+    if (!arena) return input;
+    String_Builder out = {0};
+    size_t i = 0;
+    while (i < input.count) {
+        if (input.data[i] == '$' && i + 2 < input.count && input.data[i + 1] == '(') {
+            size_t start = i + 2;
+            size_t j = start;
+            if (j < input.count && makefile_inc_is_ident_start(input.data[j])) {
+                j++;
+                while (j < input.count && makefile_inc_is_ident_char(input.data[j])) j++;
+                if (j < input.count && input.data[j] == ')') {
+                    sb_append_cstr(&out, "${");
+                    sb_append_buf(&out, input.data + start, j - start);
+                    sb_append_cstr(&out, "}");
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+
+        if (input.data[i] == '@') {
+            size_t start = i + 1;
+            size_t j = start;
+            if (j < input.count && makefile_inc_is_ident_start(input.data[j])) {
+                j++;
+                while (j < input.count && makefile_inc_is_ident_char(input.data[j])) j++;
+                if (j < input.count && input.data[j] == '@') {
+                    sb_append_cstr(&out, "${");
+                    sb_append_buf(&out, input.data + start, j - start);
+                    sb_append_cstr(&out, "}");
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+
+        sb_append(&out, input.data[i]);
+        i++;
+    }
+    String_View result = sv_from_cstr(arena_strndup(arena, out.items ? out.items : "", out.count));
+    nob_sb_free(out);
+    return result;
+}
+
+static String_View makefile_inc_transform_text(Evaluator_Context *ctx, String_View text) {
+    if (!ctx) return text;
+
+    String_View out = text;
+    out = makefile_inc_replace_all(ctx->arena, out, sv_from_cstr("$(top_srcdir)"), sv_from_cstr("${PROJECT_SOURCE_DIR}"));
+    out = makefile_inc_replace_all(ctx->arena, out, sv_from_cstr("$(top_builddir)"), sv_from_cstr("${PROJECT_BINARY_DIR}"));
+
+    String_Builder converted = {0};
+    size_t i = 0;
+    while (i < out.count) {
+        String_Builder logical = {0};
+        bool has_continuation = false;
+
+        for (;;) {
+            size_t line_start = i;
+            while (i < out.count && out.data[i] != '\n') i++;
+            size_t line_end = i;
+            if (line_end > line_start && out.data[line_end - 1] == '\r') line_end--;
+
+            bool continuation = (line_end > line_start && out.data[line_end - 1] == '\\');
+            size_t append_end = continuation ? (line_end - 1) : line_end;
+            if (append_end > line_start) {
+                sb_append_buf(&logical, out.data + line_start, append_end - line_start);
+            }
+
+            if (i < out.count && out.data[i] == '\n') i++;
+            if (!continuation) break;
+            has_continuation = true;
+        }
+
+        String_View logical_line = sb_to_sv(logical);
+
+        bool converted_to_set = false;
+        size_t p = 0;
+        if (logical_line.count > 0 && makefile_inc_is_ident_start(logical_line.data[p])) {
+            p++;
+            while (p < logical_line.count && makefile_inc_is_ident_char(logical_line.data[p])) p++;
+            size_t name_end = p;
+            while (p < logical_line.count && (logical_line.data[p] == ' ' || logical_line.data[p] == '\t')) p++;
+            if (p < logical_line.count && logical_line.data[p] == '=') {
+                p++;
+                while (p < logical_line.count && (logical_line.data[p] == ' ' || logical_line.data[p] == '\t')) p++;
+                sb_append_cstr(&converted, "set(");
+                sb_append_buf(&converted, logical_line.data, name_end);
+                if (p < logical_line.count) {
+                    sb_append(&converted, ' ');
+                    sb_append_buf(&converted, logical_line.data + p, logical_line.count - p);
+                }
+                sb_append_cstr(&converted, ")\n");
+                converted_to_set = true;
+            }
+        }
+
+        if (!converted_to_set) {
+            sb_append_buf(&converted, logical_line.data, logical_line.count);
+            if (has_continuation || logical_line.count > 0 || i < out.count) sb_append(&converted, '\n');
+        }
+
+        nob_sb_free(logical);
+    }
+
+    String_View converted_sv = sv_from_cstr(arena_strndup(ctx->arena, converted.items ? converted.items : "", converted.count));
+    nob_sb_free(converted);
+    return makefile_inc_convert_variable_refs(ctx->arena, converted_sv);
+}
+
+static void eval_curl_transform_makefile_inc_command(Evaluator_Context *ctx, Args args) {
+    if (!ctx || args.count < 2) return;
+
+    String_View input_arg = resolve_arg(ctx, args.items[0]);
+    String_View output_arg = resolve_arg(ctx, args.items[1]);
+    if (input_arg.count == 0 || output_arg.count == 0) return;
+
+    String_View input_path = cmk_path_is_absolute(input_arg)
+        ? input_arg
+        : cmk_path_join(ctx->arena, ctx->current_list_dir, input_arg);
+    String_View output_path = cmk_path_is_absolute(output_arg)
+        ? output_arg
+        : cmk_path_join(ctx->arena, ctx->current_binary_dir, output_arg);
+
+    String_View content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(input_path));
+    if (!content.data) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "curl_transform_makefile_inc",
+            nob_temp_sprintf("falha ao ler arquivo: "SV_Fmt, SV_Arg(input_path)),
+            "verifique se Makefile.inc existe no diretorio esperado");
+        return;
+    }
+
+    String_View transformed = makefile_inc_transform_text(ctx, content);
+    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "curl_transform_makefile_inc",
+            nob_temp_sprintf("falha ao preparar diretorio de saida: "SV_Fmt, SV_Arg(output_path)),
+            "verifique permissao de escrita no diretorio de build");
+        return;
+    }
+    if (!sys_write_file_bytes(output_path, transformed.data, transformed.count)) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "curl_transform_makefile_inc",
+            nob_temp_sprintf("falha ao gravar arquivo transformado: "SV_Fmt, SV_Arg(output_path)),
+            "verifique permissao de escrita e caminho de destino");
+    }
+}
 typedef void (*Eval_Command_Handler)(Evaluator_Context *ctx, Args args);
 
 typedef struct {
@@ -686,6 +865,7 @@ static bool eval_dispatch_known_command(Evaluator_Context *ctx, String_View cmd_
         {"cmake_file_api", eval_cmake_file_api_command},
         {"cmake_instrumentation", eval_cmake_instrumentation_command},
         {"cmake_pkg_config", eval_cmake_pkg_config_command},
+        {"curl_transform_makefile_inc", eval_curl_transform_makefile_inc_command},
         {"cmake_minimum_required", eval_cmake_minimum_required_command},
         {"project", eval_project_command},
         {"add_executable", eval_add_executable_command},

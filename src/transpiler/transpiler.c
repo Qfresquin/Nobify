@@ -56,7 +56,8 @@ void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const c
 
     if (input_path && input_path[0] != '\0') {
         String_View input_sv = sv_from_cstr(input_path);
-        String_View base_dir = cmk_path_make_absolute(arena, cmk_path_parent(arena, input_sv));
+        String_View base_dir_abs = cmk_path_make_absolute(arena, cmk_path_parent(arena, input_sv));
+        String_View base_dir = cmk_path_normalize(arena, base_dir_abs);
         ctx->current_source_dir = base_dir;
         ctx->current_binary_dir = base_dir;
         ctx->current_list_dir = base_dir;

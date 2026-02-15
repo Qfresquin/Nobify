@@ -87,9 +87,7 @@ static bool main_token_list_append(Arena *arena, Token_List *list, Token item) {
 
 int main(int argc, char **argv) {
     // 1. Sistema de Rebuild Próprio do NOB (Bootstrapping)
-    NOB_GO_REBUILD_URSELF_PLUS(argc, argv,
-        CMK2NOB_REBUILD_INCLUDE_FLAGS,
-        CMK2NOB_REBUILD_SOURCES);
+    NOB_GO_REBUILD_URSELF_PLUS(argc, argv, CMK2NOB_REBUILD_SOURCES);
 
     bool strict_mode = false;
     bool continue_on_fatal_error = false;
