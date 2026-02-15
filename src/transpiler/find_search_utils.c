@@ -102,7 +102,8 @@ bool find_search_candidates(Arena *arena,
             }
         } else {
             for (size_t s = 0; s < suffixes->count; s++) {
-                String_View base = cmk_path_join(arena, dir, suffixes->items[s]);
+                String_View suffix = suffixes->items[s];
+                String_View base = suffix.count == 0 ? dir : cmk_path_join(arena, dir, suffix);
                 for (size_t n = 0; n < names->count; n++) {
                     String_View candidate = cmk_path_join(arena, base, names->items[n]);
                     if (sys_file_exists(candidate)) {
@@ -136,7 +137,8 @@ bool find_search_path_candidates(Arena *arena,
             }
         } else {
             for (size_t s = 0; s < suffixes->count; s++) {
-                String_View base = cmk_path_join(arena, dir, suffixes->items[s]);
+                String_View suffix = suffixes->items[s];
+                String_View base = suffix.count == 0 ? dir : cmk_path_join(arena, dir, suffix);
                 for (size_t n = 0; n < names->count; n++) {
                     String_View candidate = cmk_path_join(arena, base, names->items[n]);
                     if (sys_file_exists(candidate)) {

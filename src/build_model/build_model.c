@@ -99,6 +99,13 @@ static bool build_model_has_cycle_dfs(const Build_Model *model, size_t idx, uint
             return true;
         }
     }
+    for (size_t j = 0; j < target->object_dependencies.count; j++) {
+        int dep_idx = build_model_find_target_index(model, target->object_dependencies.items[j]);
+        if (dep_idx < 0) continue;
+        if (build_model_has_cycle_dfs(model, (size_t)dep_idx, state)) {
+            return true;
+        }
+    }
 
     state[idx] = 2;
     return false;
@@ -416,6 +423,7 @@ Build_Target* build_model_add_target(Build_Model *model,
     string_list_init(&target->sources);
     string_list_init(&target->source_groups);
     string_list_init(&target->dependencies);
+    string_list_init(&target->object_dependencies);
     string_list_init(&target->interface_dependencies);
     string_list_init(&target->link_libraries);
     string_list_init(&target->interface_libs);
@@ -499,6 +507,16 @@ void build_target_add_dependency(Build_Target *target, Arena *arena, String_View
         }
     }
     string_list_add(&target->dependencies, arena, dep_name);
+}
+
+void build_target_add_object_dependency(Build_Target *target, Arena *arena, String_View dep_target_name) {
+    if (!target || !arena) return;
+    for (size_t i = 0; i < target->object_dependencies.count; i++) {
+        if (nob_sv_eq(target->object_dependencies.items[i], dep_target_name)) {
+            return;
+        }
+    }
+    string_list_add(&target->object_dependencies, arena, dep_target_name);
 }
 
 void build_target_add_definition(Build_Target *target, 
@@ -994,6 +1012,12 @@ bool build_model_validate_dependencies(Build_Model *model) {
                 return false;
             }
         }
+        for (size_t j = 0; j < target->object_dependencies.count; j++) {
+            String_View dep_name = target->object_dependencies.items[j];
+            if (!build_model_find_target(model, dep_name)) {
+                return false;
+            }
+        }
     }
 
     if (model->target_count == 0) return true;
@@ -1028,6 +1052,12 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
                 in_degree[i]++;
             }
         }
+        for (size_t j = 0; j < target->object_dependencies.count; j++) {
+            int dep_idx = build_model_find_target_index(model, target->object_dependencies.items[j]);
+            if (dep_idx >= 0) {
+                in_degree[i]++;
+            }
+        }
     }
 
     size_t q_front = 0;
@@ -1050,6 +1080,16 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
             Build_Target *other = model->targets[i];
             for (size_t j = 0; j < other->dependencies.count; j++) {
                 if (nob_sv_eq(other->dependencies.items[j], current->name)) {
+                    in_degree[i]--;
+                    if (in_degree[i] == 0) {
+                        queue[q_back++] = i;
+                    }
+                    break;
+                }
+            }
+            if (in_degree[i] == 0) continue;
+            for (size_t j = 0; j < other->object_dependencies.count; j++) {
+                if (nob_sv_eq(other->object_dependencies.items[j], current->name)) {
                     in_degree[i]--;
                     if (in_degree[i] == 0) {
                         queue[q_back++] = i;
@@ -1099,6 +1139,7 @@ void build_model_dump(Build_Model *model, FILE *output) {
         fprintf(output, "  [%zu] "SV_Fmt" (%s)\n", i, SV_Arg(t->name), type_str);
         fprintf(output, "    Sources: %zu\n", t->sources.count);
         fprintf(output, "    Dependencies: %zu\n", t->dependencies.count);
+        fprintf(output, "    Object dependencies: %zu\n", t->object_dependencies.count);
         fprintf(output, "    Link libraries: %zu\n", t->link_libraries.count);
         
         if (t->custom_properties.count > 0) {
@@ -1729,6 +1770,7 @@ const String_List* build_target_get_string_list(const Build_Target *target, Buil
     switch (kind) {
         case BUILD_TARGET_LIST_SOURCES: return &target->sources;
         case BUILD_TARGET_LIST_DEPENDENCIES: return &target->dependencies;
+        case BUILD_TARGET_LIST_OBJECT_DEPENDENCIES: return &target->object_dependencies;
         case BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES: return &target->interface_dependencies;
         case BUILD_TARGET_LIST_INTERFACE_LIBS: return &target->interface_libs;
         case BUILD_TARGET_LIST_INTERFACE_COMPILE_DEFINITIONS: return &target->interface_compile_definitions;

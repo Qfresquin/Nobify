@@ -1444,6 +1444,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
     const String_List *global_system_include_dirs = build_model_get_string_list(model, BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS);
     const String_List *global_link_dirs = build_model_get_string_list(model, BUILD_MODEL_LIST_LINK_DIRS);
     const String_List *target_dependencies = build_target_get_string_list(target, BUILD_TARGET_LIST_DEPENDENCIES);
+    const String_List *target_object_dependencies = build_target_get_string_list(target, BUILD_TARGET_LIST_OBJECT_DEPENDENCIES);
     const String_List *target_sources = build_target_get_string_list(target, BUILD_TARGET_LIST_SOURCES);
 
     String_List effective_compile_defs = {0};
@@ -1672,6 +1673,22 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
         sb_appendf(sb, "        nob_cmd_append(&cmd_"SV_Fmt", objs_"SV_Fmt".items[i]);\n", 
                   SV_Arg(ident), SV_Arg(ident));
         sb_appendf(sb, "    }\n");
+
+        // Adiciona objetos vindos de OBJECT libraries dependentes
+        for (size_t i = 0; i < target_object_dependencies->count; i++) {
+            Build_Target *obj_dep = build_model_find_target(model, target_object_dependencies->items[i]);
+            obj_dep = resolve_alias_target(model, obj_dep);
+            if (!obj_dep || build_target_get_type(obj_dep) != TARGET_OBJECT_LIB) continue;
+
+            String_Builder dep_ident_builder = {0};
+            append_sanitized_identifier(&dep_ident_builder, build_target_get_name(obj_dep));
+            String_View dep_ident = sb_to_sv(dep_ident_builder);
+            sb_appendf(sb, "    for (size_t i = 0; i < objs_"SV_Fmt".count; i++) {\n", SV_Arg(dep_ident));
+            sb_appendf(sb, "        nob_cmd_append(&cmd_"SV_Fmt", objs_"SV_Fmt".items[i]);\n",
+                      SV_Arg(ident), SV_Arg(dep_ident));
+            sb_appendf(sb, "    }\n");
+            nob_sb_free(dep_ident_builder);
+        }
 
         if (!archive_only_target) {
         for (size_t i = 0; i < all_link_opts.count; i++) {

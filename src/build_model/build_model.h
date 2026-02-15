@@ -145,6 +145,7 @@ typedef struct {
     
     // Dependências
     String_List dependencies;     // Nomes dos targets dependentes
+    String_List object_dependencies; // Dependencias via $<TARGET_OBJECTS:...>
     String_List interface_dependencies; // Dependencias transitivas (PUBLIC/INTERFACE)
     String_List link_libraries;   // Bibliotecas para linkar
     String_List interface_libs;   // Bibliotecas de interface (PUBLIC/INTERFACE)
@@ -349,6 +350,7 @@ void build_target_add_source(Build_Target *target, Arena *arena, String_View sou
 
 // Adiciona uma dependência a um target
 void build_target_add_dependency(Build_Target *target, Arena *arena, String_View dep_name);
+void build_target_add_object_dependency(Build_Target *target, Arena *arena, String_View dep_target_name);
 
 // Adiciona uma definição de compilação
 void build_target_add_definition(Build_Target *target, 
@@ -544,6 +546,7 @@ typedef enum {
 typedef enum {
     BUILD_TARGET_LIST_SOURCES,
     BUILD_TARGET_LIST_DEPENDENCIES,
+    BUILD_TARGET_LIST_OBJECT_DEPENDENCIES,
     BUILD_TARGET_LIST_INTERFACE_DEPENDENCIES,
     BUILD_TARGET_LIST_INTERFACE_LIBS,
     BUILD_TARGET_LIST_INTERFACE_COMPILE_DEFINITIONS,

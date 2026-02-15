@@ -409,7 +409,7 @@ TEST(cmake_regex_glob_find_utils_basic) {
                                                       sv_from_cstr("([0-9]+\\.[0-9]+\\.[0-9]+).+"),
                                                       sv_from_cstr("version=1.2.3-beta"),
                                                       sv_from_cstr("\\1"));
-    ASSERT(nob_sv_eq(replaced, sv_from_cstr("1.2.3")));
+    ASSERT(nob_sv_eq(replaced, sv_from_cstr("version=1.2.3")));
 
     ASSERT(cmk_glob_match(sv_from_cstr("*.txt"), sv_from_cstr("a.txt")) == true);
     ASSERT(cmk_glob_match(sv_from_cstr("*.txt"), sv_from_cstr("a.c")) == false);

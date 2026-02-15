@@ -44,3 +44,17 @@
   2. `nob_generated.c` compilou
   3. execucao do runner iniciou a compilacao da libcurl
 - Estado atual do build da libcurl: **falha em dependencia externa ausente** (`libpsl.h` nao encontrado no ambiente local), no arquivo `lib/psl.h` durante a compilacao de `lib/altsvc.c`.
+
+## 2026-02-15T00:01:28-03:00
+- Removidos comportamentos especificos de projeto no transpiler:
+  - fallback sintetico por nome de pacote (`Libpsl` e afins)
+  - comando dedicado `curl_transform_makefile_inc`
+- `find_package` passou a exigir evidencias reais (`<Pkg>_FOUND`) e agora falha cedo em `REQUIRED`.
+- `string(REGEX MATCH/REPLACE)` e `file(STRINGS ... REGEX ...)` estao em caminho generico.
+- `pkg_check_modules`, `pkg_search_module` e `find_package_handle_standard_args` foram integrados ao evaluator.
+- Dependencias de `OBJECT` library via `$<TARGET_OBJECTS:...>` agora entram no modelo e no codegen.
+- Validacao atual com `curl-8.18.0/CMakeLists.txt`:
+  - a transpilacao para durante configuracao em `find_package(Libpsl REQUIRED)` quando o pacote nao esta disponivel;
+  - nao avanca para erro tardio de compilacao C por header ausente;
+  - estado local observado: `1 erro(s)` e `5 warning(s)` (dependencias opcionais ausentes).
+- Decisoes de arquitetura e comportamento generico foram consolidadas em `docs/transpiler_dependency_resolution.md`.

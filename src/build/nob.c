@@ -57,6 +57,12 @@ static void append_project_sources(Nob_Cmd *cmd, bool with_app_main) {
         "src/transpiler/ctest_coverage_utils.c");
 }
 
+static void append_platform_link_flags(Nob_Cmd *cmd) {
+#if defined(__MINGW32__)
+    nob_cmd_append(cmd, "-lregex");
+#endif
+}
+
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
@@ -68,6 +74,7 @@ int main(int argc, char **argv) {
         append_common_include_flags(&cmd);
         nob_cmd_append(&cmd, "-o", program_name);
         append_project_sources(&cmd, true);
+        append_platform_link_flags(&cmd);
         if (!nob_cmd_run_sync(cmd)) return 1;
         return 0;
     }
@@ -92,6 +99,7 @@ int main(int argc, char **argv) {
             "test/test_logic_model.c");
 
         append_project_sources(&cmd, false);
+        append_platform_link_flags(&cmd);
         if (!nob_cmd_run_sync(cmd)) return 1;
 
         nob_log(NOB_INFO, "--- Running Tests ---");
@@ -107,6 +115,7 @@ int main(int argc, char **argv) {
     append_common_include_flags(&cmd);
     nob_cmd_append(&cmd, "-o", program_name);
     append_project_sources(&cmd, true);
+    append_platform_link_flags(&cmd);
     if (!nob_cmd_run_sync(cmd)) return 1;
 
     return 0;

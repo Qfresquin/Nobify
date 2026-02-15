@@ -181,6 +181,13 @@ String_View genex_evaluate(const Genex_Eval_Context *ctx, String_View content) {
         return out;
     }
 
+    if (nob_sv_starts_with(content, sv_from_cstr("TARGET_OBJECTS:"))) {
+        String_View target_name = gx_trim(nob_sv_from_parts(content.data + 15, content.count - 15));
+        if (target_name.count == 0) return sv_from_cstr("");
+        const char *expr = nob_temp_sprintf("$<TARGET_OBJECTS:%s>", nob_temp_sv_to_cstr(target_name));
+        return sv_from_cstr(arena_strndup(ctx->arena, expr, strlen(expr)));
+    }
+
     if (nob_sv_starts_with(content, sv_from_cstr("BOOL:"))) {
         String_View value = nob_sv_from_parts(content.data + 5, content.count - 5);
         return gx_cmake_string_is_false(value) ? sv_from_cstr("0") : sv_from_cstr("1");

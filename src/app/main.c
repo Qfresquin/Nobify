@@ -44,24 +44,30 @@
     "src/transpiler/cmake_meta_io.c", \
     "src/transpiler/ctest_coverage_utils.c"
 
+#if defined(__MINGW32__)
+#define CMK2NOB_REBUILD_LINK_FLAGS , "-lregex"
+#else
+#define CMK2NOB_REBUILD_LINK_FLAGS
+#endif
+
 #if defined(_WIN32)
 #if defined(_MSC_VER) && !defined(__clang__)
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
     "cl.exe", CMK2NOB_REBUILD_INCLUDE_FLAGS, nob_temp_sprintf("/Fe:%s", (binary_path)), \
-    (source_path), CMK2NOB_REBUILD_SOURCES
+    (source_path), CMK2NOB_REBUILD_SOURCES CMK2NOB_REBUILD_LINK_FLAGS
 #elif defined(__clang__)
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
     "clang", CMK2NOB_REBUILD_INCLUDE_FLAGS, "-x", "c", "-o", (binary_path), \
-    (source_path), CMK2NOB_REBUILD_SOURCES
+    (source_path), CMK2NOB_REBUILD_SOURCES CMK2NOB_REBUILD_LINK_FLAGS
 #else
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
     "gcc", CMK2NOB_REBUILD_INCLUDE_FLAGS, "-x", "c", "-o", (binary_path), \
-    (source_path), CMK2NOB_REBUILD_SOURCES
+    (source_path), CMK2NOB_REBUILD_SOURCES CMK2NOB_REBUILD_LINK_FLAGS
 #endif
 #else
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
     "cc", CMK2NOB_REBUILD_INCLUDE_FLAGS, "-x", "c", "-o", (binary_path), \
-    (source_path), CMK2NOB_REBUILD_SOURCES
+    (source_path), CMK2NOB_REBUILD_SOURCES CMK2NOB_REBUILD_LINK_FLAGS
 #endif
 
 #define NOB_IMPLEMENTATION

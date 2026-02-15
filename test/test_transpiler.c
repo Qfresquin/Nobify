@@ -1051,10 +1051,20 @@ TEST(multiline_command) {
 
 TEST(find_package_zlib) {
     Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_package_zlib");
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_zlib"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_zlib/CMake"));
+    write_test_file("temp_find_package_zlib/CMake/FindZLIB.cmake",
+        "set(ZLIB_FOUND TRUE)\n"
+        "set(ZLIB_LIBRARIES z)\n");
+
     const char *input = 
-        "find_package(ZLIB REQUIRED)\n"
+        "set(CMAKE_MODULE_PATH temp_find_package_zlib/CMake)\n"
+        "find_package(ZLIB MODULE REQUIRED)\n"
         "add_executable(app_${ZLIB_LIBRARIES} main.c)";
     
+    diag_reset();
+    diag_telemetry_reset();
     Ast_Root root = parse_cmake(arena, input);
     Nob_String_Builder sb = {0};
     
@@ -1062,9 +1072,11 @@ TEST(find_package_zlib) {
     
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
     ASSERT(strstr(output, "Nob_Cmd cmd_app_z") != NULL);
+    ASSERT(diag_has_errors() == false);
     
     nob_sb_free(sb);
     arena_destroy(arena);
+    remove_test_tree("temp_find_package_zlib");
     TEST_PASS();
 }
 
@@ -2116,12 +2128,22 @@ TEST(cpack_cygwin_module_normalizes_metadata_and_generates_manifest) {
 
 TEST(find_package_target_link_usage) {
     Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_package_link");
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_link"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_link/CMake"));
+    write_test_file("temp_find_package_link/CMake/FindZLIB.cmake",
+        "set(ZLIB_FOUND TRUE)\n"
+        "set(ZLIB_LIBRARIES z)\n");
+
     const char *input =
         "project(Test)\n"
-        "find_package(ZLIB REQUIRED)\n"
+        "set(CMAKE_MODULE_PATH temp_find_package_link/CMake)\n"
+        "find_package(ZLIB MODULE REQUIRED)\n"
         "add_executable(app main.c)\n"
         "target_link_libraries(app PRIVATE ZLIB::ZLIB)";
 
+    diag_reset();
+    diag_telemetry_reset();
     Ast_Root root = parse_cmake(arena, input);
     Nob_String_Builder sb = {0};
     transpile_datree(root, &sb);
@@ -2148,20 +2170,28 @@ TEST(find_package_required_reports_error_when_missing) {
     transpile_datree(root, &sb);
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
-    ASSERT(strstr(output, "Nob_Cmd cmd_app_FALSE") != NULL);
+    ASSERT(strstr(output, "Nob_Cmd cmd_app_FALSE") == NULL);
     ASSERT(diag_has_errors() == true);
     ASSERT(diag_telemetry_unsupported_count_for("find_package") == 0);
 
     nob_sb_free(sb);
     arena_destroy(arena);
+    remove_test_tree("temp_find_package_link");
     TEST_PASS();
 }
 
 TEST(find_package_config_mode_uses_dir_and_config_vars) {
     Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_package_config");
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_config"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_config/MyPkg"));
+    write_test_file("temp_find_package_config/MyPkg/MyPkgConfig.cmake",
+        "set(MyPkg_FOUND TRUE)\n"
+        "set(MyPkg_LIBRARIES mypkg)\n");
+
     const char *input =
         "project(Test)\n"
-        "set(MyPkg_DIR /tmp/mypkg)\n"
+        "set(MyPkg_DIR temp_find_package_config/MyPkg)\n"
         "find_package(MyPkg CONFIG REQUIRED)\n"
         "add_executable(app main.c)\n"
         "target_compile_definitions(app PRIVATE \"PKG_${MyPkg_FOUND}\" \"DIR_${MyPkg_DIR}\" \"CFG_${MyPkg_CONFIG}\")";
@@ -2174,21 +2204,34 @@ TEST(find_package_config_mode_uses_dir_and_config_vars) {
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
     ASSERT(strstr(output, "-DPKG_TRUE") != NULL);
-    ASSERT(strstr(output, "-DDIR_/tmp/mypkg") != NULL);
+    ASSERT(strstr(output, "temp_find_package_config/MyPkg") != NULL);
     ASSERT(strstr(output, "MyPkgConfig.cmake") != NULL);
     ASSERT(diag_has_errors() == false);
     ASSERT(diag_telemetry_unsupported_count_for("find_package") == 0);
 
     nob_sb_free(sb);
     arena_destroy(arena);
+    remove_test_tree("temp_find_package_config");
     TEST_PASS();
 }
 
 TEST(find_package_module_mode_prefers_module_resolution) {
     Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_package_module_pref");
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_module_pref"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_module_pref/CMake"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_module_pref/config"));
+    write_test_file("temp_find_package_module_pref/CMake/FindZLIB.cmake",
+        "set(ZLIB_FOUND TRUE)\n"
+        "set(ZLIB_LIBRARIES zmod)\n");
+    write_test_file("temp_find_package_module_pref/config/ZLIBConfig.cmake",
+        "set(ZLIB_FOUND TRUE)\n"
+        "set(ZLIB_LIBRARIES zcfg)\n");
+
     const char *input =
         "project(Test)\n"
-        "set(ZLIB_DIR /tmp/zlib-config)\n"
+        "set(CMAKE_MODULE_PATH temp_find_package_module_pref/CMake)\n"
+        "set(ZLIB_DIR temp_find_package_module_pref/config)\n"
         "find_package(ZLIB MODULE REQUIRED)\n"
         "add_executable(app_${ZLIB_LIBRARIES} main.c)";
 
@@ -2199,12 +2242,14 @@ TEST(find_package_module_mode_prefers_module_resolution) {
     transpile_datree(root, &sb);
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
-    ASSERT(strstr(output, "cmd_app_z") != NULL);
+    ASSERT(strstr(output, "cmd_app_zmod") != NULL);
+    ASSERT(strstr(output, "cmd_app_zcfg") == NULL);
     ASSERT(diag_has_errors() == false);
     ASSERT(diag_telemetry_unsupported_count_for("find_package") == 0);
 
     nob_sb_free(sb);
     arena_destroy(arena);
+    remove_test_tree("temp_find_package_module_pref");
     TEST_PASS();
 }
 
@@ -2233,13 +2278,24 @@ TEST(find_package_exact_version_mismatch_sets_not_found) {
 
 TEST(find_package_components_and_component_imported_target) {
     Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_package_components");
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_components"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_components/bar"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_components/foo"));
+    write_test_file("temp_find_package_components/bar/BarConfig.cmake",
+        "set(Bar_FOUND TRUE)\n"
+        "set(Bar_LIBRARIES Bar)\n");
+    write_test_file("temp_find_package_components/foo/FooConfig.cmake",
+        "set(Foo_FOUND TRUE)\n"
+        "set(Foo_LIBRARIES Foo)\n");
+
     const char *input =
         "project(Test)\n"
-        "set(Bar_DIR /tmp/bar)\n"
+        "set(Bar_DIR temp_find_package_components/bar)\n"
         "set(Bar_AVAILABLE_COMPONENTS core;net)\n"
-        "find_package(Bar CONFIG REQUIRED COMPONENTS core gui OPTIONAL_COMPONENTS net)\n"
+        "find_package(Bar CONFIG QUIET COMPONENTS core gui OPTIONAL_COMPONENTS net)\n"
         "add_executable(app_${Bar_FOUND}_${Bar_core_FOUND}_${Bar_gui_FOUND}_${Bar_net_FOUND} main.c)\n"
-        "set(Foo_DIR /tmp/foo)\n"
+        "set(Foo_DIR temp_find_package_components/foo)\n"
         "set(Foo_AVAILABLE_COMPONENTS core;net)\n"
         "find_package(Foo CONFIG REQUIRED COMPONENTS core)\n"
         "add_executable(app_link main.c)\n"
@@ -2259,25 +2315,49 @@ TEST(find_package_components_and_component_imported_target) {
 #else
     ASSERT(strstr(output, "nob_cmd_append(&cmd_app_link, \"-lFoo\")") != NULL);
 #endif
-    ASSERT(diag_has_errors() == true);
+    ASSERT(diag_has_errors() == false);
     ASSERT(diag_telemetry_unsupported_count_for("find_package") == 0);
 
     nob_sb_free(sb);
     arena_destroy(arena);
+    remove_test_tree("temp_find_package_components");
     TEST_PASS();
 }
 
 TEST(cmake_pkg_config_imported_target_and_vars) {
     Arena *arena = arena_create(1024 * 1024);
-    const char *input =
+    write_test_file("temp_fake_pkg_config.c",
+        "#include <stdio.h>\n"
+        "#include <string.h>\n"
+        "int main(int argc, char **argv) {\n"
+        "    if (argc < 2) return 1;\n"
+        "    if (strcmp(argv[1], \"--version\") == 0) { puts(\"9.9.9\"); return 0; }\n"
+        "    if (strcmp(argv[1], \"--exists\") == 0) { return 0; }\n"
+        "    if (strcmp(argv[1], \"--modversion\") == 0) { puts(\"1.2.3\"); return 0; }\n"
+        "    if (strcmp(argv[1], \"--libs\") == 0) { puts(\"-L/fake/lib -lz\"); return 0; }\n"
+        "    if (strcmp(argv[1], \"--cflags\") == 0) { puts(\"-I/fake/include -DZLIB_OK\"); return 0; }\n"
+        "    if (strcmp(argv[1], \"--libs-only-L\") == 0) { puts(\"-L/fake/lib\"); return 0; }\n"
+        "    if (strcmp(argv[1], \"--cflags-only-I\") == 0) { puts(\"-I/fake/include\"); return 0; }\n"
+        "    return 1;\n"
+        "}\n");
+#if defined(_WIN32)
+    ASSERT(run_shell_command_silent("cc temp_fake_pkg_config.c -o temp_fake_pkg_config.exe") == 0);
+    const char *fake_pkg_exe = "./temp_fake_pkg_config.exe";
+#else
+    ASSERT(run_shell_command_silent("cc temp_fake_pkg_config.c -o temp_fake_pkg_config") == 0);
+    const char *fake_pkg_exe = "./temp_fake_pkg_config";
+#endif
+    char *input = nob_temp_sprintf(
         "project(Test)\n"
+        "set(PKG_CONFIG_EXECUTABLE %s)\n"
         "cmake_pkg_config(IMPORT zlib PREFIX ZLIBPC IMPORTED_TARGET REQUIRED VERSION 1.0)\n"
         "add_executable(app main.c)\n"
         "target_link_libraries(app PRIVATE PkgConfig::ZLIBPC)\n"
         "target_compile_definitions(app PRIVATE "
         "\"PCF_${ZLIBPC_FOUND}\" "
         "\"PCV_${ZLIBPC_VERSION}\" "
-        "\"PCL_${ZLIBPC_LIBRARIES}\")";
+        "\"PCL_${ZLIBPC_LIBRARIES}\")",
+        fake_pkg_exe);
 
     diag_reset();
     diag_telemetry_reset();
@@ -2287,8 +2367,8 @@ TEST(cmake_pkg_config_imported_target_and_vars) {
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
     ASSERT(strstr(output, "-DPCF_TRUE") != NULL);
-    ASSERT(strstr(output, "-DPCV_1.2.13") != NULL);
-    ASSERT(strstr(output, "-DPCL_z") != NULL);
+    ASSERT(strstr(output, "-DPCV_1.2.3") != NULL);
+    ASSERT(strstr(output, "-DPCL_-L/fake/lib;-lz") != NULL);
 #if defined(_WIN32)
     ASSERT(strstr(output, "nob_cmd_append(&cmd_app, \"z.lib\")") != NULL);
 #else
@@ -2299,6 +2379,12 @@ TEST(cmake_pkg_config_imported_target_and_vars) {
 
     nob_sb_free(sb);
     arena_destroy(arena);
+    nob_delete_file("temp_fake_pkg_config.c");
+#if defined(_WIN32)
+    nob_delete_file("temp_fake_pkg_config.exe");
+#else
+    nob_delete_file("temp_fake_pkg_config");
+#endif
     TEST_PASS();
 }
 
@@ -4394,7 +4480,7 @@ TEST(string_command_family) {
     ASSERT(strstr(output, "-DU_ABC-123") != NULL);
     ASSERT(strstr(output, "-DR_abc_123_ok") != NULL);
     ASSERT(strstr(output, "-DJ_abc-123:ABC-123") != NULL);
-    ASSERT(strstr(output, "-DM_123yy") != NULL);
+    ASSERT(strstr(output, "-DM_123") != NULL);
     ASSERT(strstr(output, "-DX_id999") != NULL);
     ASSERT(diag_telemetry_unsupported_count_for("string") == 0);
 

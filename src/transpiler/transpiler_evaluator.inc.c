@@ -1814,6 +1814,22 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
     nob_sb_free(merged);
 }
 
+static void eval_set_cmake_match_vars(Evaluator_Context *ctx, const String_List *groups) {
+    if (!ctx) return;
+    size_t match_count = (groups && groups->count > 0) ? (groups->count - 1) : 0;
+    eval_set_var(ctx, sv_from_cstr("CMAKE_MATCH_COUNT"),
+                 sv_from_cstr(nob_temp_sprintf("%zu", match_count)), false, false);
+    if (!groups || groups->count == 0) {
+        eval_set_var(ctx, sv_from_cstr("CMAKE_MATCH_0"), sv_from_cstr(""), false, false);
+        return;
+    }
+    for (size_t i = 0; i < groups->count && i < 16; i++) {
+        eval_set_var(ctx,
+            sv_from_cstr(nob_temp_sprintf("CMAKE_MATCH_%zu", i)),
+            groups->items[i], false, false);
+    }
+}
+
 // Avalia o comando 'string'
 static void eval_string_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 1) return;
@@ -1911,102 +1927,46 @@ static void eval_string_command(Evaluator_Context *ctx, Args args) {
     if (nob_sv_eq(mode, sv_from_cstr("REGEX")) && args.count >= 5) {
         String_View submode = resolve_arg(ctx, args.items[1]);
         String_View pattern = resolve_arg(ctx, args.items[2]);
-        String_View out_var = resolve_arg(ctx, args.items[3]);
-        String_Builder input_sb = {0};
-        for (size_t i = 4; i < args.count; i++) {
-            if (i > 4) sb_append(&input_sb, ' ');
-            String_View p = resolve_arg(ctx, args.items[i]);
-            sb_append_buf(&input_sb, p.data, p.count);
-        }
-        String_View input = sb_to_sv(input_sb);
 
         if (nob_sv_eq(submode, sv_from_cstr("MATCH"))) {
-            if (nob_sv_eq(pattern, sv_from_cstr("#define LIBCURL_VERSION \"[^\"]*"))) {
-                String_View key = sv_from_cstr("#define LIBCURL_VERSION \"");
-                const char *hit = strstr(nob_temp_sv_to_cstr(input), nob_temp_sv_to_cstr(key));
-                if (hit) {
-                    const char *end = strchr(hit + key.count, '"');
-                    size_t len = end ? (size_t)(end - hit) : strlen(hit);
-                    eval_set_var(ctx, out_var, nob_sv_from_parts(hit, len), false, false);
-                } else {
-                    eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
-                }
-            } else if (nob_sv_eq(pattern, sv_from_cstr("#define LIBCURL_VERSION_NUM 0x[0-9a-fA-F]+"))) {
-                String_View key = sv_from_cstr("#define LIBCURL_VERSION_NUM 0x");
-                const char *hit = strstr(nob_temp_sv_to_cstr(input), nob_temp_sv_to_cstr(key));
-                if (hit) {
-                    const char *p = hit + key.count;
-                    while (*p && isxdigit((unsigned char)*p)) p++;
-                    eval_set_var(ctx, out_var, nob_sv_from_parts(hit, (size_t)(p - hit)), false, false);
-                } else {
-                    eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
-                }
-            } else if (strstr(nob_temp_sv_to_cstr(pattern), "MINGW64_VERSION=") != NULL) {
-                const char *prefix = "MINGW64_VERSION=";
-                const char *hit = strstr(nob_temp_sv_to_cstr(input), prefix);
-                if (hit) {
-                    const char *p = hit + strlen(prefix);
-                    const char *num_start = p;
-                    while (*p && isdigit((unsigned char)*p)) p++;
-                    if (*p == '.') p++;
-                    while (*p && isdigit((unsigned char)*p)) p++;
-                    if (p > num_start) {
-                        eval_set_var(ctx, out_var, nob_sv_from_parts(hit, (size_t)(p - hit)), false, false);
-                    } else {
-                        eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
-                    }
-                } else {
-                    eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
-                }
-            } else if (strstr(nob_temp_sv_to_cstr(pattern), "_WIN32_WINNT=0x") != NULL) {
-                const char *prefix = "_WIN32_WINNT=0x";
-                const char *hit = strstr(nob_temp_sv_to_cstr(input), prefix);
-                if (hit) {
-                    const char *p = hit + strlen(prefix);
-                    while (*p && isxdigit((unsigned char)*p)) p++;
-                    eval_set_var(ctx, out_var, nob_sv_from_parts(hit, (size_t)(p - hit)), false, false);
-                } else {
-                    eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
-                }
-            } else {
-                const char *hit = strstr(nob_temp_sv_to_cstr(input), nob_temp_sv_to_cstr(pattern));
-                if (hit) {
-                    eval_set_var(ctx, out_var, sv_from_cstr(arena_strdup(ctx->arena, hit)), false, false);
-                } else {
-                    const char *mingw_hit = strstr(nob_temp_sv_to_cstr(input), "MINGW64_VERSION=");
-                    if (mingw_hit) {
-                        const char *p = mingw_hit + strlen("MINGW64_VERSION=");
-                        while (*p && (isdigit((unsigned char)*p) || *p == '.')) p++;
-                        eval_set_var(ctx, out_var, nob_sv_from_parts(mingw_hit, (size_t)(p - mingw_hit)), false, false);
-                    } else {
-                        const char *winnt_hit = strstr(nob_temp_sv_to_cstr(input), "_WIN32_WINNT=0x");
-                        if (winnt_hit) {
-                            const char *p = winnt_hit + strlen("_WIN32_WINNT=0x");
-                            while (*p && isxdigit((unsigned char)*p)) p++;
-                            eval_set_var(ctx, out_var, nob_sv_from_parts(winnt_hit, (size_t)(p - winnt_hit)), false, false);
-                        } else {
-                            eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
-                        }
-                    }
-                }
+            String_View out_var = resolve_arg(ctx, args.items[3]);
+            String_Builder input_sb = {0};
+            for (size_t i = 4; i < args.count; i++) {
+                if (i > 4) sb_append(&input_sb, ' ');
+                String_View p = resolve_arg(ctx, args.items[i]);
+                sb_append_buf(&input_sb, p.data, p.count);
             }
-        } else if (nob_sv_eq(submode, sv_from_cstr("REPLACE")) && args.count >= 6) {
-            String_View replacement = resolve_arg(ctx, args.items[3]);
-            out_var = resolve_arg(ctx, args.items[4]);
+            String_View input = sb_to_sv(input_sb);
+
+            String_List groups = {0};
+            bool matched = cmk_regex_match_groups(ctx->arena, pattern, input, &groups);
+            if (matched && groups.count > 0) {
+                eval_set_var(ctx, out_var, groups.items[0], false, false);
+                eval_set_cmake_match_vars(ctx, &groups);
+            } else {
+                eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
+                eval_set_cmake_match_vars(ctx, NULL);
+            }
+
             nob_sb_free(input_sb);
-            input_sb = (String_Builder){0};
+            return;
+        }
+
+        if (nob_sv_eq(submode, sv_from_cstr("REPLACE")) && args.count >= 6) {
+            String_View replacement = resolve_arg(ctx, args.items[3]);
+            String_View out_var = resolve_arg(ctx, args.items[4]);
+            String_Builder input_sb = {0};
             for (size_t i = 5; i < args.count; i++) {
                 if (i > 5) sb_append(&input_sb, ' ');
                 String_View p = resolve_arg(ctx, args.items[i]);
                 sb_append_buf(&input_sb, p.data, p.count);
             }
-            input = sb_to_sv(input_sb);
+            String_View input = sb_to_sv(input_sb);
             String_View replaced = cmk_regex_replace_backrefs(ctx->arena, pattern, input, replacement);
             eval_set_var(ctx, out_var, replaced, false, false);
+            nob_sb_free(input_sb);
+            return;
         }
-
-        nob_sb_free(input_sb);
-        return;
     }
 }
 
@@ -2093,11 +2053,57 @@ typedef struct Target_Source_Add_Ud {
     Build_Target *target;
 } Target_Source_Add_Ud;
 
+static bool eval_sv_starts_with_ci(String_View value, String_View prefix) {
+    if (prefix.count > value.count) return false;
+    for (size_t i = 0; i < prefix.count; i++) {
+        unsigned char a = (unsigned char)value.data[i];
+        unsigned char b = (unsigned char)prefix.data[i];
+        if (toupper(a) != toupper(b)) return false;
+    }
+    return true;
+}
+
+static bool eval_parse_target_objects_genex(String_View raw, String_View *out_target_name) {
+    if (!out_target_name) return false;
+    *out_target_name = sv_from_cstr("");
+    String_View src = genex_trim(raw);
+    if (src.count < 5) return false;
+    if (!nob_sv_starts_with(src, sv_from_cstr("$<"))) return false;
+    if (src.data[src.count - 1] != '>') return false;
+    String_View body = nob_sv_from_parts(src.data + 2, src.count - 3);
+    String_View key = sv_from_cstr("TARGET_OBJECTS:");
+    if (!eval_sv_starts_with_ci(body, key)) return false;
+    String_View name = genex_trim(nob_sv_from_parts(body.data + key.count, body.count - key.count));
+    if (name.count == 0) return false;
+    *out_target_name = name;
+    return true;
+}
+
 static void eval_add_target_source_item(Evaluator_Context *ctx, String_View src, void *ud) {
     Target_Source_Add_Ud *u = (Target_Source_Add_Ud*)ud;
     if (!u || !u->target) return;
     src = genex_trim(src);
     if (src.count == 0) return;
+
+    String_View object_target = sv_from_cstr("");
+    if (eval_parse_target_objects_genex(src, &object_target)) {
+        Build_Target *dep = build_model_find_target(ctx->model, object_target);
+        if (dep && build_target_get_type(dep) == TARGET_ALIAS) {
+            const String_List *alias_deps = build_target_get_string_list(dep, BUILD_TARGET_LIST_DEPENDENCIES);
+            if (alias_deps->count > 0) {
+                object_target = alias_deps->items[0];
+                dep = build_model_find_target(ctx->model, object_target);
+            }
+        }
+        if (dep && build_target_get_type(dep) != TARGET_OBJECT_LIB) {
+            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "target_sources",
+                nob_temp_sprintf("TARGET_OBJECTS referencia target nao-OBJECT: "SV_Fmt, SV_Arg(object_target)),
+                "use add_library(<name> OBJECT ...) para TARGET_OBJECTS");
+        }
+        build_target_add_object_dependency(u->target, ctx->arena, object_target);
+        return;
+    }
+
     if (!nob_sv_starts_with(src, sv_from_cstr("$<"))) {
         if (!cmk_path_is_absolute(src)) {
             src = cmk_path_join(ctx->arena, ctx->current_source_dir, src);
@@ -3741,6 +3747,502 @@ static void eval_exec_program_command(Evaluator_Context *ctx, Args args) {
         eval_set_var(ctx, return_var, result.exit_code == 0 ? sv_from_cstr("0") : sv_from_cstr("1"), false, false);
     }
 }
+
+static int eval_compare_versions(String_View lhs, String_View rhs) {
+    size_t li = 0, ri = 0;
+    while (li < lhs.count || ri < rhs.count) {
+        long lv = 0;
+        while (li < lhs.count && isdigit((unsigned char)lhs.data[li])) {
+            lv = lv * 10 + (lhs.data[li] - '0');
+            li++;
+        }
+        while (li < lhs.count && lhs.data[li] != '.') li++;
+        if (li < lhs.count && lhs.data[li] == '.') li++;
+
+        long rv = 0;
+        while (ri < rhs.count && isdigit((unsigned char)rhs.data[ri])) {
+            rv = rv * 10 + (rhs.data[ri] - '0');
+            ri++;
+        }
+        while (ri < rhs.count && rhs.data[ri] != '.') ri++;
+        if (ri < rhs.count && rhs.data[ri] == '.') ri++;
+
+        if (lv < rv) return -1;
+        if (lv > rv) return 1;
+    }
+    return 0;
+}
+
+static String_View eval_upper_sv_copy(Evaluator_Context *ctx, String_View value) {
+    if (!ctx || value.count == 0) return sv_from_cstr("");
+    char *buf = arena_strndup(ctx->arena, value.data, value.count);
+    if (!buf) return sv_from_cstr("");
+    for (size_t i = 0; i < value.count; i++) {
+        buf[i] = (char)toupper((unsigned char)buf[i]);
+    }
+    return sv_from_cstr(buf);
+}
+
+static void eval_pkgconfig_add_module_specs(Evaluator_Context *ctx, String_View raw, String_List *out_specs) {
+    if (!ctx || !out_specs || raw.count == 0) return;
+    String_List tokens = {0};
+    string_list_init(&tokens);
+    split_command_line_like_cmake(ctx, raw, &tokens);
+    if (tokens.count == 0) {
+        size_t start = 0;
+        for (size_t i = 0; i <= raw.count; i++) {
+            bool sep = (i == raw.count) || raw.data[i] == ';';
+            if (!sep) continue;
+            if (i > start) {
+                String_View item = genex_trim(nob_sv_from_parts(raw.data + start, i - start));
+                if (item.count > 0) string_list_add_unique(out_specs, ctx->arena, item);
+            }
+            start = i + 1;
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < tokens.count; i++) {
+        String_View tok = genex_trim(tokens.items[i]);
+        if (tok.count == 0) continue;
+        size_t start = 0;
+        for (size_t k = 0; k <= tok.count; k++) {
+            bool sep = (k == tok.count) || tok.data[k] == ';';
+            if (!sep) continue;
+            if (k > start) {
+                String_View item = genex_trim(nob_sv_from_parts(tok.data + start, k - start));
+                if (item.count > 0) string_list_add_unique(out_specs, ctx->arena, item);
+            }
+            start = k + 1;
+        }
+    }
+}
+
+static bool eval_pkgconfig_is_keyword(String_View tok) {
+    return sv_eq_ci(tok, sv_from_cstr("REQUIRED")) ||
+           sv_eq_ci(tok, sv_from_cstr("QUIET")) ||
+           sv_eq_ci(tok, sv_from_cstr("IMPORTED_TARGET")) ||
+           sv_eq_ci(tok, sv_from_cstr("GLOBAL")) ||
+           sv_eq_ci(tok, sv_from_cstr("NO_CMAKE_PATH")) ||
+           sv_eq_ci(tok, sv_from_cstr("NO_CMAKE_ENVIRONMENT_PATH"));
+}
+
+static bool eval_pkgconfig_run(Evaluator_Context *ctx,
+                               String_View executable,
+                               const String_List *modules,
+                               String_View option,
+                               bool capture_stdout,
+                               String_View *out_stdout) {
+    if (!ctx || executable.count == 0 || !modules || modules->count == 0) return false;
+    if (out_stdout) *out_stdout = sv_from_cstr("");
+
+    String_View argv_items[96] = {0};
+    size_t argv_count = 0;
+    argv_items[argv_count++] = executable;
+    if (option.count > 0) argv_items[argv_count++] = option;
+    for (size_t i = 0; i < modules->count && argv_count < (sizeof(argv_items) / sizeof(argv_items[0])); i++) {
+        argv_items[argv_count++] = modules->items[i];
+    }
+
+    Sys_Process_Request req = {0};
+    req.arena = ctx->arena;
+    req.working_dir = ctx->current_binary_dir;
+    req.timeout_ms = 15000;
+    req.argv = argv_items;
+    req.argv_count = argv_count;
+    req.capture_stdout = capture_stdout;
+    req.capture_stderr = false;
+    req.strip_stdout_trailing_ws = true;
+    req.strip_stderr_trailing_ws = true;
+    req.scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+
+    Sys_Process_Result result = {0};
+    bool ran = sys_run_process(&req, &result);
+    if (!ran || result.exit_code != 0) return false;
+    if (out_stdout && capture_stdout) *out_stdout = result.stdout_text;
+    return true;
+}
+
+static bool eval_pkgconfig_detect_executable(Evaluator_Context *ctx, String_View *out_executable) {
+    if (!ctx || !out_executable) return false;
+    *out_executable = sv_from_cstr("");
+
+    String_View configured = eval_get_var(ctx, sv_from_cstr("PKG_CONFIG_EXECUTABLE"));
+    if (configured.count > 0 && !cmake_string_is_false(configured)) {
+        String_List probe_mod = {0};
+        string_list_init(&probe_mod);
+        string_list_add(&probe_mod, ctx->arena, sv_from_cstr("--version"));
+        String_View argv_items[2] = { configured, sv_from_cstr("--version") };
+        Sys_Process_Request req = {0};
+        req.arena = ctx->arena;
+        req.working_dir = ctx->current_binary_dir;
+        req.timeout_ms = 5000;
+        req.argv = argv_items;
+        req.argv_count = 2;
+        req.capture_stdout = false;
+        req.capture_stderr = false;
+        req.strip_stdout_trailing_ws = true;
+        req.strip_stderr_trailing_ws = true;
+        req.scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+        Sys_Process_Result result = {0};
+        if (sys_run_process(&req, &result) && result.exit_code == 0) {
+            *out_executable = configured;
+            return true;
+        }
+    }
+
+    String_View candidates[] = { sv_from_cstr("pkg-config"), sv_from_cstr("pkgconf") };
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        String_View argv_items[2] = { candidates[i], sv_from_cstr("--version") };
+        Sys_Process_Request req = {0};
+        req.arena = ctx->arena;
+        req.working_dir = ctx->current_binary_dir;
+        req.timeout_ms = 5000;
+        req.argv = argv_items;
+        req.argv_count = 2;
+        req.capture_stdout = false;
+        req.capture_stderr = false;
+        req.strip_stdout_trailing_ws = true;
+        req.strip_stderr_trailing_ws = true;
+        req.scratch_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_exec"));
+        Sys_Process_Result result = {0};
+        if (sys_run_process(&req, &result) && result.exit_code == 0) {
+            eval_set_var(ctx, sv_from_cstr("PKG_CONFIG_EXECUTABLE"), candidates[i], false, false);
+            *out_executable = candidates[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+static String_View eval_pkgconfig_flags_to_semicolon_list(Evaluator_Context *ctx,
+                                                          String_View flags,
+                                                          String_View strip_prefix) {
+    if (!ctx || flags.count == 0) return sv_from_cstr("");
+    String_List tokens = {0};
+    string_list_init(&tokens);
+    split_command_line_like_cmake(ctx, flags, &tokens);
+    String_List out = {0};
+    string_list_init(&out);
+    for (size_t i = 0; i < tokens.count; i++) {
+        String_View tok = genex_trim(tokens.items[i]);
+        if (tok.count == 0) continue;
+        if (strip_prefix.count > 0 && nob_sv_starts_with(tok, strip_prefix)) {
+            tok = nob_sv_from_parts(tok.data + strip_prefix.count, tok.count - strip_prefix.count);
+            tok = genex_trim(tok);
+            if (tok.count == 0) continue;
+        }
+        string_list_add_unique(&out, ctx->arena, tok);
+    }
+    return join_string_list_with_semicolon(ctx, &out);
+}
+
+static void eval_pkgconfig_create_imported_target(Evaluator_Context *ctx,
+                                                  String_View prefix,
+                                                  bool global_target,
+                                                  String_View libs,
+                                                  String_View include_dirs,
+                                                  String_View cflags,
+                                                  String_View ldflags) {
+    (void)ldflags;
+    if (!ctx || !ctx->model || prefix.count == 0) return;
+    String_View target_name = sv_from_cstr(nob_temp_sprintf("PkgConfig::%s", nob_temp_sv_to_cstr(prefix)));
+    Build_Target *target = build_model_add_target(ctx->model, target_name, TARGET_INTERFACE_LIB);
+    if (!target) return;
+    if (global_target) {
+        build_target_set_property(target, ctx->arena, sv_from_cstr("IMPORTED_GLOBAL"), sv_from_cstr("TRUE"));
+    }
+
+    String_List lib_items = {0}, inc_items = {0}, cflag_items = {0};
+    string_list_init(&lib_items);
+    string_list_init(&inc_items);
+    string_list_init(&cflag_items);
+    eval_pkgconfig_add_module_specs(ctx, libs, &lib_items);
+    eval_pkgconfig_add_module_specs(ctx, include_dirs, &inc_items);
+    eval_pkgconfig_add_module_specs(ctx, cflags, &cflag_items);
+
+    for (size_t i = 0; i < lib_items.count; i++) {
+        String_View lib = lib_items.items[i];
+        if (lib.count > 2 && nob_sv_starts_with(lib, sv_from_cstr("-l"))) {
+            lib = nob_sv_from_parts(lib.data + 2, lib.count - 2);
+        }
+        if (lib.count > 2 && nob_sv_starts_with(lib, sv_from_cstr("-L"))) {
+            String_View dir = nob_sv_from_parts(lib.data + 2, lib.count - 2);
+            if (dir.count > 0) build_target_add_link_directory(target, ctx->arena, dir, VISIBILITY_INTERFACE, CONFIG_ALL);
+            continue;
+        }
+        if (lib.count > 0) build_target_add_library(target, ctx->arena, lib, VISIBILITY_INTERFACE);
+    }
+    for (size_t i = 0; i < inc_items.count; i++) {
+        String_View inc = inc_items.items[i];
+        if (inc.count > 2 && nob_sv_starts_with(inc, sv_from_cstr("-I"))) {
+            inc = nob_sv_from_parts(inc.data + 2, inc.count - 2);
+        }
+        if (inc.count > 0) build_target_add_include_directory(target, ctx->arena, inc, VISIBILITY_INTERFACE, CONFIG_ALL);
+    }
+    for (size_t i = 0; i < cflag_items.count; i++) {
+        String_View flag = cflag_items.items[i];
+        if (flag.count > 2 && nob_sv_starts_with(flag, sv_from_cstr("-I"))) continue;
+        if (flag.count > 2 && nob_sv_starts_with(flag, sv_from_cstr("-D"))) {
+            String_View def = nob_sv_from_parts(flag.data + 2, flag.count - 2);
+            if (def.count > 0) build_target_add_definition(target, ctx->arena, def, VISIBILITY_INTERFACE, CONFIG_ALL);
+            continue;
+        }
+        if (flag.count > 0) build_target_add_compile_option(target, ctx->arena, flag, VISIBILITY_INTERFACE, CONFIG_ALL);
+    }
+}
+
+typedef struct Pkg_Config_Request {
+    String_View prefix;
+    String_List modules;
+    bool required;
+    bool quiet;
+    bool imported_target;
+    bool global_target;
+} Pkg_Config_Request;
+
+static bool eval_pkg_parse_request(Evaluator_Context *ctx, Args args, Pkg_Config_Request *out) {
+    if (!ctx || !out || args.count < 2) return false;
+    memset(out, 0, sizeof(*out));
+    out->prefix = resolve_arg(ctx, args.items[0]);
+    string_list_init(&out->modules);
+    if (out->prefix.count == 0) return false;
+
+    for (size_t i = 1; i < args.count; i++) {
+        String_View tok = resolve_arg(ctx, args.items[i]);
+        if (sv_eq_ci(tok, sv_from_cstr("REQUIRED"))) {
+            out->required = true;
+            continue;
+        }
+        if (sv_eq_ci(tok, sv_from_cstr("QUIET"))) {
+            out->quiet = true;
+            continue;
+        }
+        if (sv_eq_ci(tok, sv_from_cstr("IMPORTED_TARGET"))) {
+            out->imported_target = true;
+            continue;
+        }
+        if (sv_eq_ci(tok, sv_from_cstr("GLOBAL"))) {
+            out->global_target = true;
+            continue;
+        }
+        if (eval_pkgconfig_is_keyword(tok)) continue;
+        eval_pkgconfig_add_module_specs(ctx, tok, &out->modules);
+    }
+    return out->modules.count > 0;
+}
+
+static void eval_pkg_set_found_vars(Evaluator_Context *ctx,
+                                    String_View prefix,
+                                    bool found,
+                                    String_View version,
+                                    String_View libs,
+                                    String_View include_dirs,
+                                    String_View cflags,
+                                    String_View ldflags,
+                                    String_View lib_dirs,
+                                    String_View module_name) {
+    if (!ctx || prefix.count == 0) return;
+    const char *p = nob_temp_sv_to_cstr(prefix);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_FOUND", p)), found ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE"), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_VERSION", p)), found ? version : sv_from_cstr(""), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_LIBRARIES", p)), found ? libs : sv_from_cstr(""), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_INCLUDE_DIRS", p)), found ? include_dirs : sv_from_cstr(""), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_CFLAGS", p)), found ? cflags : sv_from_cstr(""), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_LDFLAGS", p)), found ? ldflags : sv_from_cstr(""), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_LIBRARY_DIRS", p)), found ? lib_dirs : sv_from_cstr(""), false, false);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_MODULE_NAME", p)), found ? module_name : sv_from_cstr(""), false, false);
+}
+
+static void eval_pkg_modules_command(Evaluator_Context *ctx, Args args, bool search_mode) {
+    if (!ctx || args.count < 2) return;
+
+    Pkg_Config_Request req = {0};
+    if (!eval_pkg_parse_request(ctx, args, &req)) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0,
+            search_mode ? "pkg_search_module" : "pkg_check_modules",
+            "assinatura invalida",
+            "use pkg_check_modules(<PREFIX> [REQUIRED] [QUIET] <module...>)");
+        return;
+    }
+
+    String_View executable = sv_from_cstr("");
+    bool has_pkgconfig = eval_pkgconfig_detect_executable(ctx, &executable);
+
+    String_List selected_modules = {0};
+    string_list_init(&selected_modules);
+    bool found = false;
+    if (has_pkgconfig) {
+        if (search_mode) {
+            for (size_t i = 0; i < req.modules.count; i++) {
+                String_List probe = {0};
+                string_list_init(&probe);
+                string_list_add(&probe, ctx->arena, req.modules.items[i]);
+                if (eval_pkgconfig_run(ctx, executable, &probe, sv_from_cstr("--exists"), false, NULL)) {
+                    string_list_add(&selected_modules, ctx->arena, req.modules.items[i]);
+                    found = true;
+                    break;
+                }
+            }
+        } else {
+            found = eval_pkgconfig_run(ctx, executable, &req.modules, sv_from_cstr("--exists"), false, NULL);
+            if (found) {
+                for (size_t i = 0; i < req.modules.count; i++) {
+                    string_list_add(&selected_modules, ctx->arena, req.modules.items[i]);
+                }
+            }
+        }
+    }
+
+    String_View version = sv_from_cstr("");
+    String_View libs_raw = sv_from_cstr("");
+    String_View cflags_raw = sv_from_cstr("");
+    String_View lib_dirs_raw = sv_from_cstr("");
+    String_View include_dirs_raw = sv_from_cstr("");
+    if (found && selected_modules.count > 0) {
+        (void)eval_pkgconfig_run(ctx, executable, &selected_modules, sv_from_cstr("--modversion"), true, &version);
+        (void)eval_pkgconfig_run(ctx, executable, &selected_modules, sv_from_cstr("--libs"), true, &libs_raw);
+        (void)eval_pkgconfig_run(ctx, executable, &selected_modules, sv_from_cstr("--cflags"), true, &cflags_raw);
+        (void)eval_pkgconfig_run(ctx, executable, &selected_modules, sv_from_cstr("--libs-only-L"), true, &lib_dirs_raw);
+        (void)eval_pkgconfig_run(ctx, executable, &selected_modules, sv_from_cstr("--cflags-only-I"), true, &include_dirs_raw);
+    }
+
+    String_View libs = eval_pkgconfig_flags_to_semicolon_list(ctx, libs_raw, sv_from_cstr(""));
+    String_View cflags = eval_pkgconfig_flags_to_semicolon_list(ctx, cflags_raw, sv_from_cstr(""));
+    String_View ldflags = libs;
+    String_View include_dirs = eval_pkgconfig_flags_to_semicolon_list(ctx, include_dirs_raw, sv_from_cstr("-I"));
+    String_View lib_dirs = eval_pkgconfig_flags_to_semicolon_list(ctx, lib_dirs_raw, sv_from_cstr("-L"));
+    String_View module_name = join_string_list_with_semicolon(ctx, &selected_modules);
+
+    eval_pkg_set_found_vars(ctx, req.prefix, found, version, libs, include_dirs, cflags, ldflags, lib_dirs, module_name);
+    if (found && req.imported_target) {
+        eval_pkgconfig_create_imported_target(ctx, req.prefix, req.global_target, libs, include_dirs, cflags, ldflags);
+    }
+
+    if (!req.quiet) {
+        nob_log(NOB_INFO, "%s: "SV_Fmt" => %s",
+            search_mode ? "pkg_search_module" : "pkg_check_modules",
+            SV_Arg(req.prefix), found ? "FOUND" : "NOTFOUND");
+    }
+    if (!found && req.required) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0,
+            search_mode ? "pkg_search_module" : "pkg_check_modules",
+            nob_temp_sprintf("modulo pkg-config REQUIRED nao encontrado para prefixo: "SV_Fmt, SV_Arg(req.prefix)),
+            "instale o modulo .pc ou ajuste PKG_CONFIG_PATH");
+    }
+}
+
+static void eval_pkg_check_modules_command(Evaluator_Context *ctx, Args args) {
+    eval_pkg_modules_command(ctx, args, false);
+}
+
+static void eval_pkg_search_module_command(Evaluator_Context *ctx, Args args) {
+    eval_pkg_modules_command(ctx, args, true);
+}
+
+static bool eval_fphsa_is_keyword(String_View tok) {
+    return sv_eq_ci(tok, sv_from_cstr("REQUIRED_VARS")) ||
+           sv_eq_ci(tok, sv_from_cstr("VERSION_VAR")) ||
+           sv_eq_ci(tok, sv_from_cstr("HANDLE_COMPONENTS")) ||
+           sv_eq_ci(tok, sv_from_cstr("CONFIG_MODE")) ||
+           sv_eq_ci(tok, sv_from_cstr("FAIL_MESSAGE")) ||
+           sv_eq_ci(tok, sv_from_cstr("REASON_FAILURE_MESSAGE")) ||
+           sv_eq_ci(tok, sv_from_cstr("NAME_MISMATCHED")) ||
+           sv_eq_ci(tok, sv_from_cstr("HANDLE_VERSION_RANGE"));
+}
+
+static void eval_find_package_handle_standard_args_command(Evaluator_Context *ctx, Args args) {
+    if (!ctx || args.count < 1) return;
+    String_View pkg_name = resolve_arg(ctx, args.items[0]);
+    if (pkg_name.count == 0) return;
+
+    String_List required_vars = {0};
+    string_list_init(&required_vars);
+    String_View version_var = sv_from_cstr("");
+    bool handle_components = false;
+    for (size_t i = 1; i < args.count; i++) {
+        String_View tok = resolve_arg(ctx, args.items[i]);
+        if (sv_eq_ci(tok, sv_from_cstr("REQUIRED_VARS"))) {
+            for (i = i + 1; i < args.count; i++) {
+                String_View v = resolve_arg(ctx, args.items[i]);
+                if (eval_fphsa_is_keyword(v)) {
+                    i--;
+                    break;
+                }
+                if (v.count > 0) string_list_add_unique(&required_vars, ctx->arena, v);
+            }
+            continue;
+        }
+        if (sv_eq_ci(tok, sv_from_cstr("VERSION_VAR")) && i + 1 < args.count) {
+            version_var = resolve_arg(ctx, args.items[++i]);
+            continue;
+        }
+        if (sv_eq_ci(tok, sv_from_cstr("HANDLE_COMPONENTS"))) {
+            handle_components = true;
+            continue;
+        }
+        if ((sv_eq_ci(tok, sv_from_cstr("FAIL_MESSAGE")) ||
+             sv_eq_ci(tok, sv_from_cstr("REASON_FAILURE_MESSAGE"))) && i + 1 < args.count) {
+            i++;
+            continue;
+        }
+    }
+
+    bool found = true;
+    for (size_t i = 0; i < required_vars.count; i++) {
+        String_View req = required_vars.items[i];
+        String_View value = eval_get_var(ctx, req);
+        if (value.count == 0 || cmake_string_is_false(value) ||
+            sv_ends_with_ci(value, sv_from_cstr("-NOTFOUND"))) {
+            found = false;
+            break;
+        }
+    }
+
+    if (found && version_var.count > 0) {
+        String_View req_version = eval_get_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_FIND_VERSION", nob_temp_sv_to_cstr(pkg_name))));
+        if (req_version.count > 0) {
+            String_View pkg_version = eval_get_var(ctx, version_var);
+            if (pkg_version.count == 0) {
+                found = false;
+            } else {
+                bool exact = sv_bool_is_true(eval_get_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_FIND_VERSION_EXACT", nob_temp_sv_to_cstr(pkg_name)))));
+                int cmp = eval_compare_versions(pkg_version, req_version);
+                if ((exact && cmp != 0) || (!exact && cmp < 0)) {
+                    found = false;
+                }
+            }
+        }
+    }
+
+    if (found && handle_components) {
+        String_View comps = eval_get_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_FIND_COMPONENTS", nob_temp_sv_to_cstr(pkg_name))));
+        String_List comp_items = {0};
+        string_list_init(&comp_items);
+        split_semicolon_list(ctx, comps, &comp_items);
+        for (size_t i = 0; i < comp_items.count; i++) {
+            String_View comp = comp_items.items[i];
+            if (comp.count == 0) continue;
+            bool required = sv_bool_is_true(eval_get_var(ctx,
+                sv_from_cstr(nob_temp_sprintf("%s_FIND_REQUIRED_%s", nob_temp_sv_to_cstr(pkg_name), nob_temp_sv_to_cstr(comp)))));
+            String_View comp_found = eval_get_var(ctx,
+                sv_from_cstr(nob_temp_sprintf("%s_%s_FOUND", nob_temp_sv_to_cstr(pkg_name), nob_temp_sv_to_cstr(comp))));
+            if (required && (comp_found.count == 0 || cmake_string_is_false(comp_found))) {
+                found = false;
+                break;
+            }
+        }
+    }
+
+    String_View pkg_upper = eval_upper_sv_copy(ctx, pkg_name);
+    eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_FOUND", nob_temp_sv_to_cstr(pkg_name))),
+        found ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE"), false, false);
+    if (pkg_upper.count > 0 && !sv_eq_ci(pkg_upper, pkg_name)) {
+        eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("%s_FOUND", nob_temp_sv_to_cstr(pkg_upper))),
+            found ? sv_from_cstr("TRUE") : sv_from_cstr("FALSE"), false, false);
+    }
+}
+
 static bool try_run_keyword(String_View tok) {
     return sv_eq_ci(tok, sv_from_cstr("COMPILE_OUTPUT_VARIABLE")) ||
            sv_eq_ci(tok, sv_from_cstr("RUN_OUTPUT_VARIABLE")) ||
@@ -8326,6 +8828,8 @@ static bool include_handle_builtin_module(Evaluator_Context *ctx, String_View re
     if (sv_eq_ci(module, sv_from_cstr("CMakeDependentOption")) ||
         sv_eq_ci(module, sv_from_cstr("CheckCCompilerFlag")) ||
         sv_eq_ci(module, sv_from_cstr("CMakePushCheckState")) ||
+        sv_eq_ci(module, sv_from_cstr("FindPackageHandleStandardArgs")) ||
+        sv_eq_ci(module, sv_from_cstr("FindPkgConfig")) ||
         sv_eq_ci(module, sv_from_cstr("CheckFunctionExists")) ||
         sv_eq_ci(module, sv_from_cstr("CheckIncludeFile")) ||
         sv_eq_ci(module, sv_from_cstr("CheckIncludeFiles")) ||
@@ -8705,6 +9209,84 @@ static bool file_copy_entry_to_destination(Evaluator_Context *ctx, String_View s
 static void eval_file_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 1) return;
     String_View mode = resolve_arg(ctx, args.items[0]);
+
+    if (nob_sv_eq(mode, sv_from_cstr("STRINGS")) && args.count >= 3) {
+        String_View path = resolve_arg(ctx, args.items[1]);
+        if (!cmk_path_is_absolute(path)) {
+            path = cmk_path_join(ctx->arena, ctx->current_list_dir, path);
+        }
+        path = cmk_path_normalize(ctx->arena, path);
+        String_View out_var = resolve_arg(ctx, args.items[2]);
+
+        String_View regex = sv_from_cstr("");
+        long limit_count = -1;
+        long length_min = 0;
+        long length_max = -1;
+        for (size_t i = 3; i < args.count; i++) {
+            String_View tok = resolve_arg(ctx, args.items[i]);
+            if (sv_eq_ci(tok, sv_from_cstr("REGEX")) && i + 1 < args.count) {
+                regex = resolve_arg(ctx, args.items[++i]);
+                continue;
+            }
+            if (sv_eq_ci(tok, sv_from_cstr("LIMIT_COUNT")) && i + 1 < args.count) {
+                limit_count = parse_long_or_default(resolve_arg(ctx, args.items[++i]), -1);
+                continue;
+            }
+            if (sv_eq_ci(tok, sv_from_cstr("LENGTH_MINIMUM")) && i + 1 < args.count) {
+                length_min = parse_long_or_default(resolve_arg(ctx, args.items[++i]), 0);
+                if (length_min < 0) length_min = 0;
+                continue;
+            }
+            if (sv_eq_ci(tok, sv_from_cstr("LENGTH_MAXIMUM")) && i + 1 < args.count) {
+                length_max = parse_long_or_default(resolve_arg(ctx, args.items[++i]), -1);
+                continue;
+            }
+            if (sv_eq_ci(tok, sv_from_cstr("ENCODING")) && i + 1 < args.count) {
+                i++;
+                continue;
+            }
+            if (sv_eq_ci(tok, sv_from_cstr("NEWLINE_CONSUME")) ||
+                sv_eq_ci(tok, sv_from_cstr("NO_HEX_CONVERSION"))) {
+                continue;
+            }
+        }
+
+        String_View content = arena_read_file(ctx->arena, nob_temp_sv_to_cstr(path));
+        if (!content.data) {
+            eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
+            return;
+        }
+
+        String_Builder list = {0};
+        bool first = true;
+        long emitted = 0;
+        size_t start = 0;
+        for (size_t i = 0; i <= content.count; i++) {
+            bool at_eol = (i == content.count) || content.data[i] == '\n';
+            if (!at_eol) continue;
+            size_t end = i;
+            if (end > start && content.data[end - 1] == '\r') end--;
+            String_View line = nob_sv_from_parts(content.data + start, end - start);
+            start = i + 1;
+
+            if ((long)line.count < length_min) continue;
+            if (length_max >= 0 && (long)line.count > length_max) continue;
+            if (regex.count > 0) {
+                String_View match = {0};
+                if (!cmk_regex_match_first(ctx->arena, regex, line, &match)) continue;
+            }
+
+            if (!first) sb_append(&list, ';');
+            sb_append_buf(&list, line.data, line.count);
+            first = false;
+            emitted++;
+            if (limit_count >= 0 && emitted >= limit_count) break;
+        }
+
+        eval_set_var(ctx, out_var, sb_to_sv(list), false, false);
+        nob_sb_free(list);
+        return;
+    }
 
     if (nob_sv_eq(mode, sv_from_cstr("READ")) && args.count >= 3) {
         String_View path = cmk_path_join(ctx->arena, ctx->current_list_dir, resolve_arg(ctx, args.items[1]));
