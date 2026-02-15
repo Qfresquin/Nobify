@@ -1,6 +1,6 @@
-#include "../nob.h"
-#include "../arena.h"
-#include "../logic_model.h"
+#include "nob.h"
+#include "arena.h"
+#include "logic_model.h"
 
 #include <stdio.h>
 #include <string.h>

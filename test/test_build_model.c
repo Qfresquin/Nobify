@@ -1,5 +1,5 @@
-#include "../nob.h"
-#include "../build_model.h"
+#include "nob.h"
+#include "build_model.h"
 #include <stdio.h>
 #include <stdbool.h>
 

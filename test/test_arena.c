@@ -1,6 +1,6 @@
-#include "../nob.h"
-#include "../arena.h"
-#include "../arena_dyn.h"
+#include "nob.h"
+#include "arena.h"
+#include "arena_dyn.h"
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>

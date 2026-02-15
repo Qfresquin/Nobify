@@ -1,5 +1,5 @@
 #define NOB_IMPLEMENTATION
-#include "../nob.h"
+#include "nob.h"
 
 #include <stdbool.h>
 #include <string.h>

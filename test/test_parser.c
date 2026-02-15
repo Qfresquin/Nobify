@@ -1,8 +1,8 @@
-#include "../nob.h"
-#include "../lexer.h"
-#include "../parser.h"
-#include "../arena.h" // <--- Necessário agora
-#include "../diagnostics.h"
+#include "nob.h"
+#include "lexer.h"
+#include "parser.h"
+#include "arena.h" // <--- Necessário agora
+#include "diagnostics.h"
 #include <stdio.h>
 #include <stdlib.h>
 

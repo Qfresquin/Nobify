@@ -1,25 +1,67 @@
+#if defined(_MSC_VER) && !defined(__clang__)
+#define CMK2NOB_REBUILD_INCLUDE_FLAGS \
+    "/Ivendor", \
+    "/Isrc\\arena", \
+    "/Isrc\\lexer", \
+    "/Isrc\\parser", \
+    "/Isrc\\build_model", \
+    "/Isrc\\logic_model", \
+    "/Isrc\\diagnostics", \
+    "/Isrc\\ds_adapter", \
+    "/Isrc\\transpiler", \
+    "/Isrc\\app"
+#else
+#define CMK2NOB_REBUILD_INCLUDE_FLAGS \
+    "-Ivendor", \
+    "-Isrc/arena", \
+    "-Isrc/lexer", \
+    "-Isrc/parser", \
+    "-Isrc/build_model", \
+    "-Isrc/logic_model", \
+    "-Isrc/diagnostics", \
+    "-Isrc/ds_adapter", \
+    "-Isrc/transpiler", \
+    "-Isrc/app"
+#endif
+
+#define CMK2NOB_REBUILD_SOURCES \
+    "src/lexer/lexer.c", \
+    "src/parser/parser.c", \
+    "src/transpiler/transpiler.c", \
+    "src/arena/arena.c", \
+    "src/build_model/build_model.c", \
+    "src/diagnostics/diagnostics.c", \
+    "src/transpiler/sys_utils.c", \
+    "src/transpiler/toolchain_driver.c", \
+    "src/transpiler/math_parser.c", \
+    "src/transpiler/genex_evaluator.c", \
+    "src/logic_model/logic_model.c", \
+    "src/ds_adapter/ds_adapter.c", \
+    "src/transpiler/cmake_path_utils.c", \
+    "src/transpiler/cmake_regex_utils.c", \
+    "src/transpiler/cmake_glob_utils.c", \
+    "src/transpiler/find_search_utils.c", \
+    "src/transpiler/cmake_meta_io.c", \
+    "src/transpiler/ctest_coverage_utils.c"
+
 #if defined(_WIN32)
 #if defined(_MSC_VER) && !defined(__clang__)
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "cl.exe", "/I.", "/Isrc\\transpiler", nob_temp_sprintf("/Fe:%s", (binary_path)), \
-    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
-    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
+    "cl.exe", CMK2NOB_REBUILD_INCLUDE_FLAGS, nob_temp_sprintf("/Fe:%s", (binary_path)), \
+    (source_path), CMK2NOB_REBUILD_SOURCES
 #elif defined(__clang__)
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "clang", "-I.", "-Isrc/transpiler", "-x", "c", "-o", (binary_path), \
-    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
-    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
+    "clang", CMK2NOB_REBUILD_INCLUDE_FLAGS, "-x", "c", "-o", (binary_path), \
+    (source_path), CMK2NOB_REBUILD_SOURCES
 #else
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "gcc", "-I.", "-Isrc/transpiler", "-x", "c", "-o", (binary_path), \
-    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
-    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
+    "gcc", CMK2NOB_REBUILD_INCLUDE_FLAGS, "-x", "c", "-o", (binary_path), \
+    (source_path), CMK2NOB_REBUILD_SOURCES
 #endif
 #else
 #define NOB_REBUILD_URSELF(binary_path, source_path) \
-    "cc", "-I.", "-Isrc/transpiler", "-x", "c", "-o", (binary_path), \
-    (source_path), "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c", \
-    "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c"
+    "cc", CMK2NOB_REBUILD_INCLUDE_FLAGS, "-x", "c", "-o", (binary_path), \
+    (source_path), CMK2NOB_REBUILD_SOURCES
 #endif
 
 #define NOB_IMPLEMENTATION
@@ -46,9 +88,8 @@ static bool main_token_list_append(Arena *arena, Token_List *list, Token item) {
 int main(int argc, char **argv) {
     // 1. Sistema de Rebuild Próprio do NOB (Bootstrapping)
     NOB_GO_REBUILD_URSELF_PLUS(argc, argv,
-        "-I.", "-Isrc/transpiler",
-        "lexer.c", "parser.c", "src/transpiler/transpiler.c", "arena.c", "build_model.c", "diagnostics.c", "src/transpiler/sys_utils.c", "src/transpiler/toolchain_driver.c", "src/transpiler/math_parser.c", "src/transpiler/genex_evaluator.c", "logic_model.c", "ds_adapter.c",
-        "src/transpiler/cmake_path_utils.c", "src/transpiler/cmake_regex_utils.c", "src/transpiler/cmake_glob_utils.c", "src/transpiler/find_search_utils.c", "src/transpiler/cmake_meta_io.c", "src/transpiler/ctest_coverage_utils.c");
+        CMK2NOB_REBUILD_INCLUDE_FLAGS,
+        CMK2NOB_REBUILD_SOURCES);
 
     bool strict_mode = false;
     bool continue_on_fatal_error = false;
