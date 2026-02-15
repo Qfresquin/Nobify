@@ -14,6 +14,7 @@
 #include "cmake_meta_io.h"
 #include "ctest_coverage_utils.h"
 #include "ds_adapter.h"
+#include "transpiler_legacy_bridge.h"
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -36,7 +37,7 @@
 // FUNCOES PUBLICAS
 // ============================================================================
 
-void transpile_datree_ex(Ast_Root root, String_Builder *sb, const Transpiler_Run_Options *options) {
+static void transpile_datree_legacy_impl(Ast_Root root, String_Builder *sb, const Transpiler_Run_Options *options) {
     Transpiler_Run_Options effective = {0};
     if (options) effective = *options;
 
@@ -75,6 +76,14 @@ void transpile_datree_ex(Ast_Root root, String_Builder *sb, const Transpiler_Run
 
     // Libera memoria (arena faz cleanup automatico)
     arena_destroy(arena);
+}
+
+void transpile_datree_legacy_bridge(Ast_Root root, String_Builder *sb, const Transpiler_Run_Options *options) {
+    transpile_datree_legacy_impl(root, sb, options);
+}
+
+void transpile_datree_ex(Ast_Root root, String_Builder *sb, const Transpiler_Run_Options *options) {
+    transpile_datree_legacy_impl(root, sb, options);
 }
 
 void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const char *input_path) {

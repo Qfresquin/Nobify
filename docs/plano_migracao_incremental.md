@@ -13,6 +13,7 @@
 - [x] Q4 (concluido): camada `transpiler_effects` integrada em subprocess/toolchain e filesystem para `file(...)`, `configure_file`, `try_compile/try_run`, `cmake_file_api`, `cmake_instrumentation`, `qt/fltk wrap`, geracao de arquivos de pacote e varredura de diretorios (`aux_source_directory`/`file(GLOB)`).
 - [x] Q5 (concluido): `build_model.h` convertido em umbrella header enxuto com segregacao por dominio (`build_model_core.h`, `build_model_cpack.h`, `build_model_custom_command.h`, `build_model_collections.h`), ownership padronizado para strings persistidas no modelo e wrappers legados marcados para deprecacao.
 - [x] Q6 (concluido): suite `test/test_transpiler.c` dividida em suites tematicas (`test_transpiler_01..08`) com harness compartilhado em `test/test_transpiler_shared.h` e orquestracao central no `run_transpiler_tests`.
+- [x] V2 bootstrap (Fase 0/1 iniciado): `docs/transpiler_v2_spec.md` criado, estrutura `src/transpiler_v2/` adicionada com entrypoint `transpile_datree_v2` e gate diferencial inicial (`test/test_transpiler_v2_diff.c`).
 
 ### Objetivos tecnicos
 - Eliminar dependencias de estado global mutavel no fluxo principal do transpiler.
@@ -210,21 +211,6 @@
 - [ ] Metricas atualizadas neste arquivo.
 - [ ] Riscos residuais atualizados.
 
-## 9. Registro de mudancas comportamentais aceitas
-
-> Regra: toda mudanca comportamental aceita deve entrar com data, justificativa, impacto e cobertura de teste.
-
-### Template de registro
-- Data:
-- Bloco:
-- Mudanca:
-- Justificativa tecnica:
-- Impacto funcional:
-- Testes adicionados/ajustados:
-- Rollback:
-
-### Entradas
-- (vazio no momento)
 
 ## Metas objetivas de reducao de codigo
 1. `transpiler_evaluator.inc.c`: de 10.928 para <= 7.500 ate Q4 e <= 5.500 ate Q6.

@@ -23,6 +23,7 @@ void run_arena_tests(int *passed, int *failed);
 void run_build_model_tests(int *passed, int *failed);
 void run_phase2_module_tests(int *passed, int *failed);
 void run_logic_model_tests(int *passed, int *failed);
+void run_transpiler_v2_diff_tests(int *passed, int *failed);
 
 typedef void (*Test_Suite_Fn)(int *passed, int *failed);
 
@@ -261,8 +262,14 @@ int main(int argc, char **argv) {
     run_suite_in_sandbox("transpiler", run_transpiler_tests, &transpiler_passed, &transpiler_failed, keep_temp);
     nob_log(NOB_INFO, "Transpiler Results: Passed: %d | Failed: %d", transpiler_passed, transpiler_failed);
 
-    int total_passed = arena_passed + lexer_passed + parser_passed + model_passed + phase2_passed + logic_passed + transpiler_passed;
-    int total_failed = arena_failed + lexer_failed + parser_failed + model_failed + phase2_failed + logic_failed + transpiler_failed;
+    // Differential legacy vs v2 tests (compatibility gate during migration)
+    nob_log(NOB_INFO, "-> Running Transpiler V2 Diff Tests...");
+    int transpiler_v2_diff_passed = 0, transpiler_v2_diff_failed = 0;
+    run_suite_in_sandbox("transpiler_v2_diff", run_transpiler_v2_diff_tests, &transpiler_v2_diff_passed, &transpiler_v2_diff_failed, keep_temp);
+    nob_log(NOB_INFO, "Transpiler V2 Diff Results: Passed: %d | Failed: %d", transpiler_v2_diff_passed, transpiler_v2_diff_failed);
+
+    int total_passed = arena_passed + lexer_passed + parser_passed + model_passed + phase2_passed + logic_passed + transpiler_passed + transpiler_v2_diff_passed;
+    int total_failed = arena_failed + lexer_failed + parser_failed + model_failed + phase2_failed + logic_failed + transpiler_failed + transpiler_v2_diff_failed;
 
     nob_log(NOB_INFO, "------------------------------------------");
     nob_log(NOB_INFO, "-         Test Results Summary           -");

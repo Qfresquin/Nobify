@@ -4,6 +4,7 @@
 #include "parser.h"
 #include "arena.h"
 #include "build_model.h"
+#include "transpiler_v2_types.h"
 
 // ============================================================================
 // CONTEXTO DE AVALIACAO
@@ -111,6 +112,10 @@ typedef struct {
 void transpile_datree(Ast_Root root, String_Builder *sb);
 void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const char *input_path);
 void transpile_datree_ex(Ast_Root root, String_Builder *sb, const Transpiler_Run_Options *options);
+void transpile_datree_v2(Ast_Root root,
+                         String_Builder *sb,
+                         const Transpiler_Run_Options *options,
+                         const Transpiler_Compat_Profile *compat);
 
 // API legada: use transpile_datree_ex(..., &Transpiler_Run_Options) no novo codigo.
 void transpiler_set_continue_on_fatal_error(bool enabled);

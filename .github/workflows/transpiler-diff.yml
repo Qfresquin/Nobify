@@ -1,0 +1,21 @@
+name: transpiler-diff
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-and-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build nob
+        run: cc -Ivendor -x c -o nob src/build/nob.c
+
+      - name: Run full test suite (includes v2 diff gate)
+        run: ./nob test
+
