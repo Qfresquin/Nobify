@@ -108,3 +108,21 @@ Nobify aplica esse princípio ao ecossistema CMake:
 * Remove dependências desnecessárias
 * Reduz complexidade do ambiente
 * Mantém controle total do backend
+
+---
+
+## V2 Documentation Index
+
+Read order for Build Model v2 / Transpiler v2 migration:
+
+1. `docs/build_model_v2_contract.md` (normative source of truth)
+2. `docs/build_model_v2_readiness_checklist.md` (objective go/no-go gate)
+3. `docs/build_model_v2_roadmap.md` (milestones and execution order)
+4. `docs/build_model_v2_transition_recommendations.md` (operational guidance)
+5. `docs/transpiler_v2_spec.md` (transpiler constraints and dependencies)
+6. `docs/transpiler_v2_activation_plan.md` (post-readiness activation)
+
+Hard policy summary:
+
+1. no functional implementation in transpiler v2 planner/codegen before Build Model v2 readiness is PASS
+2. Build Model v2 readiness is the single unlock gate for transpiler v2 functional work
