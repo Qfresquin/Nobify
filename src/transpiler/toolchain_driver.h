@@ -33,5 +33,6 @@ bool toolchain_probe_check_c_source_compiles(const Toolchain_Driver *drv, String
 bool toolchain_probe_check_c_source_runs(const Toolchain_Driver *drv, String_View source, bool *used_probe);
 bool toolchain_probe_check_library_exists(const Toolchain_Driver *drv, String_View library, String_View function_name, String_View location, bool *used_probe);
 bool toolchain_probe_check_symbol_exists(const Toolchain_Driver *drv, String_View symbol, String_View headers, bool *used_probe);
+bool toolchain_probe_check_include_files(const Toolchain_Driver *drv, String_View headers, bool *used_probe);
 
 #endif // TOOLCHAIN_DRIVER_H_

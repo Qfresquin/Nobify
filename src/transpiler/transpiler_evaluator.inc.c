@@ -69,7 +69,9 @@ static void eval_register_macro(Evaluator_Context *ctx, const Node *node);
 static bool eval_invoke_macro(Evaluator_Context *ctx, String_View name, Args args);
 static void eval_register_function(Evaluator_Context *ctx, const Node *node);
 static bool eval_invoke_function(Evaluator_Context *ctx, String_View name, Args args);
+static String_View eval_get_var(Evaluator_Context *ctx, String_View key);
 static String_View resolve_arg(Evaluator_Context *ctx, Arg arg);
+static void split_semicolon_list(Evaluator_Context *ctx, String_View value, String_List *out);
 static bool eval_handle_flow_control_command(Evaluator_Context *ctx, String_View cmd_name);
 static bool eval_condition(Evaluator_Context *ctx, Args condition);
 static void list_load_var(Evaluator_Context *ctx, String_View var_name, String_List *out);
@@ -81,6 +83,9 @@ static String_View configure_expand_variables(Evaluator_Context *ctx, String_Vie
 static bool eval_real_probes_enabled(Evaluator_Context *ctx);
 static bool eval_real_probe_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers, bool *used_probe);
 static bool eval_real_probe_check_c_source_compiles(Evaluator_Context *ctx, String_View source, bool *used_probe);
+static bool eval_real_probe_check_include_files(Evaluator_Context *ctx, String_View headers, bool *used_probe);
+static bool eval_real_probe_check_function_exists(Evaluator_Context *ctx, String_View function_name, bool *used_probe);
+static bool eval_real_probe_check_type_size(Evaluator_Context *ctx, String_View type_name, size_t *out_size, bool *used_probe);
 static bool eval_has_pending_flow_control(const Evaluator_Context *ctx);
 static Loop_Flow_Signal eval_consume_loop_flow_signal(Evaluator_Context *ctx);
 static void eval_append_link_library_value(Evaluator_Context *ctx, Build_Target *target, Visibility visibility, String_View value);
@@ -139,19 +144,104 @@ static bool cmake_check_truthy_candidate(String_View value) {
     return true;
 }
 
+static String_View eval_strip_include_delimiters(String_View header) {
+    String_View h = genex_trim(header);
+    if (h.count >= 2) {
+        bool angle = (h.data[0] == '<' && h.data[h.count - 1] == '>');
+        bool quoted = (h.data[0] == '"' && h.data[h.count - 1] == '"');
+        if (angle || quoted) {
+            h = nob_sv_from_parts(h.data + 1, h.count - 2);
+            h = genex_trim(h);
+        }
+    }
+    return h;
+}
+
+static bool eval_header_contains_path_separator(String_View header) {
+    for (size_t i = 0; i < header.count; i++) {
+        if (header.data[i] == '/' || header.data[i] == '\\') return true;
+    }
+    return false;
+}
+
+static bool eval_check_include_is_standard_header(String_View header) {
+    static const char *k_standard_headers[] = {
+        "assert.h",
+        "ctype.h",
+        "errno.h",
+        "float.h",
+        "inttypes.h",
+        "limits.h",
+        "locale.h",
+        "math.h",
+        "setjmp.h",
+        "signal.h",
+        "stdarg.h",
+        "stdbool.h",
+        "stddef.h",
+        "stdint.h",
+        "stdio.h",
+        "stdlib.h",
+        "string.h",
+        "time.h",
+        "wchar.h",
+        "wctype.h",
+    };
+    for (size_t i = 0; i < (sizeof(k_standard_headers) / sizeof(k_standard_headers[0])); i++) {
+        if (sv_eq_ci(header, sv_from_cstr(k_standard_headers[i]))) return true;
+    }
+    return false;
+}
+
+static bool eval_check_include_exists_in_project(Evaluator_Context *ctx, String_View header) {
+    if (!ctx || header.count == 0) return false;
+
+    if (cmk_path_is_absolute(header)) {
+        return nob_file_exists(nob_temp_sv_to_cstr(header));
+    }
+
+    String_View from_source = cmk_path_join(ctx->arena, ctx->current_source_dir, header);
+    if (nob_file_exists(nob_temp_sv_to_cstr(from_source))) return true;
+
+    String_View from_binary = cmk_path_join(ctx->arena, ctx->current_binary_dir, header);
+    if (nob_file_exists(nob_temp_sv_to_cstr(from_binary))) return true;
+
+    return false;
+}
+
 static bool eval_check_include_exists(Evaluator_Context *ctx, String_View header) {
-    (void)ctx;
-    return cmake_check_truthy_candidate(header);
+    String_View normalized = eval_strip_include_delimiters(header);
+    if (!cmake_check_truthy_candidate(normalized)) return false;
+    if (eval_check_include_exists_in_project(ctx, normalized)) return true;
+
+    if (eval_header_contains_path_separator(normalized)) {
+        return false;
+    }
+
+    return eval_check_include_is_standard_header(normalized);
 }
 
 static bool eval_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers) {
-    (void)ctx;
-    return cmake_check_truthy_candidate(symbol) && cmake_check_truthy_candidate(headers);
+    if (!cmake_check_truthy_candidate(symbol) || !cmake_check_truthy_candidate(headers)) return false;
+
+    // Fallback sem compilador: nunca assumir simbolo existente sem evidencia real.
+    size_t start = 0;
+    for (size_t i = 0; i <= headers.count; i++) {
+        bool sep = (i == headers.count) || headers.data[i] == ';';
+        if (!sep) continue;
+        String_View item = genex_trim(nob_sv_from_parts(headers.data + start, i - start));
+        start = i + 1;
+        if (item.count == 0) continue;
+        if (!eval_check_include_exists(ctx, item)) return false;
+    }
+    return false;
 }
 
 static bool eval_check_function_exists(Evaluator_Context *ctx, String_View function_name) {
     (void)ctx;
-    return cmake_check_truthy_candidate(function_name);
+    if (!cmake_check_truthy_candidate(function_name)) return false;
+    // Fallback sem compilador: conservador para evitar falso positivo.
+    return false;
 }
 
 static bool eval_check_type_size_value(String_View type_name, size_t *out_size) {
@@ -198,13 +288,178 @@ static bool eval_check_type_size_value(String_View type_name, size_t *out_size) 
     if (sv_eq_ci(t, sv_from_cstr("void *")) || sv_eq_ci(t, sv_from_cstr("char *")) ||
         sv_eq_ci(t, sv_from_cstr("size_t")) || sv_eq_ci(t, sv_from_cstr("ssize_t")) ||
         sv_eq_ci(t, sv_from_cstr("intptr_t")) || sv_eq_ci(t, sv_from_cstr("uintptr_t")) ||
-        sv_eq_ci(t, sv_from_cstr("time_t")) || sv_eq_ci(t, sv_from_cstr("off_t")) ||
-        sv_eq_ci(t, sv_from_cstr("curl_off_t"))) {
+        sv_eq_ci(t, sv_from_cstr("time_t")) || sv_eq_ci(t, sv_from_cstr("off_t"))) {
         *out_size = sizeof(void*);
         return true;
     }
 
     return false;
+}
+
+static String_View eval_strip_matching_quotes(String_View value) {
+    if (value.count >= 2 && value.data[0] == '"' && value.data[value.count - 1] == '"') {
+        return nob_sv_from_parts(value.data + 1, value.count - 2);
+    }
+    return value;
+}
+
+static void eval_probe_cleanup_outputs(String_View base_path, bool msvc) {
+    String_View src = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base_path)));
+#if defined(_WIN32)
+    String_View exe = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base_path)));
+#else
+    String_View exe = base_path;
+#endif
+
+    if (nob_file_exists(nob_temp_sv_to_cstr(src))) (void)nob_delete_file(nob_temp_sv_to_cstr(src));
+    if (nob_file_exists(nob_temp_sv_to_cstr(exe))) (void)nob_delete_file(nob_temp_sv_to_cstr(exe));
+
+    if (msvc) {
+        String_View obj = sv_from_cstr(nob_temp_sprintf("%s.obj", nob_temp_sv_to_cstr(base_path)));
+        String_View pdb = sv_from_cstr(nob_temp_sprintf("%s.pdb", nob_temp_sv_to_cstr(base_path)));
+        if (nob_file_exists(nob_temp_sv_to_cstr(obj))) (void)nob_delete_file(nob_temp_sv_to_cstr(obj));
+        if (nob_file_exists(nob_temp_sv_to_cstr(pdb))) (void)nob_delete_file(nob_temp_sv_to_cstr(pdb));
+    }
+}
+
+static bool eval_type_size_try_resolve_from_dir(Evaluator_Context *ctx,
+                                                String_View base_dir,
+                                                String_View header,
+                                                String_View *out_path) {
+    if (!ctx || !out_path || base_dir.count == 0 || header.count == 0) return false;
+
+    String_View base = eval_strip_matching_quotes(genex_trim(base_dir));
+    if (base.count == 0) return false;
+    if (!cmk_path_is_absolute(base)) {
+        base = cmk_path_join(ctx->arena, ctx->current_source_dir, base);
+    }
+
+    String_View candidate = cmk_path_join(ctx->arena, base, header);
+    if (!nob_file_exists(nob_temp_sv_to_cstr(candidate))) return false;
+
+    *out_path = cmk_path_normalize(ctx->arena, cmk_path_make_absolute(ctx->arena, candidate));
+    return true;
+}
+
+static bool eval_type_size_try_resolve_header(Evaluator_Context *ctx,
+                                              String_View header,
+                                              String_View *out_path) {
+    if (!ctx || !out_path) return false;
+    String_View h = eval_strip_matching_quotes(genex_trim(header));
+    if (h.count == 0) return false;
+
+    if (cmk_path_is_absolute(h) && nob_file_exists(nob_temp_sv_to_cstr(h))) {
+        *out_path = cmk_path_normalize(ctx->arena, cmk_path_make_absolute(ctx->arena, h));
+        return true;
+    }
+
+    String_View source_local = cmk_path_join(ctx->arena, ctx->current_source_dir, h);
+    if (nob_file_exists(nob_temp_sv_to_cstr(source_local))) {
+        *out_path = cmk_path_normalize(ctx->arena, cmk_path_make_absolute(ctx->arena, source_local));
+        return true;
+    }
+
+    String_View source_include = cmk_path_join(ctx->arena,
+                                               cmk_path_join(ctx->arena, ctx->current_source_dir, sv_from_cstr("include")),
+                                               h);
+    if (nob_file_exists(nob_temp_sv_to_cstr(source_include))) {
+        *out_path = cmk_path_normalize(ctx->arena, cmk_path_make_absolute(ctx->arena, source_include));
+        return true;
+    }
+
+    String_View binary_local = cmk_path_join(ctx->arena, ctx->current_binary_dir, h);
+    if (nob_file_exists(nob_temp_sv_to_cstr(binary_local))) {
+        *out_path = cmk_path_normalize(ctx->arena, cmk_path_make_absolute(ctx->arena, binary_local));
+        return true;
+    }
+
+    String_View required_includes = eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_INCLUDES"));
+    size_t start = 0;
+    for (size_t i = 0; i <= required_includes.count; i++) {
+        bool sep = (i == required_includes.count) || required_includes.data[i] == ';';
+        if (!sep) continue;
+        String_View dir = nob_sv_from_parts(required_includes.data + start, i - start);
+        start = i + 1;
+        if (eval_type_size_try_resolve_from_dir(ctx, dir, h, out_path)) return true;
+    }
+
+    if (ctx->model) {
+        const String_List *include_dirs =
+            build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_INCLUDE_DIRS);
+        if (include_dirs) {
+            for (size_t i = 0; i < include_dirs->count; i++) {
+                if (eval_type_size_try_resolve_from_dir(ctx, include_dirs->items[i], h, out_path)) return true;
+            }
+        }
+
+        const String_List *system_include_dirs =
+            build_model_get_string_list(ctx->model, BUILD_MODEL_LIST_SYSTEM_INCLUDE_DIRS);
+        if (system_include_dirs) {
+            for (size_t i = 0; i < system_include_dirs->count; i++) {
+                if (eval_type_size_try_resolve_from_dir(ctx, system_include_dirs->items[i], h, out_path)) return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static void eval_type_size_emit_include_line(Evaluator_Context *ctx,
+                                             String_Builder *source,
+                                             String_View include_item) {
+    if (!ctx || !source) return;
+    String_View item = genex_trim(include_item);
+    if (item.count == 0) return;
+
+    sb_append_cstr(source, "#include ");
+    if ((item.data[0] == '<' && item.data[item.count - 1] == '>') ||
+        (item.data[0] == '"' && item.data[item.count - 1] == '"')) {
+        sb_append_buf(source, item.data, item.count);
+        sb_append(source, '\n');
+        return;
+    }
+
+    String_View resolved = sv_from_cstr("");
+    if (eval_type_size_try_resolve_header(ctx, item, &resolved)) {
+        sb_append(source, '"');
+        sb_append_buf(source, resolved.data, resolved.count);
+        sb_append_cstr(source, "\"\n");
+        return;
+    }
+
+    sb_append(source, '<');
+    sb_append_buf(source, item.data, item.count);
+    sb_append_cstr(source, ">\n");
+}
+
+static bool eval_type_size_emit_extra_includes(Evaluator_Context *ctx, String_Builder *source) {
+    if (!ctx || !source) return false;
+
+    String_View raw = eval_get_var(ctx, sv_from_cstr("CMAKE_EXTRA_INCLUDE_FILES"));
+    if (raw.count == 0) return false;
+
+    String_List items = {0};
+    string_list_init(&items);
+    split_semicolon_list(ctx, raw, &items);
+
+    bool added_any = false;
+    if (items.count == 0) {
+        String_View one = genex_trim(raw);
+        if (one.count > 0) {
+            eval_type_size_emit_include_line(ctx, source, one);
+            added_any = true;
+        }
+        return added_any;
+    }
+
+    for (size_t i = 0; i < items.count; i++) {
+        String_View item = genex_trim(items.items[i]);
+        if (item.count == 0) continue;
+        eval_type_size_emit_include_line(ctx, source, item);
+        added_any = true;
+    }
+
+    return added_any;
 }
 
 static bool sv_eq_ci(String_View a, String_View b) {
@@ -1243,6 +1498,40 @@ enum { MAX_RESOLVE_DEPTH = 64 };
 
 static String_View resolve_string_depth(Evaluator_Context *ctx, String_View input, size_t depth);
 
+static bool resolve_string_try_append_escape(String_View input, size_t *index, String_Builder *out) {
+    if (!index || !out) return false;
+    size_t i = *index;
+    if (i >= input.count || input.data[i] != '\\') return false;
+
+    if (i + 1 >= input.count) {
+        sb_append(out, '\\');
+        *index = i + 1;
+        return true;
+    }
+
+    char next = input.data[i + 1];
+    if (next == '\n') {
+        *index = i + 2;
+        return true;
+    }
+    if (next == '\r' && i + 2 < input.count && input.data[i + 2] == '\n') {
+        *index = i + 3;
+        return true;
+    }
+
+    switch (next) {
+        case '$': sb_append(out, '$'); *index = i + 2; return true;
+        case '\\': sb_append(out, '\\'); *index = i + 2; return true;
+        case 'n': sb_append(out, '\n'); *index = i + 2; return true;
+        case 'r': sb_append(out, '\r'); *index = i + 2; return true;
+        case 't': sb_append(out, '\t'); *index = i + 2; return true;
+        case ';': sb_append(out, ';'); *index = i + 2; return true;
+        case '"': sb_append(out, '"'); *index = i + 2; return true;
+        default:
+            return false;
+    }
+}
+
 static String_View resolve_string(Evaluator_Context *ctx, String_View input) {
     return resolve_string_depth(ctx, input, 0);
 }
@@ -1257,7 +1546,7 @@ static String_View resolve_string_depth(Evaluator_Context *ctx, String_View inpu
 
     bool has_special = false;
     for (size_t i = 0; i < input.count; i++) {
-        if (input.data[i] == '$') {
+        if (input.data[i] == '$' || input.data[i] == '\\') {
             has_special = true;
             break;
         }
@@ -1269,6 +1558,14 @@ static String_View resolve_string_depth(Evaluator_Context *ctx, String_View inpu
     size_t i = 0;
     
     while (i < input.count) {
+        if (input.data[i] == '\\') {
+            size_t escaped_next = i;
+            if (resolve_string_try_append_escape(input, &escaped_next, &sb)) {
+                i = escaped_next;
+                continue;
+            }
+        }
+
         if (input.data[i] == '$' && i + 1 < input.count) {
             char next_char = input.data[i + 1];
 
@@ -1881,7 +2178,6 @@ static void eval_string_command(Evaluator_Context *ctx, Args args) {
         String_View out_var = resolve_arg(ctx, args.items[3]);
         String_Builder input_sb = {0};
         for (size_t i = 4; i < args.count; i++) {
-            if (i > 4) sb_append(&input_sb, ' ');
             String_View p = resolve_arg(ctx, args.items[i]);
             sb_append_buf(&input_sb, p.data, p.count);
         }
@@ -1932,7 +2228,6 @@ static void eval_string_command(Evaluator_Context *ctx, Args args) {
             String_View out_var = resolve_arg(ctx, args.items[3]);
             String_Builder input_sb = {0};
             for (size_t i = 4; i < args.count; i++) {
-                if (i > 4) sb_append(&input_sb, ' ');
                 String_View p = resolve_arg(ctx, args.items[i]);
                 sb_append_buf(&input_sb, p.data, p.count);
             }
@@ -1957,7 +2252,6 @@ static void eval_string_command(Evaluator_Context *ctx, Args args) {
             String_View out_var = resolve_arg(ctx, args.items[4]);
             String_Builder input_sb = {0};
             for (size_t i = 5; i < args.count; i++) {
-                if (i > 5) sb_append(&input_sb, ' ');
                 String_View p = resolve_arg(ctx, args.items[i]);
                 sb_append_buf(&input_sb, p.data, p.count);
             }
@@ -2643,13 +2937,11 @@ static void eval_check_symbol_exists_command(Evaluator_Context *ctx, Args args) 
     String_View out_var = resolve_arg(ctx, args.items[2]);
     bool ok = false;
     bool used_probe = false;
-    if (eval_real_probes_enabled(ctx)) {
-        ok = eval_real_probe_check_symbol_exists(ctx, symbol, headers, &used_probe);
-        if (!used_probe) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_symbol_exists",
-                "probe real indisponivel (compiler nao encontrado); usando heuristica",
-                "defina CMAKE_C_COMPILER/CC para habilitar probe real");
-        }
+    ok = eval_real_probe_check_symbol_exists(ctx, symbol, headers, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_symbol_exists",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
     }
     if (!used_probe) {
         ok = eval_check_symbol_exists(ctx, symbol, headers);
@@ -2662,7 +2954,17 @@ static void eval_check_function_exists_command(Evaluator_Context *ctx, Args args
     if (args.count < 2) return;
     String_View function_name = resolve_arg(ctx, args.items[0]);
     String_View out_var = resolve_arg(ctx, args.items[1]);
-    bool ok = eval_check_function_exists(ctx, function_name);
+    bool ok = false;
+    bool used_probe = false;
+    ok = eval_real_probe_check_function_exists(ctx, function_name, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_function_exists",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
+    }
+    if (!used_probe) {
+        ok = eval_check_function_exists(ctx, function_name);
+    }
     eval_set_var(ctx, out_var, ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
 }
 
@@ -2671,7 +2973,17 @@ static void eval_check_include_file_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 2) return;
     String_View header = resolve_arg(ctx, args.items[0]);
     String_View out_var = resolve_arg(ctx, args.items[1]);
-    bool ok = eval_check_include_exists(ctx, header);
+    bool ok = false;
+    bool used_probe = false;
+    ok = eval_real_probe_check_include_files(ctx, header, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_include_file",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
+    }
+    if (!used_probe) {
+        ok = eval_check_include_exists(ctx, header);
+    }
     eval_set_var(ctx, out_var, ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
 }
 
@@ -2681,17 +2993,27 @@ static void eval_check_include_files_command(Evaluator_Context *ctx, Args args) 
     String_View headers = resolve_arg(ctx, args.items[0]);
     String_View out_var = resolve_arg(ctx, args.items[1]);
 
-    bool ok = true;
-    size_t start = 0;
-    for (size_t i = 0; i <= headers.count; i++) {
-        bool sep = (i == headers.count) || headers.data[i] == ';';
-        if (!sep) continue;
-        String_View item = genex_trim(nob_sv_from_parts(headers.data + start, i - start));
-        start = i + 1;
-        if (item.count == 0) continue;
-        if (!eval_check_include_exists(ctx, item)) {
-            ok = false;
-            break;
+    bool ok = false;
+    bool used_probe = false;
+    ok = eval_real_probe_check_include_files(ctx, headers, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_include_files",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
+    }
+    if (!used_probe) {
+        ok = true;
+        size_t start = 0;
+        for (size_t i = 0; i <= headers.count; i++) {
+            bool sep = (i == headers.count) || headers.data[i] == ';';
+            if (!sep) continue;
+            String_View item = genex_trim(nob_sv_from_parts(headers.data + start, i - start));
+            start = i + 1;
+            if (item.count == 0) continue;
+            if (!eval_check_include_exists(ctx, item)) {
+                ok = false;
+                break;
+            }
         }
     }
     eval_set_var(ctx, out_var, ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
@@ -2704,7 +3026,16 @@ static void eval_check_type_size_command(Evaluator_Context *ctx, Args args) {
     String_View out_code_var = sv_from_cstr(nob_temp_sprintf("%s_CODE", nob_temp_sv_to_cstr(out_var)));
 
     size_t size_val = 0;
-    bool ok = eval_check_type_size_value(type_name, &size_val);
+    bool used_probe = false;
+    bool ok = eval_real_probe_check_type_size(ctx, type_name, &size_val, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_type_size",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
+    }
+    if (!ok) {
+        ok = eval_check_type_size_value(type_name, &size_val);
+    }
     if (ok) {
         eval_set_var(ctx, out_var, sv_from_cstr(nob_temp_sprintf("%zu", size_val)), false, false);
         eval_set_var(ctx, sv_from_cstr(nob_temp_sprintf("HAVE_%s", nob_temp_sv_to_cstr(out_var))), sv_from_cstr("1"), false, false);
@@ -2771,7 +3102,8 @@ static bool eval_check_c_source_compiles(Evaluator_Context *ctx, String_View sou
     String_View s = genex_trim(source);
     if (s.count == 0) return false;
     if (cmake_string_is_false(s)) return false;
-    return true;
+    // Fallback sem compilador: conservador para evitar falso positivo.
+    return false;
 }
 
 // Avalia o comando 'check_c_source_compiles' e armazena resultado em variável
@@ -2932,6 +3264,23 @@ static bool eval_real_probe_check_c_source_compiles(Evaluator_Context *ctx, Stri
     return ok;
 }
 
+static bool eval_real_probe_check_function_exists(Evaluator_Context *ctx, String_View function_name, bool *used_probe) {
+    if (used_probe) *used_probe = false;
+    String_View fn = genex_trim(function_name);
+    if (fn.count == 0) return false;
+
+    String_View source = sv_from_cstr(nob_temp_sprintf(
+        "#ifdef __cplusplus\n"
+        "extern \"C\"\n"
+        "#endif\n"
+        "char %s(void);\n"
+        "int main(void){ return %s(); }\n",
+        nob_temp_sv_to_cstr(fn),
+        nob_temp_sv_to_cstr(fn)));
+
+    return eval_real_probe_check_c_source_compiles(ctx, source, used_probe);
+}
+
 static bool eval_real_probe_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers, bool *used_probe) {
     if (used_probe) *used_probe = false;
     if (!ctx) return false;
@@ -2945,6 +3294,156 @@ static bool eval_real_probe_check_symbol_exists(Evaluator_Context *ctx, String_V
     eval_pop_cc_override(&ov);
     return ok;
 }
+
+static bool eval_real_probe_check_include_files(Evaluator_Context *ctx, String_View headers, bool *used_probe) {
+    if (used_probe) *used_probe = false;
+    if (!ctx) return false;
+
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
+
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+    bool ok = toolchain_probe_check_include_files(&drv, headers, used_probe);
+    eval_pop_cc_override(&ov);
+    return ok;
+}
+
+static bool eval_real_probe_check_type_size(Evaluator_Context *ctx, String_View type_name, size_t *out_size, bool *used_probe) {
+    if (used_probe) *used_probe = false;
+    if (!ctx || !out_size) return false;
+
+    String_View t = genex_trim(type_name);
+    if (t.count == 0) return false;
+
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
+    if (used_probe) *used_probe = true;
+
+    bool msvc = toolchain_compiler_looks_msvc(compiler);
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+
+    static size_t s_type_size_probe_counter = 0;
+    s_type_size_probe_counter++;
+
+    String_View probe_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_probes"));
+    (void)sys_mkdir(probe_dir);
+
+    String_View base = cmk_path_join(
+        ctx->arena,
+        probe_dir,
+        sv_from_cstr(nob_temp_sprintf("check_type_size_%zu", s_type_size_probe_counter)));
+
+    String_View src_path = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
+#if defined(_WIN32)
+    String_View out_path = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
+#else
+    String_View out_path = base;
+#endif
+
+    String_Builder source = {0};
+    sb_append_cstr(&source, "#include <stddef.h>\n");
+    sb_append_cstr(&source, "#include <stdint.h>\n");
+    sb_append_cstr(&source, "#include <stdio.h>\n");
+    (void)eval_type_size_emit_extra_includes(ctx, &source);
+    sb_append_cstr(&source, "int main(void){ printf(\"%llu\", (unsigned long long)sizeof(");
+    sb_append_buf(&source, t.data, t.count);
+    sb_append_cstr(&source, ")); return 0; }\n");
+
+    bool wrote = sys_write_file(src_path, sb_to_sv(source));
+    nob_sb_free(source);
+    if (!wrote) {
+        eval_probe_cleanup_outputs(base, msvc);
+        eval_pop_cc_override(&ov);
+        return false;
+    }
+
+    String_List compile_definitions = {0};
+    String_List link_options = {0};
+    String_List link_libraries = {0};
+    string_list_init(&compile_definitions);
+    string_list_init(&link_options);
+    string_list_init(&link_libraries);
+
+    List_Add_Ud ud_defs = { .list = &compile_definitions, .unique = true };
+    eval_foreach_semicolon_item(ctx,
+                                eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS")),
+                                /*trim_ws=*/true,
+                                eval_list_add_item,
+                                &ud_defs);
+
+    List_Add_Ud ud_libs = { .list = &link_libraries, .unique = true };
+    eval_foreach_semicolon_item(ctx,
+                                eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_LIBRARIES")),
+                                /*trim_ws=*/true,
+                                eval_list_add_item,
+                                &ud_libs);
+
+    if (!msvc) {
+        String_View required_includes = eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_INCLUDES"));
+        String_List include_dirs = {0};
+        string_list_init(&include_dirs);
+        split_semicolon_list(ctx, required_includes, &include_dirs);
+        for (size_t i = 0; i < include_dirs.count; i++) {
+            String_View dir = eval_strip_matching_quotes(genex_trim(include_dirs.items[i]));
+            if (dir.count == 0) continue;
+            if (!cmk_path_is_absolute(dir)) {
+                dir = cmk_path_join(ctx->arena, ctx->current_source_dir, dir);
+            }
+            String_View opt = sv_from_cstr(nob_temp_sprintf("-I%s", nob_temp_sv_to_cstr(dir)));
+            string_list_add_unique(&link_options, ctx->arena, opt);
+        }
+    }
+
+    Toolchain_Compile_Request req = {
+        .compiler = compiler,
+        .src_path = src_path,
+        .out_path = out_path,
+        .compile_definitions = &compile_definitions,
+        .link_options = &link_options,
+        .link_libraries = &link_libraries,
+    };
+
+    Toolchain_Compile_Result compile_out = {0};
+    int run_rc = 1;
+    String_View run_output = sv_from_cstr("");
+    bool invoked = toolchain_try_run(&drv, &req, NULL, &compile_out, &run_rc, &run_output);
+
+    eval_probe_cleanup_outputs(base, msvc);
+    eval_pop_cc_override(&ov);
+
+    if (!invoked || !compile_out.ok || run_rc != 0) {
+        const char *dbg = getenv("CMK2NOB_DEBUG_PROBES");
+        if (dbg && dbg[0] != '\0' && strcmp(dbg, "0") != 0) {
+            printf("[INFO] check_type_size probe failed for `" SV_Fmt "`\n", SV_Arg(t));
+            if (compile_out.output.count > 0) {
+                printf("[INFO] compile output:\n%s\n", nob_temp_sv_to_cstr(compile_out.output));
+            }
+            if (run_rc != 0 && run_output.count > 0) {
+                printf("[INFO] run output:\n%s\n", nob_temp_sv_to_cstr(run_output));
+            }
+        }
+        return false;
+    }
+
+    String_View trimmed = genex_trim(run_output);
+    const char *text = nob_temp_sv_to_cstr(trimmed);
+    char *end = NULL;
+    unsigned long long parsed = strtoull(text, &end, 10);
+    if (end == text) {
+        const char *dbg = getenv("CMK2NOB_DEBUG_PROBES");
+        if (dbg && dbg[0] != '\0' && strcmp(dbg, "0") != 0) {
+            printf("[INFO] check_type_size probe parse failed for `" SV_Fmt "`\n", SV_Arg(t));
+            printf("[INFO] raw run output: %s\n", nob_temp_sv_to_cstr(run_output));
+        }
+        return false;
+    }
+
+    *out_size = (size_t)parsed;
+    return true;
+}
+
 static bool eval_check_library_exists(Evaluator_Context *ctx, String_View library, String_View function_name, String_View location) {
     (void)ctx;
     String_View lib = genex_trim(library);
@@ -2954,7 +3453,8 @@ static bool eval_check_library_exists(Evaluator_Context *ctx, String_View librar
     if (!cmake_check_truthy_candidate(fun)) return false;
     // LOCATION vazio e valido em CMake para usar search path padrao.
     if (loc.count > 0 && cmake_string_is_false(loc)) return false;
-    return true;
+    // Fallback sem compilador: conservador para evitar falso positivo.
+    return false;
 }
 
 // Avalia o comando 'check_library_exists' e armazena resultado em variável
@@ -2970,13 +3470,11 @@ static void eval_check_c_source_compiles_command(Evaluator_Context *ctx, Args ar
     String_View out_var = resolve_arg(ctx, args.items[1]);
     bool ok = false;
     bool used_probe = false;
-    if (eval_real_probes_enabled(ctx)) {
-        ok = eval_real_probe_check_c_source_compiles(ctx, source, &used_probe);
-        if (!used_probe) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_c_source_compiles",
-                "probe real indisponivel (compiler nao encontrado); usando heuristica",
-                "defina CMAKE_C_COMPILER/CC para habilitar probe real");
-        }
+    ok = eval_real_probe_check_c_source_compiles(ctx, source, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_c_source_compiles",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
     }
     if (!used_probe) {
         ok = eval_check_c_source_compiles(ctx, source);
@@ -2993,13 +3491,11 @@ static void eval_check_library_exists_command(Evaluator_Context *ctx, Args args)
     String_View out_var = resolve_arg(ctx, args.items[3]);
     bool ok = false;
     bool used_probe = false;
-    if (eval_real_probes_enabled(ctx)) {
-        ok = eval_real_probe_check_library_exists(ctx, library, function_name, location, &used_probe);
-        if (!used_probe) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_library_exists",
-                "probe real indisponivel (compiler nao encontrado); usando heuristica",
-                "defina CMAKE_C_COMPILER/CC para habilitar probe real");
-        }
+    ok = eval_real_probe_check_library_exists(ctx, library, function_name, location, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_library_exists",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
     }
     if (!used_probe) {
         ok = eval_check_library_exists(ctx, library, function_name, location);
@@ -3014,13 +3510,11 @@ static void eval_check_c_source_runs_command(Evaluator_Context *ctx, Args args) 
     String_View out_var = resolve_arg(ctx, args.items[1]);
     bool ok = false;
     bool used_probe = false;
-    if (eval_real_probes_enabled(ctx)) {
-        ok = eval_real_probe_check_c_source_runs(ctx, source, &used_probe);
-        if (!used_probe) {
-            diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_c_source_runs",
-                "probe real indisponivel (compiler nao encontrado); usando heuristica",
-                "defina CMAKE_C_COMPILER/CC para habilitar probe real");
-        }
+    ok = eval_real_probe_check_c_source_runs(ctx, source, &used_probe);
+    if (!used_probe && eval_real_probes_enabled(ctx)) {
+        diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_c_source_runs",
+            "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
+            "defina CMAKE_C_COMPILER/CC para habilitar probe real");
     }
     if (!used_probe) {
         ok = eval_check_c_source_runs(ctx, source);
@@ -5732,10 +6226,83 @@ static String_View append_property_value(Evaluator_Context *ctx, String_View cur
     return out;
 }
 
+typedef struct Eval_Interface_Rebuild_Ud {
+    Build_Target *target;
+} Eval_Interface_Rebuild_Ud;
+
+static void eval_rebuild_iface_definition_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
+    if (!ctx || !u || !u->target) return;
+    build_target_add_definition(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+}
+
+static void eval_rebuild_iface_compile_option_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
+    if (!ctx || !u || !u->target) return;
+    build_target_add_compile_option(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+}
+
+static void eval_rebuild_iface_include_dir_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
+    if (!ctx || !u || !u->target) return;
+    build_target_add_include_directory(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+}
+
+static void eval_rebuild_iface_link_option_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
+    if (!ctx || !u || !u->target) return;
+    build_target_add_link_option(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+}
+
+static void eval_rebuild_iface_link_dir_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
+    if (!ctx || !u || !u->target) return;
+    build_target_add_link_directory(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+}
+
+static void eval_rebuild_iface_link_lib_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
+    if (!ctx || !u || !u->target) return;
+    eval_append_link_library_item(ctx, u->target, VISIBILITY_INTERFACE, item);
+}
+
 static void eval_apply_target_property(Evaluator_Context *ctx, Build_Target *target, String_View key, String_View value, bool append, bool append_string) {
     String_View current = build_target_get_property(target, key);
     String_View final_value = append_property_value(ctx, current, value, append, append_string);
     build_target_set_property_smart(target, ctx->arena, key, final_value);
+
+    Eval_Interface_Rebuild_Ud ud = { .target = target };
+    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS"))) {
+        target->interface_compile_definitions.count = 0;
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_definition_item, &ud);
+        return;
+    }
+    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_COMPILE_OPTIONS"))) {
+        target->interface_compile_options.count = 0;
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_compile_option_item, &ud);
+        return;
+    }
+    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"))) {
+        target->interface_include_directories.count = 0;
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_include_dir_item, &ud);
+        return;
+    }
+    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_LINK_OPTIONS"))) {
+        target->interface_link_options.count = 0;
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_link_option_item, &ud);
+        return;
+    }
+    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_LINK_DIRECTORIES"))) {
+        target->interface_link_directories.count = 0;
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_link_dir_item, &ud);
+        return;
+    }
+    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_LINK_LIBRARIES"))) {
+        target->interface_dependencies.count = 0;
+        target->interface_libs.count = 0;
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_link_lib_item, &ud);
+        return;
+    }
 }
 
 static String_View target_property_list_to_sv(Evaluator_Context *ctx, const String_List *list) {

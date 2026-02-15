@@ -344,6 +344,7 @@ static String_View target_property_for_config(Build_Target *target, Build_Config
 static void collect_interface_usage_recursive(
     Build_Model *model,
     Build_Target *target,
+    const Logic_Eval_Context *logic_ctx,
     uint8_t *visited,
     Fast_String_Set_Entry **compile_defs_set,
     Fast_String_Set_Entry **compile_opts_set,
@@ -408,12 +409,53 @@ static void collect_interface_usage_recursive(
             string_list_add_unique_fast(link_targets, arena, link_targets_set, build_target_get_name(dep));
         }
         collect_interface_usage_recursive(
-            model, dep, visited,
+            model, dep, logic_ctx, visited,
             compile_defs_set, compile_opts_set, include_dirs_set,
             link_opts_set, link_dirs_set, link_libs_set, link_targets_set,
             compile_defs, compile_opts, include_dirs,
             link_opts, link_dirs, link_libs, link_targets
         );
+    }
+
+    // Static libraries need their implementation link requirements propagated to consumers.
+    if (build_target_get_type(base) == TARGET_STATIC_LIB) {
+        String_List base_link_opts = {0};
+        String_List base_link_dirs = {0};
+        String_List base_link_libs = {0};
+        string_list_init(&base_link_opts);
+        string_list_init(&base_link_dirs);
+        string_list_init(&base_link_libs);
+        build_target_collect_effective_link_options(base, arena, logic_ctx, &base_link_opts);
+        build_target_collect_effective_link_directories(base, arena, logic_ctx, &base_link_dirs);
+        build_target_collect_effective_link_libraries(base, arena, logic_ctx, &base_link_libs);
+        for (size_t i = 0; i < base_link_opts.count; i++) {
+            string_list_add_unique_fast(link_opts, arena, link_opts_set, base_link_opts.items[i]);
+        }
+        for (size_t i = 0; i < base_link_dirs.count; i++) {
+            string_list_add_unique_fast(link_dirs, arena, link_dirs_set, base_link_dirs.items[i]);
+        }
+        for (size_t i = 0; i < base_link_libs.count; i++) {
+            string_list_add_unique_fast(link_libs, arena, link_libs_set, base_link_libs.items[i]);
+        }
+
+        const String_List *base_deps = build_target_get_string_list(base, BUILD_TARGET_LIST_DEPENDENCIES);
+        for (size_t i = 0; i < base_deps->count; i++) {
+            String_View dep_name = base_deps->items[i];
+            Build_Target *dep = build_model_find_target(model, dep_name);
+            dep = resolve_alias_target(model, dep);
+            if (!dep) continue;
+
+            if (target_is_linkable_artifact(dep)) {
+                string_list_add_unique_fast(link_targets, arena, link_targets_set, build_target_get_name(dep));
+            }
+            collect_interface_usage_recursive(
+                model, dep, logic_ctx, visited,
+                compile_defs_set, compile_opts_set, include_dirs_set,
+                link_opts_set, link_dirs_set, link_libs_set, link_targets_set,
+                compile_defs, compile_opts, include_dirs,
+                link_opts, link_dirs, link_libs, link_targets
+            );
+        }
     }
 }
 
@@ -514,6 +556,11 @@ static void sb_append_target_output_path_literal(String_Builder *sb, Build_Targe
     Target_Type target_type = build_target_get_type(target);
     String_View default_cfg = codegen_active_config_name(active_cfg);
     if (target_type == TARGET_IMPORTED) {
+        String_View imported_implib = target_property_for_config(target, active_cfg, "IMPORTED_IMPLIB", sv_from_cstr(""));
+        if (imported_implib.count > 0) {
+            sb_append_c_string_literal(sb, imported_implib);
+            return;
+        }
         String_View imported_location = target_property_for_config(target, active_cfg, "IMPORTED_LOCATION", sv_from_cstr(""));
         if (imported_location.count > 0) {
             sb_append_c_string_literal(sb, imported_location);
@@ -1517,7 +1564,7 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
             string_list_add_unique_fast(&all_link_targets, arena, &all_link_targets_set, build_target_get_name(dep));
         }
         collect_interface_usage_recursive(
-            model, dep, visited,
+            model, dep, &logic_ctx, visited,
             &all_compile_defs_set, &all_compile_opts_set, &all_include_dirs_set,
             &all_link_opts_set, &all_link_dirs_set, &all_link_libs_set, &all_link_targets_set,
             &all_compile_defs, &all_compile_opts, &all_include_dirs,
@@ -1692,12 +1739,14 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
 
         if (!archive_only_target) {
         for (size_t i = 0; i < all_link_opts.count; i++) {
-            String_View opt = all_link_opts.items[i];
+            String_View opt = sv_trim_spaces(all_link_opts.items[i]);
+            if (opt.count == 0) continue;
             sb_appendf(sb, "    nob_cmd_append(&cmd_"SV_Fmt", \""SV_Fmt"\");\n", SV_Arg(ident), SV_Arg(opt));
         }
 
         for (size_t i = 0; i < all_link_dirs.count; i++) {
-            String_View dir = all_link_dirs.items[i];
+            String_View dir = sv_trim_spaces(all_link_dirs.items[i]);
+            if (dir.count == 0) continue;
             sb_append_cstr(sb, "    #if defined(_MSC_VER) && !defined(__clang__)\n");
             sb_appendf(sb, "    nob_cmd_append(&cmd_"SV_Fmt", nob_temp_sprintf(\"/LIBPATH:%%s\", \""SV_Fmt"\"));\n", SV_Arg(ident), SV_Arg(dir));
             sb_append_cstr(sb, "    #else\n");
@@ -1712,12 +1761,19 @@ static void generate_target_code(Build_Model *model, Build_Target *target, Strin
             Build_Target *dep = build_model_find_target(model, all_link_targets.items[i]);
             dep = resolve_alias_target(model, dep);
             if (!dep || !target_is_linkable_artifact(dep)) continue;
+            if (build_target_get_type(dep) == TARGET_IMPORTED) {
+                String_View imported_implib = target_property_for_config(dep, active_cfg, "IMPORTED_IMPLIB", sv_from_cstr(""));
+                String_View imported_location = target_property_for_config(dep, active_cfg, "IMPORTED_LOCATION", sv_from_cstr(""));
+                if (sv_trim_spaces(imported_implib).count == 0 && sv_trim_spaces(imported_location).count == 0) {
+                    continue;
+                }
+            }
             sb_appendf(sb, "    nob_cmd_append(&cmd_"SV_Fmt", ", SV_Arg(ident));
             sb_append_target_output_path_literal(sb, dep, active_cfg);
             sb_append_cstr(sb, ");\n");
         }
         for (size_t i = 0; i < all_link_libs.count; i++) {
-            String_View lib = all_link_libs.items[i];
+            String_View lib = sv_trim_spaces(all_link_libs.items[i]);
             if (lib.count == 0) continue;
             if (sv_eq_ci(lib, sv_from_cstr("debug")) ||
                 sv_eq_ci(lib, sv_from_cstr("optimized")) ||

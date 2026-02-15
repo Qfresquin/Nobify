@@ -631,3 +631,53 @@ bool toolchain_probe_check_symbol_exists(const Toolchain_Driver *drv,
 
     return ok;
 }
+
+bool toolchain_probe_check_include_files(const Toolchain_Driver *drv, String_View headers, bool *used_probe) {
+    if (used_probe) *used_probe = false;
+    if (!drv || !drv->arena) return false;
+
+    String_View compiler = sv_from_cstr("");
+    if (!tc_probe_compiler_available(drv, &compiler)) return false;
+    if (used_probe) *used_probe = true;
+
+    bool msvc = toolchain_compiler_looks_msvc(compiler);
+    String_View base = tc_make_probe_base_path(drv, "check_include_files");
+    String_View src_path = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
+#if defined(_WIN32)
+    String_View out_path = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
+#else
+    String_View out_path = base;
+#endif
+
+    String_Builder source = {0};
+    tc_probe_source_with_headers(&source, headers);
+    sb_append_cstr(&source, "int main(void){ return 0; }\n");
+
+    bool wrote = sys_write_file(src_path, sb_to_sv(source));
+    nob_sb_free(source);
+    if (!wrote) {
+        tc_cleanup_probe_outputs(base, msvc);
+        return false;
+    }
+
+    String_List defs = {0};
+    String_List opts = {0};
+    String_List libs = {0};
+    string_list_init(&defs);
+    string_list_init(&opts);
+    string_list_init(&libs);
+
+    Toolchain_Compile_Request req = {
+        .compiler = compiler,
+        .src_path = src_path,
+        .out_path = out_path,
+        .compile_definitions = &defs,
+        .link_options = &opts,
+        .link_libraries = &libs,
+    };
+
+    Toolchain_Compile_Result compile_out = {0};
+    bool ok = toolchain_try_compile(drv, &req, &compile_out) && compile_out.ok;
+    tc_cleanup_probe_outputs(base, msvc);
+    return ok;
+}

@@ -327,6 +327,20 @@ TEST(toolchain_driver_compiler_probe_and_try_run) {
     ASSERT(used_probe == true);
     ASSERT(compiles == true);
 
+    bool used_include_probe = false;
+    bool includes_ok = toolchain_probe_check_include_files(&drv,
+                                                           sv_from_cstr("stdio.h;stddef.h"),
+                                                           &used_include_probe);
+    ASSERT(used_include_probe == true);
+    ASSERT(includes_ok == true);
+
+    bool used_missing_include_probe = false;
+    bool missing_include_ok = toolchain_probe_check_include_files(&drv,
+                                                                  sv_from_cstr("cmk2nob_header_that_should_not_exist_12345.h"),
+                                                                  &used_missing_include_probe);
+    ASSERT(used_missing_include_probe == true);
+    ASSERT(missing_include_ok == false);
+
     String_View src_path = sv_from_cstr("temp_phase2_toolchain_ok.c");
 #if defined(_WIN32)
     String_View out_path = sv_from_cstr("temp_phase2_toolchain_ok.exe");
@@ -410,6 +424,12 @@ TEST(cmake_regex_glob_find_utils_basic) {
                                                       sv_from_cstr("version=1.2.3-beta"),
                                                       sv_from_cstr("\\1"));
     ASSERT(nob_sv_eq(replaced, sv_from_cstr("version=1.2.3")));
+
+    String_View replaced_dollar = cmk_regex_replace_backrefs(arena,
+                                                             sv_from_cstr("([0-9]+)"),
+                                                             sv_from_cstr("v42"),
+                                                             sv_from_cstr("\\$\\1"));
+    ASSERT(nob_sv_eq(replaced_dollar, sv_from_cstr("v$42")));
 
     ASSERT(cmk_glob_match(sv_from_cstr("*.txt"), sv_from_cstr("a.txt")) == true);
     ASSERT(cmk_glob_match(sv_from_cstr("*.txt"), sv_from_cstr("a.c")) == false);

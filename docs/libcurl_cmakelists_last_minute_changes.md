@@ -58,3 +58,54 @@
   - nao avanca para erro tardio de compilacao C por header ausente;
   - estado local observado: `1 erro(s)` e `5 warning(s)` (dependencias opcionais ausentes).
 - Decisoes de arquitetura e comportamento generico foram consolidadas em `docs/transpiler_dependency_resolution.md`.
+
+## 2026-02-15T04:36:19-03:00
+- Validacao com dependencia real instalada:
+  - instalado via MSYS2 UCRT64: `mingw-w64-ucrt-x86_64-libpsl` (com `libidn2`/`libunistring`).
+  - `pkg-config --modversion libpsl` passou (`0.21.5`).
+- Reexecucao de `cmk2nob` no `curl-8.18.0/CMakeLists.txt`:
+  - `find_package(Libpsl REQUIRED)` passou e marcou origem `module` (via `pkg-config` no fluxo `FindLibpsl.cmake`).
+  - avancou para etapas posteriores do projeto.
+- Novo bloqueio observado (apos superar `Libpsl`):
+  - dois erros de parser (`argumento nao fechado, esperado ')'`) durante processamento em subdiretorios `lib` e `src`.
+  - contexto do bloqueio: includes de `Makefile.inc.cmake` no fluxo de build do curl.
+
+## 2026-02-15T12:40:00-03:00
+- Fechada a regressao de parser em `lib/src` de forma generica:
+  - `resolve_string_depth` agora aplica escapes CMake antes de expandir variaveis/genex.
+  - `string(REPLACE|REGEX MATCH|REGEX REPLACE)` passou a concatenar `input...` sem inserir espaco.
+  - `cmk_regex_replace_backrefs` passou a aceitar `\$` no template de replacement sem quebrar backrefs.
+- Novos testes de regressao adicionados para:
+  - replacement `"\${\\1}"` em `string(REGEX REPLACE ...)`;
+  - `string(REPLACE ... "\n" ...)`;
+  - transformacao estilo `Makefile.inc` + `include(...)`.
+- Validacao atual:
+  - `nob.exe test`: `343/343` passou.
+  - `cmk2nob curl-8.18.0/CMakeLists.txt`: sucesso com `0 erro(s)` (mantendo warnings de dependencias opcionais ausentes).
+  - `nob_generated.c` compila com `-Ivendor`; a execucao do runner agora falha adiante por ambiente/toolchain (`netinet/in.h` ausente no compilador C atual do host), nao por parser/transpilacao.
+
+## 2026-02-15T06:25:00-03:00
+- Removida regra especifica de projeto no fallback de `check_type_size`:
+  - excluido `curl_off_t` hardcoded de `eval_check_type_size_value` em `src/transpiler/transpiler_evaluator.inc.c`.
+  - o evaluator manteve apenas tipos genericos para fallback local.
+- Revalidacao ponta-a-ponta no cenario atual:
+  1. `nob.exe`
+  2. `cmk2nob.exe curl-8.18.0/CMakeLists.txt`
+  3. `cc -Ivendor nob_generated.c -o nob_generated_runner.exe`
+  4. `nob_generated_runner.exe`
+- Resultado da execucao final do runner: `EXIT=0`.
+- Estado final: fluxo do `curl` conclui no `nob_generated` sem hacks especificos no transpiler.
+
+## 2026-02-15T07:05:00-03:00
+- Fechado de forma generica o caso de tipos definidos por header em `check_type_size`:
+  - `check_type_size` agora tenta probe real (compila + executa snippet) para obter `sizeof(T)` de tipos nao triviais.
+  - suporte a `CMAKE_EXTRA_INCLUDE_FILES` no snippet do probe.
+  - resolucao de headers para caminho absoluto (evita dependencia do diretorio do arquivo de probe).
+  - fallback conservador antigo continua para cenarios sem compilador.
+- Regressao coberta por teste novo:
+  - `check_type_size_real_probe_with_extra_include_files` em `test/test_transpiler.c`.
+- Validacao completa apos ajuste:
+  1. `nob.exe test` -> `344/344` passou.
+  2. `cmk2nob.exe curl-8.18.0/CMakeLists.txt` -> `EXIT=0`.
+  3. `cc -Ivendor nob_generated.c -o nob_generated_runner.exe` -> sucesso.
+  4. `nob_generated_runner.exe` -> `EXIT=0`.

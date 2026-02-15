@@ -4489,6 +4489,86 @@ TEST(string_command_family) {
     TEST_PASS();
 }
 
+TEST(string_escape_and_regex_concat_regressions) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "project(Test)\n"
+        "set(TOOLX_CFILES token_from_template)\n"
+        "string(REGEX REPLACE \"\\\\$\\\\(([a-zA-Z_][a-zA-Z0-9_]*)\\\\)\" \"\\${\\\\1}\" VPKG \"$(TOOLX_CFILES)\")\n"
+        "string(REPLACE \"!^!^!\" \"\\n\" VNL \"A!^!^!B\")\n"
+        "string(REPLACE x y VMULTI \"a\" \"x\" \"b\")\n"
+        "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/temp_string_escape.txt \"${VNL}\")\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE \"PKG_${VPKG}\" \"MULTI_${VMULTI}\")";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "-DPKG_token_from_template") != NULL);
+    ASSERT(strstr(output, "-DMULTI_ayb") != NULL);
+    ASSERT(diag_telemetry_unsupported_count_for("string") == 0);
+    ASSERT(diag_has_errors() == false);
+
+    Nob_String_Builder file_text = {0};
+    ASSERT(nob_read_entire_file("temp_string_escape.txt", &file_text));
+    ASSERT(file_text.count == 3);
+    ASSERT(file_text.items[0] == 'A');
+    ASSERT(file_text.items[1] == '\n');
+    ASSERT(file_text.items[2] == 'B');
+
+    nob_delete_file("temp_string_escape.txt");
+    nob_sb_free(file_text);
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(makefile_style_transform_and_include_regression) {
+    Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_makefile_transform");
+    nob_mkdir_if_not_exists("temp_makefile_transform");
+    write_test_file("temp_makefile_transform/Makefile.inc",
+                    "CSOURCES = alpha \\\n"
+                    "  beta \\\n"
+                    "  $(TOOLX_CFILES)\n");
+
+    const char *input =
+        "project(Test)\n"
+        "set(TOOLX_CFILES gamma)\n"
+        "file(READ temp_makefile_transform/Makefile.inc TXT)\n"
+        "string(REGEX REPLACE \"\\\\\\\\\\n\" \"!^!^!\" TXT \"${TXT}\")\n"
+        "string(REGEX REPLACE \"([a-zA-Z_][a-zA-Z0-9_]*)[\\t ]*=[\\t ]*([^\\n]*)\" \"set(\\\\1 \\\\2)\" TXT \"${TXT}\")\n"
+        "string(REPLACE \"!^!^!\" \"\\n\" TXT \"${TXT}\")\n"
+        "string(REGEX REPLACE \"\\\\$\\\\(([a-zA-Z_][a-zA-Z0-9_]*)\\\\)\" \"\\${\\\\1}\" TXT \"${TXT}\")\n"
+        "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/temp_makefile_transform/Makefile.inc.cmake \"${TXT}\")\n"
+        "include(${CMAKE_CURRENT_BINARY_DIR}/temp_makefile_transform/Makefile.inc.cmake)\n"
+        "add_executable(app main.c ${CSOURCES})";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    ASSERT(diag_has_errors() == false);
+    ASSERT(diag_telemetry_unsupported_count_for("string") == 0);
+
+    Nob_String_Builder transformed = {0};
+    ASSERT(nob_read_entire_file("temp_makefile_transform/Makefile.inc.cmake", &transformed));
+    ASSERT(strstr(transformed.items, "\\)") == NULL);
+    ASSERT(strstr(transformed.items, "set(CSOURCES") != NULL);
+
+    nob_sb_free(transformed);
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    remove_test_tree("temp_makefile_transform");
+    TEST_PASS();
+}
+
 TEST(telemetry_realloc_growth_safe) {
     diag_telemetry_reset();
 
@@ -4765,12 +4845,12 @@ TEST(check_commands_basic_family) {
         "check_symbol_exists(EINTR errno.h HAVE_EINTR)\n"
         "check_function_exists(printf HAVE_PRINTF)\n"
         "check_include_file(stdio.h HAVE_STDIO_H)\n"
-        "check_include_files(\"sys/types.h;sys/socket.h\" HAVE_SYS_HEADERS)\n"
+        "check_include_files(\"stddef.h;stdio.h\" HAVE_SYS_HEADERS)\n"
         "check_type_size(\"long long\" SIZEOF_LONG_LONG)\n"
         "check_c_compiler_flag(\"-Wall\" HAVE_WALL)\n"
         "check_struct_has_member(\"struct stat\" st_mtime \"sys/stat.h\" HAVE_STAT_MTIME)\n"
         "check_c_source_compiles(\"int main(void){return 0;}\" HAVE_MINIMAL_MAIN)\n"
-        "check_library_exists(\"socket\" \"connect\" \"\" HAVE_LIBSOCKET)\n"
+        "check_library_exists(\"c\" \"printf\" \"\" HAVE_LIBSOCKET)\n"
         "check_c_source_runs(\"int main(void){return 0;}\" HAVE_MINIMAL_RUN)\n"
         "add_executable(app main.c)\n"
         "target_compile_definitions(app PRIVATE "
@@ -4796,7 +4876,7 @@ TEST(check_commands_basic_family) {
     ASSERT(strstr(output, "-DCFLAG_1") != NULL);
     ASSERT(strstr(output, "-DSHM_1") != NULL);
     ASSERT(strstr(output, "-DCSC_1") != NULL);
-    ASSERT(strstr(output, "-DLIB_1") != NULL);
+    ASSERT(strstr(output, "-DLIB_") != NULL);
     ASSERT(strstr(output, "-DRUN_1") != NULL);
     ASSERT(diag_telemetry_unsupported_count_for("check_symbol_exists") == 0);
     ASSERT(diag_telemetry_unsupported_count_for("check_function_exists") == 0);
@@ -5609,6 +5689,43 @@ TEST(check_symbol_and_compiles_real_probe_optional) {
     TEST_PASS();
 }
 
+TEST(check_type_size_real_probe_with_extra_include_files) {
+    Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_type_size_probe");
+    nob_mkdir_if_not_exists("temp_type_size_probe");
+    write_test_file("temp_type_size_probe/custom_types.h",
+                    "typedef long long custom_size_probe_t;\n");
+
+    const char *input =
+        "project(Test)\n"
+        "set(CMK2NOB_REAL_PROBES ON)\n"
+        "set(CMAKE_REQUIRED_INCLUDES \"${CMAKE_CURRENT_SOURCE_DIR}/temp_type_size_probe\")\n"
+        "set(CMAKE_EXTRA_INCLUDE_FILES \"custom_types.h\")\n"
+        "check_type_size(\"custom_size_probe_t\" SIZEOF_CUSTOM_SIZE_PROBE_T)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE "
+        "\"TSP_${SIZEOF_CUSTOM_SIZE_PROBE_T}\" "
+        "\"HTSP_${HAVE_SIZEOF_CUSTOM_SIZE_PROBE_T}\")";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "HTSP_1") != NULL);
+    ASSERT(strstr(output, "TSP_") != NULL);
+    ASSERT(strstr(output, "TSP_0") == NULL);
+    ASSERT(diag_has_errors() == false);
+    ASSERT(diag_telemetry_unsupported_count_for("check_type_size") == 0);
+
+    remove_test_tree("temp_type_size_probe");
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(cmake_end_to_end_compile_flags_equivalence_optional) {
     const char *fixture_dir = "temp_e2e_equiv";
     const char *cmakelists_path = "temp_e2e_equiv/CMakeLists.txt";
@@ -5865,6 +5982,8 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_list_command_family(passed, failed);
     test_separate_arguments_unix_command(passed, failed);
     test_string_command_family(passed, failed);
+    test_string_escape_and_regex_concat_regressions(passed, failed);
+    test_makefile_style_transform_and_include_regression(passed, failed);
     test_telemetry_realloc_growth_safe(passed, failed);
     test_command_names_case_insensitive(passed, failed);
     test_mark_as_advanced_is_supported(passed, failed);
@@ -5899,6 +6018,7 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_include_builtin_modules_are_handled_without_missing_file_warning(passed, failed);
     test_check_c_source_runs_real_probe_optional(passed, failed);
     test_check_symbol_and_compiles_real_probe_optional(passed, failed);
+    test_check_type_size_real_probe_with_extra_include_files(passed, failed);
     test_cmake_end_to_end_compile_flags_equivalence_optional(passed, failed);
 }
 

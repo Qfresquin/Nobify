@@ -23,6 +23,7 @@ Este documento descreve a semantica generica de resolucao de dependencias no tra
   - `<Pkg>_FOUND`
   - variante upper-case (`<PKG>_FOUND`)
 - Nao existe mais fallback sintetico de sucesso por inferencia de nome.
+- Nao existe tabela de aliases hardcoded por projeto (pacotes/tipos especificos de um unico projeto).
 
 ## Semantica de erro
 - `find_package(... REQUIRED)`:
@@ -60,6 +61,24 @@ Comportamento:
 ## Regex e leitura de arquivo
 - `string(REGEX MATCH ...)` e `string(REGEX REPLACE ...)` sao genericos.
 - `file(STRINGS ... REGEX ...)` suportado com filtros de tamanho e limite de contagem.
+
+## Semantica de `string(...)` e escapes
+- Em argumentos quoted, o evaluator aplica escapes CMake antes da expansao:
+  - `\$` -> `$` literal (sem disparar `${...}`)
+  - `\\` -> `\`
+  - `\n`, `\r`, `\t`, `\;`, `\"`
+  - continuacao de linha com `\` + quebra de linha e consumida
+- Em `string(REPLACE ...)`, `string(REGEX MATCH ...)` e `string(REGEX REPLACE ...)`, multiplos argumentos `input...` sao concatenados sem espaco automatico.
+- Em `string(REGEX REPLACE ...)`, templates de replacement aceitam:
+  - backrefs (`\1..\9`)
+  - `\$` para `$` literal.
+- Esse comportamento evita geracao de CMake invalido em fluxos que transformam arquivos texto e depois fazem `include(...)` do resultado.
+
+## `check_type_size`
+- O transpiler tenta probe real (compila + executa) para determinar `sizeof(T)` quando compilador esta disponivel.
+- O snippet do probe respeita `CMAKE_EXTRA_INCLUDE_FILES`.
+- Caminhos de headers extras sao resolvidos para absolutos quando possivel para evitar dependencia de diretorio relativo do arquivo de probe.
+- Sem compilador disponivel, permanece fallback conservador para tipos basicos conhecidos.
 
 ## `OBJECT` libraries e `$<TARGET_OBJECTS:...>`
 - Dependencias de objetos sao registradas no modelo.

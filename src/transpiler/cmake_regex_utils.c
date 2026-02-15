@@ -5,38 +5,30 @@
 #include <string.h>
 
 static String_View cmk_regex_unescape_cmake(Arena *arena, String_View text) {
+    (void)arena;
+    return text;
+}
+
+static String_View cmk_regex_unescape_replacement_template(Arena *arena, String_View text) {
     if (!arena || text.count == 0) return text;
 
-    bool has_escape = false;
-    for (size_t i = 0; i < text.count; i++) {
-        if (text.data[i] == '\\') {
-            has_escape = true;
+    bool has_escape_dollar = false;
+    for (size_t i = 0; i + 1 < text.count; i++) {
+        if (text.data[i] == '\\' && text.data[i + 1] == '$') {
+            has_escape_dollar = true;
             break;
         }
     }
-    if (!has_escape) return text;
+    if (!has_escape_dollar) return text;
 
     String_Builder sb = {0};
     for (size_t i = 0; i < text.count; i++) {
-        char ch = text.data[i];
-        if (ch == '\\' && i + 1 < text.count) {
-            char next = text.data[i + 1];
-            switch (next) {
-                case '\\': sb_append(&sb, '\\'); break;
-                case 'n': sb_append(&sb, '\n'); break;
-                case 'r': sb_append(&sb, '\r'); break;
-                case 't': sb_append(&sb, '\t'); break;
-                case ';': sb_append(&sb, ';'); break;
-                case '"': sb_append(&sb, '"'); break;
-                default:
-                    sb_append(&sb, '\\');
-                    sb_append(&sb, next);
-                    break;
-            }
+        if (text.data[i] == '\\' && i + 1 < text.count && text.data[i + 1] == '$') {
+            sb_append(&sb, '$');
             i++;
             continue;
         }
-        sb_append(&sb, ch);
+        sb_append(&sb, text.data[i]);
     }
 
     String_View out = sv_from_cstr(arena_strndup(arena, sb.items ? sb.items : "", sb.count));
@@ -70,7 +62,7 @@ bool cmk_regex_match_groups(Arena *arena, String_View pattern, String_View input
 String_View cmk_regex_replace_backrefs(Arena *arena, String_View pattern, String_View input, String_View replacement) {
     if (!arena) return input;
     pattern = cmk_regex_unescape_cmake(arena, pattern);
-    replacement = cmk_regex_unescape_cmake(arena, replacement);
+    replacement = cmk_regex_unescape_replacement_template(arena, replacement);
     if (pattern.count == 0) return input;
 
     String_Builder out = {0};
@@ -167,7 +159,7 @@ String_View cmk_regex_replace_backrefs(Arena *arena, String_View pattern, String
 
     regex_t re = {0};
     if (!cmk_regex_compile(&re, arena, pattern)) return input;
-    replacement = cmk_regex_unescape_cmake(arena, replacement);
+    replacement = cmk_regex_unescape_replacement_template(arena, replacement);
 
     size_t max_groups = re.re_nsub + 1;
     if (max_groups < 1) max_groups = 1;
