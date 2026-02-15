@@ -6304,15 +6304,23 @@ static void eval_append_link_library_item(Evaluator_Context *ctx, Build_Target *
     }
 }
 
+typedef struct Eval_Link_Library_Value_Ud {
+    Build_Target *target;
+    Visibility visibility;
+} Eval_Link_Library_Value_Ud;
+
+static void eval_append_link_library_value_item(Evaluator_Context *ctx, String_View item, void *ud) {
+    Eval_Link_Library_Value_Ud *u = (Eval_Link_Library_Value_Ud*)ud;
+    if (!u) return;
+    eval_append_link_library_item(ctx, u->target, u->visibility, item);
+}
+
 static void eval_append_link_library_value(Evaluator_Context *ctx, Build_Target *target, Visibility visibility, String_View value) {
-    size_t start = 0;
-    for (size_t i = 0; i <= value.count; i++) {
-        bool at_sep = (i == value.count) || value.data[i] == ';';
-        if (!at_sep) continue;
-        String_View item = genex_trim(nob_sv_from_parts(value.data + start, i - start));
-        eval_append_link_library_item(ctx, target, visibility, item);
-        start = i + 1;
-    }
+    Eval_Link_Library_Value_Ud ud = {
+        .target = target,
+        .visibility = visibility,
+    };
+    eval_foreach_semicolon_item(ctx, value, /*trim_ws=*/true, eval_append_link_library_value_item, &ud);
 }
 
 // Avalia o comando 'link_libraries'
@@ -6601,48 +6609,39 @@ static String_View append_property_value(Evaluator_Context *ctx, String_View cur
 
 typedef struct Eval_Interface_Rebuild_Ud {
     Build_Target *target;
+    Build_Target_Derived_Property_Kind apply_kind;
 } Eval_Interface_Rebuild_Ud;
 
 typedef struct Eval_Interface_Rebuild_Spec {
     const char *property_name;
     Build_Target_Derived_Property_Kind derived_kind;
-    Eval_SV_Item_Fn item_handler;
 } Eval_Interface_Rebuild_Spec;
 
-static void eval_rebuild_iface_definition_item(Evaluator_Context *ctx, String_View item, void *ud) {
+static void eval_rebuild_iface_item(Evaluator_Context *ctx, String_View item, void *ud) {
     Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
     if (!ctx || !u || !u->target) return;
-    build_target_add_definition(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
-}
-
-static void eval_rebuild_iface_compile_option_item(Evaluator_Context *ctx, String_View item, void *ud) {
-    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
-    if (!ctx || !u || !u->target) return;
-    build_target_add_compile_option(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
-}
-
-static void eval_rebuild_iface_include_dir_item(Evaluator_Context *ctx, String_View item, void *ud) {
-    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
-    if (!ctx || !u || !u->target) return;
-    build_target_add_include_directory(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
-}
-
-static void eval_rebuild_iface_link_option_item(Evaluator_Context *ctx, String_View item, void *ud) {
-    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
-    if (!ctx || !u || !u->target) return;
-    build_target_add_link_option(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
-}
-
-static void eval_rebuild_iface_link_dir_item(Evaluator_Context *ctx, String_View item, void *ud) {
-    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
-    if (!ctx || !u || !u->target) return;
-    build_target_add_link_directory(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
-}
-
-static void eval_rebuild_iface_link_lib_item(Evaluator_Context *ctx, String_View item, void *ud) {
-    Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
-    if (!ctx || !u || !u->target) return;
-    eval_append_link_library_item(ctx, u->target, VISIBILITY_INTERFACE, item);
+    switch (u->apply_kind) {
+        case BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS:
+            build_target_add_definition(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS:
+            build_target_add_compile_option(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES:
+            build_target_add_include_directory(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS:
+            build_target_add_link_option(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES:
+            build_target_add_link_directory(u->target, ctx->arena, item, VISIBILITY_INTERFACE, CONFIG_ALL);
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES:
+            eval_append_link_library_item(ctx, u->target, VISIBILITY_INTERFACE, item);
+            break;
+        default:
+            break;
+    }
 }
 
 static bool eval_rebuild_derived_interface_property(Evaluator_Context *ctx,
@@ -6652,44 +6651,41 @@ static bool eval_rebuild_derived_interface_property(Evaluator_Context *ctx,
     static const Eval_Interface_Rebuild_Spec specs[] = {
         {
             "INTERFACE_COMPILE_DEFINITIONS",
-            BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS,
-            eval_rebuild_iface_definition_item
+            BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS
         },
         {
             "INTERFACE_COMPILE_OPTIONS",
-            BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS,
-            eval_rebuild_iface_compile_option_item
+            BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS
         },
         {
             "INTERFACE_INCLUDE_DIRECTORIES",
-            BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES,
-            eval_rebuild_iface_include_dir_item
+            BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES
         },
         {
             "INTERFACE_LINK_OPTIONS",
-            BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS,
-            eval_rebuild_iface_link_option_item
+            BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS
         },
         {
             "INTERFACE_LINK_DIRECTORIES",
-            BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES,
-            eval_rebuild_iface_link_dir_item
+            BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES
         },
         {
             "INTERFACE_LINK_LIBRARIES",
-            BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES,
-            eval_rebuild_iface_link_lib_item
+            BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES
         },
     };
 
     if (!ctx || !target) return false;
 
-    Eval_Interface_Rebuild_Ud ud = { .target = target };
     for (size_t i = 0; i < sizeof(specs) / sizeof(specs[0]); i++) {
         const Eval_Interface_Rebuild_Spec *spec = &specs[i];
         if (!sv_eq_ci(key, sv_from_cstr(spec->property_name))) continue;
+        Eval_Interface_Rebuild_Ud ud = {
+            .target = target,
+            .apply_kind = spec->derived_kind,
+        };
         build_target_reset_derived_property(target, spec->derived_kind);
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, spec->item_handler, &ud);
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_item, &ud);
         return true;
     }
     return false;

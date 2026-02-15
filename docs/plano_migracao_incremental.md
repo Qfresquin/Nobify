@@ -7,8 +7,8 @@
 - Documento de governanca: este arquivo e a referencia unica para status, gates e riscos da migracao.
 
 ### Status de implementacao (rodada atual)
-- [x] Q1 (parcial): `Transpiler_Run_Options` + entrada `transpile_datree_ex` + adaptacao do app para injecao de contexto.
-- [x] Q2 (parcial): generalizacao do rebuild de `INTERFACE_*` via spec unica + facade no `Build_Model`.
+- [x] Q1 (concluido): `Transpiler_Run_Options` + entrada `transpile_datree_ex` + eliminacao de dependencia global no fluxo principal + gate arquitetural em teste para bloquear regressao.
+- [x] Q2 (concluido): rebuild de `INTERFACE_*` consolidado em fluxo generico unico + parse de listas `;` unificado no caminho de link libs + aplicacao centralizada por `eval_apply_target_property`.
 - [x] Q3 (foundation): introducao de `Command_Spec` com validacao de aridade no dispatcher.
 - [x] Q4 (parcial): camada `transpiler_effects` criada e integrada em `execute_process`, `exec_program`, fluxo `pkg-config` e probes/toolchain.
 - [x] Q5 (parcial): `build_model_types.h` extraido de `build_model.h` e headers utilitarios do transpiler migrados para dependencia por tipos.

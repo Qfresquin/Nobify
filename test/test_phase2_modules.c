@@ -536,6 +536,26 @@ TEST(cmake_meta_and_ctest_coverage_utils_basic) {
     TEST_PASS();
 }
 
+TEST(q1_architecture_guards_for_transpiler_context) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+
+    String_View evaluator_src = sys_read_file(arena, sv_from_cstr("../../src/transpiler/transpiler_evaluator.inc.c"));
+    ASSERT(evaluator_src.data != NULL);
+    ASSERT(strstr(nob_temp_sv_to_cstr(evaluator_src), "ctx->model->") == NULL);
+
+    String_View transpiler_src = sys_read_file(arena, sv_from_cstr("../../src/transpiler/transpiler.c"));
+    ASSERT(transpiler_src.data != NULL);
+    ASSERT(strstr(nob_temp_sv_to_cstr(transpiler_src), "g_continue_on_fatal_error") == NULL);
+
+    String_View diagnostics_src = sys_read_file(arena, sv_from_cstr("../../src/diagnostics/diagnostics.c"));
+    ASSERT(diagnostics_src.data != NULL);
+    ASSERT(strstr(nob_temp_sv_to_cstr(diagnostics_src), "g_continue_on_fatal_error") == NULL);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 void run_phase2_module_tests(int *passed, int *failed) {
     test_math_parser_precedence_unary_and_errors(passed, failed);
     test_genex_evaluator_basic_paths(passed, failed);
@@ -546,4 +566,5 @@ void run_phase2_module_tests(int *passed, int *failed) {
     test_cmake_path_utils_basic(passed, failed);
     test_cmake_regex_glob_find_utils_basic(passed, failed);
     test_cmake_meta_and_ctest_coverage_utils_basic(passed, failed);
+    test_q1_architecture_guards_for_transpiler_context(passed, failed);
 }
