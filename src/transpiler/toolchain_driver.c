@@ -157,6 +157,7 @@ static void tc_append_compiler_command(String_Builder *cmd,
     tc_append_command_program(cmd, req->compiler);
 
     const String_List *compile_definitions = req->compile_definitions;
+    const String_List *compile_options = req->compile_options;
     const String_List *link_options = req->link_options;
     const String_List *link_libraries = req->link_libraries;
 
@@ -166,6 +167,15 @@ static void tc_append_compiler_command(String_Builder *cmd,
         tc_append_quoted(cmd, out_arg);
         sb_append(cmd, ' ');
         tc_append_quoted(cmd, src_arg);
+
+        if (compile_options) {
+            for (size_t i = 0; i < compile_options->count; i++) {
+                String_View opt = compile_options->items[i];
+                if (opt.count == 0) continue;
+                sb_append(cmd, ' ');
+                tc_append_quoted(cmd, opt);
+            }
+        }
 
         if (compile_definitions) {
             for (size_t i = 0; i < compile_definitions->count; i++) {
@@ -205,6 +215,15 @@ static void tc_append_compiler_command(String_Builder *cmd,
     tc_append_quoted(cmd, out_arg);
     sb_append(cmd, ' ');
     tc_append_quoted(cmd, src_arg);
+
+    if (compile_options) {
+        for (size_t i = 0; i < compile_options->count; i++) {
+            String_View opt = compile_options->items[i];
+            if (opt.count == 0) continue;
+            sb_append(cmd, ' ');
+            tc_append_quoted(cmd, opt);
+        }
+    }
 
     if (compile_definitions) {
         for (size_t i = 0; i < compile_definitions->count; i++) {
@@ -449,6 +468,7 @@ bool toolchain_probe_check_c_source_compiles(const Toolchain_Driver *drv, String
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = &defs,
+        .compile_options = NULL,
         .link_options = &opts,
         .link_libraries = &libs,
     };
@@ -493,6 +513,7 @@ bool toolchain_probe_check_c_source_runs(const Toolchain_Driver *drv, String_Vie
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = &defs,
+        .compile_options = NULL,
         .link_options = &opts,
         .link_libraries = &libs,
     };
@@ -566,6 +587,7 @@ bool toolchain_probe_check_library_exists(const Toolchain_Driver *drv,
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = &defs,
+        .compile_options = NULL,
         .link_options = &opts,
         .link_libraries = &libs,
     };
@@ -621,6 +643,7 @@ bool toolchain_probe_check_symbol_exists(const Toolchain_Driver *drv,
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = &defs,
+        .compile_options = NULL,
         .link_options = &opts,
         .link_libraries = &libs,
     };
@@ -672,6 +695,7 @@ bool toolchain_probe_check_include_files(const Toolchain_Driver *drv, String_Vie
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = &defs,
+        .compile_options = NULL,
         .link_options = &opts,
         .link_libraries = &libs,
     };

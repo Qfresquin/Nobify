@@ -10,6 +10,11 @@ typedef struct {
     bool exact_version;
     bool mode_module_only;
     bool mode_config_only;
+    bool no_default_path;
+    bool no_cmake_path;
+    bool no_cmake_environment_path;
+    bool no_system_environment_path;
+    bool no_cmake_system_path;
     String_View requested_version;
     String_List required_components;
     String_List optional_components;
@@ -33,6 +38,11 @@ static bool find_package_is_keyword(String_View arg) {
            sv_eq_ci(arg, sv_from_cstr("HINTS")) ||
            sv_eq_ci(arg, sv_from_cstr("PATHS")) ||
            sv_eq_ci(arg, sv_from_cstr("PATH_SUFFIXES")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_DEFAULT_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_ENVIRONMENT_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_SYSTEM_ENVIRONMENT_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_SYSTEM_PATH")) ||
            sv_eq_ci(arg, sv_from_cstr("NO_POLICY_SCOPE")) ||
            sv_eq_ci(arg, sv_from_cstr("BYPASS_PROVIDER")) ||
            sv_eq_ci(arg, sv_from_cstr("UNWIND_INCLUDE"));
@@ -207,6 +217,13 @@ static void find_package_collect_dirs(Evaluator_Context *ctx, String_View value,
     split_semicolon_list(ctx, value, out_dirs);
 }
 
+static void find_package_collect_env_dirs(Evaluator_Context *ctx, const char *env_name, String_List *out_dirs) {
+    if (!ctx || !env_name || !out_dirs) return;
+    const char *env = getenv(env_name);
+    if (!env || env[0] == '\0') return;
+    find_search_split_env_path(ctx->arena, sv_from_cstr(env), out_dirs);
+}
+
 static bool find_package_search_module_file(Evaluator_Context *ctx,
                                             const Find_Package_Request *req,
                                             String_View *out_file) {
@@ -215,18 +232,27 @@ static bool find_package_search_module_file(Evaluator_Context *ctx,
 
     String_List module_dirs = {0};
     string_list_init(&module_dirs);
-    find_package_collect_dirs(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_MODULE_PATH")), &module_dirs);
     for (size_t i = 0; i < req->hints.count; i++) {
         string_list_add_unique(&module_dirs, ctx->arena, req->hints.items[i]);
     }
     for (size_t i = 0; i < req->paths.count; i++) {
         string_list_add_unique(&module_dirs, ctx->arena, req->paths.items[i]);
     }
-    String_View cmake_root = eval_get_var(ctx, sv_from_cstr("CMAKE_ROOT"));
-    if (cmake_root.count > 0) {
-        String_View modules_dir = cmk_path_join(ctx->arena, cmake_root, sv_from_cstr("Modules"));
-        string_list_add_unique(&module_dirs, ctx->arena, modules_dir);
-        string_list_add_unique(&module_dirs, ctx->arena, cmake_root);
+    if (!req->no_default_path) {
+        if (!req->no_cmake_path) {
+            find_package_collect_dirs(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_MODULE_PATH")), &module_dirs);
+        }
+        if (!req->no_cmake_environment_path) {
+            find_package_collect_env_dirs(ctx, "CMAKE_MODULE_PATH", &module_dirs);
+        }
+        if (!req->no_cmake_system_path) {
+            String_View cmake_root = eval_get_var(ctx, sv_from_cstr("CMAKE_ROOT"));
+            if (cmake_root.count > 0) {
+                String_View modules_dir = cmk_path_join(ctx->arena, cmake_root, sv_from_cstr("Modules"));
+                string_list_add_unique(&module_dirs, ctx->arena, modules_dir);
+                string_list_add_unique(&module_dirs, ctx->arena, cmake_root);
+            }
+        }
     }
 
     String_List module_names = {0};
@@ -253,24 +279,58 @@ static bool find_package_search_config_file(Evaluator_Context *ctx,
 
     String_List search_dirs = {0};
     string_list_init(&search_dirs);
-    String_View package_dir_var = find_package_read_var(ctx, package_name, &req->names, "DIR");
-    if (package_dir_var.count > 0 && !cmake_string_is_false(package_dir_var)) {
-        String_List dirs = {0};
-        string_list_init(&dirs);
-        split_semicolon_list(ctx, package_dir_var, &dirs);
-        for (size_t i = 0; i < dirs.count; i++) {
-            if (dirs.items[i].count > 0 && !cmake_string_is_false(dirs.items[i])) {
-                string_list_add_unique(&search_dirs, ctx->arena, dirs.items[i]);
-            }
-        }
-    }
     for (size_t i = 0; i < req->hints.count; i++) {
         string_list_add_unique(&search_dirs, ctx->arena, req->hints.items[i]);
     }
     for (size_t i = 0; i < req->paths.count; i++) {
         string_list_add_unique(&search_dirs, ctx->arena, req->paths.items[i]);
     }
-    find_package_collect_dirs(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_PREFIX_PATH")), &search_dirs);
+    if (!req->no_default_path) {
+        if (!req->no_cmake_path) {
+            String_View package_dir_var = find_package_read_var(ctx, package_name, &req->names, "DIR");
+            if (package_dir_var.count > 0 && !cmake_string_is_false(package_dir_var)) {
+                String_List dirs = {0};
+                string_list_init(&dirs);
+                split_semicolon_list(ctx, package_dir_var, &dirs);
+                for (size_t i = 0; i < dirs.count; i++) {
+                    if (dirs.items[i].count > 0 && !cmake_string_is_false(dirs.items[i])) {
+                        string_list_add_unique(&search_dirs, ctx->arena, dirs.items[i]);
+                    }
+                }
+            }
+            find_package_collect_dirs(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_PREFIX_PATH")), &search_dirs);
+        }
+        if (!req->no_cmake_environment_path) {
+            String_View pkg_upper = find_package_upper_sv_copy(ctx->arena, package_name);
+            find_package_collect_env_dirs(ctx, nob_temp_sprintf("%s_DIR", nob_temp_sv_to_cstr(package_name)), &search_dirs);
+            if (pkg_upper.count > 0) {
+                find_package_collect_env_dirs(ctx, nob_temp_sprintf("%s_DIR", nob_temp_sv_to_cstr(pkg_upper)), &search_dirs);
+            }
+            for (size_t i = 0; i < req->names.count; i++) {
+                String_View alias = req->names.items[i];
+                if (alias.count == 0) continue;
+                String_View alias_upper = find_package_upper_sv_copy(ctx->arena, alias);
+                find_package_collect_env_dirs(ctx, nob_temp_sprintf("%s_DIR", nob_temp_sv_to_cstr(alias)), &search_dirs);
+                if (alias_upper.count > 0) {
+                    find_package_collect_env_dirs(ctx, nob_temp_sprintf("%s_DIR", nob_temp_sv_to_cstr(alias_upper)), &search_dirs);
+                }
+            }
+            find_package_collect_env_dirs(ctx, "CMAKE_PREFIX_PATH", &search_dirs);
+        }
+        if (!req->no_system_environment_path) {
+            find_package_collect_env_dirs(ctx, "PATH", &search_dirs);
+        }
+        if (!req->no_cmake_system_path) {
+            find_package_collect_dirs(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_SYSTEM_PREFIX_PATH")), &search_dirs);
+#if defined(_WIN32)
+            find_package_collect_env_dirs(ctx, "ProgramFiles", &search_dirs);
+            find_package_collect_env_dirs(ctx, "ProgramFiles(x86)", &search_dirs);
+#else
+            string_list_add_unique(&search_dirs, ctx->arena, sv_from_cstr("/usr"));
+            string_list_add_unique(&search_dirs, ctx->arena, sv_from_cstr("/usr/local"));
+#endif
+        }
+    }
 
     String_List suffixes = {0};
     string_list_init(&suffixes);
@@ -640,6 +700,31 @@ static void parse_find_package_request(Evaluator_Context *ctx, Args args, Find_P
         }
         if (sv_eq_ci(arg, sv_from_cstr("PATH_SUFFIXES"))) {
             mode = PARSE_MODE_PATH_SUFFIXES;
+            continue;
+        }
+        if (sv_eq_ci(arg, sv_from_cstr("NO_DEFAULT_PATH"))) {
+            out->no_default_path = true;
+            mode = PARSE_MODE_NONE;
+            continue;
+        }
+        if (sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_PATH"))) {
+            out->no_cmake_path = true;
+            mode = PARSE_MODE_NONE;
+            continue;
+        }
+        if (sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_ENVIRONMENT_PATH"))) {
+            out->no_cmake_environment_path = true;
+            mode = PARSE_MODE_NONE;
+            continue;
+        }
+        if (sv_eq_ci(arg, sv_from_cstr("NO_SYSTEM_ENVIRONMENT_PATH"))) {
+            out->no_system_environment_path = true;
+            mode = PARSE_MODE_NONE;
+            continue;
+        }
+        if (sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_SYSTEM_PATH"))) {
+            out->no_cmake_system_path = true;
+            mode = PARSE_MODE_NONE;
             continue;
         }
         if (find_package_is_keyword(arg)) {
@@ -1035,13 +1120,32 @@ static void eval_cmake_pkg_config_command(Evaluator_Context *ctx, Args args) {
 
 typedef void (*Eval_Command_Handler)(Evaluator_Context *ctx, Args args);
 
+typedef enum {
+    COMMAND_SPEC_FLAG_NONE = 0u,
+    COMMAND_SPEC_FLAG_COMPAT_NOOP = 1u << 0,
+} Command_Spec_Flags;
+
 typedef struct {
     const char *name;
     Eval_Command_Handler handler;
-} Eval_Command_Dispatch_Entry;
+    size_t min_args;
+    size_t max_args; // 0 => sem limite explicito
+    unsigned flags;
+} Command_Spec;
+
+static bool eval_command_spec_arity_ok(const Command_Spec *spec, Args args) {
+    if (!spec) return false;
+    if (spec->min_args > 0 && args.count < spec->min_args) return false;
+    if (spec->max_args > 0 && args.count > spec->max_args) return false;
+    return true;
+}
 
 static bool eval_dispatch_known_command(Evaluator_Context *ctx, String_View cmd_name, Args args) {
-    static const Eval_Command_Dispatch_Entry table[] = {
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+    static const Command_Spec table[] = {
         {"set", eval_set_command},
         {"unset", eval_unset_command},
         {"option", eval_option_command},
@@ -1163,9 +1267,18 @@ static bool eval_dispatch_known_command(Evaluator_Context *ctx, String_View cmd_
         {"get_test_property", eval_get_test_property_command},
         {"separate_arguments", eval_separate_arguments_command},
     };
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
     for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
         if (sv_eq_ci(cmd_name, sv_from_cstr(table[i].name))) {
+            if (!eval_command_spec_arity_ok(&table[i], args)) {
+                diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, table[i].name,
+                    "assinatura invalida para o comando",
+                    "ajuste o numero de argumentos ou atualize a especificacao do comando");
+                return true;
+            }
             table[i].handler(ctx, args);
             return true;
         }

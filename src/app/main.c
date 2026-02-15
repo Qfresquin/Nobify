@@ -122,7 +122,6 @@ int main(int argc, char **argv) {
     diag_reset();
     diag_set_strict(strict_mode);
     diag_telemetry_reset();
-    transpiler_set_continue_on_fatal_error(continue_on_fatal_error);
 
     const char *output_filename = "nob_generated.c";
     
@@ -206,8 +205,11 @@ int main(int argc, char **argv) {
     // mas usa a AST que está na global_arena.
     nob_log(NOB_INFO, "Etapa 3: Transpilacao e Geracao de Codigo...");
     Nob_String_Builder sb_output = {0};
-    
-    transpile_datree_with_input_path(root, &sb_output, input_path);
+    Transpiler_Run_Options transpiler_options = {0};
+    transpiler_options.input_path = input_path;
+    transpiler_options.continue_on_fatal_error = continue_on_fatal_error;
+
+    transpile_datree_ex(root, &sb_output, &transpiler_options);
     if (sb_output.count == 0 || sb_output.items == NULL) {
         nob_log(NOB_ERROR, "Transpilacao falhou: nenhuma saida foi gerada");
         arena_destroy(global_arena);

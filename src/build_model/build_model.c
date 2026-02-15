@@ -1782,6 +1782,33 @@ const String_List* build_target_get_string_list(const Build_Target *target, Buil
     }
 }
 
+void build_target_reset_derived_property(Build_Target *target, Build_Target_Derived_Property_Kind kind) {
+    if (!target) return;
+    switch (kind) {
+        case BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS:
+            target->interface_compile_definitions.count = 0;
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS:
+            target->interface_compile_options.count = 0;
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES:
+            target->interface_include_directories.count = 0;
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS:
+            target->interface_link_options.count = 0;
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES:
+            target->interface_link_directories.count = 0;
+            break;
+        case BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES:
+            target->interface_dependencies.count = 0;
+            target->interface_libs.count = 0;
+            break;
+        default:
+            break;
+    }
+}
+
 bool build_target_is_exclude_from_all(const Build_Target *target) {
     return target ? target->exclude_from_all : false;
 }

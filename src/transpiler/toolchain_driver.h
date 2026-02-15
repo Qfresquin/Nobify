@@ -15,6 +15,7 @@ typedef struct {
     String_View src_path;
     String_View out_path;
     const String_List *compile_definitions;
+    const String_List *compile_options;
     const String_List *link_options;
     const String_List *link_libraries;
 } Toolchain_Compile_Request;

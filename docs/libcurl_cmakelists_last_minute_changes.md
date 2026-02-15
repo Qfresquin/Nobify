@@ -5,9 +5,8 @@
 - Removido o uso incorreto de `CMK2NOB_REBUILD_INCLUDE_FLAGS` nessa chamada, que fazia o runtime tentar abrir `-Ivendor` como arquivo e abortar antes de ler o `CMakeLists.txt`.
 
 ## 2026-02-14T22:26:54-03:00
-- Adicionado fallback de `find_package(Libpsl)` em `src/transpiler/transpiler_dispatcher.inc.c`, mapeando `Libpsl -> psl`.
-- Incluida versao padrao inferida para `Libpsl` (`0.21.0`) para manter variaveis `<Pkg>_VERSION` consistentes no evaluator.
-- Objetivo: destravar o fluxo padrao do `CMakeLists.txt` do curl, onde `CURL_USE_LIBPSL` e `ON` por padrao e `find_package(Libpsl REQUIRED)` e executado.
+- Foi testado temporariamente um fallback de `find_package(Libpsl)` para destravar investigacao local.
+- Estado atual (posterior): fallback removido; resolucao permanece generica e sem inferencia sintetica de sucesso.
 
 ## 2026-02-14T22:29:39-03:00
 - Validacao concluida com `./cmk2nob.exe ./curl-8.18.0/CMakeLists.txt`.
@@ -16,8 +15,8 @@
 
 ## 2026-02-14T22:37:10-03:00
 - Corrigido `set_property(DIRECTORY ...)` em `src/transpiler/transpiler_evaluator.inc.c` para aplicar propriedades de diretorio suportadas (como `INCLUDE_DIRECTORIES`) no modelo.
-- Adicionado comando dedicado `curl_transform_makefile_inc` em `src/transpiler/transpiler_dispatcher.inc.c` para transformar `Makefile.inc` em sintaxe CMake (`set(...)`) de forma compativel com o fluxo do curl.
-- A transformacao dedicada tambem converte referencias `$(VAR)` e `@VAR@` para `${VAR}` e preserva continuacoes de linha com `\`.
+- Foi testado temporariamente um comando dedicado de transformacao de `Makefile.inc`.
+- Estado atual (posterior): comando dedicado removido; comportamento substituido por semantica generica do evaluator.
 
 ## 2026-02-14T22:39:20-03:00
 - Corrigido expansao de listas de fontes separadas por `;` nos comandos `add_library`, `add_executable` e `target_sources` em `src/transpiler/transpiler_evaluator.inc.c` (antes viravam um unico argumento gigante para o compilador).
@@ -109,3 +108,19 @@
   2. `cmk2nob.exe curl-8.18.0/CMakeLists.txt` -> `EXIT=0`.
   3. `cc -Ivendor nob_generated.c -o nob_generated_runner.exe` -> sucesso.
   4. `nob_generated_runner.exe` -> `EXIT=0`.
+
+## 2026-02-15T10:19:39-03:00
+- Rodada de paridade CMake 3.16 (foco em configuracao/find/check), sem acoplamento a projeto:
+  - `cmake_minimum_required` com parsing formal `VERSION <min>[...<max>] [FATAL_ERROR]`, validacao de assinatura e variaveis de policy.
+  - aplicacao centralizada de `CMAKE_REQUIRED_*` em probes/checks e em `try_compile`/`try_run`.
+  - `find_program`/`find_library`/`find_file`/`find_path` com suporte a `NO_CMAKE_PATH`, `NO_CMAKE_ENVIRONMENT_PATH`, `NO_SYSTEM_ENVIRONMENT_PATH`, `NO_CMAKE_SYSTEM_PATH`.
+  - `find_package` atualizado com os mesmos toggles de path em modos `MODULE` e `CONFIG`.
+- Cobertura de regressao adicionada em `test/test_transpiler.c` para:
+  - novos toggles de busca (`find_*` e `find_package`);
+  - assinatura/range invalido/valido de `cmake_minimum_required`;
+  - efetividade de `CMAKE_REQUIRED_INCLUDES` + `CMAKE_REQUIRED_DEFINITIONS` em `check_c_source_compiles` e `try_compile`.
+- Validacao completa desta rodada:
+  1. `./nob.exe test` -> `349/349` passou.
+  2. `./cmk2nob.exe ./curl-8.18.0/CMakeLists.txt` -> `EXIT=0` (warnings de opcionais permanecem).
+  3. `cc -Ivendor nob_generated.c -o nob_generated_runner.exe` -> sucesso.
+  4. `./nob_generated_runner.exe` -> `EXIT=0`.

@@ -556,6 +556,15 @@ typedef enum {
     BUILD_TARGET_LIST_INTERFACE_LINK_DIRECTORIES,
 } Build_Target_List_Kind;
 
+typedef enum {
+    BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS,
+    BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS,
+    BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES,
+    BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS,
+    BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES,
+    BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES,
+} Build_Target_Derived_Property_Kind;
+
 void build_model_set_project_info(Build_Model *model, String_View name, String_View version);
 void build_model_set_default_config(Build_Model *model, String_View config);
 void build_model_enable_language(Build_Model *model, Arena *arena, String_View lang);
@@ -624,6 +633,7 @@ String_View build_target_get_name(const Build_Target *target);
 Target_Type build_target_get_type(const Build_Target *target);
 bool build_target_has_source(const Build_Target *target, String_View source);
 const String_List* build_target_get_string_list(const Build_Target *target, Build_Target_List_Kind kind);
+void build_target_reset_derived_property(Build_Target *target, Build_Target_Derived_Property_Kind kind);
 bool build_target_is_exclude_from_all(const Build_Target *target);
 const Custom_Command* build_target_get_custom_commands(const Build_Target *target, bool pre_build, size_t *out_count);
 

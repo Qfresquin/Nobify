@@ -86,6 +86,13 @@ static bool eval_real_probe_check_c_source_compiles(Evaluator_Context *ctx, Stri
 static bool eval_real_probe_check_include_files(Evaluator_Context *ctx, String_View headers, bool *used_probe);
 static bool eval_real_probe_check_function_exists(Evaluator_Context *ctx, String_View function_name, bool *used_probe);
 static bool eval_real_probe_check_type_size(Evaluator_Context *ctx, String_View type_name, size_t *out_size, bool *used_probe);
+static bool eval_check_required_quiet(Evaluator_Context *ctx);
+static void eval_apply_required_settings(Evaluator_Context *ctx,
+                                         String_View compiler,
+                                         String_List *compile_definitions,
+                                         String_List *compile_options,
+                                         String_List *link_options,
+                                         String_List *link_libraries);
 static bool eval_has_pending_flow_control(const Evaluator_Context *ctx);
 static Loop_Flow_Signal eval_consume_loop_flow_signal(Evaluator_Context *ctx);
 static void eval_append_link_library_value(Evaluator_Context *ctx, Build_Target *target, Visibility visibility, String_View value);
@@ -1818,6 +1825,130 @@ static void split_command_line_like_cmake(Evaluator_Context *ctx, String_View in
     }
 }
 
+static bool eval_check_required_quiet(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    String_View quiet = eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_QUIET"));
+    return quiet.count > 0 && !cmake_string_is_false(quiet);
+}
+
+static void eval_required_append_command_line_tokens(Evaluator_Context *ctx,
+                                                     String_View raw,
+                                                     String_List *out,
+                                                     bool unique) {
+    if (!ctx || !out || raw.count == 0) return;
+    String_List parts = {0};
+    string_list_init(&parts);
+    split_semicolon_list(ctx, raw, &parts);
+    if (parts.count == 0) {
+        string_list_add(&parts, ctx->arena, raw);
+    }
+
+    for (size_t i = 0; i < parts.count; i++) {
+        String_View part = genex_trim(parts.items[i]);
+        if (part.count == 0) continue;
+        String_List tokens = {0};
+        string_list_init(&tokens);
+        split_command_line_like_cmake(ctx, part, &tokens);
+        if (tokens.count == 0) {
+            if (unique) string_list_add_unique(out, ctx->arena, part);
+            else string_list_add(out, ctx->arena, part);
+            continue;
+        }
+        for (size_t t = 0; t < tokens.count; t++) {
+            String_View tok = genex_trim(tokens.items[t]);
+            if (tok.count == 0) continue;
+            if (unique) string_list_add_unique(out, ctx->arena, tok);
+            else string_list_add(out, ctx->arena, tok);
+        }
+    }
+}
+
+static void eval_required_append_semicolon_items(Evaluator_Context *ctx,
+                                                 String_View raw,
+                                                 String_List *out,
+                                                 bool unique) {
+    if (!ctx || !out || raw.count == 0) return;
+    List_Add_Ud ud = { .list = out, .unique = unique };
+    eval_foreach_semicolon_item(ctx, raw, /*trim_ws=*/true, eval_list_add_item, &ud);
+}
+
+static String_View eval_required_normalize_path(Evaluator_Context *ctx, String_View raw_path) {
+    if (!ctx) return sv_from_cstr("");
+    String_View path = eval_strip_matching_quotes(genex_trim(raw_path));
+    if (path.count == 0) return sv_from_cstr("");
+    if (!cmk_path_is_absolute(path)) {
+        path = cmk_path_join(ctx->arena, ctx->current_source_dir, path);
+    }
+    return path;
+}
+
+static void eval_apply_required_settings(Evaluator_Context *ctx,
+                                         String_View compiler,
+                                         String_List *compile_definitions,
+                                         String_List *compile_options,
+                                         String_List *link_options,
+                                         String_List *link_libraries) {
+    if (!ctx) return;
+
+    if (compile_definitions) {
+        eval_required_append_semicolon_items(
+            ctx,
+            eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS")),
+            compile_definitions,
+            /*unique=*/true);
+    }
+
+    if (compile_options) {
+        eval_required_append_command_line_tokens(
+            ctx,
+            eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_FLAGS")),
+            compile_options,
+            /*unique=*/true);
+
+        bool msvc = toolchain_compiler_looks_msvc(compiler);
+        String_List include_dirs = {0};
+        string_list_init(&include_dirs);
+        split_semicolon_list(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_INCLUDES")), &include_dirs);
+        for (size_t i = 0; i < include_dirs.count; i++) {
+            String_View dir = eval_required_normalize_path(ctx, include_dirs.items[i]);
+            if (dir.count == 0) continue;
+            String_View opt = msvc
+                ? sv_from_cstr(nob_temp_sprintf("/I%s", nob_temp_sv_to_cstr(dir)))
+                : sv_from_cstr(nob_temp_sprintf("-I%s", nob_temp_sv_to_cstr(dir)));
+            string_list_add_unique(compile_options, ctx->arena, opt);
+        }
+    }
+
+    if (link_options) {
+        eval_required_append_command_line_tokens(
+            ctx,
+            eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_LINK_OPTIONS")),
+            link_options,
+            /*unique=*/true);
+
+        bool msvc = toolchain_compiler_looks_msvc(compiler);
+        String_List link_dirs = {0};
+        string_list_init(&link_dirs);
+        split_semicolon_list(ctx, eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_LINK_DIRECTORIES")), &link_dirs);
+        for (size_t i = 0; i < link_dirs.count; i++) {
+            String_View dir = eval_required_normalize_path(ctx, link_dirs.items[i]);
+            if (dir.count == 0) continue;
+            String_View opt = msvc
+                ? sv_from_cstr(nob_temp_sprintf("/LIBPATH:%s", nob_temp_sv_to_cstr(dir)))
+                : sv_from_cstr(nob_temp_sprintf("-L%s", nob_temp_sv_to_cstr(dir)));
+            string_list_add_unique(link_options, ctx->arena, opt);
+        }
+    }
+
+    if (link_libraries) {
+        eval_required_append_semicolon_items(
+            ctx,
+            eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_LIBRARIES")),
+            link_libraries,
+            /*unique=*/true);
+    }
+}
+
 // Avalia o comando 'separate_arguments'
 static void eval_separate_arguments_command(Evaluator_Context *ctx, Args args) {
     if (args.count < 1) return;
@@ -2938,7 +3069,7 @@ static void eval_check_symbol_exists_command(Evaluator_Context *ctx, Args args) 
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_symbol_exists(ctx, symbol, headers, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_symbol_exists",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -2957,7 +3088,7 @@ static void eval_check_function_exists_command(Evaluator_Context *ctx, Args args
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_function_exists(ctx, function_name, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_function_exists",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -2976,7 +3107,7 @@ static void eval_check_include_file_command(Evaluator_Context *ctx, Args args) {
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_include_files(ctx, header, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_include_file",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -2996,7 +3127,7 @@ static void eval_check_include_files_command(Evaluator_Context *ctx, Args args) 
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_include_files(ctx, headers, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_include_files",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -3028,7 +3159,7 @@ static void eval_check_type_size_command(Evaluator_Context *ctx, Args args) {
     size_t size_val = 0;
     bool used_probe = false;
     bool ok = eval_real_probe_check_type_size(ctx, type_name, &size_val, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_type_size",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -3222,46 +3353,226 @@ static void eval_pop_cc_override(Eval_Cc_Env_Override *ov) {
 #endif
 }
 
+static void eval_probe_source_with_headers(String_Builder *source, String_View headers) {
+    if (!source) return;
+    size_t start = 0;
+    bool added_any = false;
+    for (size_t i = 0; i <= headers.count; i++) {
+        bool sep = (i == headers.count) || headers.data[i] == ';';
+        if (!sep) continue;
+
+        String_View item = nob_sv_from_parts(headers.data + start, i - start);
+        while (item.count > 0 && isspace((unsigned char)item.data[0])) item = nob_sv_from_parts(item.data + 1, item.count - 1);
+        while (item.count > 0 && isspace((unsigned char)item.data[item.count - 1])) item = nob_sv_from_parts(item.data, item.count - 1);
+        start = i + 1;
+
+        if (item.count == 0) continue;
+        added_any = true;
+
+        sb_append_cstr(source, "#include ");
+        if ((item.data[0] == '<' && item.data[item.count - 1] == '>') ||
+            (item.data[0] == '"' && item.data[item.count - 1] == '"')) {
+            sb_append_buf(source, item.data, item.count);
+        } else {
+            sb_append(source, '<');
+            sb_append_buf(source, item.data, item.count);
+            sb_append(source, '>');
+        }
+        sb_append(source, '\n');
+    }
+
+    if (!added_any) {
+        sb_append_cstr(source, "#include <stddef.h>\n");
+    }
+}
+
+static bool eval_real_probe_from_source(Evaluator_Context *ctx,
+                                        String_View probe_name,
+                                        String_View source,
+                                        bool run_binary,
+                                        const String_List *extra_compile_options,
+                                        const String_List *extra_link_options,
+                                        const String_List *extra_link_libraries,
+                                        bool *used_probe,
+                                        String_View *out_compile_output,
+                                        int *out_run_rc,
+                                        String_View *out_run_output) {
+    if (used_probe) *used_probe = false;
+    if (out_compile_output) *out_compile_output = sv_from_cstr("");
+    if (out_run_rc) *out_run_rc = 1;
+    if (out_run_output) *out_run_output = sv_from_cstr("");
+    if (!ctx || source.count == 0) return false;
+
+    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
+    String_View compiler = eval_toolchain_compiler(ctx);
+    if (!toolchain_compiler_available(&drv, compiler)) return false;
+    if (used_probe) *used_probe = true;
+
+    bool msvc = toolchain_compiler_looks_msvc(compiler);
+    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
+
+    static size_t s_probe_counter = 0;
+    s_probe_counter++;
+
+    String_View probe_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_probes"));
+    (void)sys_mkdir(probe_dir);
+
+    String_View base = cmk_path_join(
+        ctx->arena,
+        probe_dir,
+        sv_from_cstr(nob_temp_sprintf("%s_%zu", nob_temp_sv_to_cstr(probe_name), s_probe_counter)));
+
+    String_View src_path = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
+#if defined(_WIN32)
+    String_View out_path = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
+#else
+    String_View out_path = base;
+#endif
+
+    if (!sys_write_file(src_path, source)) {
+        eval_probe_cleanup_outputs(base, msvc);
+        eval_pop_cc_override(&ov);
+        return false;
+    }
+
+    String_List compile_definitions = {0};
+    String_List compile_options = {0};
+    String_List link_options = {0};
+    String_List link_libraries = {0};
+    string_list_init(&compile_definitions);
+    string_list_init(&compile_options);
+    string_list_init(&link_options);
+    string_list_init(&link_libraries);
+
+    eval_apply_required_settings(ctx, compiler, &compile_definitions, &compile_options, &link_options, &link_libraries);
+
+    if (extra_compile_options) {
+        for (size_t i = 0; i < extra_compile_options->count; i++) {
+            String_View v = genex_trim(extra_compile_options->items[i]);
+            if (v.count == 0) continue;
+            string_list_add_unique(&compile_options, ctx->arena, v);
+        }
+    }
+    if (extra_link_options) {
+        for (size_t i = 0; i < extra_link_options->count; i++) {
+            String_View v = genex_trim(extra_link_options->items[i]);
+            if (v.count == 0) continue;
+            string_list_add_unique(&link_options, ctx->arena, v);
+        }
+    }
+    if (extra_link_libraries) {
+        for (size_t i = 0; i < extra_link_libraries->count; i++) {
+            String_View v = genex_trim(extra_link_libraries->items[i]);
+            if (v.count == 0) continue;
+            string_list_add_unique(&link_libraries, ctx->arena, v);
+        }
+    }
+
+    Toolchain_Compile_Request req = {
+        .compiler = compiler,
+        .src_path = src_path,
+        .out_path = out_path,
+        .compile_definitions = &compile_definitions,
+        .compile_options = &compile_options,
+        .link_options = &link_options,
+        .link_libraries = &link_libraries,
+    };
+
+    Toolchain_Compile_Result compile_out = {0};
+    bool ok = false;
+    if (run_binary) {
+        int run_rc = 1;
+        String_View run_output = sv_from_cstr("");
+        bool invoked = toolchain_try_run(&drv, &req, NULL, &compile_out, &run_rc, &run_output);
+        ok = invoked && compile_out.ok && run_rc == 0;
+        if (out_run_rc) *out_run_rc = run_rc;
+        if (out_run_output) *out_run_output = run_output;
+    } else {
+        bool invoked = toolchain_try_compile(&drv, &req, &compile_out);
+        ok = invoked && compile_out.ok;
+        if (out_run_rc) *out_run_rc = 0;
+    }
+
+    if (out_compile_output) *out_compile_output = compile_out.output;
+    eval_probe_cleanup_outputs(base, msvc);
+    eval_pop_cc_override(&ov);
+    return ok;
+}
+
 static bool eval_real_probe_check_library_exists(Evaluator_Context *ctx, String_View library, String_View function_name, String_View location, bool *used_probe) {
     if (used_probe) *used_probe = false;
     if (!ctx) return false;
 
-    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
-    String_View compiler = eval_toolchain_compiler(ctx);
-    if (!toolchain_compiler_available(&drv, compiler)) return false;
+    String_View lib = genex_trim(library);
+    String_View fn = genex_trim(function_name);
+    if (lib.count == 0 || fn.count == 0) return false;
 
-    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
-    bool ok = toolchain_probe_check_library_exists(&drv, library, function_name, location, used_probe);
-    eval_pop_cc_override(&ov);
-    return ok;
+    String_View source = sv_from_cstr(nob_temp_sprintf(
+        "extern int %s(void);\nint main(void){ (void)%s; return 0; }\n",
+        nob_temp_sv_to_cstr(fn),
+        nob_temp_sv_to_cstr(fn)));
+
+    String_List extra_link_options = {0};
+    String_List extra_link_libraries = {0};
+    string_list_init(&extra_link_options);
+    string_list_init(&extra_link_libraries);
+
+    String_View compiler = eval_toolchain_compiler(ctx);
+    bool msvc = toolchain_compiler_looks_msvc(compiler);
+    String_List location_items = {0};
+    string_list_init(&location_items);
+    split_semicolon_list(ctx, location, &location_items);
+    for (size_t i = 0; i < location_items.count; i++) {
+        String_View loc = genex_trim(location_items.items[i]);
+        if (loc.count == 0 || cmake_string_is_false(loc)) continue;
+        String_View norm = eval_required_normalize_path(ctx, loc);
+        if (norm.count == 0) continue;
+        String_View opt = msvc
+            ? sv_from_cstr(nob_temp_sprintf("/LIBPATH:%s", nob_temp_sv_to_cstr(norm)))
+            : sv_from_cstr(nob_temp_sprintf("-L%s", nob_temp_sv_to_cstr(norm)));
+        string_list_add_unique(&extra_link_options, ctx->arena, opt);
+    }
+    string_list_add_unique(&extra_link_libraries, ctx->arena, lib);
+
+    return eval_real_probe_from_source(ctx,
+                                       sv_from_cstr("check_library_exists"),
+                                       source,
+                                       /*run_binary=*/false,
+                                       NULL,
+                                       &extra_link_options,
+                                       &extra_link_libraries,
+                                       used_probe,
+                                       NULL,
+                                       NULL,
+                                       NULL);
 }
 
 static bool eval_real_probe_check_c_source_runs(Evaluator_Context *ctx, String_View source, bool *used_probe) {
-    if (used_probe) *used_probe = false;
-    if (!ctx) return false;
-
-    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
-    String_View compiler = eval_toolchain_compiler(ctx);
-    if (!toolchain_compiler_available(&drv, compiler)) return false;
-
-    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
-    bool ok = toolchain_probe_check_c_source_runs(&drv, source, used_probe);
-    eval_pop_cc_override(&ov);
-    return ok;
+    return eval_real_probe_from_source(ctx,
+                                       sv_from_cstr("check_c_source_runs"),
+                                       source,
+                                       /*run_binary=*/true,
+                                       NULL,
+                                       NULL,
+                                       NULL,
+                                       used_probe,
+                                       NULL,
+                                       NULL,
+                                       NULL);
 }
 
 static bool eval_real_probe_check_c_source_compiles(Evaluator_Context *ctx, String_View source, bool *used_probe) {
-    if (used_probe) *used_probe = false;
-    if (!ctx) return false;
-
-    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
-    String_View compiler = eval_toolchain_compiler(ctx);
-    if (!toolchain_compiler_available(&drv, compiler)) return false;
-
-    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
-    bool ok = toolchain_probe_check_c_source_compiles(&drv, source, used_probe);
-    eval_pop_cc_override(&ov);
-    return ok;
+    return eval_real_probe_from_source(ctx,
+                                       sv_from_cstr("check_c_source_compiles"),
+                                       source,
+                                       /*run_binary=*/false,
+                                       NULL,
+                                       NULL,
+                                       NULL,
+                                       used_probe,
+                                       NULL,
+                                       NULL,
+                                       NULL);
 }
 
 static bool eval_real_probe_check_function_exists(Evaluator_Context *ctx, String_View function_name, bool *used_probe) {
@@ -3283,29 +3594,48 @@ static bool eval_real_probe_check_function_exists(Evaluator_Context *ctx, String
 
 static bool eval_real_probe_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers, bool *used_probe) {
     if (used_probe) *used_probe = false;
-    if (!ctx) return false;
+    String_View sym = genex_trim(symbol);
+    if (sym.count == 0) return false;
 
-    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
-    String_View compiler = eval_toolchain_compiler(ctx);
-    if (!toolchain_compiler_available(&drv, compiler)) return false;
+    String_Builder source = {0};
+    eval_probe_source_with_headers(&source, headers);
+    sb_append_cstr(&source, "int main(void){ (void)");
+    sb_append_buf(&source, sym.data, sym.count);
+    sb_append_cstr(&source, "; return 0; }\n");
 
-    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
-    bool ok = toolchain_probe_check_symbol_exists(&drv, symbol, headers, used_probe);
-    eval_pop_cc_override(&ov);
+    bool ok = eval_real_probe_from_source(ctx,
+                                          sv_from_cstr("check_symbol_exists"),
+                                          sb_to_sv(source),
+                                          /*run_binary=*/false,
+                                          NULL,
+                                          NULL,
+                                          NULL,
+                                          used_probe,
+                                          NULL,
+                                          NULL,
+                                          NULL);
+    nob_sb_free(source);
     return ok;
 }
 
 static bool eval_real_probe_check_include_files(Evaluator_Context *ctx, String_View headers, bool *used_probe) {
     if (used_probe) *used_probe = false;
-    if (!ctx) return false;
+    String_Builder source = {0};
+    eval_probe_source_with_headers(&source, headers);
+    sb_append_cstr(&source, "int main(void){ return 0; }\n");
 
-    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
-    String_View compiler = eval_toolchain_compiler(ctx);
-    if (!toolchain_compiler_available(&drv, compiler)) return false;
-
-    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
-    bool ok = toolchain_probe_check_include_files(&drv, headers, used_probe);
-    eval_pop_cc_override(&ov);
+    bool ok = eval_real_probe_from_source(ctx,
+                                          sv_from_cstr("check_include_files"),
+                                          sb_to_sv(source),
+                                          /*run_binary=*/false,
+                                          NULL,
+                                          NULL,
+                                          NULL,
+                                          used_probe,
+                                          NULL,
+                                          NULL,
+                                          NULL);
+    nob_sb_free(source);
     return ok;
 }
 
@@ -3316,32 +3646,6 @@ static bool eval_real_probe_check_type_size(Evaluator_Context *ctx, String_View 
     String_View t = genex_trim(type_name);
     if (t.count == 0) return false;
 
-    Toolchain_Driver drv = eval_make_toolchain_driver(ctx);
-    String_View compiler = eval_toolchain_compiler(ctx);
-    if (!toolchain_compiler_available(&drv, compiler)) return false;
-    if (used_probe) *used_probe = true;
-
-    bool msvc = toolchain_compiler_looks_msvc(compiler);
-    Eval_Cc_Env_Override ov = eval_push_cc_override(ctx, compiler);
-
-    static size_t s_type_size_probe_counter = 0;
-    s_type_size_probe_counter++;
-
-    String_View probe_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_probes"));
-    (void)sys_mkdir(probe_dir);
-
-    String_View base = cmk_path_join(
-        ctx->arena,
-        probe_dir,
-        sv_from_cstr(nob_temp_sprintf("check_type_size_%zu", s_type_size_probe_counter)));
-
-    String_View src_path = sv_from_cstr(nob_temp_sprintf("%s.c", nob_temp_sv_to_cstr(base)));
-#if defined(_WIN32)
-    String_View out_path = sv_from_cstr(nob_temp_sprintf("%s.exe", nob_temp_sv_to_cstr(base)));
-#else
-    String_View out_path = base;
-#endif
-
     String_Builder source = {0};
     sb_append_cstr(&source, "#include <stddef.h>\n");
     sb_append_cstr(&source, "#include <stdint.h>\n");
@@ -3351,74 +3655,28 @@ static bool eval_real_probe_check_type_size(Evaluator_Context *ctx, String_View 
     sb_append_buf(&source, t.data, t.count);
     sb_append_cstr(&source, ")); return 0; }\n");
 
-    bool wrote = sys_write_file(src_path, sb_to_sv(source));
-    nob_sb_free(source);
-    if (!wrote) {
-        eval_probe_cleanup_outputs(base, msvc);
-        eval_pop_cc_override(&ov);
-        return false;
-    }
-
-    String_List compile_definitions = {0};
-    String_List link_options = {0};
-    String_List link_libraries = {0};
-    string_list_init(&compile_definitions);
-    string_list_init(&link_options);
-    string_list_init(&link_libraries);
-
-    List_Add_Ud ud_defs = { .list = &compile_definitions, .unique = true };
-    eval_foreach_semicolon_item(ctx,
-                                eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS")),
-                                /*trim_ws=*/true,
-                                eval_list_add_item,
-                                &ud_defs);
-
-    List_Add_Ud ud_libs = { .list = &link_libraries, .unique = true };
-    eval_foreach_semicolon_item(ctx,
-                                eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_LIBRARIES")),
-                                /*trim_ws=*/true,
-                                eval_list_add_item,
-                                &ud_libs);
-
-    if (!msvc) {
-        String_View required_includes = eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_INCLUDES"));
-        String_List include_dirs = {0};
-        string_list_init(&include_dirs);
-        split_semicolon_list(ctx, required_includes, &include_dirs);
-        for (size_t i = 0; i < include_dirs.count; i++) {
-            String_View dir = eval_strip_matching_quotes(genex_trim(include_dirs.items[i]));
-            if (dir.count == 0) continue;
-            if (!cmk_path_is_absolute(dir)) {
-                dir = cmk_path_join(ctx->arena, ctx->current_source_dir, dir);
-            }
-            String_View opt = sv_from_cstr(nob_temp_sprintf("-I%s", nob_temp_sv_to_cstr(dir)));
-            string_list_add_unique(&link_options, ctx->arena, opt);
-        }
-    }
-
-    Toolchain_Compile_Request req = {
-        .compiler = compiler,
-        .src_path = src_path,
-        .out_path = out_path,
-        .compile_definitions = &compile_definitions,
-        .link_options = &link_options,
-        .link_libraries = &link_libraries,
-    };
-
-    Toolchain_Compile_Result compile_out = {0};
+    String_View compile_output = sv_from_cstr("");
     int run_rc = 1;
     String_View run_output = sv_from_cstr("");
-    bool invoked = toolchain_try_run(&drv, &req, NULL, &compile_out, &run_rc, &run_output);
+    bool ok = eval_real_probe_from_source(ctx,
+                                          sv_from_cstr("check_type_size"),
+                                          sb_to_sv(source),
+                                          /*run_binary=*/true,
+                                          NULL,
+                                          NULL,
+                                          NULL,
+                                          used_probe,
+                                          &compile_output,
+                                          &run_rc,
+                                          &run_output);
+    nob_sb_free(source);
 
-    eval_probe_cleanup_outputs(base, msvc);
-    eval_pop_cc_override(&ov);
-
-    if (!invoked || !compile_out.ok || run_rc != 0) {
+    if (!ok) {
         const char *dbg = getenv("CMK2NOB_DEBUG_PROBES");
         if (dbg && dbg[0] != '\0' && strcmp(dbg, "0") != 0) {
             printf("[INFO] check_type_size probe failed for `" SV_Fmt "`\n", SV_Arg(t));
-            if (compile_out.output.count > 0) {
-                printf("[INFO] compile output:\n%s\n", nob_temp_sv_to_cstr(compile_out.output));
+            if (compile_output.count > 0) {
+                printf("[INFO] compile output:\n%s\n", nob_temp_sv_to_cstr(compile_output));
             }
             if (run_rc != 0 && run_output.count > 0) {
                 printf("[INFO] run output:\n%s\n", nob_temp_sv_to_cstr(run_output));
@@ -3471,7 +3729,7 @@ static void eval_check_c_source_compiles_command(Evaluator_Context *ctx, Args ar
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_c_source_compiles(ctx, source, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_c_source_compiles",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -3492,7 +3750,7 @@ static void eval_check_library_exists_command(Evaluator_Context *ctx, Args args)
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_library_exists(ctx, library, function_name, location, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_library_exists",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -3511,7 +3769,7 @@ static void eval_check_c_source_runs_command(Evaluator_Context *ctx, Args args) 
     bool ok = false;
     bool used_probe = false;
     ok = eval_real_probe_check_c_source_runs(ctx, source, &used_probe);
-    if (!used_probe && eval_real_probes_enabled(ctx)) {
+    if (!used_probe && eval_real_probes_enabled(ctx) && !eval_check_required_quiet(ctx)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "check_c_source_runs",
             "probe real indisponivel (compiler nao encontrado); usando fallback conservador",
             "defina CMAKE_C_COMPILER/CC para habilitar probe real");
@@ -3523,33 +3781,120 @@ static void eval_check_c_source_runs_command(Evaluator_Context *ctx, Args args) 
 }
 
 // Avalia o comando 'check_struct_has_member' e armazena resultado em variável, usando probe real se disponível
-static void eval_cmake_minimum_required_command(Evaluator_Context *ctx, Args args) {
-    
-//TODO: a implementacao atual so suporta "VERSION x.y" e ignora o resto dos argumentos
-    String_View min_version = sv_from_cstr("3.0");
+static bool cmake_min_required_version_is_valid(String_View version) {
+    if (version.count == 0) return false;
+    if (!isdigit((unsigned char)version.data[0])) return false;
+    for (size_t i = 0; i < version.count; i++) {
+        char c = version.data[i];
+        if (!(isdigit((unsigned char)c) || c == '.')) return false;
+    }
+    return true;
+}
 
-    for (size_t i = 0; i < args.count; i++) {
-        String_View arg = resolve_arg(ctx, args.items[i]);
-        if (sv_eq_ci(arg, sv_from_cstr("VERSION")) && i + 1 < args.count) {
-            min_version = resolve_arg(ctx, args.items[i + 1]);
-            break;
+static int cmake_min_required_parse_part(const char *s, size_t len, size_t *idx) {
+    int value = 0;
+    while (*idx < len && isdigit((unsigned char)s[*idx])) {
+        value = value * 10 + (s[*idx] - '0');
+        (*idx)++;
+    }
+    while (*idx < len && s[*idx] != '.') (*idx)++;
+    if (*idx < len && s[*idx] == '.') (*idx)++;
+    return value;
+}
+
+static int cmake_min_required_compare_versions(String_View lhs, String_View rhs) {
+    const char *ls = nob_temp_sv_to_cstr(lhs);
+    const char *rs = nob_temp_sv_to_cstr(rhs);
+    size_t li = 0, ri = 0;
+    size_t ll = strlen(ls), rl = strlen(rs);
+    while (li < ll || ri < rl) {
+        int lv = cmake_min_required_parse_part(ls, ll, &li);
+        int rv = cmake_min_required_parse_part(rs, rl, &ri);
+        if (lv < rv) return -1;
+        if (lv > rv) return 1;
+    }
+    return 0;
+}
+
+static void eval_cmake_minimum_required_command(Evaluator_Context *ctx, Args args) {
+    if (!ctx) return;
+    if (args.count < 2) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_minimum_required",
+            "assinatura invalida",
+            "use cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])");
+        ctx->skip_evaluation = true;
+        return;
+    }
+
+    String_View tok0 = resolve_arg(ctx, args.items[0]);
+    if (!sv_eq_ci(tok0, sv_from_cstr("VERSION"))) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_minimum_required",
+            "assinatura invalida",
+            "esperado VERSION como primeiro argumento");
+        ctx->skip_evaluation = true;
+        return;
+    }
+
+    String_View version_expr = genex_trim(resolve_arg(ctx, args.items[1]));
+    if (version_expr.count == 0) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_minimum_required",
+            "versao minima ausente",
+            "forneca VERSION <min>[...<max>]");
+        ctx->skip_evaluation = true;
+        return;
+    }
+
+    for (size_t i = 2; i < args.count; i++) {
+        String_View tok = resolve_arg(ctx, args.items[i]);
+        if (sv_eq_ci(tok, sv_from_cstr("FATAL_ERROR"))) continue;
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_minimum_required",
+            nob_temp_sprintf("argumento nao suportado: " SV_Fmt, SV_Arg(tok)),
+            "assinatura suportada: VERSION <min>[...<max>] [FATAL_ERROR]");
+        ctx->skip_evaluation = true;
+        return;
+    }
+
+    String_View min_version = version_expr;
+    String_View policy_max_version = sv_from_cstr("");
+    const char *expr_c = nob_temp_sv_to_cstr(version_expr);
+    const char *dots = strstr(expr_c, "...");
+    if (dots) {
+        size_t off = (size_t)(dots - expr_c);
+        min_version = nob_sv_from_parts(version_expr.data, off);
+        size_t max_off = off + 3;
+        if (max_off < version_expr.count) {
+            policy_max_version = nob_sv_from_parts(version_expr.data + max_off, version_expr.count - max_off);
         }
     }
 
-    String_View min_only = min_version;
-    const char *version_c = nob_temp_sv_to_cstr(min_version);
-    const char *dots = strstr(version_c, "...");
-    if (dots) {
-        size_t off = (size_t)(dots - version_c);
-        min_only = nob_sv_from_parts(min_version.data, off);
+    if (!cmake_min_required_version_is_valid(min_version) ||
+        (policy_max_version.count > 0 && !cmake_min_required_version_is_valid(policy_max_version))) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_minimum_required",
+            nob_temp_sprintf("versao invalida: " SV_Fmt, SV_Arg(version_expr)),
+            "use numeros separados por ponto, ex.: 3.16 ou 3.16...3.27");
+        ctx->skip_evaluation = true;
+        return;
     }
 
-    eval_set_var(ctx, sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_only, false, false);
+    eval_set_var(ctx, sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_version, false, false);
+    String_View policy_version = policy_max_version.count > 0 ? policy_max_version : min_version;
+    eval_set_var(ctx, sv_from_cstr("CMAKE_POLICY_VERSION_MINIMUM"), min_version, false, false);
+    eval_set_var(ctx, sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version, false, false);
+
     if (!eval_has_var(ctx, sv_from_cstr("CMAKE_VERSION"))) {
         eval_set_var(ctx, sv_from_cstr("CMAKE_VERSION"), sv_from_cstr("3.16.0"), false, false);
     }
 
     String_View cmv = eval_get_var(ctx, sv_from_cstr("CMAKE_VERSION"));
+    if (cmake_min_required_compare_versions(cmv, min_version) < 0) {
+        diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cmake_minimum_required",
+            nob_temp_sprintf("CMAKE_VERSION (" SV_Fmt ") menor que VERSION requerida (" SV_Fmt ")",
+                             SV_Arg(cmv), SV_Arg(min_version)),
+            "ajuste a versao baseline do transpiler ou reduza cmake_minimum_required");
+        ctx->skip_evaluation = true;
+        return;
+    }
+
     size_t major = 0, minor = 0, patch = 0;
     sscanf(nob_temp_sv_to_cstr(cmv), "%zu.%zu.%zu", &major, &minor, &patch);
     eval_set_var(ctx, sv_from_cstr("CMAKE_MAJOR_VERSION"), sv_from_cstr(nob_temp_sprintf("%zu", major)), false, false);
@@ -3573,20 +3918,12 @@ static bool try_compile_keyword(String_View tok) {
 
 static void try_compile_append_required_settings(Evaluator_Context *ctx,
                                                  String_List *compile_definitions,
+                                                 String_List *compile_options,
+                                                 String_List *link_options,
                                                  String_List *link_libraries) {
-    List_Add_Ud ud_defs = { .list = compile_definitions, .unique = true };
-    eval_foreach_semicolon_item(ctx,
-                                eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS")),
-                                /*trim_ws=*/true,
-                                eval_list_add_item,
-                                &ud_defs);
-
-    List_Add_Ud ud_libs = { .list = link_libraries, .unique = true };
-    eval_foreach_semicolon_item(ctx,
-                                eval_get_var(ctx, sv_from_cstr("CMAKE_REQUIRED_LIBRARIES")),
-                                /*trim_ws=*/true,
-                                eval_list_add_item,
-                                &ud_libs);
+    if (!ctx) return;
+    String_View compiler = eval_toolchain_compiler(ctx);
+    eval_apply_required_settings(ctx, compiler, compile_definitions, compile_options, link_options, link_libraries);
 }
 
 static String_View try_compile_run_compile(Evaluator_Context *ctx,
@@ -3594,6 +3931,7 @@ static String_View try_compile_run_compile(Evaluator_Context *ctx,
                                            String_View src_path,
                                            String_View out_path,
                                            String_List *compile_definitions,
+                                           String_List *compile_options,
                                            String_List *link_options,
                                            String_List *link_libraries,
                                            bool *out_ok) {
@@ -3608,6 +3946,7 @@ static String_View try_compile_run_compile(Evaluator_Context *ctx,
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = compile_definitions,
+        .compile_options = compile_options,
         .link_options = link_options,
         .link_libraries = link_libraries,
     };
@@ -3627,9 +3966,11 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
     String_View copy_file_path = sv_from_cstr("");
 
     String_List compile_definitions = {0};
+    String_List compile_options = {0};
     String_List link_options = {0};
     String_List link_libraries = {0};
     string_list_init(&compile_definitions);
+    string_list_init(&compile_options);
     string_list_init(&link_options);
     string_list_init(&link_libraries);
 
@@ -3703,7 +4044,7 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
         }
     }
 
-    try_compile_append_required_settings(ctx, &compile_definitions, &link_libraries);
+    try_compile_append_required_settings(ctx, &compile_definitions, &compile_options, &link_options, &link_libraries);
 
     String_View bindir = cmk_path_is_absolute(bindir_arg)
         ? bindir_arg
@@ -3743,7 +4084,7 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
 
     bool compile_ok = false;
     String_View compile_output = try_compile_run_compile(ctx, compiler, src_path, out_path,
-        &compile_definitions, &link_options, &link_libraries, &compile_ok);
+        &compile_definitions, &compile_options, &link_options, &link_libraries, &compile_ok);
 
     eval_set_var(ctx, out_var, compile_ok ? sv_from_cstr("1") : sv_from_cstr("0"), false, false);
 
@@ -4996,10 +5337,12 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
     String_View run_output_var = sv_from_cstr("");
     String_View output_var = sv_from_cstr("");
     String_List compile_definitions = {0};
+    String_List compile_options = {0};
     String_List link_options = {0};
     String_List link_libraries = {0};
     String_List run_args = {0};
     string_list_init(&compile_definitions);
+    string_list_init(&compile_options);
     string_list_init(&link_options);
     string_list_init(&link_libraries);
     string_list_init(&run_args);
@@ -5091,7 +5434,7 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
         }
     }
 
-    try_compile_append_required_settings(ctx, &compile_definitions, &link_libraries);
+    try_compile_append_required_settings(ctx, &compile_definitions, &compile_options, &link_options, &link_libraries);
     String_View bindir = cmk_path_is_absolute(bindir_arg)
         ? bindir_arg
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, bindir_arg);
@@ -5139,6 +5482,7 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
         .src_path = src_path,
         .out_path = out_path,
         .compile_definitions = &compile_definitions,
+        .compile_options = &compile_options,
         .link_options = &link_options,
         .link_libraries = &link_libraries,
     };
@@ -6230,6 +6574,12 @@ typedef struct Eval_Interface_Rebuild_Ud {
     Build_Target *target;
 } Eval_Interface_Rebuild_Ud;
 
+typedef struct Eval_Interface_Rebuild_Spec {
+    const char *property_name;
+    Build_Target_Derived_Property_Kind derived_kind;
+    Eval_SV_Item_Fn item_handler;
+} Eval_Interface_Rebuild_Spec;
+
 static void eval_rebuild_iface_definition_item(Evaluator_Context *ctx, String_View item, void *ud) {
     Eval_Interface_Rebuild_Ud *u = (Eval_Interface_Rebuild_Ud*)ud;
     if (!ctx || !u || !u->target) return;
@@ -6266,43 +6616,61 @@ static void eval_rebuild_iface_link_lib_item(Evaluator_Context *ctx, String_View
     eval_append_link_library_item(ctx, u->target, VISIBILITY_INTERFACE, item);
 }
 
+static bool eval_rebuild_derived_interface_property(Evaluator_Context *ctx,
+                                                    Build_Target *target,
+                                                    String_View key,
+                                                    String_View final_value) {
+    static const Eval_Interface_Rebuild_Spec specs[] = {
+        {
+            "INTERFACE_COMPILE_DEFINITIONS",
+            BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS,
+            eval_rebuild_iface_definition_item
+        },
+        {
+            "INTERFACE_COMPILE_OPTIONS",
+            BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS,
+            eval_rebuild_iface_compile_option_item
+        },
+        {
+            "INTERFACE_INCLUDE_DIRECTORIES",
+            BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES,
+            eval_rebuild_iface_include_dir_item
+        },
+        {
+            "INTERFACE_LINK_OPTIONS",
+            BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS,
+            eval_rebuild_iface_link_option_item
+        },
+        {
+            "INTERFACE_LINK_DIRECTORIES",
+            BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES,
+            eval_rebuild_iface_link_dir_item
+        },
+        {
+            "INTERFACE_LINK_LIBRARIES",
+            BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES,
+            eval_rebuild_iface_link_lib_item
+        },
+    };
+
+    if (!ctx || !target) return false;
+
+    Eval_Interface_Rebuild_Ud ud = { .target = target };
+    for (size_t i = 0; i < sizeof(specs) / sizeof(specs[0]); i++) {
+        const Eval_Interface_Rebuild_Spec *spec = &specs[i];
+        if (!sv_eq_ci(key, sv_from_cstr(spec->property_name))) continue;
+        build_target_reset_derived_property(target, spec->derived_kind);
+        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, spec->item_handler, &ud);
+        return true;
+    }
+    return false;
+}
+
 static void eval_apply_target_property(Evaluator_Context *ctx, Build_Target *target, String_View key, String_View value, bool append, bool append_string) {
     String_View current = build_target_get_property(target, key);
     String_View final_value = append_property_value(ctx, current, value, append, append_string);
     build_target_set_property_smart(target, ctx->arena, key, final_value);
-
-    Eval_Interface_Rebuild_Ud ud = { .target = target };
-    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS"))) {
-        target->interface_compile_definitions.count = 0;
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_definition_item, &ud);
-        return;
-    }
-    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_COMPILE_OPTIONS"))) {
-        target->interface_compile_options.count = 0;
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_compile_option_item, &ud);
-        return;
-    }
-    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"))) {
-        target->interface_include_directories.count = 0;
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_include_dir_item, &ud);
-        return;
-    }
-    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_LINK_OPTIONS"))) {
-        target->interface_link_options.count = 0;
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_link_option_item, &ud);
-        return;
-    }
-    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_LINK_DIRECTORIES"))) {
-        target->interface_link_directories.count = 0;
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_link_dir_item, &ud);
-        return;
-    }
-    if (sv_eq_ci(key, sv_from_cstr("INTERFACE_LINK_LIBRARIES"))) {
-        target->interface_dependencies.count = 0;
-        target->interface_libs.count = 0;
-        eval_foreach_semicolon_item(ctx, final_value, /*trim_ws=*/true, eval_rebuild_iface_link_lib_item, &ud);
-        return;
-    }
+    (void)eval_rebuild_derived_interface_property(ctx, target, key, final_value);
 }
 
 static String_View target_property_list_to_sv(Evaluator_Context *ctx, const String_List *list) {
@@ -8891,6 +9259,10 @@ static bool find_command_keyword(String_View arg) {
            sv_eq_ci(arg, sv_from_cstr("PATHS")) ||
            sv_eq_ci(arg, sv_from_cstr("PATH_SUFFIXES")) ||
            sv_eq_ci(arg, sv_from_cstr("NO_DEFAULT_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_ENVIRONMENT_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_SYSTEM_ENVIRONMENT_PATH")) ||
+           sv_eq_ci(arg, sv_from_cstr("NO_CMAKE_SYSTEM_PATH")) ||
            sv_eq_ci(arg, sv_from_cstr("REQUIRED")) ||
            sv_eq_ci(arg, sv_from_cstr("QUIET")) ||
            sv_eq_ci(arg, sv_from_cstr("DOC"));
@@ -8937,6 +9309,10 @@ typedef struct Find_Command_Params {
     String_List paths;
     String_List suffixes;
     bool no_default_path;
+    bool no_cmake_path;
+    bool no_cmake_environment_path;
+    bool no_system_environment_path;
+    bool no_cmake_system_path;
     bool required;
     bool quiet;
 } Find_Command_Params;
@@ -9001,6 +9377,10 @@ static bool find_parse_common_args(Evaluator_Context *ctx, Args args, Find_Comma
         }
 
         if (sv_eq_ci(tok, sv_from_cstr("NO_DEFAULT_PATH"))) params->no_default_path = true;
+        else if (sv_eq_ci(tok, sv_from_cstr("NO_CMAKE_PATH"))) params->no_cmake_path = true;
+        else if (sv_eq_ci(tok, sv_from_cstr("NO_CMAKE_ENVIRONMENT_PATH"))) params->no_cmake_environment_path = true;
+        else if (sv_eq_ci(tok, sv_from_cstr("NO_SYSTEM_ENVIRONMENT_PATH"))) params->no_system_environment_path = true;
+        else if (sv_eq_ci(tok, sv_from_cstr("NO_CMAKE_SYSTEM_PATH"))) params->no_cmake_system_path = true;
         else if (sv_eq_ci(tok, sv_from_cstr("REQUIRED"))) params->required = true;
         else if (sv_eq_ci(tok, sv_from_cstr("QUIET"))) params->quiet = true;
         else if (sv_eq_ci(tok, sv_from_cstr("DOC"))) i++;
@@ -9027,59 +9407,117 @@ static void find_collect_name_variants(Evaluator_Context *ctx, Find_Command_Kind
     }
 }
 
-static void find_collect_default_search_dirs(Evaluator_Context *ctx, Find_Command_Kind kind, String_List *search_dirs) {
-    if (!ctx || !search_dirs) return;
+static void find_collect_env_paths(Evaluator_Context *ctx, const char *env_name, String_List *out_dirs) {
+    if (!ctx || !env_name || !out_dirs) return;
+    const char *env_val = getenv(env_name);
+    if (!env_val || env_val[0] == '\0') return;
+    find_search_split_env_path(ctx->arena, sv_from_cstr(env_val), out_dirs);
+}
+
+static void find_collect_default_search_dirs(Evaluator_Context *ctx,
+                                             Find_Command_Kind kind,
+                                             const Find_Command_Params *params,
+                                             String_List *search_dirs) {
+    if (!ctx || !params || !search_dirs) return;
+
+    bool use_cmake_path = !params->no_cmake_path;
+    bool use_cmake_env = !params->no_cmake_environment_path;
+    bool use_system_env = !params->no_system_environment_path;
+    bool use_cmake_system = !params->no_cmake_system_path;
+
+    String_List prefixes = {0};
+    string_list_init(&prefixes);
+    if (use_cmake_path) {
+        find_collect_var_paths(ctx, "CMAKE_PREFIX_PATH", &prefixes);
+    }
+    if (use_cmake_env) {
+        find_collect_env_paths(ctx, "CMAKE_PREFIX_PATH", &prefixes);
+    }
+    if (use_cmake_system) {
+        find_collect_var_paths(ctx, "CMAKE_SYSTEM_PREFIX_PATH", &prefixes);
+    }
 
     if (kind == FIND_COMMAND_PROGRAM) {
-        find_collect_var_paths(ctx, "CMAKE_PROGRAM_PATH", search_dirs);
-        const char *env_path = getenv("PATH");
-        if (env_path) find_search_split_env_path(ctx->arena, sv_from_cstr(env_path), search_dirs);
+        if (use_cmake_path) find_collect_var_paths(ctx, "CMAKE_PROGRAM_PATH", search_dirs);
+        if (use_cmake_env) find_collect_env_paths(ctx, "CMAKE_PROGRAM_PATH", search_dirs);
+        for (size_t k = 0; k < prefixes.count; k++) {
+            string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("bin")));
+        }
+        if (use_system_env) {
+            find_collect_env_paths(ctx, "PATH", search_dirs);
+        }
+        if (use_cmake_system) {
+            find_collect_var_paths(ctx, "CMAKE_SYSTEM_PROGRAM_PATH", search_dirs);
 #if defined(_WIN32)
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows/System32"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows/System32"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows"));
 #else
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/bin"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/local/bin"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/bin"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/bin"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/local/bin"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/bin"));
 #endif
+        }
         return;
     }
 
-    find_collect_var_paths(ctx, "CMAKE_LIBRARY_PATH", search_dirs);
-    String_List prefixes = {0};
-    string_list_init(&prefixes);
-    find_collect_var_paths(ctx, "CMAKE_PREFIX_PATH", &prefixes);
     if (kind == FIND_COMMAND_LIBRARY) {
+        if (use_cmake_path) find_collect_var_paths(ctx, "CMAKE_LIBRARY_PATH", search_dirs);
+        if (use_cmake_env) find_collect_env_paths(ctx, "CMAKE_LIBRARY_PATH", search_dirs);
+        if (use_cmake_system) find_collect_var_paths(ctx, "CMAKE_SYSTEM_LIBRARY_PATH", search_dirs);
         for (size_t k = 0; k < prefixes.count; k++) {
             string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("lib")));
             string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("lib64")));
         }
-#if defined(_WIN32)
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows/System32"));
-#else
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/lib"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/local/lib"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/lib"));
+        if (use_system_env) {
+            find_collect_env_paths(ctx, "LIB", search_dirs);
+#if !defined(_WIN32)
+            find_collect_env_paths(ctx, "LD_LIBRARY_PATH", search_dirs);
+            find_collect_env_paths(ctx, "DYLD_LIBRARY_PATH", search_dirs);
 #endif
+        }
+        if (use_cmake_system) {
+#if defined(_WIN32)
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/Windows/System32"));
+#else
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/lib"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/local/lib"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/lib"));
+#endif
+        }
         return;
     }
 
     if (kind == FIND_COMMAND_FILE || kind == FIND_COMMAND_PATH) {
-        find_collect_var_paths(ctx, "CMAKE_INCLUDE_PATH", search_dirs);
+        if (use_cmake_path) {
+            find_collect_var_paths(ctx, "CMAKE_INCLUDE_PATH", search_dirs);
+            string_list_add_unique(search_dirs, ctx->arena, ctx->current_list_dir);
+            string_list_add_unique(search_dirs, ctx->arena, ctx->current_source_dir);
+            string_list_add_unique(search_dirs, ctx->arena, ctx->current_binary_dir);
+        }
+        if (use_cmake_env) {
+            find_collect_env_paths(ctx, "CMAKE_INCLUDE_PATH", search_dirs);
+        }
+        if (use_cmake_system) {
+            find_collect_var_paths(ctx, "CMAKE_SYSTEM_INCLUDE_PATH", search_dirs);
+        }
         for (size_t k = 0; k < prefixes.count; k++) {
             string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("include")));
             string_list_add_unique(search_dirs, ctx->arena, cmk_path_join(ctx->arena, prefixes.items[k], sv_from_cstr("share")));
         }
-        string_list_add_unique(search_dirs, ctx->arena, ctx->current_list_dir);
-        string_list_add_unique(search_dirs, ctx->arena, ctx->current_source_dir);
-        string_list_add_unique(search_dirs, ctx->arena, ctx->current_binary_dir);
+        if (use_system_env) {
+            find_collect_env_paths(ctx, "INCLUDE", search_dirs);
+            find_collect_env_paths(ctx, "CPATH", search_dirs);
+            find_collect_env_paths(ctx, "C_INCLUDE_PATH", search_dirs);
+        }
+        if (use_cmake_system) {
 #if defined(_WIN32)
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("C:/"));
 #else
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/include"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/local/include"));
-        string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/etc"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/include"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/usr/local/include"));
+            string_list_add_unique(search_dirs, ctx->arena, sv_from_cstr("/etc"));
 #endif
+        }
     }
 }
 
@@ -9126,7 +9564,7 @@ static void eval_find_common_command(Evaluator_Context *ctx, Args args, Find_Com
     for (size_t h = 0; h < params.hints.count; h++) string_list_add_unique(&search_dirs, ctx->arena, params.hints.items[h]);
     for (size_t p = 0; p < params.paths.count; p++) string_list_add_unique(&search_dirs, ctx->arena, params.paths.items[p]);
     if (!params.no_default_path) {
-        find_collect_default_search_dirs(ctx, kind, &search_dirs);
+        find_collect_default_search_dirs(ctx, kind, &params, &search_dirs);
     }
 
     String_View found = sv_from_cstr("");

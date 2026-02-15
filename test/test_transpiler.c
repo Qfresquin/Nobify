@@ -2215,6 +2215,40 @@ TEST(find_package_config_mode_uses_dir_and_config_vars) {
     TEST_PASS();
 }
 
+TEST(find_package_no_default_path_ignores_dir_and_prefix_defaults) {
+    Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_package_nodefault");
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_nodefault"));
+    ASSERT(nob_mkdir_if_not_exists("temp_find_package_nodefault/MyPkg"));
+    write_test_file("temp_find_package_nodefault/MyPkg/MyPkgConfig.cmake",
+        "set(MyPkg_FOUND TRUE)\n"
+        "set(MyPkg_LIBRARIES mypkg)\n");
+
+    const char *input =
+        "project(Test)\n"
+        "set(MyPkg_DIR temp_find_package_nodefault/MyPkg)\n"
+        "set(CMAKE_PREFIX_PATH temp_find_package_nodefault)\n"
+        "find_package(MyPkg CONFIG QUIET NO_DEFAULT_PATH)\n"
+        "set(FIRST_RESULT ${MyPkg_FOUND})\n"
+        "find_package(MyPkg CONFIG QUIET NO_DEFAULT_PATH PATHS temp_find_package_nodefault/MyPkg)\n"
+        "add_executable(app_${FIRST_RESULT}_${MyPkg_FOUND} main.c)";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "cmd_app_FALSE_TRUE") != NULL);
+    ASSERT(diag_has_errors() == false);
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    remove_test_tree("temp_find_package_nodefault");
+    TEST_PASS();
+}
+
 TEST(find_package_module_mode_prefers_module_resolution) {
     Arena *arena = arena_create(1024 * 1024);
     remove_test_tree("temp_find_package_module_pref");
@@ -2451,6 +2485,54 @@ TEST(find_program_notfound_sets_notfound) {
 
     nob_sb_free(sb);
     arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(find_program_no_system_environment_path_excludes_path_env) {
+    Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_find_env");
+    nob_mkdir_if_not_exists("temp_find_env");
+    nob_mkdir_if_not_exists("temp_find_env/bin");
+    write_test_file("temp_find_env/bin/envtool", "tool\n");
+    write_test_file("temp_find_env/bin/envtool.exe", "MZ");
+
+    const char *old_path = getenv("PATH");
+    const char *saved_path = old_path ? arena_strdup(arena, old_path) : NULL;
+#if defined(_WIN32)
+    _putenv_s("PATH", "temp_find_env/bin");
+#else
+    setenv("PATH", "temp_find_env/bin", 1);
+#endif
+
+    const char *input =
+        "project(Test)\n"
+        "find_program(PROG_FROM_ENV NAMES envtool)\n"
+        "find_program(PROG_NO_ENV NAMES envtool NO_SYSTEM_ENVIRONMENT_PATH)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE \"ENV_${PROG_FROM_ENV}\" \"NOENV_${PROG_NO_ENV}\")";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "ENV_") != NULL);
+    ASSERT(strstr(output, "temp_find_env/bin") != NULL);
+    ASSERT(strstr(output, "NOENV_PROG_NO_ENV-NOTFOUND") != NULL);
+    ASSERT(diag_has_errors() == false);
+
+#if defined(_WIN32)
+    _putenv_s("PATH", saved_path ? saved_path : "");
+#else
+    if (saved_path) setenv("PATH", saved_path, 1);
+    else unsetenv("PATH");
+#endif
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    remove_test_tree("temp_find_env");
     TEST_PASS();
 }
 
@@ -3170,11 +3252,11 @@ TEST(message_fatal_error_can_continue_when_enabled) {
 
     diag_reset();
     diag_telemetry_reset();
-    transpiler_set_continue_on_fatal_error(true);
     Ast_Root root = parse_cmake(arena, input);
     Nob_String_Builder sb = {0};
-    transpile_datree(root, &sb);
-    transpiler_set_continue_on_fatal_error(false);
+    Transpiler_Run_Options options = {0};
+    options.continue_on_fatal_error = true;
+    transpile_datree_ex(root, &sb, &options);
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
     ASSERT(diag_has_errors() == false);
@@ -3214,6 +3296,57 @@ TEST(cmake_minimum_required_try_compile_and_get_cmake_property_supported) {
     ASSERT(diag_has_errors() == false);
 
     nob_delete_file(src_file);
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(cmake_minimum_required_range_sets_policy_vars) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "cmake_minimum_required(VERSION 3.16...3.27 FATAL_ERROR)\n"
+        "project(Test)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE "
+        "\"MIN_${CMAKE_MINIMUM_REQUIRED_VERSION}\" "
+        "\"POL_${CMAKE_POLICY_VERSION}\" "
+        "\"POLMIN_${CMAKE_POLICY_VERSION_MINIMUM}\")";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "MIN_3.16") != NULL);
+    ASSERT(strstr(output, "POL_3.27") != NULL);
+    ASSERT(strstr(output, "POLMIN_3.16") != NULL);
+    ASSERT(diag_has_errors() == false);
+    ASSERT(diag_telemetry_unsupported_count_for("cmake_minimum_required") == 0);
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(cmake_minimum_required_invalid_signature_reports_error) {
+    Arena *arena = arena_create(1024 * 1024);
+    const char *input =
+        "cmake_minimum_required(3.16)\n"
+        "project(Test)\n"
+        "add_executable(app main.c)";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(diag_has_errors() == true);
+    ASSERT(strstr(output, "Nob_Cmd cmd_app") == NULL);
+
     nob_sb_free(sb);
     arena_destroy(arena);
     TEST_PASS();
@@ -5726,6 +5859,45 @@ TEST(check_type_size_real_probe_with_extra_include_files) {
     TEST_PASS();
 }
 
+TEST(cmake_required_settings_apply_to_checks_and_try_compile) {
+    Arena *arena = arena_create(1024 * 1024);
+    remove_test_tree("temp_required_probe");
+    nob_mkdir_if_not_exists("temp_required_probe");
+    write_test_file("temp_required_probe/required_probe.h",
+                    "#ifndef REQUIRED_FLAG\n"
+                    "#error REQUIRED_FLAG missing\n"
+                    "#endif\n");
+    write_test_file("temp_required_probe/probe.c",
+                    "#include <required_probe.h>\n"
+                    "int main(void){ return 0; }\n");
+
+    const char *input =
+        "project(Test)\n"
+        "set(CMK2NOB_REAL_PROBES ON)\n"
+        "set(CMAKE_REQUIRED_INCLUDES \"${CMAKE_CURRENT_SOURCE_DIR}/temp_required_probe\")\n"
+        "set(CMAKE_REQUIRED_DEFINITIONS \"REQUIRED_FLAG=1\")\n"
+        "check_c_source_compiles(\"#include <required_probe.h>\\nint main(void){return 0;}\" CHECK_OK)\n"
+        "try_compile(TRY_OK ${CMAKE_BINARY_DIR} temp_required_probe/probe.c)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE \"CHECK_${CHECK_OK}\" \"TRY_${TRY_OK}\")";
+
+    diag_reset();
+    diag_telemetry_reset();
+    Ast_Root root = parse_cmake(arena, input);
+    Nob_String_Builder sb = {0};
+    transpile_datree(root, &sb);
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items);
+    ASSERT(strstr(output, "CHECK_1") != NULL);
+    ASSERT(strstr(output, "TRY_1") != NULL);
+    ASSERT(diag_has_errors() == false);
+
+    nob_sb_free(sb);
+    remove_test_tree("temp_required_probe");
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(cmake_end_to_end_compile_flags_equivalence_optional) {
     const char *fixture_dir = "temp_e2e_equiv";
     const char *cmakelists_path = "temp_e2e_equiv/CMakeLists.txt";
@@ -5890,12 +6062,14 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_find_package_target_link_usage(passed, failed);
     test_find_package_required_reports_error_when_missing(passed, failed);
     test_find_package_config_mode_uses_dir_and_config_vars(passed, failed);
+    test_find_package_no_default_path_ignores_dir_and_prefix_defaults(passed, failed);
     test_find_package_module_mode_prefers_module_resolution(passed, failed);
     test_find_package_exact_version_mismatch_sets_not_found(passed, failed);
     test_find_package_components_and_component_imported_target(passed, failed);
     test_cmake_pkg_config_imported_target_and_vars(passed, failed);
     test_find_program_and_find_library_basic(passed, failed);
     test_find_program_notfound_sets_notfound(passed, failed);
+    test_find_program_no_system_environment_path_excludes_path_env(passed, failed);
     test_find_file_and_find_path_basic(passed, failed);
     test_find_file_and_find_path_notfound_set_notfound(passed, failed);
     test_add_subdirectory_complex(passed, failed);
@@ -5930,6 +6104,8 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_message_fatal_error_stops_evaluation(passed, failed);
     test_message_fatal_error_can_continue_when_enabled(passed, failed);
     test_cmake_minimum_required_try_compile_and_get_cmake_property_supported(passed, failed);
+    test_cmake_minimum_required_range_sets_policy_vars(passed, failed);
+    test_cmake_minimum_required_invalid_signature_reports_error(passed, failed);
     test_try_compile_mingw64_version_behaves_like_curl_check(passed, failed);
     test_try_compile_real_failure_sets_zero_and_output_log(passed, failed);
     test_create_test_sourcelist_generates_driver_and_list(passed, failed);
@@ -6019,6 +6195,7 @@ void run_transpiler_tests(int *passed, int *failed) {
     test_check_c_source_runs_real_probe_optional(passed, failed);
     test_check_symbol_and_compiles_real_probe_optional(passed, failed);
     test_check_type_size_real_probe_with_extra_include_files(passed, failed);
+    test_cmake_required_settings_apply_to_checks_and_try_compile(passed, failed);
     test_cmake_end_to_end_compile_flags_equivalence_optional(passed, failed);
 }
 

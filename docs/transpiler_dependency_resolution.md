@@ -6,6 +6,12 @@ Este documento descreve a semantica generica de resolucao de dependencias no tra
 ## `find_package`
 - A resolucao segue os modos `MODULE`, `CONFIG` e `NO_MODULE/CONFIG`.
 - A ordem respeita `CMAKE_FIND_PACKAGE_PREFER_CONFIG` quando nem `MODULE` nem `CONFIG` sao forcados.
+- Flags de restricao de busca suportadas:
+  - `NO_DEFAULT_PATH`
+  - `NO_CMAKE_PATH`
+  - `NO_CMAKE_ENVIRONMENT_PATH`
+  - `NO_SYSTEM_ENVIRONMENT_PATH`
+  - `NO_CMAKE_SYSTEM_PATH`
 - Em modo `MODULE`, o transpiler busca `Find<Package>.cmake` em:
   - `CMAKE_MODULE_PATH`
   - `HINTS`
@@ -33,6 +39,36 @@ Este documento descreve a semantica generica de resolucao de dependencias no tra
   - suprime logs informativos/avisos de ausencia
 - `OPTIONAL`:
   - mantem o fluxo sem erro fatal
+
+## `find_program`/`find_library`/`find_file`/`find_path`
+- Suporte a:
+  - `NAMES`, `HINTS`, `PATHS`, `PATH_SUFFIXES`, `REQUIRED`, `QUIET`
+  - `NO_DEFAULT_PATH`, `NO_CMAKE_PATH`, `NO_CMAKE_ENVIRONMENT_PATH`, `NO_SYSTEM_ENVIRONMENT_PATH`, `NO_CMAKE_SYSTEM_PATH`
+- Em caso de ausencia:
+  - `<VAR>` recebe `<VAR>-NOTFOUND`
+  - `<VAR>_FOUND` recebe `FALSE`
+- Em sucesso:
+  - `<VAR>` recebe caminho absoluto encontrado
+  - `<VAR>_FOUND` recebe `TRUE`
+
+## `cmake_minimum_required`
+- Assinatura suportada: `cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])`.
+- Em assinatura invalida, o transpiler emite erro e interrompe a avaliacao.
+- Variaveis atualizadas:
+  - `CMAKE_MINIMUM_REQUIRED_VERSION`
+  - `CMAKE_VERSION`, `CMAKE_MAJOR_VERSION`, `CMAKE_MINOR_VERSION`, `CMAKE_PATCH_VERSION`
+  - `CMAKE_POLICY_VERSION_MINIMUM`, `CMAKE_POLICY_VERSION`
+- Se `CMAKE_VERSION` for menor que a versao minima exigida, a configuracao falha cedo.
+
+## Aplicacao de `CMAKE_REQUIRED_*`
+- Os checks/probes e `try_compile`/`try_run` aplicam:
+  - `CMAKE_REQUIRED_DEFINITIONS`
+  - `CMAKE_REQUIRED_FLAGS`
+  - `CMAKE_REQUIRED_INCLUDES`
+  - `CMAKE_REQUIRED_LINK_OPTIONS`
+  - `CMAKE_REQUIRED_LINK_DIRECTORIES`
+  - `CMAKE_REQUIRED_LIBRARIES`
+- `CMAKE_REQUIRED_QUIET` suprime warnings informativos quando probe real nao esta disponivel.
 
 ## Propagacao para imported targets
 Quando o pacote e encontrado, os metadados sao propagados para target importado (`<Pkg>::<Pkg>`) e componentes (`<Pkg>::<Component>`), usando variaveis reais:

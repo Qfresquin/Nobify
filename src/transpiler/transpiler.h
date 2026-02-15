@@ -98,6 +98,11 @@ typedef struct {
     } check_state_stack;
 } Evaluator_Context;
 
+typedef struct {
+    const char *input_path;
+    bool continue_on_fatal_error;
+} Transpiler_Run_Options;
+
 // ============================================================================
 // FUNCOES PUBLICAS
 // ============================================================================
@@ -105,6 +110,9 @@ typedef struct {
 // Transpila uma AST para codigo C (nob.h)
 void transpile_datree(Ast_Root root, String_Builder *sb);
 void transpile_datree_with_input_path(Ast_Root root, String_Builder *sb, const char *input_path);
+void transpile_datree_ex(Ast_Root root, String_Builder *sb, const Transpiler_Run_Options *options);
+
+// API legada: use transpile_datree_ex(..., &Transpiler_Run_Options) no novo codigo.
 void transpiler_set_continue_on_fatal_error(bool enabled);
 
 // Funcoes auxiliares para testes e debug
