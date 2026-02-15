@@ -48,9 +48,39 @@ typedef struct {
     String_View run_output;
 } Effect_Toolchain_Result;
 
+typedef enum {
+    EFFECT_FS_ENSURE_PARENT_DIRS = 0,
+    EFFECT_FS_WRITE_FILE_BYTES,
+    EFFECT_FS_MKDIR,
+    EFFECT_FS_DELETE_PATH_RECURSIVE,
+    EFFECT_FS_COPY_ENTRY_TO_DESTINATION,
+    EFFECT_FS_DOWNLOAD_TO_PATH,
+    EFFECT_FS_DELETE_FILE,
+    EFFECT_FS_COPY_DIRECTORY_RECURSIVE,
+    EFFECT_FS_GET_FILE_TYPE,
+    EFFECT_FS_COPY_FILE,
+} Effect_Fs_Kind;
+
+typedef struct {
+    Effect_Fs_Kind kind;
+    Arena *arena;
+    String_View path;
+    String_View path2;
+    const char *bytes;
+    size_t bytes_count;
+    String_View url;
+} Effect_Fs_Request;
+
+typedef struct {
+    Effect_Status status;
+    bool ok;
+    Nob_File_Type file_type;
+    String_View log_msg;
+} Effect_Fs_Result;
+
 bool effect_execute(const Effect_Request *req, Effect_Result *out);
 bool effect_toolchain_invoke(const Effect_Toolchain_Request *req, Effect_Toolchain_Result *out);
+bool effect_fs_invoke(const Effect_Fs_Request *req, Effect_Fs_Result *out);
 const char *effect_status_name(Effect_Status status);
 
 #endif // TRANSPILER_EFFECTS_H_
-

@@ -10,7 +10,7 @@
 - [x] Q1 (concluido): `Transpiler_Run_Options` + entrada `transpile_datree_ex` + eliminacao de dependencia global no fluxo principal + gate arquitetural em teste para bloquear regressao.
 - [x] Q2 (concluido): rebuild de `INTERFACE_*` consolidado em fluxo generico unico + parse de listas `;` unificado no caminho de link libs + aplicacao centralizada por `eval_apply_target_property`.
 - [x] Q3 (concluido): dispatcher declarativo com `Command_Spec` por dominio (`commands_control`, `commands_target`, `commands_find`, `commands_file`), no-op de compat via flags e politica de diagnostico de aridade centralizada.
-- [x] Q4 (parcial): camada `transpiler_effects` criada e integrada em `execute_process`, `exec_program`, fluxo `pkg-config` e probes/toolchain.
+- [x] Q4 (parcial): camada `transpiler_effects` integrada em subprocess/toolchain e filesystem para `file(...)`, `configure_file`, `try_compile/try_run`, `cmake_file_api`, `cmake_instrumentation`, `qt/fltk wrap` e geracao de arquivos de pacote.
 - [x] Q5 (parcial): `build_model_types.h` extraido de `build_model.h` e headers utilitarios do transpiler migrados para dependencia por tipos.
 - [ ] Q6: split completo da suite `test/test_transpiler.c` em suites tematicas.
 

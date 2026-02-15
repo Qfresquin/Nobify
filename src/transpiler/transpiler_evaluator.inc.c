@@ -96,6 +96,10 @@ static void eval_apply_required_settings(Evaluator_Context *ctx,
 static bool eval_has_pending_flow_control(const Evaluator_Context *ctx);
 static Loop_Flow_Signal eval_consume_loop_flow_signal(Evaluator_Context *ctx);
 static void eval_append_link_library_value(Evaluator_Context *ctx, Build_Target *target, Visibility visibility, String_View value);
+static bool eval_effect_ensure_parent_dirs(Evaluator_Context *ctx, String_View path);
+static bool eval_effect_write_file_bytes(String_View path, const char *bytes, size_t bytes_count);
+static bool eval_effect_mkdir(String_View path);
+static bool eval_effect_copy_file(String_View from, String_View to);
 
 /*static String_View normalize_source_path(Evaluator_Context *ctx, String_View src) {
     if (!ctx || src.count == 0) return src;
@@ -226,6 +230,46 @@ static bool eval_check_include_exists(Evaluator_Context *ctx, String_View header
     }
 
     return eval_check_include_is_standard_header(normalized);
+}
+
+static bool eval_effect_ensure_parent_dirs(Evaluator_Context *ctx, String_View path) {
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_ENSURE_PARENT_DIRS,
+        .arena = ctx ? ctx->arena : NULL,
+        .path = path,
+    };
+    Effect_Fs_Result out = {0};
+    return effect_fs_invoke(&req, &out) && out.ok;
+}
+
+static bool eval_effect_write_file_bytes(String_View path, const char *bytes, size_t bytes_count) {
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_WRITE_FILE_BYTES,
+        .path = path,
+        .bytes = bytes,
+        .bytes_count = bytes_count,
+    };
+    Effect_Fs_Result out = {0};
+    return effect_fs_invoke(&req, &out) && out.ok;
+}
+
+static bool eval_effect_mkdir(String_View path) {
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_MKDIR,
+        .path = path,
+    };
+    Effect_Fs_Result out = {0};
+    return effect_fs_invoke(&req, &out) && out.ok;
+}
+
+static bool eval_effect_copy_file(String_View from, String_View to) {
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_COPY_FILE,
+        .path = from,
+        .path2 = to,
+    };
+    Effect_Fs_Result out = {0};
+    return effect_fs_invoke(&req, &out) && out.ok;
 }
 
 static bool eval_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers) {
@@ -2191,14 +2235,14 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
     }
 
     if (!append_mode) {
-        if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
+        if (!eval_effect_ensure_parent_dirs(ctx, output_path)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
                 nob_temp_sprintf("falha ao preparar diretorio para escrita: "SV_Fmt, SV_Arg(output_path)),
                 "verifique permissao de escrita e caminho de destino");
             nob_sb_free(content);
             return;
         }
-        if (!sys_write_file_bytes(output_path, content.items ? content.items : "", content.count)) {
+        if (!eval_effect_write_file_bytes(output_path, content.items ? content.items : "", content.count)) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
                 nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -2222,7 +2266,7 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
     sb_append_buf(&merged, existing.items ? existing.items : "", existing.count);
     sb_append_buf(&merged, content.items ? content.items : "", content.count);
 
-    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
+    if (!eval_effect_ensure_parent_dirs(ctx, output_path)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
             nob_temp_sprintf("falha ao preparar diretorio para append: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita e caminho de destino");
@@ -2231,7 +2275,7 @@ static void eval_write_file_command(Evaluator_Context *ctx, Args args) {
         nob_sb_free(merged);
         return;
     }
-    if (!sys_write_file_bytes(output_path, merged.items ? merged.items : "", merged.count)) {
+    if (!eval_effect_write_file_bytes(output_path, merged.items ? merged.items : "", merged.count)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "write_file",
             nob_temp_sprintf("falha ao gravar append em arquivo: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita e caminho de destino");
@@ -3415,7 +3459,7 @@ static bool eval_real_probe_from_source(Evaluator_Context *ctx,
     s_probe_counter++;
 
     String_View probe_dir = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmk2nob_probes"));
-    (void)sys_mkdir(probe_dir);
+    (void)eval_effect_mkdir(probe_dir);
 
     String_View base = cmk_path_join(
         ctx->arena,
@@ -3429,7 +3473,7 @@ static bool eval_real_probe_from_source(Evaluator_Context *ctx,
     String_View out_path = base;
 #endif
 
-    if (!sys_write_file(src_path, source)) {
+    if (!eval_effect_write_file_bytes(src_path, source.data, source.count)) {
         eval_probe_cleanup_outputs(base, msvc);
         eval_pop_cc_override(&ov);
         return false;
@@ -4052,7 +4096,7 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
     String_View bindir = cmk_path_is_absolute(bindir_arg)
         ? bindir_arg
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, bindir_arg);
-    (void)sys_mkdir(bindir);
+    (void)eval_effect_mkdir(bindir);
 
     String_View src_path = cmk_path_is_absolute(src_arg)
         ? src_arg
@@ -4095,7 +4139,7 @@ static void eval_try_compile_command(Evaluator_Context *ctx, Args args) {
         String_View copy_path = cmk_path_is_absolute(copy_file_path)
             ? copy_file_path
             : cmk_path_join(ctx->arena, ctx->current_binary_dir, copy_file_path);
-        (void)sys_copy_file(out_path, copy_path);
+        (void)eval_effect_copy_file(out_path, copy_path);
     }
 
     if (output_var.count > 0) {
@@ -4185,7 +4229,7 @@ static void eval_create_test_sourcelist_command(Evaluator_Context *ctx, Args arg
     String_View driver_path = cmk_path_is_absolute(driver_file)
         ? driver_file
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, driver_file);
-    if (sys_ensure_parent_dirs(ctx->arena, driver_path)) {
+    if (eval_effect_ensure_parent_dirs(ctx, driver_path)) {
         String_Builder file_sb = {0};
         sb_append_cstr(&file_sb, "/* generated by cmk2nob: create_test_sourcelist */\n");
         if (extra_include.count > 0) {
@@ -4198,7 +4242,7 @@ static void eval_create_test_sourcelist_command(Evaluator_Context *ctx, Args arg
         sb_append_cstr(&file_sb, "    (void)argv;\n");
         sb_append_cstr(&file_sb, "    return 0;\n");
         sb_append_cstr(&file_sb, "}\n");
-        if (!sys_write_file_bytes(driver_path, file_sb.items, file_sb.count)) {
+        if (!eval_effect_write_file_bytes(driver_path, file_sb.items, file_sb.count)) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "create_test_sourcelist",
                 nob_temp_sprintf("falha ao gerar driver de teste: "SV_Fmt, SV_Arg(driver_path)),
                 "verifique permissao de escrita no diretorio de build");
@@ -4251,9 +4295,9 @@ static void eval_qt_wrap_cpp_command(Evaluator_Context *ctx, Args args) {
         sb_append_buf(&list_sb, generated_path.data, generated_path.count);
         first = false;
 
-        if (sys_ensure_parent_dirs(ctx->arena, generated_path)) {
+        if (eval_effect_ensure_parent_dirs(ctx, generated_path)) {
             const char *content = "/* generated by cmk2nob: qt_wrap_cpp */\n";
-            if (!sys_write_file_bytes(generated_path, content, strlen(content))) {
+            if (!eval_effect_write_file_bytes(generated_path, content, strlen(content))) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "qt_wrap_cpp",
                     nob_temp_sprintf("falha ao gerar arquivo MOC: "SV_Fmt, SV_Arg(generated_path)),
                     "verifique permissao de escrita no diretorio de build");
@@ -4289,11 +4333,11 @@ static void eval_qt_wrap_ui_command(Evaluator_Context *ctx, Args args) {
         sb_append_buf(&list_sb, generated_path.data, generated_path.count);
         first = false;
 
-        if (sys_ensure_parent_dirs(ctx->arena, generated_path)) {
+        if (eval_effect_ensure_parent_dirs(ctx, generated_path)) {
             const char *content =
                 "/* generated by cmk2nob: qt_wrap_ui */\n"
                 "#pragma once\n";
-            if (!sys_write_file_bytes(generated_path, content, strlen(content))) {
+            if (!eval_effect_write_file_bytes(generated_path, content, strlen(content))) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "qt_wrap_ui",
                     nob_temp_sprintf("falha ao gerar header UI: "SV_Fmt, SV_Arg(generated_path)),
                     "verifique permissao de escrita no diretorio de build");
@@ -4335,11 +4379,11 @@ static void eval_fltk_wrap_ui_command(Evaluator_Context *ctx, Args args) {
         sb_append_buf(&list_sb, generated_path.data, generated_path.count);
         first = false;
 
-        if (sys_ensure_parent_dirs(ctx->arena, generated_path)) {
+        if (eval_effect_ensure_parent_dirs(ctx, generated_path)) {
             String_Builder content = {0};
             sb_append_cstr(&content, "/* generated by cmk2nob: fltk_wrap_ui */\n");
             sb_append_cstr(&content, "int cmk2nob_fltk_wrap_ui_stub(void) { return 0; }\n");
-            if (!sys_write_file_bytes(generated_path, content.items, content.count)) {
+            if (!eval_effect_write_file_bytes(generated_path, content.items, content.count)) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "fltk_wrap_ui",
                     nob_temp_sprintf("falha ao gerar wrapper FLTK: "SV_Fmt, SV_Arg(generated_path)),
                     "verifique permissao de escrita no diretorio de build");
@@ -5132,8 +5176,8 @@ static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
     String_View api_root = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmake/api"));
     String_View v1_root = cmk_path_join(ctx->arena, api_root, sv_from_cstr("v1"));
     String_View query_root = cmk_path_join(ctx->arena, v1_root, sv_from_cstr("query"));
-    (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, query_root, sv_from_cstr(".keep")));
-    (void)sys_mkdir(query_root);
+    (void)eval_effect_ensure_parent_dirs(ctx, cmk_path_join(ctx->arena, query_root, sv_from_cstr(".keep")));
+    (void)eval_effect_mkdir(query_root);
 
     String_View client_name = sv_from_cstr("");
     size_t i = 1;
@@ -5158,8 +5202,8 @@ static void eval_cmake_file_api_command(Evaluator_Context *ctx, Args args) {
         String_View client_dir = cmk_path_join(ctx->arena, query_root,
             sv_from_cstr(nob_temp_sprintf("client-%s", nob_temp_sv_to_cstr(client_name))));
         effective_query_root = cmk_path_join(ctx->arena, client_dir, sv_from_cstr("query"));
-        (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, effective_query_root, sv_from_cstr(".keep")));
-        (void)sys_mkdir(effective_query_root);
+        (void)eval_effect_ensure_parent_dirs(ctx, cmk_path_join(ctx->arena, effective_query_root, sv_from_cstr(".keep")));
+        (void)eval_effect_mkdir(effective_query_root);
     }
 
     bool emitted_any = false;
@@ -5319,8 +5363,8 @@ static void eval_cmake_instrumentation_command(Evaluator_Context *ctx, Args args
     }
 
     String_View root = cmk_path_join(ctx->arena, ctx->current_binary_dir, sv_from_cstr(".cmake/instrumentation/v1/query/generated"));
-    (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, root, sv_from_cstr(".keep")));
-    (void)sys_mkdir(root);
+    (void)eval_effect_ensure_parent_dirs(ctx, cmk_path_join(ctx->arena, root, sv_from_cstr(".keep")));
+    (void)eval_effect_mkdir(root);
 
     static size_t s_instr_query_counter = 0;
     s_instr_query_counter++;
@@ -5455,7 +5499,7 @@ static void eval_try_run_command(Evaluator_Context *ctx, Args args) {
     String_View bindir = cmk_path_is_absolute(bindir_arg)
         ? bindir_arg
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, bindir_arg);
-    (void)sys_mkdir(bindir);
+    (void)eval_effect_mkdir(bindir);
     String_View src_path = cmk_path_is_absolute(src_arg)
         ? src_arg
         : cmk_path_join(ctx->arena, ctx->current_list_dir, src_arg);
@@ -6535,7 +6579,7 @@ static void eval_write_basic_package_version_file_command(Evaluator_Context *ctx
         ? out_arg
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, out_arg);
 
-    if (!sys_ensure_parent_dirs(ctx->arena, out_path)) {
+    if (!eval_effect_ensure_parent_dirs(ctx, out_path)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "write_basic_package_version_file",
             nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(out_path)),
             "arquivo de versao de pacote nao sera gerado");
@@ -6546,7 +6590,7 @@ static void eval_write_basic_package_version_file_command(Evaluator_Context *ctx
         "# Generated by cmk2nob (partial support)\n"
         "set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
         "set(PACKAGE_VERSION_EXACT TRUE)\n";
-    if (!sys_write_file_bytes(out_path, content, strlen(content))) {
+    if (!eval_effect_write_file_bytes(out_path, content, strlen(content))) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "write_basic_package_version_file",
             nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(out_path)),
             "arquivo de versao de pacote nao sera gerado");
@@ -6565,7 +6609,7 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
         ? output_arg
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, output_arg);
 
-    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
+    if (!eval_effect_ensure_parent_dirs(ctx, output_path)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "configure_package_config_file",
             nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(output_path)),
             "arquivo de config de pacote nao sera gerado");
@@ -6577,7 +6621,7 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
         const char *fallback =
             "# Generated by cmk2nob (partial support)\n"
             "set(PACKAGE_INIT_DONE TRUE)\n";
-        if (!sys_write_file_bytes(output_path, fallback, strlen(fallback))) {
+        if (!eval_effect_write_file_bytes(output_path, fallback, strlen(fallback))) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "configure_package_config_file",
                 nob_temp_sprintf("falha ao escrever fallback: "SV_Fmt, SV_Arg(output_path)),
                 "arquivo de config de pacote nao sera gerado");
@@ -6586,7 +6630,7 @@ static void eval_configure_package_config_file_command(Evaluator_Context *ctx, A
     }
 
     String_View rendered = configure_expand_variables(ctx, content, false);
-    if (!sys_write_file_bytes(output_path, rendered.data, rendered.count)) {
+    if (!eval_effect_write_file_bytes(output_path, rendered.data, rendered.count)) {
         diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "configure_package_config_file",
             nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
             "arquivo de config de pacote nao sera gerado");
@@ -7669,7 +7713,7 @@ static void eval_ctest_empty_binary_directory_command(Evaluator_Context *ctx, Ar
     String_View dir = resolve_arg(ctx, args.items[0]);
     if (dir.count == 0) return;
     String_View resolved = cmk_path_is_absolute(dir) ? dir : cmk_path_join(ctx->arena, ctx->current_binary_dir, dir);
-    (void)sys_mkdir(resolved);
+    (void)eval_effect_mkdir(resolved);
     eval_set_var(ctx, sv_from_cstr("CTEST_BINARY_DIRECTORY"), resolved, false, false);
 }
 
@@ -8413,13 +8457,13 @@ static void eval_cpack_ifw_configure_file_command(Evaluator_Context *ctx, Args a
     }
 
     String_View rendered = copy_only ? content : configure_expand_variables(ctx, content, at_only);
-    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
+    if (!eval_effect_ensure_parent_dirs(ctx, output_path)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cpack_ifw_configure_file",
                  nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(output_path)),
                  "verifique permissao de escrita");
         return;
     }
-    if (!sys_write_file_bytes(output_path, rendered.data, rendered.count)) {
+    if (!eval_effect_write_file_bytes(output_path, rendered.data, rendered.count)) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "cpack_ifw_configure_file",
                  nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
                  "verifique permissao de escrita");
@@ -10213,13 +10257,25 @@ static void eval_configure_file_command(Evaluator_Context *ctx, Args args) {
     }
 
     String_View rendered = copy_only ? content : configure_expand_variables(ctx, content, at_only);
-    if (!sys_ensure_parent_dirs(ctx->arena, output_path)) {
+    Effect_Fs_Result fs_out = {0};
+    Effect_Fs_Request ensure_req = {
+        .kind = EFFECT_FS_ENSURE_PARENT_DIRS,
+        .arena = ctx->arena,
+        .path = output_path,
+    };
+    if (!effect_fs_invoke(&ensure_req, &fs_out) || !fs_out.ok) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "configure_file",
             nob_temp_sprintf("falha ao preparar diretorio para: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita");
         return;
     }
-    if (!sys_write_file_bytes(output_path, rendered.data, rendered.count)) {
+    Effect_Fs_Request write_req = {
+        .kind = EFFECT_FS_WRITE_FILE_BYTES,
+        .path = output_path,
+        .bytes = rendered.data,
+        .bytes_count = rendered.count,
+    };
+    if (!effect_fs_invoke(&write_req, &fs_out) || !fs_out.ok) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "configure_file",
             nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(output_path)),
             "verifique permissao de escrita");
@@ -10228,12 +10284,27 @@ static void eval_configure_file_command(Evaluator_Context *ctx, Args args) {
 
 static bool file_delete_path_recursive(Evaluator_Context *ctx, String_View path) {
     if (!ctx) return false;
-    return sys_delete_path_recursive(ctx->arena, path);
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_DELETE_PATH_RECURSIVE,
+        .arena = ctx->arena,
+        .path = path,
+    };
+    Effect_Fs_Result out = {0};
+    if (!effect_fs_invoke(&req, &out)) return false;
+    return out.ok;
 }
 
 static bool file_copy_entry_to_destination(Evaluator_Context *ctx, String_View src, String_View destination) {
     if (!ctx) return false;
-    return sys_copy_entry_to_destination(ctx->arena, src, destination);
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_COPY_ENTRY_TO_DESTINATION,
+        .arena = ctx->arena,
+        .path = src,
+        .path2 = destination,
+    };
+    Effect_Fs_Result out = {0};
+    if (!effect_fs_invoke(&req, &out)) return false;
+    return out.ok;
 }
 
 static void eval_file_command(Evaluator_Context *ctx, Args args) {
@@ -10333,14 +10404,26 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             String_View v = resolve_arg(ctx, args.items[i]);
             sb_append_buf(&b, v.data, v.count);
         }
-        if (!sys_ensure_parent_dirs(ctx->arena, path)) {
+        Effect_Fs_Result fs_out = {0};
+        Effect_Fs_Request ensure_req = {
+            .kind = EFFECT_FS_ENSURE_PARENT_DIRS,
+            .arena = ctx->arena,
+            .path = path,
+        };
+        if (!effect_fs_invoke(&ensure_req, &fs_out) || !fs_out.ok) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao preparar diretorio para escrita: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
             nob_sb_free(b);
             return;
         }
-        if (!sys_write_file_bytes(path, b.items, b.count)) {
+        Effect_Fs_Request write_req = {
+            .kind = EFFECT_FS_WRITE_FILE_BYTES,
+            .path = path,
+            .bytes = b.items,
+            .bytes_count = b.count,
+        };
+        if (!effect_fs_invoke(&write_req, &fs_out) || !fs_out.ok) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao escrever arquivo: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -10365,7 +10448,13 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             String_View v = resolve_arg(ctx, args.items[i]);
             sb_append_buf(&b, v.data, v.count);
         }
-        if (!sys_ensure_parent_dirs(ctx->arena, path)) {
+        Effect_Fs_Result fs_out = {0};
+        Effect_Fs_Request ensure_req = {
+            .kind = EFFECT_FS_ENSURE_PARENT_DIRS,
+            .arena = ctx->arena,
+            .path = path,
+        };
+        if (!effect_fs_invoke(&ensure_req, &fs_out) || !fs_out.ok) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao preparar diretorio para append: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -10373,7 +10462,13 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             nob_sb_free(b);
             return;
         }
-        if (!sys_write_file_bytes(path, b.items, b.count)) {
+        Effect_Fs_Request write_req = {
+            .kind = EFFECT_FS_WRITE_FILE_BYTES,
+            .path = path,
+            .bytes = b.items,
+            .bytes_count = b.count,
+        };
+        if (!effect_fs_invoke(&write_req, &fs_out) || !fs_out.ok) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                 nob_temp_sprintf("falha ao gravar append em arquivo: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita e caminho de destino");
@@ -10385,7 +10480,12 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
     if (nob_sv_eq(mode, sv_from_cstr("MAKE_DIRECTORY")) && args.count >= 2) {
         for (size_t i = 1; i < args.count; i++) {
             String_View d = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i]));
-            if (!sys_mkdir(d)) {
+            Effect_Fs_Result fs_out = {0};
+            Effect_Fs_Request mkdir_req = {
+                .kind = EFFECT_FS_MKDIR,
+                .path = d,
+            };
+            if (!effect_fs_invoke(&mkdir_req, &fs_out) || !fs_out.ok) {
                 diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "file",
                     nob_temp_sprintf("falha ao criar diretorio: "SV_Fmt, SV_Arg(d)),
                     "verifique permissao de escrita no diretorio pai");
@@ -10487,7 +10587,12 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             i++;
         }
         if (destination.count == 0) return;
-        (void)sys_mkdir(destination);
+        Effect_Fs_Result fs_out = {0};
+        Effect_Fs_Request mkdir_req = {
+            .kind = EFFECT_FS_MKDIR,
+            .path = destination,
+        };
+        (void)effect_fs_invoke(&mkdir_req, &fs_out);
         for (size_t s = 0; s < sources.count; s++) {
             String_View src = cmk_path_join(ctx->arena, ctx->current_list_dir, sources.items[s]);
             if (!file_copy_entry_to_destination(ctx, src, destination)) {
@@ -10514,7 +10619,13 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         if (no_replace && nob_file_exists(nob_temp_sv_to_cstr(new_path))) {
             ok = false;
         } else {
-            if (!sys_ensure_parent_dirs(ctx->arena, new_path)) ok = false;
+            Effect_Fs_Result fs_out = {0};
+            Effect_Fs_Request ensure_req = {
+                .kind = EFFECT_FS_ENSURE_PARENT_DIRS,
+                .arena = ctx->arena,
+                .path = new_path,
+            };
+            if (!effect_fs_invoke(&ensure_req, &fs_out) || !fs_out.ok) ok = false;
             else ok = nob_rename(nob_temp_sv_to_cstr(old_path), nob_temp_sv_to_cstr(new_path));
         }
         if (result_var.count > 0) {
@@ -10526,7 +10637,13 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
         bool recursive = nob_sv_eq(mode, sv_from_cstr("REMOVE_RECURSE"));
         for (size_t i = 1; i < args.count; i++) {
             String_View path = cmk_path_join(ctx->arena, ctx->current_binary_dir, resolve_arg(ctx, args.items[i]));
-            Nob_File_Type t = sys_get_file_type(path);
+            Effect_Fs_Result type_out = {0};
+            Effect_Fs_Request type_req = {
+                .kind = EFFECT_FS_GET_FILE_TYPE,
+                .path = path,
+            };
+            (void)effect_fs_invoke(&type_req, &type_out);
+            Nob_File_Type t = type_out.file_type;
             if ((int)t < 0) continue;
             bool ok = true;
             if (recursive) {
@@ -10534,7 +10651,12 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             } else if (t == NOB_FILE_DIRECTORY) {
                 ok = remove(nob_temp_sv_to_cstr(path)) == 0;
             } else {
-                ok = sys_delete_file(path);
+                Effect_Fs_Result del_out = {0};
+                Effect_Fs_Request del_req = {
+                    .kind = EFFECT_FS_DELETE_FILE,
+                    .path = path,
+                };
+                ok = effect_fs_invoke(&del_req, &del_out) && del_out.ok;
             }
             if (!ok) {
                 diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "file",
@@ -10554,13 +10676,19 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             if (sv_eq_ci(tok, sv_from_cstr("STATUS")) && i + 1 < args.count) status_var = resolve_arg(ctx, args.items[++i]);
             else if (sv_eq_ci(tok, sv_from_cstr("LOG")) && i + 1 < args.count) log_var = resolve_arg(ctx, args.items[++i]);
         }
-        String_View log_msg = sv_from_cstr("");
-        bool ok = sys_download_to_path(ctx->arena, url, out_path, &log_msg);
+        Effect_Fs_Result dl_out = {0};
+        Effect_Fs_Request dl_req = {
+            .kind = EFFECT_FS_DOWNLOAD_TO_PATH,
+            .arena = ctx->arena,
+            .url = url,
+            .path = out_path,
+        };
+        bool ok = effect_fs_invoke(&dl_req, &dl_out) && dl_out.ok;
         if (status_var.count > 0) {
             eval_set_var(ctx, status_var, ok ? sv_from_cstr("0;\"OK\"") : sv_from_cstr("1;\"FAILED\""), false, false);
         }
         if (log_var.count > 0) {
-            eval_set_var(ctx, log_var, log_msg, false, false);
+            eval_set_var(ctx, log_var, dl_out.log_msg, false, false);
         }
         if (!ok) {
             diag_log(DIAG_SEV_WARNING, "transpiler", "<input>", 0, 0, "file",
@@ -10577,8 +10705,18 @@ static void eval_make_directory_command(Evaluator_Context *ctx, Args args) {
         String_View raw = resolve_arg(ctx, args.items[i]);
         if (raw.count == 0) continue;
         String_View path = cmk_path_is_absolute(raw) ? raw : cmk_path_join(ctx->arena, ctx->current_binary_dir, raw);
-        (void)sys_ensure_parent_dirs(ctx->arena, cmk_path_join(ctx->arena, path, sv_from_cstr(".keep")));
-        if (!sys_mkdir(path)) {
+        Effect_Fs_Result fs_out = {0};
+        Effect_Fs_Request ensure_req = {
+            .kind = EFFECT_FS_ENSURE_PARENT_DIRS,
+            .arena = ctx->arena,
+            .path = cmk_path_join(ctx->arena, path, sv_from_cstr(".keep")),
+        };
+        (void)effect_fs_invoke(&ensure_req, &fs_out);
+        Effect_Fs_Request mkdir_req = {
+            .kind = EFFECT_FS_MKDIR,
+            .path = path,
+        };
+        if (!effect_fs_invoke(&mkdir_req, &fs_out) || !fs_out.ok) {
             diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "make_directory",
                 nob_temp_sprintf("falha ao criar diretorio: "SV_Fmt, SV_Arg(path)),
                 "verifique permissao de escrita no diretorio pai");
@@ -10600,7 +10738,13 @@ static void eval_use_mangled_mesa_command(Evaluator_Context *ctx, Args args) {
         ? out_arg
         : cmk_path_join(ctx->arena, ctx->current_binary_dir, out_arg);
 
-    Nob_File_Type mesa_type = sys_get_file_type(mesa_dir);
+    Effect_Fs_Result fs_out = {0};
+    Effect_Fs_Request type_req = {
+        .kind = EFFECT_FS_GET_FILE_TYPE,
+        .path = mesa_dir,
+    };
+    (void)effect_fs_invoke(&type_req, &fs_out);
+    Nob_File_Type mesa_type = fs_out.file_type;
     if (mesa_type != NOB_FILE_DIRECTORY) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
             nob_temp_sprintf("diretorio Mesa invalido: "SV_Fmt, SV_Arg(mesa_dir)),
@@ -10617,13 +10761,22 @@ static void eval_use_mangled_mesa_command(Evaluator_Context *ctx, Args args) {
             "confira se PATH_TO_MESA aponta para os headers Mesa mangled");
     }
 
-    if (!sys_mkdir(out_dir)) {
+    Effect_Fs_Request mkdir_req = {
+        .kind = EFFECT_FS_MKDIR,
+        .path = out_dir,
+    };
+    if (!effect_fs_invoke(&mkdir_req, &fs_out) || !fs_out.ok) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
             nob_temp_sprintf("falha ao criar diretorio de saida: "SV_Fmt, SV_Arg(out_dir)),
             "verifique permissao de escrita no diretorio pai");
         return;
     }
-    if (!sys_copy_directory_recursive(mesa_dir, out_dir)) {
+    Effect_Fs_Request copy_req = {
+        .kind = EFFECT_FS_COPY_DIRECTORY_RECURSIVE,
+        .path = mesa_dir,
+        .path2 = out_dir,
+    };
+    if (!effect_fs_invoke(&copy_req, &fs_out) || !fs_out.ok) {
         diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, "use_mangled_mesa",
             nob_temp_sprintf("falha ao copiar headers Mesa de "SV_Fmt " para "SV_Fmt, SV_Arg(mesa_dir), SV_Arg(out_dir)),
             "verifique permissoes e estrutura de diretorios");
