@@ -112,6 +112,45 @@ TEST(sys_utils_directory_copy_delete_and_file_download) {
     TEST_PASS();
 }
 
+TEST(sys_utils_filesystem_read_dir_and_file_type) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+
+    String_View root = sv_from_cstr("temp_phase2_sys_fs");
+    String_View subdir = sv_from_cstr("temp_phase2_sys_fs/sub");
+    String_View file = sv_from_cstr("temp_phase2_sys_fs/file.txt");
+    String_View missing = sv_from_cstr("temp_phase2_sys_fs/missing.txt");
+
+    (void)sys_delete_path_recursive(arena, root);
+    ASSERT(sys_mkdir(root));
+    ASSERT(sys_mkdir(subdir));
+    ASSERT(sys_write_file(file, sv_from_cstr("phase2")));
+
+    Nob_File_Paths entries = {0};
+    ASSERT(sys_read_dir(root, &entries));
+    ASSERT(entries.count >= 4);
+    ASSERT(strcmp(entries.items[0], ".") == 0);
+    ASSERT(strcmp(entries.items[1], "..") == 0);
+
+    bool has_file = false;
+    bool has_subdir = false;
+    for (size_t i = 0; i < entries.count; i++) {
+        if (strcmp(entries.items[i], "file.txt") == 0) has_file = true;
+        if (strcmp(entries.items[i], "sub") == 0) has_subdir = true;
+    }
+    ASSERT(has_file);
+    ASSERT(has_subdir);
+
+    ASSERT(sys_get_file_type(file) == NOB_FILE_REGULAR);
+    ASSERT(sys_get_file_type(subdir) == NOB_FILE_DIRECTORY);
+    ASSERT((int)sys_get_file_type(missing) == -1);
+
+    nob_da_free(entries);
+    (void)sys_delete_path_recursive(arena, root);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(sys_utils_process_capture_and_timeout) {
     Arena *arena = arena_create(1024 * 1024);
     ASSERT(arena != NULL);
@@ -481,6 +520,7 @@ void run_phase2_module_tests(int *passed, int *failed) {
     test_math_parser_precedence_unary_and_errors(passed, failed);
     test_genex_evaluator_basic_paths(passed, failed);
     test_sys_utils_directory_copy_delete_and_file_download(passed, failed);
+    test_sys_utils_filesystem_read_dir_and_file_type(passed, failed);
     test_sys_utils_process_capture_and_timeout(passed, failed);
     test_toolchain_driver_compiler_probe_and_try_run(passed, failed);
     test_cmake_path_utils_basic(passed, failed);

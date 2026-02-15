@@ -1,12 +1,14 @@
 #include "sys_utils.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "subprocess.h"
+#include "tinydir.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -66,6 +68,19 @@ static String_View sys_builder_to_arena_sv(Arena *arena, const String_Builder *s
     const char *dup = arena_strndup(arena, src, count);
     if (!dup) return sv_from_cstr("");
     return sv_from_cstr(dup);
+}
+
+static const char *sys_temp_path_for_tinydir(String_View path) {
+#if defined(_WIN32)
+    char *normalized = nob_temp_strndup(path.data ? path.data : "", path.count);
+    if (!normalized) return "";
+    for (size_t i = 0; i < path.count; i++) {
+        if (normalized[i] == '/') normalized[i] = '\\';
+    }
+    return normalized;
+#else
+    return nob_temp_sv_to_cstr(path);
+#endif
 }
 
 static size_t sys_subprocess_drain_stdout(struct subprocess_s *process, bool capture, String_Builder *out) {
@@ -342,12 +357,49 @@ bool sys_copy_directory_recursive(String_View src, String_View dst) {
 
 bool sys_read_dir(String_View dir, Nob_File_Paths *out) {
     if (!out || dir.count == 0) return false;
-    return nob_read_entire_dir(nob_temp_sv_to_cstr(dir), out);
+
+    const char *dir_c = sys_temp_path_for_tinydir(dir);
+    tinydir_dir tiny_dir = {0};
+    if (tinydir_open(&tiny_dir, dir_c) != 0) return false;
+
+    nob_da_append(out, ".");
+    nob_da_append(out, "..");
+
+    while (tiny_dir.has_next) {
+        tinydir_file file = {0};
+        if (tinydir_readfile(&tiny_dir, &file) != 0) {
+            tinydir_close(&tiny_dir);
+            return false;
+        }
+
+        if (strcmp(file.name, ".") != 0 && strcmp(file.name, "..") != 0) {
+            nob_da_append(out, nob_temp_strdup(file.name));
+        }
+
+        if (tinydir_next(&tiny_dir) != 0) {
+            tinydir_close(&tiny_dir);
+            return false;
+        }
+    }
+
+    tinydir_close(&tiny_dir);
+    return true;
 }
 
 Nob_File_Type sys_get_file_type(String_View path) {
     if (path.count == 0) return (Nob_File_Type)-1;
-    return nob_get_file_type(nob_temp_sv_to_cstr(path));
+
+    tinydir_file file = {0};
+    const char *path_c = sys_temp_path_for_tinydir(path);
+    errno = 0;
+    if (tinydir_file_open(&file, path_c) != 0) return (Nob_File_Type)-1;
+
+    if (file.is_dir) return NOB_FILE_DIRECTORY;
+    if (file.is_reg) return NOB_FILE_REGULAR;
+#if !defined(_WIN32) && defined(S_ISLNK)
+    if (S_ISLNK(file._s.st_mode)) return NOB_FILE_SYMLINK;
+#endif
+    return NOB_FILE_OTHER;
 }
 
 static bool sys_path_is_dot_or_dotdot(String_View path) {
