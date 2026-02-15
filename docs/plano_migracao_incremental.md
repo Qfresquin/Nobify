@@ -10,8 +10,8 @@
 - [x] Q1 (concluido): `Transpiler_Run_Options` + entrada `transpile_datree_ex` + eliminacao de dependencia global no fluxo principal + gate arquitetural em teste para bloquear regressao.
 - [x] Q2 (concluido): rebuild de `INTERFACE_*` consolidado em fluxo generico unico + parse de listas `;` unificado no caminho de link libs + aplicacao centralizada por `eval_apply_target_property`.
 - [x] Q3 (concluido): dispatcher declarativo com `Command_Spec` por dominio (`commands_control`, `commands_target`, `commands_find`, `commands_file`), no-op de compat via flags e politica de diagnostico de aridade centralizada.
-- [x] Q4 (parcial): camada `transpiler_effects` integrada em subprocess/toolchain e filesystem para `file(...)`, `configure_file`, `try_compile/try_run`, `cmake_file_api`, `cmake_instrumentation`, `qt/fltk wrap` e geracao de arquivos de pacote.
-- [x] Q5 (parcial): `build_model_types.h` extraido de `build_model.h` e headers utilitarios do transpiler migrados para dependencia por tipos.
+- [x] Q4 (concluido): camada `transpiler_effects` integrada em subprocess/toolchain e filesystem para `file(...)`, `configure_file`, `try_compile/try_run`, `cmake_file_api`, `cmake_instrumentation`, `qt/fltk wrap`, geracao de arquivos de pacote e varredura de diretorios (`aux_source_directory`/`file(GLOB)`).
+- [x] Q5 (concluido): `build_model.h` convertido em umbrella header enxuto com segregacao por dominio (`build_model_core.h`, `build_model_cpack.h`, `build_model_custom_command.h`, `build_model_collections.h`), ownership padronizado para strings persistidas no modelo e wrappers legados marcados para deprecacao.
 - [ ] Q6: split completo da suite `test/test_transpiler.c` em suites tematicas.
 
 ### Objetivos tecnicos
@@ -156,6 +156,9 @@
 4. Novo contrato `Command_Spec` para dispatcher declarativo.
 5. Novas APIs de encapsulamento no `Build_Model` para atualizar propriedades derivadas sem acesso direto a campos.
 6. Interface de efeitos (`Effect_Request`/`Effect_Result`) para subprocess, filesystem e probes.
+7. `build_model.h` passa a ser umbrella header; novos contratos por dominio em `build_model_core.h`, `build_model_cpack.h`, `build_model_custom_command.h` e `build_model_collections.h`.
+8. Novas entradas recomendadas: `build_model_ensure_cpack_group`, `build_model_ensure_cpack_component`, `build_model_ensure_cpack_install_type`.
+9. Wrappers de compatibilidade `build_model_add_test_ex` e `build_model_get_or_create_cpack_*` marcados como legados/deprecated.
 
 ## 6. Plano de testes e criterios de aceite
 

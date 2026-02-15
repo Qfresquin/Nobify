@@ -1100,13 +1100,13 @@ TEST(fase1_cpack_wrappers_and_setters) {
     Arena *arena = arena_create(1024 * 1024);
     Build_Model *model = build_model_create(arena);
 
-    CPack_Install_Type *it1 = build_model_get_or_create_cpack_install_type(model, arena, sv_from_cstr("Full"));
-    CPack_Install_Type *it2 = build_model_get_or_create_cpack_install_type(model, arena, sv_from_cstr("Full"));
+    CPack_Install_Type *it1 = build_model_ensure_cpack_install_type(model, sv_from_cstr("Full"));
+    CPack_Install_Type *it2 = build_model_ensure_cpack_install_type(model, sv_from_cstr("Full"));
     ASSERT(it1 == it2);
     build_cpack_install_type_set_display_name(it1, sv_from_cstr("Full Install"));
     ASSERT(nob_sv_eq(it1->display_name, sv_from_cstr("Full Install")));
 
-    CPack_Component_Group *g = build_model_get_or_create_cpack_group(model, arena, sv_from_cstr("Runtime"));
+    CPack_Component_Group *g = build_model_ensure_cpack_group(model, sv_from_cstr("Runtime"));
     build_cpack_group_set_display_name(g, sv_from_cstr("Runtime Group"));
     build_cpack_group_set_description(g, sv_from_cstr("Runtime files"));
     build_cpack_group_set_parent_group(g, sv_from_cstr("Parent"));
@@ -1118,7 +1118,7 @@ TEST(fase1_cpack_wrappers_and_setters) {
     ASSERT(g->expanded == true);
     ASSERT(g->bold_title == true);
 
-    CPack_Component *c = build_model_get_or_create_cpack_component(model, arena, sv_from_cstr("core"));
+    CPack_Component *c = build_model_ensure_cpack_component(model, sv_from_cstr("core"));
     build_cpack_component_set_display_name(c, sv_from_cstr("Core"));
     build_cpack_component_set_description(c, sv_from_cstr("Core component"));
     build_cpack_component_set_group(c, sv_from_cstr("Runtime"));
@@ -1178,7 +1178,7 @@ TEST(fase1_add_test_ex_wrapper) {
     Arena *arena = arena_create(1024 * 1024);
     Build_Model *model = build_model_create(arena);
 
-    Build_Test *t = build_model_add_test_ex(model, arena, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"));
+    Build_Test *t = build_model_add_test(model, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"), false);
     ASSERT(t != NULL);
     ASSERT(model->test_count == 1);
     ASSERT(t->command_expand_lists == false);
@@ -1219,14 +1219,14 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
     build_target_add_link_option(target, arena, sv_from_cstr("-Wl,--iface"), VISIBILITY_INTERFACE, CONFIG_ALL);
     build_target_add_link_directory(target, arena, sv_from_cstr("iface_link_dir"), VISIBILITY_INTERFACE, CONFIG_ALL);
 
-    Build_Test *test = build_model_add_test_ex(model, arena, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"));
+    Build_Test *test = build_model_add_test(model, sv_from_cstr("smoke"), sv_from_cstr("app"), sv_from_cstr("tests"), false);
     ASSERT(test != NULL);
 
-    CPack_Install_Type *install_type = build_model_get_or_create_cpack_install_type(model, arena, sv_from_cstr("Full"));
+    CPack_Install_Type *install_type = build_model_ensure_cpack_install_type(model, sv_from_cstr("Full"));
     ASSERT(install_type != NULL);
     build_cpack_install_type_set_display_name(install_type, sv_from_cstr("Full Install"));
 
-    CPack_Component_Group *group = build_model_get_or_create_cpack_group(model, arena, sv_from_cstr("Runtime"));
+    CPack_Component_Group *group = build_model_ensure_cpack_group(model, sv_from_cstr("Runtime"));
     ASSERT(group != NULL);
     build_cpack_group_set_display_name(group, sv_from_cstr("Runtime Group"));
     build_cpack_group_set_description(group, sv_from_cstr("Runtime files"));
@@ -1234,7 +1234,7 @@ TEST(fase1_read_getters_model_target_test_and_cpack) {
     build_cpack_group_set_expanded(group, true);
     build_cpack_group_set_bold_title(group, true);
 
-    CPack_Component *component = build_model_get_or_create_cpack_component(model, arena, sv_from_cstr("core"));
+    CPack_Component *component = build_model_ensure_cpack_component(model, sv_from_cstr("core"));
     ASSERT(component != NULL);
     build_cpack_component_set_display_name(component, sv_from_cstr("Core"));
     build_cpack_component_set_description(component, sv_from_cstr("Core component"));

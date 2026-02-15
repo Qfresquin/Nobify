@@ -59,6 +59,7 @@ typedef enum {
     EFFECT_FS_COPY_DIRECTORY_RECURSIVE,
     EFFECT_FS_GET_FILE_TYPE,
     EFFECT_FS_COPY_FILE,
+    EFFECT_FS_READ_DIR,
 } Effect_Fs_Kind;
 
 typedef struct {
@@ -69,6 +70,7 @@ typedef struct {
     const char *bytes;
     size_t bytes_count;
     String_View url;
+    Nob_File_Paths *out_paths;
 } Effect_Fs_Request;
 
 typedef struct {

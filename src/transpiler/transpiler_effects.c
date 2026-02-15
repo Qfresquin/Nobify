@@ -149,6 +149,10 @@ bool effect_fs_invoke(const Effect_Fs_Request *req, Effect_Fs_Result *out) {
         case EFFECT_FS_COPY_FILE:
             out->ok = sys_copy_file(req->path, req->path2);
             break;
+        case EFFECT_FS_READ_DIR:
+            if (!req->out_paths) return false;
+            out->ok = sys_read_dir(req->path, req->out_paths);
+            break;
         default:
             return false;
     }

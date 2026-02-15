@@ -100,6 +100,8 @@ static bool eval_effect_ensure_parent_dirs(Evaluator_Context *ctx, String_View p
 static bool eval_effect_write_file_bytes(String_View path, const char *bytes, size_t bytes_count);
 static bool eval_effect_mkdir(String_View path);
 static bool eval_effect_copy_file(String_View from, String_View to);
+static bool eval_effect_read_dir(String_View path, Nob_File_Paths *out_paths);
+static Nob_File_Type eval_effect_get_file_type(String_View path);
 
 /*static String_View normalize_source_path(Evaluator_Context *ctx, String_View src) {
     if (!ctx || src.count == 0) return src;
@@ -270,6 +272,29 @@ static bool eval_effect_copy_file(String_View from, String_View to) {
     };
     Effect_Fs_Result out = {0};
     return effect_fs_invoke(&req, &out) && out.ok;
+}
+
+static bool eval_effect_read_dir(String_View path, Nob_File_Paths *out_paths) {
+    if (!out_paths) return false;
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_READ_DIR,
+        .path = path,
+        .out_paths = out_paths,
+    };
+    Effect_Fs_Result out = {0};
+    return effect_fs_invoke(&req, &out) && out.ok;
+}
+
+static Nob_File_Type eval_effect_get_file_type(String_View path) {
+    Effect_Fs_Request req = {
+        .kind = EFFECT_FS_GET_FILE_TYPE,
+        .path = path,
+    };
+    Effect_Fs_Result out = {0};
+    if (!effect_fs_invoke(&req, &out) || !out.ok) {
+        return (Nob_File_Type)-1;
+    }
+    return out.file_type;
 }
 
 static bool eval_check_symbol_exists(Evaluator_Context *ctx, String_View symbol, String_View headers) {
@@ -6112,7 +6137,7 @@ static void eval_aux_source_directory_command(Evaluator_Context *ctx, Args args)
         : cmk_path_join(ctx->arena, ctx->current_source_dir, input_dir);
 
     Nob_File_Paths children = {0};
-    if (!sys_read_dir(scan_dir, &children)) {
+    if (!eval_effect_read_dir(scan_dir, &children)) {
         eval_set_var(ctx, out_var, sv_from_cstr(""), false, false);
         return;
     }
@@ -6125,7 +6150,7 @@ static void eval_aux_source_directory_command(Evaluator_Context *ctx, Args args)
         if (!aux_source_directory_has_supported_extension(cmk_path_extension(name))) continue;
 
         String_View full_path = cmk_path_join(ctx->arena, scan_dir, name);
-        if (sys_get_file_type(full_path) != NOB_FILE_REGULAR) continue;
+        if (eval_effect_get_file_type(full_path) != NOB_FILE_REGULAR) continue;
 
         if (!first) sb_append(&list, ';');
         sb_append_buf(&list, full_path.data, full_path.count);
@@ -8478,7 +8503,7 @@ static void eval_cpack_add_install_type_command(Evaluator_Context *ctx, Args arg
     String_View name = resolve_arg(ctx, args.items[0]);
     if (name.count == 0) return;
 
-    CPack_Install_Type *install_type = build_model_get_or_create_cpack_install_type(ctx->model, ctx->arena, name);
+    CPack_Install_Type *install_type = build_model_ensure_cpack_install_type(ctx->model, name);
     if (!install_type) return;
 
     for (size_t i = 1; i < args.count; i++) {
@@ -8518,7 +8543,7 @@ static void eval_cpack_add_component_group_command(Evaluator_Context *ctx, Args 
     String_View name = resolve_arg(ctx, args.items[0]);
     if (name.count == 0) return;
 
-    CPack_Component_Group *group = build_model_get_or_create_cpack_group(ctx->model, ctx->arena, name);
+    CPack_Component_Group *group = build_model_ensure_cpack_group(ctx->model, name);
     if (!group) return;
 
     for (size_t i = 1; i < args.count; i++) {
@@ -8593,7 +8618,7 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
     String_View name = resolve_arg(ctx, args.items[0]);
     if (name.count == 0) return;
 
-    CPack_Component *component = build_model_get_or_create_cpack_component(ctx->model, ctx->arena, name);
+    CPack_Component *component = build_model_ensure_cpack_component(ctx->model, name);
     if (!component) return;
     build_cpack_component_clear_dependencies(component);
     build_cpack_component_clear_install_types(component);
@@ -8610,7 +8635,7 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
         }
         if (sv_eq_ci(tok, sv_from_cstr("GROUP")) && i + 1 < args.count) {
             build_cpack_component_set_group(component, resolve_arg(ctx, args.items[++i]));
-            (void)build_model_get_or_create_cpack_group(ctx->model, ctx->arena, build_cpack_component_get_group(component));
+            (void)build_model_ensure_cpack_group(ctx->model, build_cpack_component_get_group(component));
             continue;
         }
         if (sv_eq_ci(tok, sv_from_cstr("DEPENDS"))) {
@@ -8636,7 +8661,7 @@ static void eval_cpack_add_component_command(Evaluator_Context *ctx, Args args) 
                 }
                 if (it.count > 0) {
                     build_cpack_component_add_install_type(component, ctx->arena, it);
-                    (void)build_model_get_or_create_cpack_install_type(ctx->model, ctx->arena, it);
+                    (void)build_model_ensure_cpack_install_type(ctx->model, it);
                 }
                 i++;
             }
@@ -8839,7 +8864,7 @@ static void eval_add_test_command(Evaluator_Context *ctx, Args args) {
     }
 
     String_View command = join_string_list_with_space_and_expand_semicolons(ctx, &command_items, command_expand_lists);
-    Build_Test *created_test = build_model_add_test_ex(ctx->model, ctx->arena, test_name, command, working_dir);
+    Build_Test *created_test = build_model_add_test(ctx->model, test_name, command, working_dir, false);
     build_test_set_command_expand_lists(created_test, command_expand_lists);
 
     if (!build_model_is_testing_enabled(ctx->model)) {
@@ -10508,7 +10533,7 @@ static void eval_file_command(Evaluator_Context *ctx, Args args) {
             }
             if (cut > 0) base = nob_sv_from_parts(pat.data, cut - 1);
             Nob_File_Paths children = {0};
-            if (!sys_read_dir(base, &children)) continue;
+            if (!eval_effect_read_dir(base, &children)) continue;
             for (size_t i = 0; i < children.count; i++) {
                 String_View child = sv_from_cstr(children.items[i]);
                 if (cmk_glob_match(pat, child)) {

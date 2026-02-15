@@ -4,6 +4,7 @@
 #include <ctype.h>
 
 static const String_List g_empty_string_list = {0};
+static String_View bm_sv_copy_to_arena(Arena *arena, String_View sv);
 
 static void build_model_heap_cleanup(void *userdata) {
     Build_Model *model = (Build_Model*)userdata;
@@ -123,7 +124,7 @@ void string_list_init(String_List *list) {
 void string_list_add(String_List *list, Arena *arena, String_View item) {
     if (!list || !arena) return;
     if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(*list->items), list->count + 1)) return;
-    list->items[list->count++] = item;
+    list->items[list->count++] = bm_sv_copy_to_arena(arena, item);
 }
 
 bool string_list_contains(const String_List *list, String_View item) {
@@ -150,8 +151,8 @@ void property_list_add(Property_List *list, Arena *arena,
                        String_View key, String_View value) {
     if (!list || !arena) return;
     if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(*list->items), list->count + 1)) return;
-    list->items[list->count].name = key;
-    list->items[list->count].value = value;
+    list->items[list->count].name = bm_sv_copy_to_arena(arena, key);
+    list->items[list->count].value = bm_sv_copy_to_arena(arena, value);
     list->count++;
 }
 
@@ -731,7 +732,7 @@ void build_target_set_property(Build_Target *target,
     }
 
     if (idx >= 0) {
-        target->custom_properties.items[idx].value = value;
+        target->custom_properties.items[idx].value = bm_sv_copy_to_arena(arena, value);
         return;
     }
 
@@ -777,7 +778,7 @@ Found_Package* build_model_add_package(Build_Model *model,
     Found_Package *pkg = &model->found_packages[model->package_count++];
     memset(pkg, 0, sizeof(Found_Package));
     
-    pkg->name = name;
+    pkg->name = bm_sv_copy_to_arena(model->arena, name);
     pkg->found = found;
     
     // Inicializa listas
@@ -799,8 +800,8 @@ Build_Test* build_model_add_test(Build_Model *model,
 
     for (size_t i = 0; i < model->test_count; i++) {
         if (nob_sv_eq(model->tests[i].name, name)) {
-            model->tests[i].command = command;
-            model->tests[i].working_directory = working_directory;
+            model->tests[i].command = bm_sv_copy_to_arena(model->arena, command);
+            model->tests[i].working_directory = bm_sv_copy_to_arena(model->arena, working_directory);
             model->tests[i].command_expand_lists = command_expand_lists;
             return &model->tests[i];
         }
@@ -815,9 +816,9 @@ Build_Test* build_model_add_test(Build_Model *model,
 
     Build_Test *test = &model->tests[model->test_count++];
     memset(test, 0, sizeof(*test));
-    test->name = name;
-    test->command = command;
-    test->working_directory = working_directory;
+    test->name = bm_sv_copy_to_arena(model->arena, name);
+    test->command = bm_sv_copy_to_arena(model->arena, command);
+    test->working_directory = bm_sv_copy_to_arena(model->arena, working_directory);
     test->command_expand_lists = command_expand_lists;
     return test;
 }
@@ -845,7 +846,7 @@ CPack_Component_Group* build_model_add_cpack_component_group(Build_Model *model,
     }
     CPack_Component_Group *group = &model->cpack_component_groups[model->cpack_component_group_count++];
     memset(group, 0, sizeof(*group));
-    group->name = name;
+    group->name = bm_sv_copy_to_arena(model->arena, name);
     return group;
 }
 
@@ -864,7 +865,7 @@ CPack_Install_Type* build_model_add_cpack_install_type(Build_Model *model, Strin
     }
     CPack_Install_Type *install_type = &model->cpack_install_types[model->cpack_install_type_count++];
     memset(install_type, 0, sizeof(*install_type));
-    install_type->name = name;
+    install_type->name = bm_sv_copy_to_arena(model->arena, name);
     return install_type;
 }
 
@@ -883,7 +884,7 @@ CPack_Component* build_model_add_cpack_component(Build_Model *model, String_View
     }
     CPack_Component *component = &model->cpack_components[model->cpack_component_count++];
     memset(component, 0, sizeof(*component));
-    component->name = name;
+    component->name = bm_sv_copy_to_arena(model->arena, name);
     string_list_init(&component->depends);
     string_list_init(&component->install_types);
     return component;
@@ -906,7 +907,7 @@ void build_model_set_cache_variable(Build_Model *model,
         }
     }
     if (idx >= 0) {
-        model->cache_variables.items[idx].value = value;
+        model->cache_variables.items[idx].value = bm_sv_copy_to_arena(model->arena, value);
         return;
     }
 
@@ -914,14 +915,8 @@ void build_model_set_cache_variable(Build_Model *model,
     if (!stable_key) return;
     String_View stable_key_sv = sv_from_cstr(stable_key);
 
-    String_View stable_val = value;
-    if (value.count > 0 && value.data) {
-        char *value_copy = build_model_copy_sv_cstr(model->arena, value);
-        if (value_copy) stable_val = sv_from_cstr(value_copy);
-    }
-
     size_t before = model->cache_variables.count;
-    property_list_add(&model->cache_variables, model->arena, stable_key_sv, stable_val);
+    property_list_add(&model->cache_variables, model->arena, stable_key_sv, value);
     if (model->cache_variables.count == before + 1) {
         build_model_put_property_index(&model->cache_variable_index, stable_key, (int)before);
     }
@@ -1196,7 +1191,7 @@ static void bm_install_rules_add_entry(Arena *arena, String_List *list,
 void build_model_set_install_prefix(Build_Model *model, String_View prefix)
 {
     if (!model) return;
-    model->install_rules.prefix = prefix;
+    model->install_rules.prefix = bm_sv_copy_to_arena(model->arena, prefix);
 }
 
 void build_model_add_install_rule(Build_Model *model, Arena *arena,
@@ -1231,9 +1226,13 @@ void build_model_add_install_rule(Build_Model *model, Arena *arena,
 
 static String_View bm_sv_copy_to_arena(Arena *arena, String_View sv) {
     if (!arena) return sv;
-    if (sv.count == 0) return sv_from_cstr("");
+    if (!sv.data || sv.count == 0) return sv_from_cstr("");
     const char *c = arena_strndup(arena, sv.data, sv.count);
     return sv_from_cstr(c);
+}
+
+String_View build_model_copy_string(Arena *arena, String_View value) {
+    return bm_sv_copy_to_arena(arena, value);
 }
 
 static String_View bm_sv_trim_ws(String_View sv) {
@@ -1375,8 +1374,8 @@ void build_target_set_alias(Build_Target *target, Arena *arena, String_View alia
 
 void build_model_set_project_info(Build_Model *model, String_View name, String_View version) {
     if (!model) return;
-    model->project_name = name;
-    if (version.count > 0) model->project_version = version;
+    model->project_name = bm_sv_copy_to_arena(model->arena, name);
+    if (version.count > 0) model->project_version = bm_sv_copy_to_arena(model->arena, version);
 }
 
 Build_Config build_model_config_from_string(String_View cfg) {
@@ -1404,7 +1403,7 @@ void build_model_set_default_config(Build_Model *model, String_View config) {
     else if (parsed == CONFIG_RELEASE) model->default_config = sv_from_cstr("Release");
     else if (parsed == CONFIG_RELWITHDEBINFO) model->default_config = sv_from_cstr("RelWithDebInfo");
     else if (parsed == CONFIG_MINSIZEREL) model->default_config = sv_from_cstr("MinSizeRel");
-    else model->default_config = config;
+    else model->default_config = bm_sv_copy_to_arena(model->arena, config);
 }
 
 String_View build_model_get_default_config(const Build_Model *model) {
@@ -1679,17 +1678,17 @@ void build_target_set_property_smart(Build_Target *target,
     build_target_set_property(target, arena, key, value);
 
     if (nob_sv_eq(key, sv_from_cstr("OUTPUT_NAME"))) {
-        target->output_name = value;
+        target->output_name = bm_sv_copy_to_arena(arena, value);
     } else if (nob_sv_eq(key, sv_from_cstr("PREFIX"))) {
-        target->prefix = value;
+        target->prefix = bm_sv_copy_to_arena(arena, value);
     } else if (nob_sv_eq(key, sv_from_cstr("SUFFIX"))) {
-        target->suffix = value;
+        target->suffix = bm_sv_copy_to_arena(arena, value);
     } else if (nob_sv_eq(key, sv_from_cstr("RUNTIME_OUTPUT_DIRECTORY"))) {
-        target->runtime_output_directory = value;
+        target->runtime_output_directory = bm_sv_copy_to_arena(arena, value);
     } else if (nob_sv_eq(key, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"))) {
-        target->archive_output_directory = value;
+        target->archive_output_directory = bm_sv_copy_to_arena(arena, value);
     } else if (nob_sv_eq(key, sv_from_cstr("OUTPUT_DIRECTORY"))) {
-        target->output_directory = value;
+        target->output_directory = bm_sv_copy_to_arena(arena, value);
     }
 
     Build_Config cfg = CONFIG_ALL;
@@ -1941,25 +1940,37 @@ Build_Test* build_model_add_test_ex(Build_Model *model,
     return build_model_add_test(model, name, command, working_dir, false);
 }
 
+CPack_Component_Group* build_model_ensure_cpack_group(Build_Model *model, String_View name) {
+    return build_model_add_cpack_component_group(model, name);
+}
+
+CPack_Component* build_model_ensure_cpack_component(Build_Model *model, String_View name) {
+    return build_model_add_cpack_component(model, name);
+}
+
+CPack_Install_Type* build_model_ensure_cpack_install_type(Build_Model *model, String_View name) {
+    return build_model_add_cpack_install_type(model, name);
+}
+
 CPack_Component_Group* build_model_get_or_create_cpack_group(Build_Model *model,
                                                              Arena *arena,
                                                              String_View name) {
     (void)arena;
-    return build_model_add_cpack_component_group(model, name);
+    return build_model_ensure_cpack_group(model, name);
 }
 
 CPack_Component* build_model_get_or_create_cpack_component(Build_Model *model,
                                                            Arena *arena,
                                                            String_View name) {
     (void)arena;
-    return build_model_add_cpack_component(model, name);
+    return build_model_ensure_cpack_component(model, name);
 }
 
 CPack_Install_Type* build_model_get_or_create_cpack_install_type(Build_Model *model,
                                                                   Arena *arena,
                                                                   String_View name) {
     (void)arena;
-    return build_model_add_cpack_install_type(model, name);
+    return build_model_ensure_cpack_install_type(model, name);
 }
 
 void build_cpack_install_type_set_display_name(CPack_Install_Type *install_type,
@@ -2068,9 +2079,9 @@ Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
     Custom_Command *cmd = &list[*count];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = CUSTOM_COMMAND_SHELL;
-    cmd->command = command;
-    cmd->working_dir = working_dir;
-    cmd->comment = comment;
+    cmd->command = bm_sv_copy_to_arena(arena, command);
+    cmd->working_dir = bm_sv_copy_to_arena(arena, working_dir);
+    cmd->comment = bm_sv_copy_to_arena(arena, comment);
     cmd->echo = true;
     string_list_init(&cmd->outputs);
     string_list_init(&cmd->byproducts);
@@ -2100,9 +2111,9 @@ Custom_Command* build_model_add_custom_command_output_ex(Build_Model *model,
     Custom_Command *cmd = &model->output_custom_commands[model->output_custom_command_count++];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = CUSTOM_COMMAND_SHELL;
-    cmd->command = command;
-    cmd->working_dir = working_dir;
-    cmd->comment = comment;
+    cmd->command = bm_sv_copy_to_arena(arena, command);
+    cmd->working_dir = bm_sv_copy_to_arena(arena, working_dir);
+    cmd->comment = bm_sv_copy_to_arena(arena, comment);
     cmd->echo = true;
     string_list_init(&cmd->outputs);
     string_list_init(&cmd->byproducts);
@@ -2201,7 +2212,7 @@ void build_custom_command_merge_flags(Custom_Command *cmd,
 void build_custom_command_append_command(Custom_Command *cmd, Arena *arena, String_View extra) {
     if (!cmd || !arena || extra.count == 0) return;
     if (cmd->command.count == 0) {
-        cmd->command = extra;
+        cmd->command = bm_sv_copy_to_arena(arena, extra);
         return;
     }
     String_Builder sb = {0};
