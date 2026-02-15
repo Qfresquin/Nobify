@@ -1125,13 +1125,27 @@ typedef enum {
     COMMAND_SPEC_FLAG_COMPAT_NOOP = 1u << 0,
 } Command_Spec_Flags;
 
+typedef enum {
+    COMMAND_DIAG_POLICY_DEFAULT = 0,
+    COMMAND_DIAG_POLICY_SILENT_ARITY,
+} Command_Diag_Policy;
+
 typedef struct {
     const char *name;
     Eval_Command_Handler handler;
     size_t min_args;
     size_t max_args; // 0 => sem limite explicito
     unsigned flags;
+    Command_Diag_Policy diag_policy;
 } Command_Spec;
+
+typedef struct {
+    const Command_Spec *items;
+    size_t count;
+} Command_Spec_Group;
+
+#define CMD(name_literal, handler_fn) {name_literal, handler_fn, 0, 0, COMMAND_SPEC_FLAG_NONE, COMMAND_DIAG_POLICY_DEFAULT}
+#define CMD_NOOP(name_literal) {name_literal, NULL, 0, 0, COMMAND_SPEC_FLAG_COMPAT_NOOP, COMMAND_DIAG_POLICY_DEFAULT}
 
 static bool eval_command_spec_arity_ok(const Command_Spec *spec, Args args) {
     if (!spec) return false;
@@ -1140,12 +1154,46 @@ static bool eval_command_spec_arity_ok(const Command_Spec *spec, Args args) {
     return true;
 }
 
+static void eval_command_spec_emit_arity_diag(const Command_Spec *spec) {
+    if (!spec || spec->diag_policy == COMMAND_DIAG_POLICY_SILENT_ARITY) return;
+    diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, spec->name,
+        "assinatura invalida para o comando",
+        "ajuste o numero de argumentos ou atualize a especificacao do comando");
+}
+
+#include "commands_control.inc.c"
+#include "commands_target.inc.c"
+#include "commands_find.inc.c"
+#include "commands_file.inc.c"
+
+static const Command_Spec g_commands_compat_noop[] = {
+    CMD_NOOP("include_guard"),
+    CMD_NOOP("block"),
+    CMD_NOOP("endblock"),
+    CMD_NOOP("cmake_policy"),
+    CMD_NOOP("cmake_language"),
+    CMD_NOOP("cmake_host_system_information"),
+    CMD_NOOP("cmake_parse_arguments"),
+    CMD_NOOP("source_group"),
+    CMD_NOOP("use_folders"),
+    CMD_NOOP("build_name"),
+    CMD_NOOP("export_library_dependencies"),
+    CMD_NOOP("load_cache"),
+    CMD_NOOP("variable_watch"),
+    CMD_NOOP("subdir_depends"),
+    CMD_NOOP("utility_source"),
+    CMD_NOOP("output_required_files"),
+    CMD_NOOP("install_files"),
+    CMD_NOOP("install_programs"),
+    CMD_NOOP("install_targets"),
+};
+
 static bool eval_dispatch_known_command(Evaluator_Context *ctx, String_View cmd_name, Args args) {
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
-    static const Command_Spec table[] = {
+    static const Command_Spec g_commands_legacy[] = {
         {"set", eval_set_command},
         {"unset", eval_unset_command},
         {"option", eval_option_command},
@@ -1271,51 +1319,33 @@ static bool eval_dispatch_known_command(Evaluator_Context *ctx, String_View cmd_
 #pragma GCC diagnostic pop
 #endif
 
-    for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
-        if (sv_eq_ci(cmd_name, sv_from_cstr(table[i].name))) {
-            if (!eval_command_spec_arity_ok(&table[i], args)) {
-                diag_log(DIAG_SEV_ERROR, "transpiler", "<input>", 0, 0, table[i].name,
-                    "assinatura invalida para o comando",
-                    "ajuste o numero de argumentos ou atualize a especificacao do comando");
-                return true;
-            }
-            table[i].handler(ctx, args);
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool eval_is_compat_noop_command(String_View cmd_name) {
-    static const char *noop_commands[] = {
-        // Fluxo/meta da linguagem que nao altera command line de build diretamente
-        "include_guard",
-        "block",
-        "endblock",
-        "cmake_policy",
-        "cmake_language",
-        "cmake_host_system_information",
-        "cmake_parse_arguments",
-
-        // Organizacao de IDE / metadados
-        "source_group",
-        "use_folders",
-
-        // Comandos legados/auxiliares raros
-        "build_name",
-        "export_library_dependencies",
-        "load_cache",
-        "variable_watch",
-        "subdir_depends",
-        "utility_source",
-        "output_required_files",
-        "install_files",
-        "install_programs",
-        "install_targets",
+    static const Command_Spec_Group groups[] = {
+        { g_commands_control, sizeof(g_commands_control) / sizeof(g_commands_control[0]) },
+        { g_commands_target, sizeof(g_commands_target) / sizeof(g_commands_target[0]) },
+        { g_commands_find, sizeof(g_commands_find) / sizeof(g_commands_find[0]) },
+        { g_commands_file, sizeof(g_commands_file) / sizeof(g_commands_file[0]) },
+        { g_commands_compat_noop, sizeof(g_commands_compat_noop) / sizeof(g_commands_compat_noop[0]) },
+        { g_commands_legacy, sizeof(g_commands_legacy) / sizeof(g_commands_legacy[0]) },
     };
 
-    for (size_t i = 0; i < sizeof(noop_commands) / sizeof(noop_commands[0]); i++) {
-        if (sv_eq_ci(cmd_name, sv_from_cstr(noop_commands[i]))) return true;
+    for (size_t g = 0; g < sizeof(groups) / sizeof(groups[0]); g++) {
+        const Command_Spec_Group *group = &groups[g];
+        for (size_t i = 0; i < group->count; i++) {
+            const Command_Spec *spec = &group->items[i];
+            if (!sv_eq_ci(cmd_name, sv_from_cstr(spec->name))) continue;
+            if (spec->flags & COMMAND_SPEC_FLAG_COMPAT_NOOP) {
+                return true;
+            }
+            if (!eval_command_spec_arity_ok(spec, args)) {
+                eval_command_spec_emit_arity_diag(spec);
+                return true;
+            }
+            if (spec->handler) {
+                spec->handler(ctx, args);
+                return true;
+            }
+            return false;
+        }
     }
     return false;
 }
@@ -1344,8 +1374,6 @@ static void eval_node(Evaluator_Context *ctx, Node node) {
 
             if (eval_dispatch_known_command(ctx, cmd_name, node.as.cmd.args)) {
                 // Comando reconhecido e executado.
-            } else if (eval_is_compat_noop_command(cmd_name)) {
-                // no-op de compatibilidade.
             } else if (eval_invoke_function(ctx, cmd_name, node.as.cmd.args)) {
                 // Função executada.
             } else if (eval_invoke_macro(ctx, cmd_name, node.as.cmd.args)) {
