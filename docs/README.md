@@ -30,7 +30,7 @@ I am currently rewriting the core **Transpiler** and **Build Model** from scratc
 
 **Why?**
 I don't want magic. I want engineering.
-I am aiming for a clean, deterministic, and well-thought-out architecture (likely ~7000 lines of focused C code) that I can maintain, understand, and be proud of.
+I am aiming for a clean, deterministic, and well-thought-out architecture (likely ~7000 lines of focused C code in one file at most :) that I can maintain, understand, and be proud of.
 
 *   **Goal:** Strict separation of concerns (AST -> Event Stream -> Build Model -> Codegen).
 *   **Status:** The v2 architecture is currently being specified and implemented. You can read the rigorous engineering contracts in the `docs/` folder.
