@@ -24,12 +24,10 @@ static void append_common_include_flags(Nob_Cmd *cmd) {
         "-Isrc/lexer",
         "-Isrc/parser",
         "-Isrc/build_model",
-        "-Isrc/build_model_v2",
         "-Isrc/logic_model",
         "-Isrc/diagnostics",
         "-Isrc/ds_adapter",
         "-Isrc/transpiler",
-        "-Isrc/transpiler_v2",
         "-Isrc/app");
 }
 
@@ -42,10 +40,8 @@ static void append_project_sources(Nob_Cmd *cmd, bool with_app_main) {
         "src/lexer/lexer.c",
         "src/parser/parser.c",
         "src/transpiler/transpiler.c",
-        "src/transpiler_v2/transpiler_v2.c",
         "src/arena/arena.c",
         "src/build_model/build_model.c",
-        "src/build_model_v2/build_model_v2.c",
         "src/diagnostics/diagnostics.c",
         "src/transpiler/sys_utils.c",
         "src/transpiler/toolchain_driver.c",
