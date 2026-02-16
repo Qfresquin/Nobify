@@ -10,9 +10,9 @@ This document is operational. Normative authority is `docs/build_model_v2_contra
 
 Observed in codebase today:
 
-1. `src/build_model_v2/build_model_v2_types.h` still exposes a single mutable `Build_Model_v2` shape.
-2. `src/build_model_v2/build_model_v2.c` implements early APIs (`build_model_v2_create`, `build_model_v2_set_project`, `build_model_v2_add_target`).
-3. `src/transpiler_v2/transpiler_v2.c` is scaffold-first and fallback-first to legacy bridge.
+1. `src/build_model/build_model_types.h` still exposes a single mutable `Build_Model` shape.
+2. `src/build_model/build_model.c` implements early APIs (`build_model_create`, `build_model_set_project`, `build_model_add_target`).
+3. `src/transpiler/transpiler.c` is scaffold-first and fallback-first to legacy bridge.
 
 Implication: contract-level types and planner boundary are not yet complete.
 
@@ -32,9 +32,9 @@ Any inverse order creates rework risk because transpiler semantics depend on fin
 
 Deliverables:
 
-1. canonical event type family declared in `src/transpiler_v2/transpiler_v2_types.h`
-2. builder/frozen split declared in `src/build_model_v2/build_model_v2_types.h`
-3. diagnostic code map reserved (`BMV2_E*`, `BMV2_W*`)
+1. canonical event type family declared in `src/transpiler/transpiler_types.h`
+2. builder/frozen split declared in `src/build_model/build_model_types.h`
+3. diagnostic code map reserved (`BM_E*`, `BM_W*`)
 4. snapshot schema v1 fields frozen in docs
 
 Exit criteria:
@@ -47,8 +47,8 @@ Exit criteria:
 
 Deliverables:
 
-1. `build_model_v2_builder_create`
-2. `build_model_v2_apply_event` for Tier-1 minimum events
+1. `build_model_builder_create`
+2. `build_model_apply_event` for Tier-1 minimum events
 3. local transactional apply using `arena_mark`/`arena_rewind`
 4. deterministic error reporting with origin propagation
 
@@ -61,7 +61,7 @@ Exit criteria:
 
 Deliverables:
 
-1. `build_model_v2_validate`
+1. `build_model_validate`
 2. strict checks for target existence/redeclaration conflicts/invalid visibility
 3. cycle detection for target graph (at validate or freeze boundary)
 
@@ -74,9 +74,9 @@ Exit criteria:
 
 Deliverables:
 
-1. `build_model_v2_freeze`
+1. `build_model_freeze`
 2. deterministic ordering for exported collections
-3. `build_model_v2_get_*` read APIs for codegen consumers
+3. `build_model_get_*` read APIs for codegen consumers
 4. mutation lock after freeze
 
 Exit criteria:
@@ -88,7 +88,7 @@ Exit criteria:
 
 Deliverables:
 
-1. `build_model_v2_snapshot_json`
+1. `build_model_snapshot_json`
 2. schema v1 emitter with required top-level fields
 3. diagnostics summary in snapshot metadata
 
@@ -114,18 +114,18 @@ Exit criteria:
 
 Current API family to preserve short-term compatibility:
 
-1. `build_model_v2_create`
-2. `build_model_v2_set_project`
-3. `build_model_v2_add_target`
-4. `build_model_v2_register_find_package_result`
+1. `build_model_create`
+2. `build_model_set_project`
+3. `build_model_add_target`
+4. `build_model_register_find_package_result`
 
 Target API family for contract compliance:
 
-1. `build_model_v2_builder_create`
-2. `build_model_v2_apply_event`
-3. `build_model_v2_validate`
-4. `build_model_v2_freeze`
-5. `build_model_v2_snapshot_json`
+1. `build_model_builder_create`
+2. `build_model_apply_event`
+3. `build_model_validate`
+4. `build_model_freeze`
+5. `build_model_snapshot_json`
 
 Recommendation:
 
@@ -145,10 +145,10 @@ Minimum tests per phase:
 
 Suggested files:
 
-1. `test/test_build_model_v2_contract.c`
-2. `test/test_build_model_v2_validate.c`
-3. `test/test_build_model_v2_freeze.c`
-4. `test/test_build_model_v2_snapshot.c`
+1. `test/test_build_model_contract.c`
+2. `test/test_build_model_validate.c`
+3. `test/test_build_model_freeze.c`
+4. `test/test_build_model_snapshot.c`
 
 ## 7. CI Gates Recommendation
 

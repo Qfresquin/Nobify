@@ -15,18 +15,19 @@ If any blocker item is not satisfied, status remains "not ready".
 ## 3. Contract Completeness
 
 1. [ ] Canonical event family (`Cmake_Event_*`) declared in public v2 headers.
-2. [ ] Event kind minimum set is implemented for Tier-1.
+2. [ ] Event kind minimum set is implemented for Tier-1 (includes `VAR_SET`, `SCOPE_*`).
 3. [ ] Required/optional/type constraints exist for implemented event kinds.
 4. [ ] Unknown field policy is enforced for strict and compat modes.
 
 ## 4. API Completeness
 
-1. [ ] `build_model_v2_builder_create` exists and is covered by tests.
-2. [ ] `build_model_v2_apply_event` exists and is covered by tests.
-3. [ ] `build_model_v2_validate` exists and is covered by tests.
-4. [ ] `build_model_v2_freeze` exists and is covered by tests.
-5. [ ] `build_model_v2_snapshot_json` exists and is covered by tests.
-6. [ ] read-only accessor family (`build_model_v2_get_*`) exists for codegen consumers.
+1. [ ] `build_model_builder_create` exists and is covered by tests.
+2. [ ] `build_model_apply_event` exists and is covered by tests.
+3. [ ] `build_model_validate` exists and is covered by tests.
+4. [ ] `build_model_freeze` exists and is covered by tests.
+5. [ ] `build_model_snapshot_json` exists and is covered by tests.
+6. [ ] read-only accessor family (`build_model_get_*`) exists for codegen consumers.
+7. [ ] API Consumer Test (`test/test_build_model_api_consumer.c`) passes and validates ergonomics (Refinement D).
 
 ## 5. Validation and Integrity
 
@@ -35,7 +36,8 @@ If any blocker item is not satisfied, status remains "not ready".
 3. [ ] Target-scoped operations on missing targets fail.
 4. [ ] Conflicting redeclarations fail.
 5. [ ] Dependency cycle detection is active.
-6. [ ] Validation does not mutate builder state.
+6. [ ] Scope integrity (unbalanced scopes) is validated.
+7. [ ] Validation does not mutate builder state.
 
 ## 6. Freeze and Determinism
 
@@ -51,12 +53,13 @@ If any blocker item is not satisfied, status remains "not ready".
 3. [ ] Same input generates byte-identical snapshot output.
 4. [ ] Schema version policy is enforced for incompatible changes.
 
-## 8. Diagnostics Contract
+## 8. Diagnostics and Origin Contract
 
 1. [ ] Every strict error includes stable diagnostic code.
 2. [ ] Every strict error includes origin.
-3. [ ] Event-kind context is present when applicable.
-4. [ ] Diagnostic messages are deterministic enough for diff-based assertions.
+3. [ ] Frozen model retains granular origin for list items (sources, flags) (Refinement C).
+4. [ ] Event-kind context is present when applicable.
+5. [ ] Diagnostic messages are deterministic enough for diff-based assertions.
 
 ## 9. Architecture Guards
 
@@ -88,3 +91,4 @@ Final gate outcome (fill during release review):
 2. Date:
 3. Approved by:
 4. Notes:
+--- END OF FILE docs/build_model_v2_readiness_checklist.md ---

@@ -38,24 +38,26 @@ Exit criteria:
 1. headers compile without shim hacks
 2. public API shape agreed and versioned
 
-### M2 - Event Apply Core (Week 2)
+### M2 - Event Apply Core & Scope (Week 2)
 
 Goals:
 
-1. implement `build_model_v2_apply_event` for Tier-1 core events
-2. guarantee local transaction semantics (`arena_mark` + rollback on failure)
-3. propagate event origin in all strict failures
+1. implement `build_model_apply_event` for Tier-1 core events
+2. implement `EVENT_VAR_SET` and `EVENT_SCOPE_*` logic in Builder (Refinement A)
+3. guarantee local transaction semantics (`arena_mark` + rollback on failure)
+4. propagate event origin in all strict failures
 
 Exit criteria:
 
 1. event contract tests green
-2. deterministic diagnostics for event validation failures
+2. scope stack logic verified
+3. deterministic diagnostics for event validation failures
 
 ### M3 - Validation Engine (Week 3)
 
 Goals:
 
-1. implement `build_model_v2_validate`
+1. implement `build_model_validate`
 2. enforce structural checks (missing target, conflicting redeclare, invalid visibility)
 3. enforce dependency integrity checks
 
@@ -68,20 +70,22 @@ Exit criteria:
 
 Goals:
 
-1. implement deterministic `build_model_v2_freeze`
+1. implement deterministic `build_model_freeze`
 2. expose read-only model APIs for codegen
 3. block mutation after freeze
+4. validate Read API ergonomics via `test_build_model_api_consumer.c` (Refinement D)
 
 Exit criteria:
 
 1. repeated freeze output is stable
 2. post-freeze mutation attempts fail predictably
+3. consumer API tests pass without accessing internal structs
 
 ### M5 - Snapshot v1 (Week 5)
 
 Goals:
 
-1. implement `build_model_v2_snapshot_json`
+1. implement `build_model_snapshot_json`
 2. emit required top-level schema fields
 3. include diagnostics summary metadata
 
@@ -109,9 +113,9 @@ Exit criteria:
 | --- | --- | --- |
 | M0 | contract docs | docs review |
 | M1 | type/API headers | compile checks |
-| M2 | apply_event core | contract unit tests |
+| M2 | apply_event core + scope | contract unit tests |
 | M3 | validation engine | integrity tests |
-| M4 | freeze + read APIs | determinism tests |
+| M4 | freeze + read APIs | determinism + api consumer tests |
 | M5 | snapshot v1 | schema + determinism tests |
 | M6 | readiness record | checklist sign-off |
 
