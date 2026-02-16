@@ -1,128 +1,73 @@
 # Nobify
 
-**CMake Frontend. Nob Backend. Zero Runtime Dependência.**
+**CMake Frontend. Nob Backend. Zero Runtime Dependencies.**
 
-Nobify converte projetos escritos em CMake para um build equivalente em Nob, permitindo compilar bibliotecas C/C++ **sem exigir CMake no ambiente final de build**.
+> "The language of the library should be sufficient to compile it. The build shouldn't require installing a second language just to exist."
 
-O projeto parte de uma premissa simples:
-
-> A linguagem da biblioteca deveria ser suficiente para compilá-la.
-> O build não deveria exigir a instalação de outra linguagem para existir.
+Nobify converts projects written in CMake into a standalone **Nob** build system (C source), allowing you to compile C/C++ libraries **without requiring CMake in the final build environment**.
 
 ---
 
-## Motivação
+## The Philosophy: Recreational Programming
 
-CMake se tornou a DSL dominante para descrição de builds no ecossistema C/C++.
-Isso trouxe padronização — mas também trouxe dependência estrutural:
+This project is, at its core, a **Recreational Programming** endeavor.
 
-* Necessidade de instalar CMake
-* Dependência de versão e policies
-* Runtime de interpretação
-* Pipeline configure → generate → build
-* Geradores múltiplos
+I started Nobify with a simple frustration: to compile a medium-to-large C/C++ project today, you practically have to learn two programming languages—C++ and CMake. CMake is powerful and standardized, but it is also bloated. It introduces a massive structural dependency (the CMake runtime, version policies, generators) just to invoke a compiler.
 
-Para muitas bibliotecas, essa infraestrutura é desproporcional ao objetivo final: gerar artefatos binários.
+I am building this to prove a point to myself: **We can do better.**
 
-Nobify preserva a compatibilidade com o ecossistema CMake, mas remove a obrigatoriedade do runtime CMake no ambiente de build.
+The scope of replicating CMake is immense for a single person. I know that. But I am having fun.
 
----
+## Current State: The "Magic" vs. The Craft
 
-## Proposta
+### Version 1 (Legacy)
+The initial version of Nobify works. It has successfully compiled complex projects like **libcurl** and handles small header-only libraries well. The Lexer and Parser are solid.
 
-CMakeLists.txt →  Nob.c
+However, the Transpiler and Build Model in v1 were built with a lot of "AI assistance" and trial-and-error. While it works, the code behaves like magic—I don't fully understand or own the logic behind it. It is a complex workaround rather than a system.
 
-CMake é tratado como DSL de entrada.
-Nob é o backend determinístico de execução.
+### Version 2 (In Progress)
+I am currently rewriting the core **Transpiler** and **Build Model** from scratch (v2).
 
-O resultado:
+**Why?**
+I don't want magic. I want engineering.
+I am aiming for a clean, deterministic, and well-thought-out architecture (likely ~7000 lines of focused C code) that I can maintain, understand, and be proud of.
 
-* Mesmos targets
-* Mesmas flags
-* Mesmas dependências
-* Mesmos artefatos finais
-
-Sem exigir a execução do CMake.
+*   **Goal:** Strict separation of concerns (AST -> Event Stream -> Build Model -> Codegen).
+*   **Status:** The v2 architecture is currently being specified and implemented. You can read the rigorous engineering contracts in the `docs/` folder.
 
 ---
 
-## Escopo e Contrato de Compatibilidade
+## How It Works
 
-Nobify não é um clone do **CMake**.
+Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 
-Ele não promete:
+1.  **Lexer/Parser:** Reads `CMakeLists.txt` and builds an AST.
+2.  **Build Model (The Brain):** Evaluates variables, targets, and dependencies without executing CMake.
+3.  **Transpiler:** Generates a `nob.c` file.
 
-* Paridade histórica completa
-* Compatibilidade bit-a-bit
-* Implementação de todos os geradores (Ninja, VS, Xcode)
-* Replicação integral de policies e quirks legados
-
-Ele promete:
-
-> Compatibilidade funcional orientada a bibliotecas C/C++ reais.
-
-A métrica de sucesso é objetiva:
-
-* A biblioteca compila.
-* Os artefatos equivalentes são gerados.
-* As dependências são preservadas.
-* O ambiente final não precisa de CMake.
+**The Result:**
+*   You get a `nob.c` file.
+*   You run it with a C compiler.
+*   Your project builds.
+*   **No CMake installation required.**
 
 ---
 
-## Cobertura Atual
+## Project Structure & Roadmap
 
-* 130 comandos CMake analisados
-* Cobertura completa no escopo do projeto
-* Classificação interna:
+If you are interested in the architecture of the rewrite, check the documentation indices:
 
-  * **Suportado** – conversão completa para o objetivo
-  * **Adequado** – conversão suficiente para builds reais
-  * **Parcial / Não implementado** – inexistentes no escopo atual
+*   **[Build Model v2 Contract](docs/build_model_v2_contract.md):** The normative source of truth for the new engine.
+*   **[Readiness Checklist](docs/build_model_v2_readiness_checklist.md):** The objective gates for v2.
+*   **[Transpiler v2 Spec](docs/transpiler_v2_spec.md):** How we turn the model into code.
 
----
+## Disclaimer
 
-## Arquitetura
+Nobify is not a 1:1 clone of CMake. It does not promise to support every legacy policy or historical quirk of the last 20 years.
 
-Nobify é estruturado como um compilador:
-
-* Lexer
-* Parser
-* Evaluator semântico
-* Dispatcher de comandos
-* Codegen para Nob
-
-Essa arquitetura permite compatibilidade ampla sem acoplamento ao runtime do CMake.
+**It promises functional compatibility for real-world libraries.**
+If the library compiles, the artifacts are correct, and dependencies are preserved, Nobify has succeeded.
 
 ---
 
-## Filosofia Nob
-
-Nob adota um princípio de engenharia:
-
-> Infraestrutura deve ser mínima, explícita e determinística.
-
-Nobify aplica esse princípio ao ecossistema CMake:
-
-* Reaproveita a linguagem dominante
-* Remove dependências desnecessárias
-* Reduz complexidade do ambiente
-* Mantém controle total do backend
-
----
-
-## V2 Documentation Index
-
-Read order for Build Model v2 / Transpiler v2 migration:
-
-1. `docs/build_model_v2_contract.md` (normative source of truth)
-2. `docs/build_model_v2_readiness_checklist.md` (objective go/no-go gate)
-3. `docs/build_model_v2_roadmap.md` (milestones and execution order)
-4. `docs/build_model_v2_transition_recommendations.md` (operational guidance)
-5. `docs/transpiler_v2_spec.md` (transpiler constraints and dependencies)
-6. `docs/transpiler_v2_activation_plan.md` (post-readiness activation)
-
-Hard policy summary:
-
-1. no functional implementation in transpiler v2 planner/codegen before Build Model v2 readiness is PASS
-2. Build Model v2 readiness is the single unlock gate for transpiler v2 functional work
+*Est. 2026. Built with hate for bloat and love for C.*
