@@ -1,16 +1,24 @@
+// --- START OF FILE parser.h ---
 #ifndef PARSER_H_
 #define PARSER_H_
 
 #include "lexer.h"
 #include "arena.h" 
 
-// --- Estruturas de Argumentos (Mantidas do original) ---
+// --- Estruturas de Argumentos ---
 
-// Um argumento lógico (pode ser "texto" ou ${VAR} ou concatenado "lib${V}.a")
+// Novo: Define como o argumento foi encapsulado no arquivo CMake
+typedef enum {
+    ARG_UNQUOTED = 0, // Argumento normal (ex: lib${V}.a) - Sujeito a quebra por ';'
+    ARG_QUOTED,       // Entre aspas (ex: "lib${V}.a") - Protege os ';'
+    ARG_BRACKET       // Entre colchetes (ex: [[texto puro]]) - Ignora expansão e ';'
+} Arg_Kind;
+
 typedef struct {
     Token *items;
     size_t count;
     size_t capacity;
+    Arg_Kind kind;    // Rastreia o tipo de quoting deste argumento
 } Arg;
 
 typedef struct {
@@ -19,7 +27,7 @@ typedef struct {
     size_t capacity;
 } Args;
 
-// --- Estruturas da AST (Novas) ---
+// --- Estruturas da AST ---
 
 typedef enum {
     NODE_COMMAND,   // set(), project(), add_executable()
@@ -30,50 +38,59 @@ typedef enum {
     NODE_MACRO      // macro() ... endmacro()
 } Node_Kind;
 
-typedef struct Node Node; // Forward declaration para uso na Node_List
+typedef struct Node Node;
 
-// Lista de nós (representa um bloco de código, ex: corpo de um if)
 typedef struct {
     Node *items;
     size_t count;
     size_t capacity;
 } Node_List;
 
+typedef struct {
+    Args condition;
+    Node_List block;
+} ElseIf_Clause;
+
+typedef struct {
+    ElseIf_Clause *items;
+    size_t count;
+    size_t capacity;
+} ElseIf_Clause_List;
+
 struct Node {
     Node_Kind kind;
     
+    // Novo: Rastreio de Origem (Essencial para o Evaluator_v2 e Diagnósticos)
+    size_t line;
+    size_t col;
+    
     union {
-        // Comando Simples
         struct {
             String_View name;
             Args args;
         } cmd;
 
-        // Controle de Fluxo: IF / ELSEIF / ELSE
-        // Nota: 'elseif' é tratado como um novo NODE_IF aninhado dentro do 'else_block'
         struct {
-            Args condition;       // Argumentos do if (ex: WIN32 OR APPLE)
-            Node_List then_block; // Bloco executado se verdadeiro
-            Node_List else_block; // Bloco else (pode conter outro IF se for elseif)
+            Args condition;       
+            Node_List then_block; 
+            ElseIf_Clause_List elseif_clauses;
+            Node_List else_block; 
         } if_stmt;
 
-        // Loop: FOREACH
         struct {
-            Args args;            // Argumentos (ex: VAR IN ITEMS a b c)
-            Node_List body;       // Bloco repetido
+            Args args;            
+            Node_List body;       
         } foreach_stmt;
 
-        // Loop: WHILE
         struct {
-            Args condition;       // Condicao do while
-            Node_List body;       // Bloco repetido
+            Args condition;       
+            Node_List body;       
         } while_stmt;
 
-        // Definição: FUNCTION / MACRO
         struct {
-            String_View name;     // Nome da função/macro
-            Args params;          // Lista de parâmetros
-            Node_List body;       // Corpo da função
+            String_View name;     
+            Args params;          
+            Node_List body;       
         } func_def;
     } as;
 };
@@ -81,7 +98,7 @@ struct Node {
 // O resultado do parsing é o bloco raiz (Root Block)
 typedef Node_List Ast_Root;
 
-// Função principal do Parser (arena obrigatória)
+// Função principal do Parser
 Ast_Root parse_tokens(Arena *arena, Token_List tokens);
 
 // Função para liberar memória da AST
@@ -89,7 +106,5 @@ void ast_free(Ast_Root root);
 
 // Função auxiliar para imprimir a AST (Debug)
 void print_ast(Ast_Root root, int indent);
-
-
 
 #endif // PARSER_H_
