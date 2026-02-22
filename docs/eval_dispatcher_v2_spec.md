@@ -47,6 +47,10 @@ If a command is not found in the table:
 *   `set_target_properties(target PROPERTIES prop val ...)` ->
     *   Iterates pairs of `prop` and `val`.
     *   Emits `EV_TARGET_PROP_SET` for each pair.
+    *   Limitation: does not update an evaluator-side property store; only emits events.
+*   `set_property(TARGET ... PROPERTY key value...)` ->
+    *   Emits `EV_TARGET_PROP_SET` with operation semantics (`SET`, `APPEND`, `APPEND_STRING`) encoded in the event payload.
+    *   Limitation: same as above, no evaluator-side materialized property state.
 *   `target_include_directories(target [SYSTEM] [BEFORE] <INTERFACE|PUBLIC|PRIVATE> items...)` ->
     *   Parses visibility scope.
     *   Emits `EV_TARGET_INCLUDE_DIRECTORIES` for each item with the correct visibility.
@@ -74,6 +78,14 @@ If a command is not found in the table:
     *   **Action:** Writes the file on the host immediately.
     *   **Constraint:** Since transpilation happens before build, this side-effect is immediate.
 
+### 3.5. CMake Policy Directives
+*   `cmake_minimum_required(VERSION ...)`:
+    *   Parsed by evaluator and stored in variables (`CMAKE_MINIMUM_REQUIRED_VERSION`, `CMAKE_POLICY_VERSION`).
+*   `cmake_policy(...)`:
+    *   V2 supports basic `VERSION`, `SET`, and `GET` state handling.
+    *   `PUSH`/`POP` are accepted with warning and currently no-op.
+    *   Policy-dependent behavioral changes (for example, subtle `if()` argument semantics changes tied to specific CMP policies) are not fully modeled in evaluator v2.
+
 ## 4. Helper Functions
 
 ```c
@@ -99,3 +111,9 @@ int eval_parse_visibility(const Args *args, int start_index, Visibility *out_vis
 ## 6. Generator Expressions Note
 
 As per the general Evaluator spec, arguments containing `$<...>` are passed through as literal strings to the event payload. The Dispatcher does **not** attempt to evaluate them.
+
+## 7. Compatibility Limitation: Property Read Commands
+
+Because the Dispatcher/Evaluator do not own a target-property state table, read-side commands such as `get_target_property(...)` and `get_property(TARGET ...)` are not currently representable with full CMake semantics. Implementing them requires either:
+1.  A dedicated evaluator-side property state cache (new layer), or
+2.  Deferring these commands to a model-aware phase with explicit policy.

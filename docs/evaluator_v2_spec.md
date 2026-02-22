@@ -58,6 +58,14 @@ The Evaluator is the sole owner of variable state.
 
 **Result:** The Build Model receives data that is already resolved. It never sees `${...}`.
 
+### 3.4. Target Property State (Current Limitation)
+The Evaluator does **not** maintain a materialized in-memory map of target properties.
+*   Commands like `set_target_properties(...)` and `set_property(TARGET ...)` are treated as **event producers** only.
+*   Property semantics (overwrite/append resolution, effective value by config, genex expansion) are delegated to the consumer side (Build Model / later phases).
+*   Consequence: `get_target_property(...)` and `get_property(TARGET ...)` cannot be implemented with CMake-compatible behavior in the Evaluator alone without introducing a property state layer.
+
+This is intentional for v2 boundary purity (Evaluator -> Event Stream), but it must be considered a compatibility gap.
+
 ### 3.2. Control Flow Flattening
 *   **IF/ELSE:** The Evaluator evaluates the condition. Only the nodes inside the *taken* branch are processed and produce events. The `if` itself produces no event.
 *   **FOREACH:** The Evaluator unrolls the loop. If a loop runs 5 times adding sources, 5 distinct `EV_TARGET_ADD_SOURCE` events are appended to the stream.

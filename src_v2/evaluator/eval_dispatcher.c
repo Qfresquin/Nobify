@@ -5,8 +5,12 @@
 #include "eval_vars.h"
 #include "eval_diag.h"
 #include "eval_flow.h"
+#include "eval_expr.h"
+#include "arena_dyn.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
@@ -17,15 +21,6 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
         return ctx_oom(ctx);
     }
     return true;
-}
-
-static char *sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
-    if (!ctx) return NULL;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sv.count + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
-    if (sv.count) memcpy(buf, sv.data, sv.count);
-    buf[sv.count] = '\0';
-    return buf;
 }
 
 static String_View sv_dirname(String_View path) {
@@ -40,7 +35,7 @@ static String_View sv_dirname(String_View path) {
 }
 
 static bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
-    char *path_c = sv_to_cstr_temp(ctx, path);
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
     return nob_file_exists(path_c) != 0;
 }
@@ -117,6 +112,236 @@ static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
     return true;
 }
 
+static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
+    if (!ctx || !list) return false;
+    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
+        return ctx_oom(ctx);
+    }
+    list->items[list->count++] = sv;
+    return true;
+}
+
+static String_View sv_join_no_sep_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
+    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) total += items[i].count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (items[i].count == 0) continue;
+        memcpy(buf + off, items[i].data, items[i].count);
+        off += items[i].count;
+    }
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
+    if (!ctx || in.count == 0) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < in.count; i++) {
+        buf[i] = (char)tolower((unsigned char)in.data[i]);
+    }
+    buf[in.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static bool emit_target_prop_set(Evaluator_Context *ctx,
+                                 Cmake_Event_Origin o,
+                                 String_View target_name,
+                                 String_View key,
+                                 String_View value,
+                                 Cmake_Target_Property_Op op) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_TARGET_PROP_SET;
+    ev.origin = o;
+    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.target_prop_set.op = op;
+    return emit_event(ctx, ev);
+}
+
+static bool sv_has_prefix_ci_lit(String_View sv, const char *lit) {
+    if (!lit || sv.count == 0) return false;
+    size_t n = strlen(lit);
+    if (sv.count < n) return false;
+    for (size_t i = 0; i < n; i++) {
+        char a = (char)tolower((unsigned char)sv.data[i]);
+        char b = (char)tolower((unsigned char)lit[i]);
+        if (a != b) return false;
+    }
+    return true;
+}
+
+static bool is_cmp_policy_id(String_View sv) {
+    if (sv.count != 7) return false;
+    if (!sv_has_prefix_ci_lit(sv, "CMP")) return false;
+    for (size_t i = 3; i < 7; i++) {
+        if (!isdigit((unsigned char)sv.data[i])) return false;
+    }
+    return true;
+}
+
+static String_View policy_key_from_id(Evaluator_Context *ctx, String_View policy_id) {
+    return sv_concat_suffix_temp(ctx, nob_sv_from_cstr("CMAKE_POLICY_"), eval_sv_to_cstr_temp(ctx, policy_id));
+}
+
+static void emit_policy_partial_warning_once(Evaluator_Context *ctx,
+                                             Cmake_Event_Origin o,
+                                             String_View command_name) {
+    String_View warned_key = nob_sv_from_cstr("NOBIFY_POLICY_PARTIAL_WARNED");
+    if (eval_var_defined(ctx, warned_key)) return;
+    (void)eval_var_set(ctx, warned_key, nob_sv_from_cstr("1"));
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   command_name,
+                   o,
+                   nob_sv_from_cstr("Policy semantics are only partially modeled in evaluator v2"),
+                   nob_sv_from_cstr("Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied"));
+}
+
+static bool h_cmake_minimum_required(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2 || !eval_sv_eq_ci_lit(a.items[0], "VERSION")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_minimum_required() expects VERSION"),
+                       nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View version = a.items[1];
+    String_View min_version = version;
+    String_View policy_version = version;
+    for (size_t i = 0; i + 2 < version.count; i++) {
+        if (version.data[i] == '.' && version.data[i + 1] == '.' && version.data[i + 2] == '.') {
+            min_version = nob_sv_from_parts(version.data, i);
+            policy_version = nob_sv_from_parts(version.data + i + 3, version.count - (i + 3));
+            break;
+        }
+    }
+    if (min_version.count == 0) min_version = version;
+    if (policy_version.count == 0) policy_version = min_version;
+
+    (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_version);
+    (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version);
+
+    emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+    return !eval_should_stop(ctx);
+}
+
+static bool h_cmake_policy(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_policy() missing subcommand"),
+                       nob_sv_from_cstr("Expected one of: VERSION, SET, GET, PUSH, POP"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[0], "VERSION")) {
+        if (a.count < 2) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(VERSION ...) missing version"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), a.items[1]);
+        emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[0], "SET")) {
+        if (a.count < 3 || !is_cmp_policy_id(a.items[1])) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(SET ...) expects CMP<NNNN> and value"),
+                           nob_sv_from_cstr("Usage: cmake_policy(SET CMP0077 NEW)"));
+            return !eval_should_stop(ctx);
+        }
+        String_View value = a.items[2];
+        if (!(eval_sv_eq_ci_lit(value, "OLD") || eval_sv_eq_ci_lit(value, "NEW"))) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_WARNING,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(SET ...) supports only OLD/NEW in v2"),
+                           value);
+        }
+        String_View key = policy_key_from_id(ctx, a.items[1]);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        (void)eval_var_set(ctx, key, value);
+        emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[0], "GET")) {
+        if (a.count < 3 || !is_cmp_policy_id(a.items[1])) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(GET ...) expects CMP<NNNN> and output variable"),
+                           nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
+            return !eval_should_stop(ctx);
+        }
+        String_View key = policy_key_from_id(ctx, a.items[1]);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        String_View val = eval_var_get(ctx, key);
+        (void)eval_var_set(ctx, a.items[2], val);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[0], "PUSH") || eval_sv_eq_ci_lit(a.items[0], "POP")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_policy(PUSH/POP) is not implemented in evaluator v2"),
+                       nob_sv_from_cstr("Policy stack semantics are currently ignored"));
+        emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+        return !eval_should_stop(ctx);
+    }
+
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   node->as.cmd.name,
+                   o,
+                   nob_sv_from_cstr("Unknown cmake_policy() subcommand"),
+                   a.items[0]);
+    emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+    return !eval_should_stop(ctx);
+}
+
 static bool h_project(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -155,8 +380,28 @@ static bool h_project(Evaluator_Context *ctx, const Node *node) {
 
     String_View langs = eval_sv_join_semi_temp(ctx, langs_items, langs_n);
 
+    String_View project_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (project_src_dir.count == 0) project_src_dir = ctx->source_dir;
+    String_View project_bin_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    if (project_bin_dir.count == 0) project_bin_dir = ctx->binary_dir;
+
     (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), name);
     (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), version);
+    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_SOURCE_DIR"), project_src_dir);
+    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_BINARY_DIR"), project_bin_dir);
+    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_DESCRIPTION"), desc);
+
+    String_View cmake_project_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"));
+    if (cmake_project_name.count == 0) {
+        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"), name);
+    }
+
+    String_View key_src = sv_concat_suffix_temp(ctx, name, "_SOURCE_DIR");
+    String_View key_bin = sv_concat_suffix_temp(ctx, name, "_BINARY_DIR");
+    String_View key_ver = sv_concat_suffix_temp(ctx, name, "_VERSION");
+    (void)eval_var_set(ctx, key_src, project_src_dir);
+    (void)eval_var_set(ctx, key_bin, project_bin_dir);
+    (void)eval_var_set(ctx, key_ver, version);
 
     Cmake_Event ev = {0};
     ev.kind = EV_PROJECT_DECLARE;
@@ -432,6 +677,183 @@ static bool h_target_compile_options(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
+static bool h_set_target_properties(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 4) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_target_properties() requires targets and PROPERTIES key/value pairs"),
+                       nob_sv_from_cstr("Usage: set_target_properties(<t1> [<t2> ...] PROPERTIES <k1> <v1> ...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    size_t props_i = a.count;
+    for (size_t i = 0; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) {
+            props_i = i;
+            break;
+        }
+    }
+
+    if (props_i == 0 || props_i >= a.count - 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_target_properties() missing PROPERTIES section"),
+                       nob_sv_from_cstr("Expected: set_target_properties(<targets...> PROPERTIES <key> <value> ...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    size_t kv_start = props_i + 1;
+    size_t kv_count = a.count - kv_start;
+    if (kv_count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_target_properties() missing property key/value"),
+                       nob_sv_from_cstr("Provide at least one <key> <value> pair"));
+        return !eval_should_stop(ctx);
+    }
+
+    if ((kv_count % 2) != 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_target_properties() has dangling property key without value"),
+                       nob_sv_from_cstr("Ignoring the last unmatched key"));
+    }
+
+    for (size_t ti = 0; ti < props_i; ti++) {
+        String_View tgt = a.items[ti];
+        for (size_t i = kv_start; i + 1 < a.count; i += 2) {
+            if (!emit_target_prop_set(ctx, o, tgt, a.items[i], a.items[i + 1], EV_PROP_SET)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+static bool h_set_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property() missing scope"),
+                       nob_sv_from_cstr("Usage: set_property(TARGET <t...> [APPEND|APPEND_STRING] PROPERTY <k> [v...])"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_sv_eq_ci_lit(a.items[0], "TARGET")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property() V1 supports only TARGET scope"),
+                       nob_sv_from_cstr("GLOBAL/DIRECTORY/SOURCE/INSTALL/TEST/CACHE scopes are ignored in v2"));
+        return !eval_should_stop(ctx);
+    }
+
+    bool append = false;
+    bool append_string = false;
+    SV_List targets = {0};
+
+    size_t i = 1;
+    for (; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) break;
+        if (eval_sv_eq_ci_lit(a.items[i], "APPEND")) {
+            append = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "APPEND_STRING")) {
+            append_string = true;
+            continue;
+        }
+        if (!sv_list_push_temp(ctx, &targets, a.items[i])) return !eval_should_stop(ctx);
+    }
+
+    if (targets.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property(TARGET ...) requires at least one target"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property(TARGET ...) missing PROPERTY keyword"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+    i++;
+    if (i >= a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property(TARGET ...) missing property key"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View key = a.items[i++];
+    String_View value = nob_sv_from_cstr("");
+    if (i < a.count) {
+        if (append_string) value = sv_join_no_sep_temp(ctx, &a.items[i], a.count - i);
+        else value = eval_sv_join_semi_temp(ctx, &a.items[i], a.count - i);
+    }
+
+    Cmake_Target_Property_Op op = EV_PROP_SET;
+    if (append_string) op = EV_PROP_APPEND_STRING;
+    else if (append) op = EV_PROP_APPEND_LIST;
+
+    if (append && append_string) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property() received both APPEND and APPEND_STRING"),
+                       nob_sv_from_cstr("Using APPEND_STRING behavior"));
+    }
+
+    for (size_t ti = 0; ti < targets.count; ti++) {
+        if (!emit_target_prop_set(ctx, o, targets.items[ti], key, value, op)) {
+            return !eval_should_stop(ctx);
+        }
+    }
+    return !eval_should_stop(ctx);
+}
+
 static bool h_add_compile_options(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -456,32 +878,15 @@ static bool h_add_definitions(Evaluator_Context *ctx, const Node *node) {
 
     for (size_t i = 0; i < a.count; i++) {
         String_View item = a.items[i];
-        bool is_def = false;
-
-        if (item.count > 2 &&
-            ((item.data[0] == '-' && item.data[1] == 'D') ||
-             (item.data[0] == '/' && item.data[1] == 'D'))) {
-            item = nob_sv_from_parts(item.data + 2, item.count - 2);
-            is_def = true;
-        }
-
         if (item.count == 0) continue;
 
-        if (is_def) {
-            if (!append_list_var(ctx, nob_sv_from_cstr(k_global_defs_var), item)) return false;
-            Cmake_Event ev = {0};
-            ev.kind = EV_GLOBAL_COMPILE_DEFINITIONS;
-            ev.origin = o;
-            ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
-            if (!emit_event(ctx, ev)) return false;
-        } else {
-            if (!append_list_var(ctx, nob_sv_from_cstr(k_global_opts_var), item)) return false;
-            Cmake_Event ev = {0};
-            ev.kind = EV_GLOBAL_COMPILE_OPTIONS;
-            ev.origin = o;
-            ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, item);
-            if (!emit_event(ctx, ev)) return false;
-        }
+        // Keep add_definitions() semantics close to CMake: treat arguments as raw flags.
+        if (!append_list_var(ctx, nob_sv_from_cstr(k_global_opts_var), item)) return false;
+        Cmake_Event ev = {0};
+        ev.kind = EV_GLOBAL_COMPILE_OPTIONS;
+        ev.origin = o;
+        ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, item);
+        if (!emit_event(ctx, ev)) return false;
     }
     return !eval_should_stop(ctx);
 }
@@ -568,10 +973,22 @@ static bool h_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
-static bool find_package_try_module(Evaluator_Context *ctx, String_View pkg, String_View *out_path) {
+static bool find_package_try_module(Evaluator_Context *ctx,
+                                    String_View pkg,
+                                    String_View extra_paths,
+                                    bool no_default_path,
+                                    String_View *out_path) {
     String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (current_src.count == 0) current_src = ctx->source_dir;
-    String_View module_paths = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH"));
+    String_View module_paths = extra_paths;
+    if (!no_default_path) {
+        String_View var_module_paths = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH"));
+        if (module_paths.count > 0 && var_module_paths.count > 0) {
+            module_paths = eval_sv_join_semi_temp(ctx, (String_View[]){module_paths, var_module_paths}, 2);
+        } else if (module_paths.count == 0) {
+            module_paths = var_module_paths;
+        }
+    }
 
     String_View module_name = nob_sv_from_cstr("");
     {
@@ -584,7 +1001,9 @@ static bool find_package_try_module(Evaluator_Context *ctx, String_View pkg, Str
         module_name = nob_sv_from_cstr(buf);
     }
 
-    String_View fallback = eval_sv_path_join(eval_temp_arena(ctx), current_src, nob_sv_from_cstr("CMake"));
+    String_View fallback = no_default_path
+        ? nob_sv_from_cstr("")
+        : eval_sv_path_join(eval_temp_arena(ctx), current_src, nob_sv_from_cstr("CMake"));
     String_View search = module_paths;
     if (fallback.count > 0) {
         if (search.count > 0) {
@@ -616,27 +1035,44 @@ static bool find_package_try_module(Evaluator_Context *ctx, String_View pkg, Str
     return false;
 }
 
-static bool find_package_try_config(Evaluator_Context *ctx, String_View pkg, String_View *out_path) {
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
-    if (current_src.count == 0) current_src = ctx->source_dir;
+static void find_package_push_prefix(String_View *items, size_t *io_count, size_t cap, String_View v) {
+    if (!items || !io_count || *io_count >= cap) return;
+    if (v.count == 0) return;
+    items[(*io_count)++] = v;
+}
 
-    String_View config_name = sv_concat_suffix_temp(ctx, pkg, "Config.cmake");
+static void find_package_push_prefix_variants(Evaluator_Context *ctx,
+                                              String_View *items,
+                                              size_t *io_count,
+                                              size_t cap,
+                                              String_View root) {
+    if (!ctx || root.count == 0) return;
+    find_package_push_prefix(items, io_count, cap, root);
+    find_package_push_prefix(items, io_count, cap, eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("lib/cmake")));
+    find_package_push_prefix(items, io_count, cap, eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("lib64/cmake")));
+    find_package_push_prefix(items, io_count, cap, eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("share/cmake")));
+}
 
-    String_View dir_var = sv_concat_suffix_temp(ctx, pkg, "_DIR");
-    String_View pkg_dir = eval_var_get(ctx, dir_var);
-    if (pkg_dir.count > 0) {
-        String_View dir = pkg_dir;
-        if (!eval_sv_is_abs_path(dir)) {
-            dir = eval_sv_path_join(eval_temp_arena(ctx), current_src, dir);
-        }
-        String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, config_name);
-        if (file_exists_sv(ctx, candidate)) {
-            *out_path = candidate;
-            return true;
-        }
-    }
+static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
+                                                  String_View *items,
+                                                  size_t *io_count,
+                                                  size_t cap,
+                                                  const char *env_name) {
+    if (!ctx || !env_name) return;
+    const char *raw = getenv(env_name);
+    if (!raw || raw[0] == '\0') return;
+    String_View root = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(raw));
+    if (eval_should_stop(ctx)) return;
+    find_package_push_prefix_variants(ctx, items, io_count, cap, root);
+}
 
-    String_View prefixes = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH"));
+static bool find_package_try_config_in_prefixes(Evaluator_Context *ctx,
+                                                String_View current_src,
+                                                String_View pkg,
+                                                String_View *config_names,
+                                                size_t config_name_count,
+                                                String_View prefixes,
+                                                String_View *out_path) {
     const char *p = prefixes.data;
     const char *end = prefixes.data + prefixes.count;
     while (p <= end) {
@@ -647,23 +1083,418 @@ static bool find_package_try_config(Evaluator_Context *ctx, String_View pkg, Str
             if (!eval_sv_is_abs_path(prefix)) {
                 prefix = eval_sv_path_join(eval_temp_arena(ctx), current_src, prefix);
             }
-            String_View c1 = eval_sv_path_join(eval_temp_arena(ctx), prefix, config_name);
-            if (file_exists_sv(ctx, c1)) {
-                *out_path = c1;
-                return true;
-            }
-            String_View pkg_subdir = eval_sv_path_join(eval_temp_arena(ctx), prefix, pkg);
-            String_View c2 = eval_sv_path_join(eval_temp_arena(ctx), pkg_subdir, config_name);
-            if (file_exists_sv(ctx, c2)) {
-                *out_path = c2;
-                return true;
+            for (size_t ni = 0; ni < config_name_count; ni++) {
+                String_View config_name = config_names[ni];
+                String_View c1 = eval_sv_path_join(eval_temp_arena(ctx), prefix, config_name);
+                if (file_exists_sv(ctx, c1)) {
+                    *out_path = c1;
+                    return true;
+                }
+                String_View pkg_subdir = eval_sv_path_join(eval_temp_arena(ctx), prefix, pkg);
+                String_View c2 = eval_sv_path_join(eval_temp_arena(ctx), pkg_subdir, config_name);
+                if (file_exists_sv(ctx, c2)) {
+                    *out_path = c2;
+                    return true;
+                }
             }
         }
         if (q >= end) break;
         p = q + 1;
     }
+    return false;
+}
+
+static bool find_package_try_config(Evaluator_Context *ctx,
+                                    String_View pkg,
+                                    String_View extra_prefixes,
+                                    bool no_default_path,
+                                    String_View *out_path) {
+    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (current_src.count == 0) current_src = ctx->source_dir;
+
+    String_View config_names[3] = {0};
+    size_t config_name_count = 0;
+    config_names[config_name_count++] = sv_concat_suffix_temp(ctx, pkg, "Config.cmake");
+    config_names[config_name_count++] = sv_concat_suffix_temp(ctx, pkg, "-config.cmake");
+    String_View lower_pkg = sv_to_lower_temp(ctx, pkg);
+    if (lower_pkg.count > 0) {
+        config_names[config_name_count++] = sv_concat_suffix_temp(ctx, lower_pkg, "-config.cmake");
+    }
+
+    String_View dir_var = sv_concat_suffix_temp(ctx, pkg, "_DIR");
+    String_View pkg_dir = eval_var_get(ctx, dir_var);
+    if (pkg_dir.count > 0) {
+        String_View dir = pkg_dir;
+        if (!eval_sv_is_abs_path(dir)) {
+            dir = eval_sv_path_join(eval_temp_arena(ctx), current_src, dir);
+        }
+        for (size_t ni = 0; ni < config_name_count; ni++) {
+            String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, config_names[ni]);
+            if (file_exists_sv(ctx, candidate)) {
+                *out_path = candidate;
+                return true;
+            }
+        }
+    }
+
+    String_View merged_prefixes[64] = {0};
+    size_t merged_count = 0;
+    find_package_push_prefix(merged_prefixes, &merged_count, 64, extra_prefixes);
+    if (!no_default_path) {
+        String_View prefixes = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH"));
+        find_package_push_prefix(merged_prefixes, &merged_count, 64, prefixes);
+    }
+
+    if (!no_default_path) {
+#if defined(_WIN32)
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "ProgramFiles");
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "ProgramFiles(x86)");
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "ProgramW6432");
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "VCPKG_ROOT");
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("C:/Program Files"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("C:/Program Files (x86)"));
+#else
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/usr/local"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/usr"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/opt/local"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/opt/homebrew"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/opt"));
+#endif
+    }
+
+    String_View all_prefixes = eval_sv_join_semi_temp(ctx, merged_prefixes, merged_count);
+    if (eval_should_stop(ctx)) return false;
+    if (find_package_try_config_in_prefixes(ctx, current_src, pkg, config_names, config_name_count, all_prefixes, out_path)) {
+        return true;
+    }
 
     return false;
+}
+
+typedef struct {
+    String_View pkg;
+    String_View mode; // MODULE / CONFIG / AUTO
+    bool required;
+    bool quiet;
+    String_View requested_version;
+    bool exact_version;
+    String_View components;
+    String_View optional_components;
+    String_View extra_prefixes;
+    bool no_default_path;
+    bool saw_registry_view;
+} Find_Package_Options;
+
+static bool find_package_is_option_keyword(String_View t) {
+    return eval_sv_eq_ci_lit(t, "REQUIRED") ||
+           eval_sv_eq_ci_lit(t, "QUIET") ||
+           eval_sv_eq_ci_lit(t, "MODULE") ||
+           eval_sv_eq_ci_lit(t, "CONFIG") ||
+           eval_sv_eq_ci_lit(t, "EXACT") ||
+           eval_sv_eq_ci_lit(t, "COMPONENTS") ||
+           eval_sv_eq_ci_lit(t, "OPTIONAL_COMPONENTS") ||
+           eval_sv_eq_ci_lit(t, "HINTS") ||
+           eval_sv_eq_ci_lit(t, "PATHS") ||
+           eval_sv_eq_ci_lit(t, "NO_DEFAULT_PATH") ||
+           eval_sv_eq_ci_lit(t, "REGISTRY_VIEW");
+}
+
+static bool find_package_looks_like_version(String_View t) {
+    if (t.count == 0) return false;
+    bool saw_digit = false;
+    for (size_t i = 0; i < t.count; i++) {
+        char c = t.data[i];
+        if (isdigit((unsigned char)c)) {
+            saw_digit = true;
+            continue;
+        }
+        if (c == '.' || c == '_' || c == '-' || isalpha((unsigned char)c)) continue;
+        return false;
+    }
+    return saw_digit;
+}
+
+static int find_package_version_part_cmp(String_View a, String_View b) {
+    bool da = true;
+    bool db = true;
+    for (size_t i = 0; i < a.count; i++) if (!isdigit((unsigned char)a.data[i])) da = false;
+    for (size_t i = 0; i < b.count; i++) if (!isdigit((unsigned char)b.data[i])) db = false;
+
+    if (da && db) {
+        size_t ia = 0, ib = 0;
+        while (ia < a.count && a.data[ia] == '0') ia++;
+        while (ib < b.count && b.data[ib] == '0') ib++;
+        size_t na = a.count - ia;
+        size_t nb = b.count - ib;
+        if (na < nb) return -1;
+        if (na > nb) return 1;
+        if (na == 0) return 0;
+        int c = memcmp(a.data + ia, b.data + ib, na);
+        return c < 0 ? -1 : (c > 0 ? 1 : 0);
+    }
+
+    size_t n = a.count < b.count ? a.count : b.count;
+    int c = memcmp(a.data, b.data, n);
+    if (c != 0) return c < 0 ? -1 : 1;
+    if (a.count < b.count) return -1;
+    if (a.count > b.count) return 1;
+    return 0;
+}
+
+static int find_package_version_cmp(String_View a, String_View b) {
+    size_t pa = 0, pb = 0;
+    for (;;) {
+        String_View sa = nob_sv_from_cstr("");
+        String_View sb = nob_sv_from_cstr("");
+        if (pa < a.count) {
+            size_t s = pa;
+            while (pa < a.count && a.data[pa] != '.') pa++;
+            sa = nob_sv_from_parts(a.data + s, pa - s);
+            if (pa < a.count) pa++;
+        }
+        if (pb < b.count) {
+            size_t s = pb;
+            while (pb < b.count && b.data[pb] != '.') pb++;
+            sb = nob_sv_from_parts(b.data + s, pb - s);
+            if (pb < b.count) pb++;
+        }
+        if (sa.count == 0 && sb.count == 0) return 0;
+        int c = find_package_version_part_cmp(sa, sb);
+        if (c != 0) return c;
+    }
+}
+
+static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, SV_List args) {
+    Find_Package_Options out = {0};
+    out.pkg = args.count > 0 ? args.items[0] : nob_sv_from_cstr("");
+    out.mode = nob_sv_from_cstr("AUTO");
+
+    bool module_mode = false;
+    bool config_mode = false;
+    String_View comps[64] = {0};
+    size_t comps_n = 0;
+    String_View opt_comps[64] = {0};
+    size_t opt_comps_n = 0;
+    String_View prefixes[64] = {0};
+    size_t prefixes_n = 0;
+
+    for (size_t i = 1; i < args.count; i++) {
+        if (eval_sv_eq_ci_lit(args.items[i], "REQUIRED")) out.required = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "QUIET")) out.quiet = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "MODULE")) module_mode = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "CONFIG")) config_mode = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "EXACT")) out.exact_version = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "NO_DEFAULT_PATH")) out.no_default_path = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "REGISTRY_VIEW")) {
+            out.saw_registry_view = true;
+            if (i + 1 < args.count && !find_package_is_option_keyword(args.items[i + 1])) i++;
+        } else if (eval_sv_eq_ci_lit(args.items[i], "COMPONENTS")) {
+            for (size_t j = i + 1; j < args.count; j++) {
+                if (find_package_is_option_keyword(args.items[j])) break;
+                if (comps_n < 64) comps[comps_n++] = args.items[j];
+                i = j;
+            }
+        } else if (eval_sv_eq_ci_lit(args.items[i], "OPTIONAL_COMPONENTS")) {
+            for (size_t j = i + 1; j < args.count; j++) {
+                if (find_package_is_option_keyword(args.items[j])) break;
+                if (opt_comps_n < 64) opt_comps[opt_comps_n++] = args.items[j];
+                i = j;
+            }
+        } else if (eval_sv_eq_ci_lit(args.items[i], "HINTS") || eval_sv_eq_ci_lit(args.items[i], "PATHS")) {
+            for (size_t j = i + 1; j < args.count; j++) {
+                if (find_package_is_option_keyword(args.items[j])) break;
+                if (prefixes_n < 64) prefixes[prefixes_n++] = args.items[j];
+                i = j;
+            }
+        } else if (out.requested_version.count == 0 && find_package_looks_like_version(args.items[i])) {
+            out.requested_version = args.items[i];
+        }
+    }
+
+    if (module_mode && !config_mode) out.mode = nob_sv_from_cstr("MODULE");
+    if (config_mode && !module_mode) out.mode = nob_sv_from_cstr("CONFIG");
+    if (comps_n > 0) out.components = eval_sv_join_semi_temp(ctx, comps, comps_n);
+    if (opt_comps_n > 0) out.optional_components = eval_sv_join_semi_temp(ctx, opt_comps, opt_comps_n);
+    if (prefixes_n > 0) out.extra_prefixes = eval_sv_join_semi_temp(ctx, prefixes, prefixes_n);
+    return out;
+}
+
+static bool find_package_resolve(Evaluator_Context *ctx,
+                                 const Find_Package_Options *opt,
+                                 String_View *out_found_path) {
+    if (!ctx || !opt || !out_found_path) return false;
+    *out_found_path = nob_sv_from_cstr("");
+
+    if (eval_sv_eq_ci_lit(opt->mode, "MODULE")) {
+        return find_package_try_module(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+    }
+    if (eval_sv_eq_ci_lit(opt->mode, "CONFIG")) {
+        return find_package_try_config(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+    }
+
+    bool found = find_package_try_module(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+    if (!found) found = find_package_try_config(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+    return found;
+}
+
+static String_View find_package_guess_version_path(Evaluator_Context *ctx,
+                                                   String_View config_path) {
+    if (!ctx || config_path.count == 0) return nob_sv_from_cstr("");
+    String_View dir = sv_dirname(config_path);
+    size_t name_off = 0;
+    for (size_t i = config_path.count; i-- > 0;) {
+        char c = config_path.data[i];
+        if (c == '/' || c == '\\') {
+            name_off = i + 1;
+            break;
+        }
+    }
+    size_t name_len = config_path.count - name_off;
+
+    String_View base = nob_sv_from_parts(config_path.data + name_off, name_len);
+    if (base.count >= 12 && eval_sv_eq_ci_lit(nob_sv_from_parts(base.data + base.count - 12, 12), "Config.cmake")) {
+        String_View stem = nob_sv_from_parts(base.data, base.count - 12);
+        String_View version_name = sv_concat_suffix_temp(ctx, stem, "ConfigVersion.cmake");
+        return eval_sv_path_join(eval_temp_arena(ctx), dir, version_name);
+    }
+    if (base.count >= 13 && eval_sv_eq_ci_lit(nob_sv_from_parts(base.data + base.count - 13, 13), "-config.cmake")) {
+        String_View stem = nob_sv_from_parts(base.data, base.count - 13);
+        String_View version_name = sv_concat_suffix_temp(ctx, stem, "-config-version.cmake");
+        return eval_sv_path_join(eval_temp_arena(ctx), dir, version_name);
+    }
+    return nob_sv_from_cstr("");
+}
+
+static bool find_package_requested_version_matches(const Find_Package_Options *opt,
+                                                   String_View actual_version) {
+    if (!opt || opt->requested_version.count == 0) return true;
+    if (actual_version.count == 0) return false;
+    int c = find_package_version_cmp(actual_version, opt->requested_version);
+    if (opt->exact_version) return c == 0;
+    return c >= 0;
+}
+
+static void find_package_seed_find_context_vars(Evaluator_Context *ctx, const Find_Package_Options *opt) {
+    if (!ctx || !opt) return;
+    String_View key_required = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED");
+    String_View key_quiet = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_QUIETLY");
+    String_View key_ver = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_VERSION");
+    String_View key_exact = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_VERSION_EXACT");
+    String_View key_comps = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_COMPONENTS");
+    String_View key_req_comps = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED_COMPONENTS");
+    String_View key_opt_comps = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_OPTIONAL_COMPONENTS");
+
+    (void)eval_var_set(ctx, key_required, opt->required ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+    (void)eval_var_set(ctx, key_quiet, opt->quiet ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+    if (opt->requested_version.count > 0) {
+        (void)eval_var_set(ctx, key_ver, opt->requested_version);
+        (void)eval_var_set(ctx, key_exact, opt->exact_version ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+    }
+    if (opt->components.count > 0) {
+        (void)eval_var_set(ctx, key_comps, opt->components);
+        (void)eval_var_set(ctx, key_req_comps, opt->components);
+    }
+    if (opt->optional_components.count > 0) (void)eval_var_set(ctx, key_opt_comps, opt->optional_components);
+}
+
+static void find_package_publish_vars(Evaluator_Context *ctx,
+                                      const Find_Package_Options *opt,
+                                      bool *io_found,
+                                      String_View found_path) {
+    String_View found_key = sv_concat_suffix_temp(ctx, opt->pkg, "_FOUND");
+    String_View dir_key = sv_concat_suffix_temp(ctx, opt->pkg, "_DIR");
+    String_View cfg_key = sv_concat_suffix_temp(ctx, opt->pkg, "_CONFIG");
+
+    if (*io_found) {
+        String_View dir = sv_dirname(found_path);
+        (void)eval_var_set(ctx, dir_key, dir);
+        (void)eval_var_set(ctx, cfg_key, found_path);
+
+        find_package_seed_find_context_vars(ctx, opt);
+
+        bool version_ok = true;
+        if (opt->requested_version.count > 0) {
+            String_View version_path = find_package_guess_version_path(ctx, found_path);
+            if (version_path.count > 0 && file_exists_sv(ctx, version_path)) {
+                (void)eval_var_set(ctx, nob_sv_from_cstr("PACKAGE_VERSION"), nob_sv_from_cstr(""));
+                (void)eval_var_set(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"), nob_sv_from_cstr(""));
+                (void)eval_var_set(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"), nob_sv_from_cstr(""));
+                if (!eval_execute_file(ctx, version_path, false, nob_sv_from_cstr(""))) {
+                    version_ok = false;
+                } else {
+                    String_View exact = eval_var_get(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"));
+                    String_View compat = eval_var_get(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"));
+                    if (opt->exact_version && exact.count > 0) {
+                        version_ok = eval_truthy(ctx, exact);
+                    } else if (!opt->exact_version && compat.count > 0) {
+                        version_ok = eval_truthy(ctx, compat);
+                    } else {
+                        version_ok = find_package_requested_version_matches(opt, eval_var_get(ctx, nob_sv_from_cstr("PACKAGE_VERSION")));
+                    }
+                }
+            }
+        }
+
+        if (version_ok) {
+            if (!eval_execute_file(ctx, found_path, false, nob_sv_from_cstr(""))) {
+                *io_found = false;
+            }
+        } else {
+            *io_found = false;
+        }
+
+        if (*io_found && opt->requested_version.count > 0) {
+            String_View pkg_ver_key = sv_concat_suffix_temp(ctx, opt->pkg, "_VERSION");
+            String_View actual = eval_var_get(ctx, pkg_ver_key);
+            if (actual.count == 0) actual = eval_var_get(ctx, nob_sv_from_cstr("PACKAGE_VERSION"));
+            if (!find_package_requested_version_matches(opt, actual)) {
+                *io_found = false;
+            }
+        }
+    }
+
+    if (*io_found) {
+        if (eval_var_defined(ctx, found_key)) {
+            *io_found = eval_truthy(ctx, eval_var_get(ctx, found_key));
+        }
+    }
+    (void)eval_var_set(ctx, found_key, *io_found ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+}
+
+static void find_package_emit_result(Evaluator_Context *ctx,
+                                     const Node *node,
+                                     Cmake_Event_Origin o,
+                                     const Find_Package_Options *opt,
+                                     bool found,
+                                     String_View found_path) {
+    if (!found && opt->required) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("Required package not found"),
+                       opt->pkg);
+        eval_request_stop_on_error(ctx);
+    } else if (!found && !opt->quiet) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("Package not found"),
+                       opt->pkg);
+    }
+
+    Cmake_Event ev = {0};
+    ev.kind = EV_FIND_PACKAGE;
+    ev.origin = o;
+    ev.as.find_package.package_name = sv_copy_to_event_arena(ctx, opt->pkg);
+    ev.as.find_package.mode = sv_copy_to_event_arena(ctx, opt->mode);
+    ev.as.find_package.required = opt->required;
+    ev.as.find_package.found = found;
+    ev.as.find_package.location = sv_copy_to_event_arena(ctx, found_path);
+    (void)emit_event(ctx, ev);
 }
 
 static bool h_find_package(Evaluator_Context *ctx, const Node *node) {
@@ -682,79 +1513,29 @@ static bool h_find_package(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View pkg = a.items[0];
-    bool required = false;
-    bool quiet = false;
-    bool module_mode = false;
-    bool config_mode = false;
-
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "REQUIRED")) required = true;
-        else if (eval_sv_eq_ci_lit(a.items[i], "QUIET")) quiet = true;
-        else if (eval_sv_eq_ci_lit(a.items[i], "MODULE")) module_mode = true;
-        else if (eval_sv_eq_ci_lit(a.items[i], "CONFIG")) config_mode = true;
-    }
-
-    String_View mode = nob_sv_from_cstr("AUTO");
-    if (module_mode && !config_mode) mode = nob_sv_from_cstr("MODULE");
-    if (config_mode && !module_mode) mode = nob_sv_from_cstr("CONFIG");
-
-    bool found = false;
-    String_View found_path = nob_sv_from_cstr("");
-    if (eval_sv_eq_ci_lit(mode, "MODULE")) {
-        found = find_package_try_module(ctx, pkg, &found_path);
-    } else if (eval_sv_eq_ci_lit(mode, "CONFIG")) {
-        found = find_package_try_config(ctx, pkg, &found_path);
-    } else {
-        found = find_package_try_module(ctx, pkg, &found_path);
-        if (!found) found = find_package_try_config(ctx, pkg, &found_path);
-    }
-
-    String_View found_key = sv_concat_suffix_temp(ctx, pkg, "_FOUND");
-    String_View dir_key = sv_concat_suffix_temp(ctx, pkg, "_DIR");
-    String_View cfg_key = sv_concat_suffix_temp(ctx, pkg, "_CONFIG");
-
-    if (found) {
-        String_View dir = sv_dirname(found_path);
-        (void)eval_var_set(ctx, found_key, nob_sv_from_cstr("1"));
-        (void)eval_var_set(ctx, dir_key, dir);
-        (void)eval_var_set(ctx, cfg_key, found_path);
-        if (!eval_execute_file(ctx, found_path, false, nob_sv_from_cstr(""))) {
-            found = false;
-            (void)eval_var_set(ctx, found_key, nob_sv_from_cstr("0"));
-        }
-    } else {
-        (void)eval_var_set(ctx, found_key, nob_sv_from_cstr("0"));
-    }
-
-    if (!found && required) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("Required package not found"),
-                       pkg);
-        eval_request_stop(ctx);
-    } else if (!found && !quiet) {
+    Find_Package_Options opt = find_package_parse_options(ctx, a);
+    if (opt.exact_version && opt.requested_version.count == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_WARNING,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
-                       nob_sv_from_cstr("Package not found"),
-                       pkg);
+                       nob_sv_from_cstr("find_package() EXACT specified without version"),
+                       nob_sv_from_cstr("EXACT is ignored when no version is requested"));
     }
-
-    Cmake_Event ev = {0};
-    ev.kind = EV_FIND_PACKAGE;
-    ev.origin = o;
-    ev.as.find_package.package_name = sv_copy_to_event_arena(ctx, pkg);
-    ev.as.find_package.mode = sv_copy_to_event_arena(ctx, mode);
-    ev.as.find_package.required = required;
-    ev.as.find_package.found = found;
-    ev.as.find_package.location = sv_copy_to_event_arena(ctx, found_path);
-    (void)emit_event(ctx, ev);
+    if (opt.saw_registry_view) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("find_package() REGISTRY_VIEW is not implemented in v2"),
+                       nob_sv_from_cstr("Windows registry-based package discovery is currently unsupported"));
+    }
+    String_View found_path = nob_sv_from_cstr("");
+    bool found = find_package_resolve(ctx, &opt, &found_path);
+    find_package_publish_vars(ctx, &opt, &found, found_path);
+    find_package_emit_result(ctx, node, o, &opt, found, found_path);
     return !eval_should_stop(ctx);
 }
 
@@ -772,6 +1553,8 @@ static const Command_Entry DISPATCH[] = {
     {"add_library", h_add_library},
     {"add_subdirectory", h_add_subdirectory},
     {"break", h_break},
+    {"cmake_minimum_required", h_cmake_minimum_required},
+    {"cmake_policy", h_cmake_policy},
     {"continue", h_continue},
     {"file", h_file},
     {"find_package", h_find_package},
@@ -782,6 +1565,8 @@ static const Command_Entry DISPATCH[] = {
     {"project", h_project},
     {"return", h_return},
     {"set", h_set},
+    {"set_property", h_set_property},
+    {"set_target_properties", h_set_target_properties},
     {"string", h_string},
     {"target_compile_definitions", h_target_compile_definitions},
     {"target_compile_options", h_target_compile_options},
@@ -829,3 +1614,4 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                    nob_sv_from_cstr("Ignored during evaluation"));
     return true;
 }
+
