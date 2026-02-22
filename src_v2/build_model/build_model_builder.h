@@ -1,6 +1,7 @@
 #ifndef BUILD_MODEL_BUILDER_V2_H_
 #define BUILD_MODEL_BUILDER_V2_H_
 
+#include "build_model.h"
 
 #include "../transpiler/event_ir.h"
 

@@ -1,6 +1,7 @@
 #ifndef BUILD_MODEL_VALIDATE_V2_H_
 #define BUILD_MODEL_VALIDATE_V2_H_
 
+#include "build_model.h"
 
 
 // `diagnostics` is reserved for a future diagnostic sink adapter.

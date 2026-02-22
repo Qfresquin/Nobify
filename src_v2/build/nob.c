@@ -45,6 +45,10 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/transpiler",
         "-Isrc_v2/evaluator",
         "-Isrc_v2/genex",
+        "-Isrc_v2/build_model",
+        "-I", "src obsoleto so use de referencia/build_model",
+        "-I", "src obsoleto so use de referencia/logic_model",
+        "-I", "src obsoleto so use de referencia/ds_adapter",
         "-Itest_v2");
 }
 
@@ -73,6 +77,17 @@ static void append_v2_parser_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/lexer/lexer.c",
         "src_v2/parser/parser.c",
         "src_v2/diagnostics/diagnostics.c");
+}
+
+static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "src_v2/build_model/build_model_builder.c",
+        "src_v2/build_model/build_model_validate.c",
+        "src_v2/build_model/build_model_freeze.c",
+        "src_v2/build_model/build_model_query.c",
+        "src obsoleto so use de referencia/build_model/build_model.c",
+        "src obsoleto so use de referencia/logic_model/logic_model.c",
+        "src obsoleto so use de referencia/ds_adapter/ds_adapter.c");
 }
 
 static void append_v2_lexer_runtime_sources(Nob_Cmd *cmd) {
@@ -173,11 +188,10 @@ static bool build_app(void) {
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", APP_BIN,
-        APP_SRC,
-        "src_v2/arena/arena.c",
-        "src_v2/lexer/lexer.c",
-        "src_v2/parser/parser.c",
-        "src_v2/diagnostics/diagnostics.c");
+        APP_SRC);
+    append_v2_evaluator_runtime_sources(&cmd);
+    append_v2_build_model_runtime_sources(&cmd);
+    append_v2_pcre_sources(&cmd);
     append_platform_link_flags(&cmd);
     return nob_cmd_run_sync(cmd);
 }
