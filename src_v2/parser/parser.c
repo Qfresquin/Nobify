@@ -1,5 +1,6 @@
 // --- START OF FILE parser.c ---
 #include "parser.h"
+#include "nob.h"
 #include "arena.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
@@ -15,11 +16,29 @@ typedef struct {
     Arena *arena;
     bool oom;
     size_t fail_after_appends;
+    size_t block_depth;
+    size_t max_block_depth;
+    size_t max_paren_depth;
 } Parser_Context;
+
+typedef enum {
+    ARGS_COMMAND_DEFAULT = 0,
+    ARGS_CONDITION_EXPR
+} Parse_Args_Mode;
 
 // --- Forward Declarations ---
 static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cursor);
 static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cursor, const char **terminators, size_t term_count, String_View *found_terminator);
+
+#define PARSER_DEFAULT_MAX_BLOCK_DEPTH 512
+#define PARSER_DEFAULT_MAX_PAREN_DEPTH 2048
+
+static inline bool parser_has_oom(const Parser_Context *ctx) {
+    return !ctx || ctx->oom;
+}
+
+#define PARSER_OOM_RETURN(ctx, ret_value) \
+    do { if (parser_has_oom((ctx))) return (ret_value); } while (0)
 
 static size_t parser_fail_after_from_env(void) {
     const char *env = getenv("CMK2NOB_PARSER_FAIL_APPEND_AFTER");
@@ -28,6 +47,17 @@ static size_t parser_fail_after_from_env(void) {
     unsigned long long raw = strtoull(env, &end, 10);
     if (end == env || (end && *end != '\0')) return SIZE_MAX;
     if (raw > (unsigned long long)SIZE_MAX) return SIZE_MAX;
+    return (size_t)raw;
+}
+
+static size_t parser_limit_from_env(const char *name, size_t fallback, size_t min_value) {
+    const char *env = getenv(name);
+    if (!env || env[0] == '\0') return fallback;
+    char *end = NULL;
+    unsigned long long raw = strtoull(env, &end, 10);
+    if (end == env || (end && *end != '\0')) return fallback;
+    if (raw > (unsigned long long)SIZE_MAX) return fallback;
+    if ((size_t)raw < min_value) return min_value;
     return (size_t)raw;
 }
 
@@ -77,6 +107,34 @@ static bool parser_append_elseif(Parser_Context *ctx, ElseIf_Clause_List *list, 
     return true;
 }
 
+static unsigned char ascii_upper(unsigned char c) {
+    if (c >= 'a' && c <= 'z') return (unsigned char)(c - ('a' - 'A'));
+    return c;
+}
+
+static void parser_emit_unexpected_token(Token t, const char *hint) {
+    diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "token",
+        nob_temp_sprintf("token inesperado no nivel de bloco: "SV_Fmt, SV_Arg(t.text)),
+        hint ? hint : "remova token inesperado");
+}
+
+static void parser_sync_after_statement_error(Token_List *tokens, size_t *cursor, size_t start_line) {
+    if (!tokens || !cursor) return;
+    while (*cursor < tokens->count) {
+        Token t = tokens->items[*cursor];
+        if (t.line != start_line) break;
+        (*cursor)++;
+    }
+}
+
+static Node parser_make_empty_statement(size_t line, size_t col) {
+    Node node = {0};
+    node.kind = NODE_COMMAND;
+    node.line = line;
+    node.col = col;
+    return node;
+}
+
 static bool match_token_text(Token t, const char *text) {
     if (t.kind != TOKEN_IDENTIFIER) return false;
     String_View sv = nob_sv_from_cstr(text);
@@ -84,7 +142,7 @@ static bool match_token_text(Token t, const char *text) {
     for (size_t i = 0; i < sv.count; i++) {
         unsigned char a = (unsigned char)t.text.data[i];
         unsigned char b = (unsigned char)sv.data[i];
-        if (toupper(a) != toupper(b)) return false;
+        if (ascii_upper(a) != ascii_upper(b)) return false;
     }
     return true;
 }
@@ -95,7 +153,7 @@ static bool sv_eq_ci_lit(String_View value, const char *lit) {
     for (size_t i = 0; i < sv.count; i++) {
         unsigned char a = (unsigned char)value.data[i];
         unsigned char b = (unsigned char)sv.data[i];
-        if (toupper(a) != toupper(b)) return false;
+        if (ascii_upper(a) != ascii_upper(b)) return false;
     }
     return true;
 }
@@ -119,14 +177,71 @@ static bool is_cmake_bracket_literal(String_View sv) {
     return sv.data[sv.count - 1] == ']';
 }
 
+static bool parser_append_new_arg_with_token(Parser_Context *ctx, Args *args, Token tok, Arg_Kind kind) {
+    Arg arg = {0};
+    arg.kind = kind;
+    if (!parser_append_token(ctx, &arg, tok)) return false;
+    if (!parser_append_arg(ctx, args, arg)) return false;
+    return true;
+}
+
+static bool parser_append_to_last_or_new(Parser_Context *ctx, Args *args, Token tok, Arg_Kind kind) {
+    if (!ctx || !args) return false;
+    if (args->count > 0 && !tok.has_space_left) {
+        if (!parser_append_token(ctx, &args->items[args->count - 1], tok)) return false;
+        return true;
+    }
+    return parser_append_new_arg_with_token(ctx, args, tok, kind);
+}
+
+static Arg_Kind parser_infer_arg_kind(Token tok);
+
+static bool parser_append_with_condition_merge_rules(Parser_Context *ctx, Args *args, Token tok) {
+    if (!ctx || !args) return false;
+    bool can_merge = (args->count > 0 && !tok.has_space_left);
+    if (can_merge) {
+        Arg *last = &args->items[args->count - 1];
+        if (last->count > 0) {
+            Token prev = last->items[last->count - 1];
+            if (prev.kind == TOKEN_LPAREN || prev.kind == TOKEN_RPAREN) {
+                can_merge = false;
+            }
+        }
+    }
+
+    if (can_merge) {
+        if (!parser_append_token(ctx, &args->items[args->count - 1], tok)) return false;
+        return true;
+    }
+    return parser_append_new_arg_with_token(ctx, args, tok, parser_infer_arg_kind(tok));
+}
+
+static Arg_Kind parser_infer_arg_kind(Token tok) {
+    if (tok.kind == TOKEN_STRING) return ARG_QUOTED;
+    if (tok.kind == TOKEN_RAW_STRING || is_cmake_bracket_literal(tok.text)) return ARG_BRACKET;
+    return ARG_UNQUOTED;
+}
+
 // Consome argumentos entre '(' e ')'
-static Args parse_args(Parser_Context *ctx, Token_List *tokens, size_t *cursor) {
+static Args parse_args(Parser_Context *ctx,
+                      Token_List *tokens,
+                      size_t *cursor,
+                      Parse_Args_Mode mode,
+                      size_t origin_line,
+                      size_t origin_col,
+                      bool *out_ok) {
     Args args = {0};
-    if (!ctx || ctx->oom) return args;
+    bool ok = true;
+    if (out_ok) *out_ok = true;
+    PARSER_OOM_RETURN(ctx, args);
     bool closed = false;
-    int depth = 0;
-    
+    size_t depth = 0;
+    size_t overflow_extra = 0;
+    bool reported_paren_depth = false;
+
     if (*cursor >= tokens->count || tokens->items[*cursor].kind != TOKEN_LPAREN) {
+        ok = false;
+        if (out_ok) *out_ok = ok;
         return args;
     }
     (*cursor)++; // Pula '('
@@ -135,12 +250,32 @@ static Args parse_args(Parser_Context *ctx, Token_List *tokens, size_t *cursor) 
     while (*cursor < tokens->count) {
         Token t = tokens->items[*cursor];
 
+        if (overflow_extra > 0) {
+            if (t.kind == TOKEN_LPAREN) overflow_extra++;
+            if (t.kind == TOKEN_RPAREN) overflow_extra--;
+            (*cursor)++;
+            continue;
+        }
+
         if (t.kind == TOKEN_LPAREN) {
+            if (depth >= ctx->max_paren_depth) {
+                if (!reported_paren_depth) {
+                    diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "args",
+                        "profundidade maxima de parenteses excedida",
+                        "reduza aninhamento ou ajuste CMK2NOB_PARSER_MAX_PAREN_DEPTH");
+                    reported_paren_depth = true;
+                }
+                ok = false;
+                overflow_extra = 1;
+                (*cursor)++;
+                continue;
+            }
             depth++;
-            Arg paren_arg = {0};
-            paren_arg.kind = ARG_UNQUOTED;
-            if (!parser_append_token(ctx, &paren_arg, t)) return (Args){0};
-            if (!parser_append_arg(ctx, &args, paren_arg)) return (Args){0};
+            if (mode == ARGS_CONDITION_EXPR) {
+                if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+            } else {
+                if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+            }
             (*cursor)++;
             continue;
         }
@@ -152,10 +287,11 @@ static Args parse_args(Parser_Context *ctx, Token_List *tokens, size_t *cursor) 
                 break;
             }
             depth--;
-            Arg paren_arg = {0};
-            paren_arg.kind = ARG_UNQUOTED;
-            if (!parser_append_token(ctx, &paren_arg, t)) return (Args){0};
-            if (!parser_append_arg(ctx, &args, paren_arg)) return (Args){0};
+            if (mode == ARGS_CONDITION_EXPR) {
+                if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+            } else {
+                if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+            }
             (*cursor)++;
             continue;
         }
@@ -165,41 +301,20 @@ static Args parse_args(Parser_Context *ctx, Token_List *tokens, size_t *cursor) 
             continue;
         }
 
-        // Parse de um argumento
-        Arg current_arg = {0};
-        
-        // --- Detecção de Quoting (Novo) ---
-        // Se o seu lexer fornece um TOKEN_STRING específico, você pode usar:
-        // if (t.kind == TOKEN_STRING) current_arg.kind = ARG_QUOTED;
-        // Caso contrário, fazemos uma heurística rápida olhando o texto:
-        if (t.text.count > 0 && t.text.data[0] == '"') {
-            current_arg.kind = ARG_QUOTED;
-        } else if (t.kind == TOKEN_RAW_STRING || is_cmake_bracket_literal(t.text)) {
-            current_arg.kind = ARG_BRACKET;
+        if (mode == ARGS_CONDITION_EXPR) {
+            if (!parser_append_with_condition_merge_rules(ctx, &args, t)) return (Args){0};
         } else {
-            current_arg.kind = ARG_UNQUOTED;
+            if (!parser_append_to_last_or_new(ctx, &args, t, parser_infer_arg_kind(t))) return (Args){0};
         }
-        
-        if (!parser_append_token(ctx, &current_arg, t)) return (Args){0};
         (*cursor)++;
+    }
 
-        while (*cursor < tokens->count) {
-            Token next = tokens->items[*cursor];
-            if (next.kind == TOKEN_LPAREN || next.kind == TOKEN_RPAREN || next.kind == TOKEN_SEMICOLON) break;
-            
-            if (!next.has_space_left) {
-                if (!parser_append_token(ctx, &current_arg, next)) return (Args){0};
-                (*cursor)++;
-            } else {
-                break;
-            }
-        }
-        if (!parser_append_arg(ctx, &args, current_arg)) return (Args){0};
-    }
     if (!closed && *cursor >= tokens->count) {
-        diag_log(DIAG_SEV_ERROR, "parser", "<input>", 0, 0, "args",
+        diag_log(DIAG_SEV_ERROR, "parser", "<input>", origin_line, origin_col, "args",
             "argumento nao fechado, esperado ')'", "feche parenteses no comando atual");
+        ok = false;
     }
+    if (out_ok) *out_ok = ok;
     return args;
 }
 
@@ -214,118 +329,152 @@ static bool is_valid_command_name(String_View name) {
     return true;
 }
 
-// --- Funções de Parsing de Blocos Específicos (Atualizadas para receber Origem) ---
+// --- Block Parsers ---
 
 static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, size_t line, size_t col) {
     Node node = {0};
-    if (!ctx || ctx->oom) return node;
+    PARSER_OOM_RETURN(ctx, node);
     node.kind = NODE_IF;
     node.line = line;
     node.col = col;
 
-    node.as.if_stmt.condition = parse_args(ctx, tokens, cursor);
-    if (ctx->oom) return (Node){0};
+    bool cond_ok = true;
+    node.as.if_stmt.condition = parse_args(ctx, tokens, cursor, ARGS_CONDITION_EXPR, line, col, &cond_ok);
+    PARSER_OOM_RETURN(ctx, (Node){0});
+    if (!cond_ok) return parser_make_empty_statement(line, col);
 
     const char *terminators[] = {"else", "elseif", "endif"};
     String_View found_term = {0};
 
     node.as.if_stmt.then_block = parse_block(ctx, tokens, cursor, terminators, 3, &found_term);
-    if (ctx->oom) return (Node){0};
+    PARSER_OOM_RETURN(ctx, (Node){0});
 
     while (sv_eq_ci_lit(found_term, "elseif")) {
         ElseIf_Clause clause = {0};
-        clause.condition = parse_args(ctx, tokens, cursor);
-        if (ctx->oom) return (Node){0};
+        bool elseif_ok = true;
+        clause.condition = parse_args(ctx, tokens, cursor, ARGS_CONDITION_EXPR, line, col, &elseif_ok);
+        PARSER_OOM_RETURN(ctx, (Node){0});
+        if (!elseif_ok) return parser_make_empty_statement(line, col);
 
         String_View elseif_term = {0};
         clause.block = parse_block(ctx, tokens, cursor, terminators, 3, &elseif_term);
-        if (ctx->oom) return (Node){0};
+        PARSER_OOM_RETURN(ctx, (Node){0});
 
         if (!parser_append_elseif(ctx, &node.as.if_stmt.elseif_clauses, clause)) return (Node){0};
         found_term = elseif_term;
     }
 
     if (sv_eq_ci_lit(found_term, "else")) {
-        Args else_args = parse_args(ctx, tokens, cursor);
+        bool else_args_ok = true;
+        Args else_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &else_args_ok);
         (void)else_args;
-        if (ctx->oom) return (Node){0};
+        PARSER_OOM_RETURN(ctx, (Node){0});
+        if (!else_args_ok) return parser_make_empty_statement(line, col);
 
         const char *else_terms[] = {"endif"};
         String_View end_term = {0};
         node.as.if_stmt.else_block = parse_block(ctx, tokens, cursor, else_terms, 1, &end_term);
-        if (ctx->oom) return (Node){0};
+        PARSER_OOM_RETURN(ctx, (Node){0});
         if (!sv_eq_ci_lit(end_term, "endif")) {
             diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "if",
                 "if sem terminador endif()", "adicione endif() ao bloco");
+            return parser_make_empty_statement(line, col);
+        } else if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+            bool end_args_ok = true;
+            Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
+            (void)ignore;
+            PARSER_OOM_RETURN(ctx, (Node){0});
+            if (!end_args_ok) return parser_make_empty_statement(line, col);
         }
-    } else if (!sv_eq_ci_lit(found_term, "endif")) {
+    } else if (sv_eq_ci_lit(found_term, "endif")) {
+        if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+            bool end_args_ok = true;
+            Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
+            (void)ignore;
+            PARSER_OOM_RETURN(ctx, (Node){0});
+            if (!end_args_ok) return parser_make_empty_statement(line, col);
+        }
+    } else {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "if",
             "if sem terminador endif()", "adicione endif() ao bloco");
+        return parser_make_empty_statement(line, col);
     }
     return node;
 }
 
 static Node parse_foreach(Parser_Context *ctx, Token_List *tokens, size_t *cursor, size_t line, size_t col) {
     Node node = {0};
-    if (!ctx || ctx->oom) return node;
+    PARSER_OOM_RETURN(ctx, node);
     node.kind = NODE_FOREACH;
     node.line = line;
     node.col = col;
     
-    node.as.foreach_stmt.args = parse_args(ctx, tokens, cursor);
-    if (ctx->oom) return (Node){0};
+    bool args_ok = true;
+    node.as.foreach_stmt.args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &args_ok);
+    PARSER_OOM_RETURN(ctx, (Node){0});
+    if (!args_ok) return parser_make_empty_statement(line, col);
 
     const char *terminators[] = {"endforeach"};
     String_View found_term = {0};
     node.as.foreach_stmt.body = parse_block(ctx, tokens, cursor, terminators, 1, &found_term);
-    if (ctx->oom) return (Node){0};
+    PARSER_OOM_RETURN(ctx, (Node){0});
     if (!sv_eq_ci_lit(found_term, "endforeach")) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "foreach",
             "foreach sem terminador endforeach()", "adicione endforeach() ao bloco");
+        return parser_make_empty_statement(line, col);
     }
 
     if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
-        Args ignore = parse_args(ctx, tokens, cursor); (void)ignore;
-        if (ctx->oom) return (Node){0};
+        bool end_args_ok = true;
+        Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok); (void)ignore;
+        PARSER_OOM_RETURN(ctx, (Node){0});
+        if (!end_args_ok) return parser_make_empty_statement(line, col);
     }
     return node;
 }
 
 static Node parse_while(Parser_Context *ctx, Token_List *tokens, size_t *cursor, size_t line, size_t col) {
     Node node = {0};
-    if (!ctx || ctx->oom) return node;
+    PARSER_OOM_RETURN(ctx, node);
     node.kind = NODE_WHILE;
     node.line = line;
     node.col = col;
 
-    node.as.while_stmt.condition = parse_args(ctx, tokens, cursor);
-    if (ctx->oom) return (Node){0};
+    bool cond_ok = true;
+    node.as.while_stmt.condition = parse_args(ctx, tokens, cursor, ARGS_CONDITION_EXPR, line, col, &cond_ok);
+    PARSER_OOM_RETURN(ctx, (Node){0});
+    if (!cond_ok) return parser_make_empty_statement(line, col);
 
     const char *terminators[] = {"endwhile"};
     String_View found_term = {0};
     node.as.while_stmt.body = parse_block(ctx, tokens, cursor, terminators, 1, &found_term);
-    if (ctx->oom) return (Node){0};
+    PARSER_OOM_RETURN(ctx, (Node){0});
     if (!sv_eq_ci_lit(found_term, "endwhile")) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "while",
             "while sem terminador endwhile()", "adicione endwhile() ao bloco");
+        return parser_make_empty_statement(line, col);
     }
 
     if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
-        Args ignore = parse_args(ctx, tokens, cursor); (void)ignore;
-        if (ctx->oom) return (Node){0};
+        bool end_args_ok = true;
+        Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok); (void)ignore;
+        PARSER_OOM_RETURN(ctx, (Node){0});
+        if (!end_args_ok) return parser_make_empty_statement(line, col);
     }
     return node;
 }
 
 static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t *cursor, bool is_macro, size_t line, size_t col) {
     Node node = {0};
-    if (!ctx || ctx->oom) return node;
+    PARSER_OOM_RETURN(ctx, node);
     node.kind = is_macro ? NODE_MACRO : NODE_FUNCTION;
     node.line = line;
     node.col = col;
     
-    Args all_args = parse_args(ctx, tokens, cursor);
-    if (ctx->oom) return (Node){0};
+    bool def_args_ok = true;
+    Args all_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &def_args_ok);
+    PARSER_OOM_RETURN(ctx, (Node){0});
+    if (!def_args_ok) return parser_make_empty_statement(line, col);
     
     if (all_args.count > 0) {
         if (all_args.items[0].count > 0) {
@@ -339,29 +488,59 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
     const char *terms[] = { is_macro ? "endmacro" : "endfunction" };
     String_View found_term = {0};
     node.as.func_def.body = parse_block(ctx, tokens, cursor, terms, 1, &found_term);
-    if (ctx->oom) return (Node){0};
+    PARSER_OOM_RETURN(ctx, (Node){0});
     if (!sv_eq_ci_lit(found_term, is_macro ? "endmacro" : "endfunction")) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, is_macro ? "macro" : "function",
             "bloco sem terminador", is_macro ? "adicione endmacro()" : "adicione endfunction()");
+        return parser_make_empty_statement(line, col);
     }
 
     if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
-        Args ignore = parse_args(ctx, tokens, cursor); (void)ignore;
-        if (ctx->oom) return (Node){0};
+        bool end_args_ok = true;
+        Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok); (void)ignore;
+        PARSER_OOM_RETURN(ctx, (Node){0});
+        if (!end_args_ok) return parser_make_empty_statement(line, col);
     }
     return node;
 }
 
-// --- Parser Genérico de Bloco ---
+// --- Generic Block Parser ---
 
 static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cursor, const char **terminators, size_t term_count, String_View *found_terminator) {
     Node_List list = {0};
-    if (!ctx || ctx->oom) return (Node_List){0};
+    PARSER_OOM_RETURN(ctx, (Node_List){0});
+    if (ctx->block_depth >= ctx->max_block_depth) {
+        size_t line = 0;
+        size_t col = 0;
+        if (*cursor < tokens->count) {
+            line = tokens->items[*cursor].line;
+            col = tokens->items[*cursor].col;
+        }
+        diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "depth",
+            "profundidade maxima de blocos excedida",
+            "reduza aninhamento ou ajuste CMK2NOB_PARSER_MAX_BLOCK_DEPTH");
+        while (*cursor < tokens->count) {
+            Token t = tokens->items[*cursor];
+            if (t.kind == TOKEN_IDENTIFIER && terminators != NULL) {
+                for (size_t i = 0; i < term_count; ++i) {
+                    if (match_token_text(t, terminators[i])) {
+                        if (found_terminator) *found_terminator = t.text;
+                        (*cursor)++;
+                        return list;
+                    }
+                }
+            }
+            (*cursor)++;
+        }
+        return list;
+    }
+    ctx->block_depth++;
 
     while (*cursor < tokens->count) {
         Token t = tokens->items[*cursor];
 
         if (t.kind == TOKEN_LPAREN || t.kind == TOKEN_RPAREN) {
+            parser_emit_unexpected_token(t, "parenteses no nivel de bloco exigem um comando valido");
             (*cursor)++;
             continue;
         }
@@ -371,63 +550,71 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
                 if (match_token_text(t, terminators[i])) {
                     if (found_terminator) *found_terminator = t.text;
                     (*cursor)++;
+                    ctx->block_depth--;
                     return list;
                 }
             }
         }
 
         Node node = parse_statement(ctx, tokens, cursor);
-        if (ctx->oom) return (Node_List){0};
+        if (ctx->oom) {
+            ctx->block_depth--;
+            return (Node_List){0};
+        }
         if (node.kind != NODE_COMMAND || node.as.cmd.name.count > 0) {
-            if (!parser_append_node(ctx, &list, node)) return (Node_List){0};
+            if (!parser_append_node(ctx, &list, node)) {
+                ctx->block_depth--;
+                return (Node_List){0};
+            }
         }
     }
 
+    ctx->block_depth--;
     return list;
 }
 
 // --- Dispatcher Principal ---
 
 static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cursor) {
-    if (!ctx || ctx->oom) return (Node){0};
+    PARSER_OOM_RETURN(ctx, (Node){0});
     if (*cursor >= tokens->count) {
-        Node node = {0};
-        node.kind = NODE_COMMAND;
-        return node;
+        return parser_make_empty_statement(0, 0);
     }
     
     Token t = tokens->items[*cursor];
     
     if (t.kind != TOKEN_IDENTIFIER) {
-        Node node = {0};
-        node.kind = NODE_COMMAND; 
-        node.line = t.line; // Origem salva
-        node.col = t.col;
+        Node node = parser_make_empty_statement(t.line, t.col);
         if (t.kind == TOKEN_INVALID) {
             diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "token",
                 nob_temp_sprintf("token invalido: "SV_Fmt, SV_Arg(t.text)),
                 "revise caractere/token na posicao informada");
+        } else {
+            diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "token",
+                nob_temp_sprintf("token inesperado no inicio de statement: "SV_Fmt, SV_Arg(t.text)),
+                "inicie statement com nome_de_comando(...)");
         }
-        (*cursor)++;
+        parser_sync_after_statement_error(tokens, cursor, t.line);
         return node;
     }
     
     (*cursor)++; // Consome o nome do comando
 
     if (!is_valid_command_name(t.text)) {
-        Node node = {0};
-        node.kind = NODE_COMMAND;
-        node.line = t.line;
-        node.col = t.col;
+        Node node = parser_make_empty_statement(t.line, t.col);
+        diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "command",
+            nob_temp_sprintf("nome de comando invalido: "SV_Fmt, SV_Arg(t.text)),
+            "use [A-Za-z_][A-Za-z0-9_]* para nome de comando");
+        parser_sync_after_statement_error(tokens, cursor, t.line);
         return node;
     }
 
     if (*cursor >= tokens->count || tokens->items[*cursor].kind != TOKEN_LPAREN) {
-        Node node = {0};
-        node.kind = NODE_COMMAND; 
-        node.line = t.line;
-        node.col = t.col;
-        return node;
+        diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "command",
+            nob_temp_sprintf("comando sem parenteses: "SV_Fmt, SV_Arg(t.text)),
+            "use sintaxe nome_do_comando(...)");
+        parser_sync_after_statement_error(tokens, cursor, t.line);
+        return parser_make_empty_statement(t.line, t.col);
     }
 
     // Passa a origem (linha e coluna) para os sub-parsers
@@ -443,12 +630,14 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
     node.line = t.line; // Origem Salva!
     node.col = t.col;
     node.as.cmd.name = t.text;
-    node.as.cmd.args = parse_args(ctx, tokens, cursor);
-    if (ctx->oom) return (Node){0};
+    bool args_ok = true;
+    node.as.cmd.args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, t.line, t.col, &args_ok);
+    PARSER_OOM_RETURN(ctx, (Node){0});
+    if (!args_ok) return parser_make_empty_statement(t.line, t.col);
     return node;
 }
 
-// --- Interface Pública ---
+// --- Public Interface ---
 
 Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
     if (!arena) {
@@ -463,13 +652,21 @@ Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
     ctx.arena = arena;
     ctx.oom = false;
     ctx.fail_after_appends = parser_fail_after_from_env();
+    ctx.block_depth = 0;
+    ctx.max_block_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", PARSER_DEFAULT_MAX_BLOCK_DEPTH, 1);
+    ctx.max_paren_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_PAREN_DEPTH", PARSER_DEFAULT_MAX_PAREN_DEPTH, 1);
 
     Ast_Root root = parse_block(&ctx, &tokens, &cursor, NULL, 0, NULL);
     if (ctx.oom) return (Ast_Root){0};
     return root;
 }
 
-// Impressão visual da árvore (melhorada com linha e quoting)
+void ast_free(Ast_Root root) {
+    (void)root;
+    // AST memory is owned by the arena passed to parse_tokens().
+}
+
+// AST pretty-print helper
 void print_ast_list(Node_List list, int indent);
 
 void print_indent(int indent) {
@@ -535,3 +732,4 @@ void print_ast_list(Node_List list, int indent) {
 void print_ast(Ast_Root root, int indent) {
     print_ast_list(root, indent);
 }
+

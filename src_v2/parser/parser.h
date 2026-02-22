@@ -11,7 +11,7 @@
 typedef enum {
     ARG_UNQUOTED = 0, // Argumento normal (ex: lib${V}.a) - Sujeito a quebra por ';'
     ARG_QUOTED,       // Entre aspas (ex: "lib${V}.a") - Protege os ';'
-    ARG_BRACKET       // Entre colchetes (ex: [[texto puro]]) - Ignora expansão e ';'
+    ARG_BRACKET       // Entre colchetes (ex: [[texto puro]]) - ignora expansao e ';'
 } Arg_Kind;
 
 typedef struct {
@@ -60,7 +60,7 @@ typedef struct {
 struct Node {
     Node_Kind kind;
     
-    // Novo: Rastreio de Origem (Essencial para o Evaluator_v2 e Diagnósticos)
+    // Rastreio de origem (linha/coluna) para diagnosticos.
     size_t line;
     size_t col;
     
@@ -95,16 +95,18 @@ struct Node {
     } as;
 };
 
-// O resultado do parsing é o bloco raiz (Root Block)
+// Resultado do parsing: bloco raiz.
 typedef Node_List Ast_Root;
 
-// Função principal do Parser
+// Funcao principal do parser.
+// Recovery: emite diagnosticos para sintaxe invalida e tenta continuar.
+// Limites (via env): CMK2NOB_PARSER_MAX_BLOCK_DEPTH e CMK2NOB_PARSER_MAX_PAREN_DEPTH.
 Ast_Root parse_tokens(Arena *arena, Token_List tokens);
 
-// Função para liberar memória da AST
+// Em alocacao por arena, ast_free() e no-op; use arena_destroy() para liberar memoria.
 void ast_free(Ast_Root root);
 
-// Função auxiliar para imprimir a AST (Debug)
+// Funcao auxiliar para imprimir a AST (debug)
 void print_ast(Ast_Root root, int indent);
 
 #endif // PARSER_H_

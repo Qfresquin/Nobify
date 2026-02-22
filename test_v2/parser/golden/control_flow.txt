@@ -1,0 +1,74 @@
+DIAG errors=0 warnings=0
+ROOT count=3
+NODE[0] kind=IF line=1 col=1
+  COND count=7
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=LPAREN text='('
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+    ARG[2] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='AND'
+    ARG[3] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='B'
+    ARG[4] kind=UNQUOTED tokens=1
+      TOK[0] kind=RPAREN text=')'
+    ARG[5] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='OR'
+    ARG[6] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='C'
+  THEN
+    NODE[0] kind=COMMAND line=2 col=3
+      NAME='message'
+      ARGS count=1
+        ARG[0] kind=QUOTED tokens=1
+          TOK[0] kind=STRING text='"then"'
+  ELSEIF_COUNT=1
+  ELSEIF[0]
+    COND count=1
+      ARG[0] kind=UNQUOTED tokens=1
+        TOK[0] kind=IDENTIFIER text='D'
+    BLOCK
+      NODE[0] kind=COMMAND line=4 col=3
+        NAME='message'
+        ARGS count=1
+          ARG[0] kind=QUOTED tokens=1
+            TOK[0] kind=STRING text='"elseif"'
+  ELSE
+    NODE[0] kind=FOREACH line=6 col=3
+      ARGS count=3
+        ARG[0] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='item'
+        ARG[1] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='a'
+        ARG[2] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='b'
+      BODY
+        NODE[0] kind=COMMAND line=7 col=5
+          NAME='message'
+          ARGS count=1
+            ARG[0] kind=UNQUOTED tokens=1
+              TOK[0] kind=VAR text='${item}'
+NODE[1] kind=FUNCTION line=11 col=1
+  NAME='foo'
+  PARAMS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='x'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='y'
+  BODY
+    NODE[0] kind=COMMAND line=12 col=3
+      NAME='set'
+      ARGS count=2
+        ARG[0] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='Z'
+        ARG[1] kind=UNQUOTED tokens=1
+          TOK[0] kind=VAR text='${x}'
+NODE[2] kind=MACRO line=15 col=1
+  NAME='bar'
+  PARAMS count=0
+  BODY
+    NODE[0] kind=COMMAND line=16 col=3
+      NAME='message'
+      ARGS count=1
+        ARG[0] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='bar'

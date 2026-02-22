@@ -1,0 +1,17 @@
+if((A AND B) OR C)
+  message("then")
+elseif(D)
+  message("elseif")
+else()
+  foreach(item a b)
+    message(${item})
+  endforeach()
+endif()
+
+function(foo x y)
+  set(Z ${x})
+endfunction()
+
+macro(bar)
+  message(bar)
+endmacro()

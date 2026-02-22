@@ -132,7 +132,7 @@ static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in
 
     size_t seg_count = 0;
     size_t seg_off = 0;
-    while (i <= in.count) {
+    while (i < in.count) {
         size_t start = i;
         while (i < in.count && !sv_is_path_sep(in.data[i])) i++;
         size_t len = i - start;

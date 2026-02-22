@@ -1,0 +1,14 @@
+DIAG errors=3 warnings=0
+ROOT count=2
+NODE[0] kind=COMMAND line=3 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='1'
+NODE[1] kind=COMMAND line=5 col=1
+  NAME='message'
+  ARGS count=1
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='ok'

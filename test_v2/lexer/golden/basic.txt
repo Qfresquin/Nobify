@@ -1,0 +1,11 @@
+TOKENS count=10
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='set'
+TOK[1] kind=LPAREN line=1 col=4 space=0 text='('
+TOK[2] kind=IDENTIFIER line=1 col=5 space=0 text='X'
+TOK[3] kind=IDENTIFIER line=1 col=7 space=1 text='1'
+TOK[4] kind=RPAREN line=1 col=8 space=0 text=')'
+TOK[5] kind=IDENTIFIER line=2 col=1 space=1 text='message'
+TOK[6] kind=LPAREN line=2 col=8 space=0 text='('
+TOK[7] kind=IDENTIFIER line=2 col=9 space=0 text='STATUS'
+TOK[8] kind=IDENTIFIER line=2 col=16 space=1 text='ok'
+TOK[9] kind=RPAREN line=2 col=18 space=0 text=')'

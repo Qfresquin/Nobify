@@ -1,0 +1,23 @@
+DIAG errors=0 warnings=0
+ROOT count=3
+NODE[0] kind=COMMAND line=1 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='X'
+    ARG[1] kind=QUOTED tokens=1
+      TOK[0] kind=STRING text='"a b c"'
+NODE[1] kind=COMMAND line=2 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='Y'
+    ARG[1] kind=BRACKET tokens=1
+      TOK[0] kind=RAW_STRING text='[=[alpha;beta]=]'
+NODE[2] kind=COMMAND line=3 col=1
+  NAME='message'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='STATUS'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='ok'

@@ -1,0 +1,6 @@
+TOKENS count=5
+TOK[0] kind=VAR line=1 col=1 space=0 text='${${NESTED}}'
+TOK[1] kind=GEN_EXP line=2 col=1 space=1 text='$<A<B>>'
+TOK[2] kind=RAW_STRING line=3 col=1 space=1 text='[=[abc]def]=]'
+TOK[3] kind=RAW_STRING line=4 col=1 space=1 text='[==[a]=]b]==]'
+TOK[4] kind=VAR line=5 col=1 space=1 text='${A\\{B\\}}'
