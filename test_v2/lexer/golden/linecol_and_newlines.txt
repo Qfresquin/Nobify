@@ -1,4 +1,0 @@
-TOKENS count=3
-TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='one'
-TOK[1] kind=IDENTIFIER line=2 col=3 space=1 text='two'
-TOK[2] kind=IDENTIFIER line=3 col=1 space=1 text='three'

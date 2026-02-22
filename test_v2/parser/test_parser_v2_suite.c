@@ -9,6 +9,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    String_View name;
+    String_View script;
+} Parser_Case;
+
+typedef struct {
+    Parser_Case *items;
+    size_t count;
+    size_t capacity;
+} Parser_Case_List;
+
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
     if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
@@ -52,6 +63,102 @@ static String_View normalize_newlines_to_arena(Arena *arena, String_View in) {
     }
     buf[out_count] = '\0';
     return nob_sv_from_parts(buf, out_count);
+}
+
+static bool parser_case_list_append(Arena *arena, Parser_Case_List *list, Parser_Case value) {
+    if (!arena || !list) return false;
+    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
+    list->items[list->count++] = value;
+    return true;
+}
+
+static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
+    String_View p = nob_sv_from_cstr(prefix);
+    if (sv.count < p.count) return false;
+    return memcmp(sv.data, p.data, p.count) == 0;
+}
+
+static String_View sv_trim_cr(String_View sv) {
+    if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
+        return nob_sv_from_parts(sv.data, sv.count - 1);
+    }
+    return sv;
+}
+
+static bool parse_case_pack_to_arena(Arena *arena, String_View content, Parser_Case_List *out) {
+    if (!arena || !out) return false;
+    *out = (Parser_Case_List){0};
+
+    Nob_String_Builder script_sb = {0};
+    bool in_case = false;
+    String_View current_name = {0};
+
+    size_t pos = 0;
+    while (pos < content.count) {
+        size_t line_start = pos;
+        while (pos < content.count && content.data[pos] != '\n') pos++;
+        size_t line_end = pos;
+        if (pos < content.count && content.data[pos] == '\n') pos++;
+
+        String_View raw_line = nob_sv_from_parts(content.data + line_start, line_end - line_start);
+        String_View line = sv_trim_cr(raw_line);
+
+        if (sv_starts_with_cstr(line, "#@@CASE ")) {
+            if (in_case) {
+                nob_sb_free(script_sb);
+                return false;
+            }
+            in_case = true;
+            current_name = nob_sv_from_parts(line.data + 8, line.count - 8);
+            script_sb.count = 0;
+            continue;
+        }
+
+        if (nob_sv_eq(line, nob_sv_from_cstr("#@@ENDCASE"))) {
+            if (!in_case) {
+                nob_sb_free(script_sb);
+                return false;
+            }
+
+            char *name = arena_strndup(arena, current_name.data, current_name.count);
+            char *script = arena_strndup(arena, script_sb.items ? script_sb.items : "", script_sb.count);
+            if (!name || !script) {
+                nob_sb_free(script_sb);
+                return false;
+            }
+
+            if (!parser_case_list_append(arena, out, (Parser_Case){
+                .name = nob_sv_from_parts(name, current_name.count),
+                .script = nob_sv_from_parts(script, script_sb.count),
+            })) {
+                nob_sb_free(script_sb);
+                return false;
+            }
+
+            in_case = false;
+            current_name = (String_View){0};
+            script_sb.count = 0;
+            continue;
+        }
+
+        if (in_case) {
+            nob_sb_append_buf(&script_sb, raw_line.data, raw_line.count);
+            nob_sb_append(&script_sb, '\n');
+        }
+    }
+
+    nob_sb_free(script_sb);
+    if (in_case) return false;
+
+    for (size_t i = 0; i < out->count; i++) {
+        for (size_t j = i + 1; j < out->count; j++) {
+            if (nob_sv_eq(out->items[i].name, out->items[j].name)) {
+                return false;
+            }
+        }
+    }
+
+    return out->count > 0;
 }
 
 static void snapshot_append_indent(Nob_String_Builder *sb, int indent) {
@@ -193,24 +300,83 @@ static void snapshot_append_node_list(Nob_String_Builder *sb, const Node_List *l
     }
 }
 
-static bool render_parser_snapshot_to_arena(Arena *arena, Ast_Root ast, String_View *out) {
-    if (!arena || !out) return false;
-    Nob_String_Builder sb = {0};
+static void set_env_or_unset(const char *name, const char *value) {
+#if defined(_WIN32)
+    if (value) _putenv_s(name, value);
+    else _putenv_s(name, "");
+#else
+    if (value) setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
 
-    nob_sb_append_cstr(&sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
-    nob_sb_append_cstr(&sb, nob_temp_sprintf("ROOT count=%zu\n", ast.count));
-    snapshot_append_node_list(&sb, &ast, 0);
+static bool apply_parser_case_env(String_View name) {
+    if (nob_sv_eq(name, nob_sv_from_cstr("parser_reports_block_depth_limit_exceeded"))) {
+        set_env_or_unset("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", "1");
+        return true;
+    }
+    if (nob_sv_eq(name, nob_sv_from_cstr("parser_fail_fast_on_append_oom_budget"))) {
+        set_env_or_unset("CMK2NOB_PARSER_FAIL_APPEND_AFTER", "0");
+        return true;
+    }
+    return false;
+}
+
+static void clear_parser_case_env(String_View name) {
+    if (nob_sv_eq(name, nob_sv_from_cstr("parser_reports_block_depth_limit_exceeded"))) {
+        set_env_or_unset("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", NULL);
+    }
+    if (nob_sv_eq(name, nob_sv_from_cstr("parser_fail_fast_on_append_oom_budget"))) {
+        set_env_or_unset("CMK2NOB_PARSER_FAIL_APPEND_AFTER", NULL);
+    }
+}
+
+static bool render_parser_case_snapshot_to_sb(Arena *arena, Parser_Case parser_case, Nob_String_Builder *sb) {
+    bool has_case_env = apply_parser_case_env(parser_case.name);
+
+    diag_reset();
+    Ast_Root ast = parse_script_local(arena, parser_case.script.data);
+
+    nob_sb_append_cstr(sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
+    nob_sb_append_cstr(sb, nob_temp_sprintf("ROOT count=%zu\n", ast.count));
+    snapshot_append_node_list(sb, &ast, 0);
+
+    if (has_case_env) clear_parser_case_env(parser_case.name);
+    return true;
+}
+
+static bool render_parser_casepack_snapshot_to_arena(Arena *arena, Parser_Case_List cases, String_View *out) {
+    if (!arena || !out) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "MODULE parser\n");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", cases.count));
+
+    for (size_t i = 0; i < cases.count; i++) {
+        nob_sb_append_cstr(&sb, "=== CASE ");
+        nob_sb_append_buf(&sb, cases.items[i].name.data, cases.items[i].name.count);
+        nob_sb_append_cstr(&sb, " ===\n");
+
+        if (!render_parser_case_snapshot_to_sb(arena, cases.items[i], &sb)) {
+            nob_sb_free(sb);
+            return false;
+        }
+
+        nob_sb_append_cstr(&sb, "=== END CASE ===\n");
+        if (i + 1 < cases.count) nob_sb_append_cstr(&sb, "\n");
+    }
 
     size_t len = sb.count;
     char *text = arena_strndup(arena, sb.items, sb.count);
     nob_sb_free(sb);
     if (!text) return false;
+
     *out = nob_sv_from_parts(text, len);
     return true;
 }
 
-static bool assert_parser_golden(const char *input_path, const char *golden_path) {
-    Arena *arena = arena_create(512 * 1024);
+static bool assert_parser_golden_casepack(const char *input_path, const char *expected_path) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
     if (!arena) return false;
 
     String_View script = {0};
@@ -223,25 +389,46 @@ static bool assert_parser_golden(const char *input_path, const char *golden_path
         ok = false;
         goto done;
     }
-    if (!load_text_file_to_arena(arena, golden_path, &expected)) {
-        nob_log(NOB_ERROR, "golden: failed to read expected: %s", golden_path);
+
+    Parser_Case_List cases = {0};
+    if (!parse_case_pack_to_arena(arena, script, &cases)) {
+        nob_log(NOB_ERROR, "golden: invalid case-pack: %s", input_path);
+        ok = false;
+        goto done;
+    }
+    if (cases.count != 14) {
+        nob_log(NOB_ERROR, "golden: unexpected parser case count: got=%zu expected=14", cases.count);
         ok = false;
         goto done;
     }
 
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, script.data);
-    if (!render_parser_snapshot_to_arena(arena, ast, &actual)) {
+    if (!render_parser_casepack_snapshot_to_arena(arena, cases, &actual)) {
         nob_log(NOB_ERROR, "golden: failed to render snapshot");
         ok = false;
         goto done;
     }
 
-    String_View expected_norm = normalize_newlines_to_arena(arena, expected);
     String_View actual_norm = normalize_newlines_to_arena(arena, actual);
+
+    const char *update = getenv("CMK2NOB_UPDATE_GOLDEN");
+    if (update && strcmp(update, "1") == 0) {
+        if (!nob_write_entire_file(expected_path, actual_norm.data, actual_norm.count)) {
+            nob_log(NOB_ERROR, "golden: failed to update expected: %s", expected_path);
+            ok = false;
+        }
+        goto done;
+    }
+
+    if (!load_text_file_to_arena(arena, expected_path, &expected)) {
+        nob_log(NOB_ERROR, "golden: failed to read expected: %s", expected_path);
+        ok = false;
+        goto done;
+    }
+
+    String_View expected_norm = normalize_newlines_to_arena(arena, expected);
     if (!nob_sv_eq(expected_norm, actual_norm)) {
         nob_log(NOB_ERROR, "golden mismatch for %s", input_path);
-        nob_log(NOB_ERROR, "--- expected (%s) ---\n%.*s", golden_path, (int)expected_norm.count, expected_norm.data);
+        nob_log(NOB_ERROR, "--- expected (%s) ---\n%.*s", expected_path, (int)expected_norm.count, expected_norm.data);
         nob_log(NOB_ERROR, "--- actual ---\n%.*s", (int)actual_norm.count, actual_norm.data);
         ok = false;
     }
@@ -253,238 +440,13 @@ done:
 
 static const char *PARSER_GOLDEN_DIR = "test_v2/parser/golden";
 
-static void set_env_or_unset(const char *name, const char *value) {
-#if defined(_WIN32)
-    if (value) _putenv_s(name, value);
-    else _putenv_s(name, "");
-#else
-    if (value) setenv(name, value, 1);
-    else unsetenv(name);
-#endif
-}
-
-TEST(bracket_arg_equals_delimiter) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    Ast_Root ast = parse_script_local(arena, "set(X [=[a;b]=])\nset(Y [==[z]==])");
-
-    ASSERT(ast.count == 2);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(ast.items[0].as.cmd.args.count == 2);
-    ASSERT(ast.items[0].as.cmd.args.items[1].kind == ARG_BRACKET);
-    ASSERT(ast.items[1].as.cmd.args.items[1].kind == ARG_BRACKET);
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_reports_command_without_parentheses_and_recovers) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "set VAR value\nmessage(ok)\n");
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 1);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.name, nob_sv_from_cstr("message")));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_reports_stray_paren_and_recovers) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, ")\nset(X 1)\n");
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 1);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.name, nob_sv_from_cstr("set")));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_keeps_nested_parens_inside_regular_args) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "func(a(b))");
-
-    ASSERT(diag_has_errors() == false);
-    ASSERT(ast.count == 1);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.name, nob_sv_from_cstr("func")));
-    ASSERT(ast.items[0].as.cmd.args.count == 1);
-    ASSERT(ast.items[0].as.cmd.args.items[0].count == 4);
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.args.items[0].items[0].text, nob_sv_from_cstr("a")));
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.args.items[0].items[1].text, nob_sv_from_cstr("(")));
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.args.items[0].items[2].text, nob_sv_from_cstr("b")));
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.args.items[0].items[3].text, nob_sv_from_cstr(")")));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_marks_quoted_string_args) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "set(X \"a b c\")");
-
-    ASSERT(diag_has_errors() == false);
-    ASSERT(ast.count == 1);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(ast.items[0].as.cmd.args.count == 2);
-    ASSERT(ast.items[0].as.cmd.args.items[1].kind == ARG_QUOTED);
-    ASSERT(ast.items[0].as.cmd.args.items[1].count == 1);
-    ASSERT(ast.items[0].as.cmd.args.items[1].items[0].kind == TOKEN_STRING);
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_reports_block_depth_limit_exceeded) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    set_env_or_unset("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", "1");
-    diag_reset();
-    Ast_Root ast = parse_script_local(
-        arena,
-        "if(A)\n"
-        "  if(B)\n"
-        "    set(X 1)\n"
-        "  endif()\n"
-        "endif()\n"
-    );
-    set_env_or_unset("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", NULL);
-
-    ASSERT(ast.count >= 1);
-    ASSERT(diag_has_errors());
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_drops_command_node_on_unclosed_args) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "set(X 1");
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 0);
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_drops_if_node_on_missing_endif) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "if(A)\n  set(X 1)\n");
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 0);
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_fail_fast_on_append_oom_budget) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    set_env_or_unset("CMK2NOB_PARSER_FAIL_APPEND_AFTER", "0");
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "set(X 1)");
-    set_env_or_unset("CMK2NOB_PARSER_FAIL_APPEND_AFTER", NULL);
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 0);
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_invalid_command_name_emits_error_and_recovers) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, "1abc(x)\nset(A 1)\n");
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 1);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.name, nob_sv_from_cstr("set")));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_unexpected_statement_token_emits_error_and_recovers) {
-    Arena *arena = arena_create(256 * 1024);
-    ASSERT(arena != NULL);
-
-    diag_reset();
-    Ast_Root ast = parse_script_local(arena, ";\nset(A 1)\n");
-
-    ASSERT(diag_has_errors());
-    ASSERT(ast.count == 1);
-    ASSERT(ast.items[0].kind == NODE_COMMAND);
-    ASSERT(nob_sv_eq(ast.items[0].as.cmd.name, nob_sv_from_cstr("set")));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(parser_golden_simple_commands) {
-    ASSERT(assert_parser_golden(
-        nob_temp_sprintf("%s/simple_commands.cmake", PARSER_GOLDEN_DIR),
-        nob_temp_sprintf("%s/simple_commands.txt", PARSER_GOLDEN_DIR)));
-    TEST_PASS();
-}
-
-TEST(parser_golden_control_flow) {
-    ASSERT(assert_parser_golden(
-        nob_temp_sprintf("%s/control_flow.cmake", PARSER_GOLDEN_DIR),
-        nob_temp_sprintf("%s/control_flow.txt", PARSER_GOLDEN_DIR)));
-    TEST_PASS();
-}
-
-TEST(parser_golden_recovery_invalid) {
-    ASSERT(assert_parser_golden(
-        nob_temp_sprintf("%s/recovery_invalid.cmake", PARSER_GOLDEN_DIR),
-        nob_temp_sprintf("%s/recovery_invalid.txt", PARSER_GOLDEN_DIR)));
+TEST(parser_golden_all_cases) {
+    ASSERT(assert_parser_golden_casepack(
+        nob_temp_sprintf("%s/parser_all.cmake", PARSER_GOLDEN_DIR),
+        nob_temp_sprintf("%s/parser_all.txt", PARSER_GOLDEN_DIR)));
     TEST_PASS();
 }
 
 void run_parser_v2_tests(int *passed, int *failed) {
-    test_bracket_arg_equals_delimiter(passed, failed);
-    test_parser_reports_command_without_parentheses_and_recovers(passed, failed);
-    test_parser_reports_stray_paren_and_recovers(passed, failed);
-    test_parser_keeps_nested_parens_inside_regular_args(passed, failed);
-    test_parser_marks_quoted_string_args(passed, failed);
-    test_parser_reports_block_depth_limit_exceeded(passed, failed);
-    test_parser_drops_command_node_on_unclosed_args(passed, failed);
-    test_parser_drops_if_node_on_missing_endif(passed, failed);
-    test_parser_fail_fast_on_append_oom_budget(passed, failed);
-    test_parser_invalid_command_name_emits_error_and_recovers(passed, failed);
-    test_parser_unexpected_statement_token_emits_error_and_recovers(passed, failed);
-    test_parser_golden_simple_commands(passed, failed);
-    test_parser_golden_control_flow(passed, failed);
-    test_parser_golden_recovery_invalid(passed, failed);
+    test_parser_golden_all_cases(passed, failed);
 }

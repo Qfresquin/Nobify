@@ -1,0 +1,273 @@
+MODULE lexer
+CASES 42
+
+=== CASE empty_input ===
+TOKENS count=0
+=== END CASE ===
+
+=== CASE simple_parens ===
+TOKENS count=2
+TOK[0] kind=LPAREN line=1 col=1 space=0 text='('
+TOK[1] kind=RPAREN line=1 col=2 space=0 text=')'
+=== END CASE ===
+
+=== CASE identifier ===
+TOKENS count=1
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='add_executable'
+=== END CASE ===
+
+=== CASE string_token ===
+TOKENS count=1
+TOK[0] kind=STRING line=1 col=1 space=0 text='"hello world"'
+=== END CASE ===
+
+=== CASE string_with_escapes ===
+TOKENS count=1
+TOK[0] kind=STRING line=1 col=1 space=0 text='"hello\\nworld"'
+=== END CASE ===
+
+=== CASE variable_simple ===
+TOKENS count=1
+TOK[0] kind=VAR line=1 col=1 space=0 text='${VAR}'
+=== END CASE ===
+
+=== CASE variable_env ===
+TOKENS count=1
+TOK[0] kind=VAR line=1 col=1 space=0 text='$ENV{PATH}'
+=== END CASE ===
+
+=== CASE generator_expression ===
+TOKENS count=1
+TOK[0] kind=GEN_EXP line=1 col=1 space=0 text='$<TARGET_FILE:app>'
+=== END CASE ===
+
+=== CASE raw_string ===
+TOKENS count=1
+TOK[0] kind=RAW_STRING line=1 col=1 space=0 text='[[raw content]]'
+=== END CASE ===
+
+=== CASE raw_string_with_equals ===
+TOKENS count=1
+TOK[0] kind=RAW_STRING line=1 col=1 space=0 text='[=[raw content]=]'
+=== END CASE ===
+
+=== CASE line_comment ===
+TOKENS count=1
+TOK[0] kind=IDENTIFIER line=2 col=1 space=1 text='add_executable'
+=== END CASE ===
+
+=== CASE block_comment ===
+TOKENS count=1
+TOK[0] kind=IDENTIFIER line=2 col=17 space=1 text='add_executable'
+=== END CASE ===
+
+=== CASE semicolon ===
+TOKENS count=1
+TOK[0] kind=SEMICOLON line=1 col=1 space=0 text=';'
+=== END CASE ===
+
+=== CASE multiple_tokens ===
+TOKENS count=5
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='set'
+TOK[1] kind=LPAREN line=1 col=4 space=0 text='('
+TOK[2] kind=IDENTIFIER line=1 col=5 space=0 text='VAR'
+TOK[3] kind=STRING line=1 col=9 space=1 text='"value"'
+TOK[4] kind=RPAREN line=1 col=16 space=0 text=')'
+=== END CASE ===
+
+=== CASE whitespace_handling ===
+TOKENS count=4
+TOK[0] kind=IDENTIFIER line=1 col=3 space=1 text='set'
+TOK[1] kind=LPAREN line=1 col=8 space=1 text='('
+TOK[2] kind=IDENTIFIER line=1 col=11 space=1 text='VAR'
+TOK[3] kind=RPAREN line=1 col=16 space=1 text=')'
+=== END CASE ===
+
+=== CASE concatenated_args ===
+TOKENS count=3
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='lib'
+TOK[1] kind=VAR line=1 col=4 space=0 text='${VAR}'
+TOK[2] kind=IDENTIFIER line=1 col=10 space=0 text='.a'
+=== END CASE ===
+
+=== CASE line_continuation ===
+TOKENS count=5
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='set'
+TOK[1] kind=LPAREN line=2 col=1 space=1 text='('
+TOK[2] kind=IDENTIFIER line=2 col=2 space=0 text='VAR'
+TOK[3] kind=IDENTIFIER line=2 col=6 space=1 text='value'
+TOK[4] kind=RPAREN line=2 col=11 space=0 text=')'
+=== END CASE ===
+
+=== CASE nested_variables ===
+TOKENS count=1
+TOK[0] kind=VAR line=1 col=1 space=0 text='${${NESTED}}'
+=== END CASE ===
+
+=== CASE unclosed_string_is_invalid ===
+TOKENS count=1
+TOK[0] kind=INVALID line=1 col=1 space=0 text='"unterminated\n'
+=== END CASE ===
+
+=== CASE unclosed_variable_is_invalid ===
+TOKENS count=1
+TOK[0] kind=INVALID line=1 col=1 space=0 text='${VAR\n'
+=== END CASE ===
+
+=== CASE unclosed_genexp_is_invalid ===
+TOKENS count=1
+TOK[0] kind=INVALID line=1 col=1 space=0 text='$<TARGET_FILE:app\n'
+=== END CASE ===
+
+=== CASE unclosed_raw_string_is_invalid ===
+TOKENS count=1
+TOK[0] kind=INVALID line=1 col=1 space=0 text='[[raw content\n'
+=== END CASE ===
+
+=== CASE single_dollar_is_identifier ===
+TOKENS count=1
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='$'
+=== END CASE ===
+
+=== CASE line_and_col_tracking_lf ===
+TOKENS count=3
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='one'
+TOK[1] kind=IDENTIFIER line=2 col=3 space=1 text='two'
+TOK[2] kind=IDENTIFIER line=3 col=1 space=1 text='three'
+=== END CASE ===
+
+=== CASE crlf_newlines_are_handled ===
+TOKENS count=2
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='a'
+TOK[1] kind=IDENTIFIER line=2 col=1 space=1 text='b'
+=== END CASE ===
+
+=== CASE block_comment_with_equals ===
+TOKENS count=1
+TOK[0] kind=IDENTIFIER line=1 col=17 space=1 text='add_executable'
+=== END CASE ===
+
+=== CASE raw_string_with_internal_brackets ===
+TOKENS count=1
+TOK[0] kind=RAW_STRING line=1 col=1 space=0 text='[=[abc]def]=]'
+=== END CASE ===
+
+=== CASE raw_string_mismatched_equals_does_not_close_early ===
+TOKENS count=1
+TOK[0] kind=RAW_STRING line=1 col=1 space=0 text='[==[a]=]b]==]'
+=== END CASE ===
+
+=== CASE genexp_nested_angle_brackets ===
+TOKENS count=1
+TOK[0] kind=GEN_EXP line=1 col=1 space=0 text='$<A<B>>'
+=== END CASE ===
+
+=== CASE var_with_escaped_braces_1 ===
+TOKENS count=1
+TOK[0] kind=VAR line=1 col=1 space=0 text='${A\\}B}'
+=== END CASE ===
+
+=== CASE var_with_escaped_braces_2 ===
+TOKENS count=1
+TOK[0] kind=VAR line=1 col=1 space=0 text='${A\\{B\\}}'
+=== END CASE ===
+
+=== CASE identifier_with_escaped_delimiters_1 ===
+TOKENS count=1
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='abc\\ def'
+=== END CASE ===
+
+=== CASE identifier_with_escaped_delimiters_2 ===
+TOKENS count=2
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='abc\\;def'
+TOK[1] kind=SEMICOLON line=1 col=9 space=0 text=';'
+=== END CASE ===
+
+=== CASE identifier_stops_before_comment ===
+TOKENS count=2
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='a'
+TOK[1] kind=IDENTIFIER line=2 col=1 space=1 text='c'
+=== END CASE ===
+
+=== CASE concatenated_multiple_vars_has_space_left_false ===
+TOKENS count=4
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='a'
+TOK[1] kind=VAR line=1 col=2 space=0 text='${B}'
+TOK[2] kind=VAR line=1 col=6 space=0 text='${C}'
+TOK[3] kind=IDENTIFIER line=1 col=10 space=0 text='d'
+=== END CASE ===
+
+=== CASE golden_basic ===
+TOKENS count=10
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='set'
+TOK[1] kind=LPAREN line=1 col=4 space=0 text='('
+TOK[2] kind=IDENTIFIER line=1 col=5 space=0 text='X'
+TOK[3] kind=IDENTIFIER line=1 col=7 space=1 text='1'
+TOK[4] kind=RPAREN line=1 col=8 space=0 text=')'
+TOK[5] kind=IDENTIFIER line=2 col=1 space=1 text='message'
+TOK[6] kind=LPAREN line=2 col=8 space=0 text='('
+TOK[7] kind=IDENTIFIER line=2 col=9 space=0 text='STATUS'
+TOK[8] kind=IDENTIFIER line=2 col=16 space=1 text='ok'
+TOK[9] kind=RPAREN line=2 col=18 space=0 text=')'
+=== END CASE ===
+
+=== CASE golden_strings_raw_var_genexp ===
+TOKENS count=9
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='set'
+TOK[1] kind=LPAREN line=1 col=4 space=0 text='('
+TOK[2] kind=IDENTIFIER line=1 col=5 space=0 text='X'
+TOK[3] kind=STRING line=1 col=7 space=1 text='"a b"'
+TOK[4] kind=RAW_STRING line=1 col=13 space=1 text='[=[raw;txt]=]'
+TOK[5] kind=VAR line=1 col=27 space=1 text='${VAR}'
+TOK[6] kind=VAR line=1 col=34 space=1 text='$ENV{HOME}'
+TOK[7] kind=GEN_EXP line=1 col=45 space=1 text='$<CONFIG:Debug>'
+TOK[8] kind=RPAREN line=1 col=60 space=0 text=')'
+=== END CASE ===
+
+=== CASE golden_invalid_tokens ===
+TOKENS count=1
+TOK[0] kind=INVALID line=1 col=1 space=0 text='"unterminated\n'
+=== END CASE ===
+
+=== CASE golden_comments_and_whitespace ===
+TOKENS count=9
+TOK[0] kind=IDENTIFIER line=2 col=1 space=1 text='set'
+TOK[1] kind=LPAREN line=2 col=5 space=1 text='('
+TOK[2] kind=IDENTIFIER line=2 col=6 space=0 text='X'
+TOK[3] kind=IDENTIFIER line=2 col=8 space=1 text='1'
+TOK[4] kind=RPAREN line=2 col=9 space=0 text=')'
+TOK[5] kind=IDENTIFIER line=5 col=1 space=1 text='message'
+TOK[6] kind=LPAREN line=5 col=8 space=0 text='('
+TOK[7] kind=IDENTIFIER line=5 col=9 space=0 text='OK'
+TOK[8] kind=RPAREN line=5 col=11 space=0 text=')'
+=== END CASE ===
+
+=== CASE golden_concatenation_and_vars ===
+TOKENS count=10
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='lib'
+TOK[1] kind=VAR line=1 col=4 space=0 text='${VAR}'
+TOK[2] kind=IDENTIFIER line=1 col=10 space=0 text='.a'
+TOK[3] kind=IDENTIFIER line=2 col=1 space=1 text='a'
+TOK[4] kind=VAR line=2 col=2 space=0 text='${B}'
+TOK[5] kind=VAR line=2 col=6 space=0 text='${C}'
+TOK[6] kind=IDENTIFIER line=2 col=10 space=0 text='d'
+TOK[7] kind=IDENTIFIER line=3 col=1 space=1 text='abc\\ def'
+TOK[8] kind=IDENTIFIER line=4 col=1 space=1 text='abc\\;def'
+TOK[9] kind=SEMICOLON line=4 col=9 space=0 text=';'
+=== END CASE ===
+
+=== CASE golden_linecol_and_newlines ===
+TOKENS count=3
+TOK[0] kind=IDENTIFIER line=1 col=1 space=0 text='one'
+TOK[1] kind=IDENTIFIER line=2 col=3 space=1 text='two'
+TOK[2] kind=IDENTIFIER line=3 col=1 space=1 text='three'
+=== END CASE ===
+
+=== CASE golden_nested_and_balancing ===
+TOKENS count=5
+TOK[0] kind=VAR line=1 col=1 space=0 text='${${NESTED}}'
+TOK[1] kind=GEN_EXP line=2 col=1 space=1 text='$<A<B>>'
+TOK[2] kind=RAW_STRING line=3 col=1 space=1 text='[=[abc]def]=]'
+TOK[3] kind=RAW_STRING line=4 col=1 space=1 text='[==[a]=]b]==]'
+TOK[4] kind=VAR line=5 col=1 space=1 text='${A\\{B\\}}'
+=== END CASE ===

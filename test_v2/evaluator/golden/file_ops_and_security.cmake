@@ -1,5 +1,0 @@
-project(FileDemo)
-file(WRITE temp_golden_eval.txt hello)
-file(READ temp_golden_eval.txt OUT)
-add_executable(file_app main.c)
-target_compile_definitions(file_app PRIVATE OUT_${OUT})

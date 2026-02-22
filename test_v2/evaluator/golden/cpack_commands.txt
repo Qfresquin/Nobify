@@ -1,7 +1,0 @@
-DIAG errors=0 warnings=3
-EVENTS count=5
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CPackDemo' version='2.0' description='' languages=''
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='cpack_add_install_type' cause='Unknown command' hint='Ignored during evaluation'
-EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='cpack_add_component' cause='Unknown command' hint='Ignored during evaluation'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='pkg_app' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='pkg_app' path='main.c'

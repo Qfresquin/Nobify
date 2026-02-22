@@ -1,0 +1,198 @@
+MODULE evaluator
+CASES 24
+
+=== CASE golden_core_flow ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CoreDemo' version='1.0' description='' languages=''
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=3 name='core_app' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=3 target='core_app' path='main.c'
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 target='core_app' item='CORE_OK=1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE golden_targets_props_events ===
+DIAG errors=0 warnings=0
+EVENTS count=11
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='TargetDemo' version='' description='' languages=''
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='app' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='main.c'
+EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='util.c'
+EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='lib' type=LIB_STATIC
+EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='lib' path='lib.c'
+EV[6] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE
+EV[9] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=7 col=1 target='app' item='lib' vis=PRIVATE
+EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET
+=== END CASE ===
+
+=== CASE golden_find_package_and_include ===
+DIAG errors=0 warnings=1
+EVENTS count=5
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FindDemo' version='' description='' languages=''
+EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='include_guard' cause='Unknown command' hint='Ignored during evaluation'
+EV[2] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=4 col=1 package='ZLIB' mode='AUTO' required=0 found=0 location=''
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='fp' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='fp' path='main.c'
+=== END CASE ===
+
+=== CASE golden_file_ops_and_security ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FileDemo' version='' description='' languages=''
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_app' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_app' path='main.c'
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_app' item='OUT_hello' vis=PRIVATE
+=== END CASE ===
+
+=== CASE golden_cpack_commands ===
+DIAG errors=0 warnings=2
+EVENTS count=5
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CPackDemo' version='2.0' description='' languages=''
+EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='cpack_add_install_type' cause='Unknown command' hint='Ignored during evaluation'
+EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='cpack_add_component' cause='Unknown command' hint='Ignored during evaluation'
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='pkg_app' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='pkg_app' path='main.c'
+=== END CASE ===
+
+=== CASE golden_probes_and_try_compile ===
+DIAG errors=0 warnings=2
+EVENTS count=5
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_minimum_required' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
+EV[1] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages=''
+EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='try_compile' cause='Unknown command' hint='Ignored during evaluation'
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
+=== END CASE ===
+
+=== CASE golden_ctest_meta ===
+DIAG errors=0 warnings=2
+EVENTS count=5
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages=''
+EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='enable_testing' cause='Unknown command' hint='Ignored during evaluation'
+EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='add_test' cause='Unknown command' hint='Ignored during evaluation'
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='app' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='app' path='main.c'
+=== END CASE ===
+
+=== CASE golden_misc_path_and_property ===
+DIAG errors=0 warnings=2
+EVENTS count=5
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='MiscDemo' version='' description='' languages=''
+EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='set_property' cause='set_property() V1 supports only TARGET scope' hint='GLOBAL/DIRECTORY/SOURCE/INSTALL/TEST/CACHE scopes are ignored in v2'
+EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='cmake_path' cause='Unknown command' hint='Ignored during evaluation'
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='misc_app' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='misc_app' path='main.c'
+=== END CASE ===
+
+=== CASE expr_variable_expansion_and_if_ops ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===
+
+=== CASE expr_parenthesized_if_condition ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===
+
+=== CASE dispatcher_command_handlers ===
+DIAG errors=0 warnings=0
+EVENTS count=11
+EV[0] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-DLEGACY=1'
+EV[1] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-fPIC'
+EV[2] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=2 col=1 item='-Wall'
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='app' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='app' path='main.c'
+EV[5] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=3 col=1 target='app' item='-DLEGACY=1' vis=UNSPECIFIED
+EV[6] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=3 col=1 target='app' item='-fPIC' vis=UNSPECIFIED
+EV[7] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=3 col=1 target='app' item='-Wall' vis=UNSPECIFIED
+EV[8] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wextra' vis=PRIVATE
+=== END CASE ===
+
+=== CASE dispatcher_cmake_minimum_required ===
+DIAG errors=0 warnings=1
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_minimum_required' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
+=== END CASE ===
+
+=== CASE dispatcher_cmake_policy_set_get_roundtrip ===
+DIAG errors=0 warnings=1
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_policy' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
+=== END CASE ===
+
+=== CASE dispatcher_find_package_handler_module_mode ===
+DIAG errors=0 warnings=1
+EVENTS count=2
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='eval_file' command='file' cause='Unsupported file() subcommand' hint='MAKE_DIRECTORY'
+EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=6 col=1 package='DemoPkg' mode='MODULE' required=1 found=1 location='./temp_pkg/CMake/FindDemoPkg.cmake'
+=== END CASE ===
+
+=== CASE dispatcher_find_package_preserves_script_defined_found_state ===
+DIAG errors=0 warnings=1
+EVENTS count=2
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='eval_file' command='file' cause='Unsupported file() subcommand' hint='MAKE_DIRECTORY'
+EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=5 col=1 package='DemoPkg2' mode='MODULE' required=0 found=0 location='./temp_pkg2/CMake/FindDemoPkg2.cmake'
+=== END CASE ===
+
+=== CASE dispatcher_find_package_config_components_and_version ===
+DIAG errors=0 warnings=1
+EVENTS count=3
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='eval_file' command='file' cause='Unsupported file() subcommand' hint='MAKE_DIRECTORY'
+EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=10 col=1 package='DemoCfg' mode='CONFIG' required=0 found=0 location='./temp_pkg_cfg/DemoCfgConfig.cmake'
+EV[2] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=12 col=1 package='DemoCfg' mode='CONFIG' required=0 found=0 location='././temp_pkg_cfg/DemoCfgConfig.cmake'
+=== END CASE ===
+
+=== CASE dispatcher_find_package_config_version_file_can_reject ===
+DIAG errors=0 warnings=1
+EVENTS count=2
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='eval_file' command='file' cause='Unsupported file() subcommand' hint='MAKE_DIRECTORY'
+EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=10 col=1 package='DemoVer' mode='CONFIG' required=0 found=0 location='./temp_pkg_cfgver/DemoVerConfig.cmake'
+=== END CASE ===
+
+=== CASE dispatcher_set_target_properties_preserves_genex_semicolon_unquoted ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=1 col=1 name='t' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=1 col=1 target='t' path='main.c'
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=2 col=1 target='t' key='MY_PROP' value='$<$<CONFIG:Debug>:A;B>' op=SET
+=== END CASE ===
+
+=== CASE dispatcher_set_property_target_ops_emit_expected_event_op ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=1 col=1 name='t' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=1 col=1 target='t' path='main.c'
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=2 col=1 target='t' key='COMPILE_OPTIONS' value='$<$<CONFIG:Debug>:-g>' op=APPEND_LIST
+EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='t' key='SUFFIX' value='$<$<CONFIG:Debug>:_d>' op=APPEND_STRING
+=== END CASE ===
+
+=== CASE dispatcher_set_property_non_target_scope_emits_warning ===
+DIAG errors=0 warnings=1
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='set_property' cause='set_property() V1 supports only TARGET scope' hint='GLOBAL/DIRECTORY/SOURCE/INSTALL/TEST/CACHE scopes are ignored in v2'
+=== END CASE ===
+
+=== CASE file_security_read_rejects_absolute_outside_project_scope ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
+=== END CASE ===
+
+=== CASE file_security_strings_rejects_absolute_outside_project_scope ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
+=== END CASE ===
+
+=== CASE file_security_read_relative_inside_project_scope_still_works ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===
+
+=== CASE file_security_copy_with_permissions_executes_without_legacy_no_effect_warning ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===

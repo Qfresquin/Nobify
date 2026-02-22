@@ -1,7 +1,0 @@
-DIAG errors=0 warnings=1
-EVENTS count=5
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FindDemo' version='' description='' languages=''
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='include_guard' cause='Unknown command' hint='Ignored during evaluation'
-EV[2] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=4 col=1 package='ZLIB' mode='AUTO' required=0 found=0 location=''
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='fp' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='fp' path='main.c'

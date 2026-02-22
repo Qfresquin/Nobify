@@ -1,2 +1,0 @@
-TOKENS count=1
-TOK[0] kind=INVALID line=1 col=1 space=0 text='"unterminated'

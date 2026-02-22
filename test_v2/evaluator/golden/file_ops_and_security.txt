@@ -1,6 +1,0 @@
-DIAG errors=0 warnings=1
-EVENTS count=4
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FileDemo' version='' description='' languages=''
-EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_app' type=EXECUTABLE
-EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_app' path='main.c'
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_app' item='OUT_hello' vis=PRIVATE

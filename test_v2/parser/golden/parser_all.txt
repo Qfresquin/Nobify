@@ -1,0 +1,242 @@
+MODULE parser
+CASES 14
+
+=== CASE bracket_arg_equals_delimiter ===
+DIAG errors=0 warnings=0
+ROOT count=2
+NODE[0] kind=COMMAND line=1 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='X'
+    ARG[1] kind=BRACKET tokens=1
+      TOK[0] kind=RAW_STRING text='[=[a;b]=]'
+NODE[1] kind=COMMAND line=2 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='Y'
+    ARG[1] kind=BRACKET tokens=1
+      TOK[0] kind=RAW_STRING text='[==[z]==]'
+=== END CASE ===
+
+=== CASE parser_reports_command_without_parentheses_and_recovers ===
+DIAG errors=1 warnings=0
+ROOT count=1
+NODE[0] kind=COMMAND line=2 col=1
+  NAME='message'
+  ARGS count=1
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='ok'
+=== END CASE ===
+
+=== CASE parser_reports_stray_paren_and_recovers ===
+DIAG errors=1 warnings=0
+ROOT count=1
+NODE[0] kind=COMMAND line=2 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='X'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='1'
+=== END CASE ===
+
+=== CASE parser_keeps_nested_parens_inside_regular_args ===
+DIAG errors=0 warnings=0
+ROOT count=1
+NODE[0] kind=COMMAND line=1 col=1
+  NAME='func'
+  ARGS count=1
+    ARG[0] kind=UNQUOTED tokens=4
+      TOK[0] kind=IDENTIFIER text='a'
+      TOK[1] kind=LPAREN text='('
+      TOK[2] kind=IDENTIFIER text='b'
+      TOK[3] kind=RPAREN text=')'
+=== END CASE ===
+
+=== CASE parser_marks_quoted_string_args ===
+DIAG errors=0 warnings=0
+ROOT count=1
+NODE[0] kind=COMMAND line=1 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='X'
+    ARG[1] kind=QUOTED tokens=1
+      TOK[0] kind=STRING text='"a b c"'
+=== END CASE ===
+
+=== CASE parser_reports_block_depth_limit_exceeded ===
+DIAG errors=1 warnings=0
+ROOT count=2
+NODE[0] kind=IF line=1 col=1
+  COND count=1
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+  THEN
+  ELSEIF_COUNT=0
+  ELSE
+NODE[1] kind=COMMAND line=5 col=1
+  NAME='endif'
+  ARGS count=0
+=== END CASE ===
+
+=== CASE parser_drops_command_node_on_unclosed_args ===
+DIAG errors=1 warnings=0
+ROOT count=0
+=== END CASE ===
+
+=== CASE parser_drops_if_node_on_missing_endif ===
+DIAG errors=1 warnings=0
+ROOT count=0
+=== END CASE ===
+
+=== CASE parser_fail_fast_on_append_oom_budget ===
+DIAG errors=1 warnings=0
+ROOT count=0
+=== END CASE ===
+
+=== CASE parser_invalid_command_name_emits_error_and_recovers ===
+DIAG errors=1 warnings=0
+ROOT count=1
+NODE[0] kind=COMMAND line=2 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='1'
+=== END CASE ===
+
+=== CASE parser_unexpected_statement_token_emits_error_and_recovers ===
+DIAG errors=1 warnings=0
+ROOT count=1
+NODE[0] kind=COMMAND line=2 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='1'
+=== END CASE ===
+
+=== CASE parser_golden_simple_commands ===
+DIAG errors=0 warnings=0
+ROOT count=3
+NODE[0] kind=COMMAND line=1 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='X'
+    ARG[1] kind=QUOTED tokens=1
+      TOK[0] kind=STRING text='"a b c"'
+NODE[1] kind=COMMAND line=2 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='Y'
+    ARG[1] kind=BRACKET tokens=1
+      TOK[0] kind=RAW_STRING text='[=[alpha;beta]=]'
+NODE[2] kind=COMMAND line=3 col=1
+  NAME='message'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='STATUS'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='ok'
+=== END CASE ===
+
+=== CASE parser_golden_control_flow ===
+DIAG errors=0 warnings=0
+ROOT count=3
+NODE[0] kind=IF line=1 col=1
+  COND count=7
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=LPAREN text='('
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+    ARG[2] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='AND'
+    ARG[3] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='B'
+    ARG[4] kind=UNQUOTED tokens=1
+      TOK[0] kind=RPAREN text=')'
+    ARG[5] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='OR'
+    ARG[6] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='C'
+  THEN
+    NODE[0] kind=COMMAND line=2 col=3
+      NAME='message'
+      ARGS count=1
+        ARG[0] kind=QUOTED tokens=1
+          TOK[0] kind=STRING text='"then"'
+  ELSEIF_COUNT=1
+  ELSEIF[0]
+    COND count=1
+      ARG[0] kind=UNQUOTED tokens=1
+        TOK[0] kind=IDENTIFIER text='D'
+    BLOCK
+      NODE[0] kind=COMMAND line=4 col=3
+        NAME='message'
+        ARGS count=1
+          ARG[0] kind=QUOTED tokens=1
+            TOK[0] kind=STRING text='"elseif"'
+  ELSE
+    NODE[0] kind=FOREACH line=6 col=3
+      ARGS count=3
+        ARG[0] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='item'
+        ARG[1] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='a'
+        ARG[2] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='b'
+      BODY
+        NODE[0] kind=COMMAND line=7 col=5
+          NAME='message'
+          ARGS count=1
+            ARG[0] kind=UNQUOTED tokens=1
+              TOK[0] kind=VAR text='${item}'
+NODE[1] kind=FUNCTION line=11 col=1
+  NAME='foo'
+  PARAMS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='x'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='y'
+  BODY
+    NODE[0] kind=COMMAND line=12 col=3
+      NAME='set'
+      ARGS count=2
+        ARG[0] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='Z'
+        ARG[1] kind=UNQUOTED tokens=1
+          TOK[0] kind=VAR text='${x}'
+NODE[2] kind=MACRO line=15 col=1
+  NAME='bar'
+  PARAMS count=0
+  BODY
+    NODE[0] kind=COMMAND line=16 col=3
+      NAME='message'
+      ARGS count=1
+        ARG[0] kind=UNQUOTED tokens=1
+          TOK[0] kind=IDENTIFIER text='bar'
+=== END CASE ===
+
+=== CASE parser_golden_recovery_invalid ===
+DIAG errors=3 warnings=0
+ROOT count=2
+NODE[0] kind=COMMAND line=3 col=1
+  NAME='set'
+  ARGS count=2
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='A'
+    ARG[1] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='1'
+NODE[1] kind=COMMAND line=5 col=1
+  NAME='message'
+  ARGS count=1
+    ARG[0] kind=UNQUOTED tokens=1
+      TOK[0] kind=IDENTIFIER text='ok'
+=== END CASE ===

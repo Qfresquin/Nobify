@@ -1,7 +1,0 @@
-DIAG errors=0 warnings=7
-EVENTS count=5
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages=''
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='enable_testing' cause='Unknown command' hint='Ignored during evaluation'
-EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='add_test' cause='Unknown command' hint='Ignored during evaluation'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='app' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='app' path='main.c'
