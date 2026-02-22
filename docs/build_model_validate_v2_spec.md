@@ -21,9 +21,9 @@ Checks for basic data consistency that would cause crashes in later stages.
 ### 2.2. Dependency Resolution (Pass 2 - Fatal)
 Ensures the dependency graph is valid.
 *   **Missing Dependencies:**
-    *   Iterate over `LINK_LIBRARIES` of every target.
-    *   If an item looks like a target name (not a file path/flag) but does not exist in the model -> Emit Error.
-    *   *Note:* Heuristics distinguish targets from system libs (e.g., `-lm` vs `my_lib`).
+    *   Validate only explicit dependency edges materialized by the Builder:
+    *   `dependencies`, `object_dependencies`, and `interface_dependencies`.
+    *   `link_libraries` / `interface_libs` are treated as library payload, not inferred target references.
 *   **Cycle Detection (DFS):**
     *   Perform Depth-First Search on the dependency graph.
     *   If a back-edge is detected (A -> B -> ... -> A) -> Emit Error ("Dependency cycle detected").
@@ -67,7 +67,7 @@ If `GRAY` node is encountered -> Cycle!
 ### 3.3. Target Lookup Optimization
 Validation requires frequent lookups (`find_target("foo")`).
 *   **Constraint:** The model stores targets in a flat array/list.
-*   **Optimization:** Build a temporary Hash Map (name -> index) at the start of validation to make lookups O(1) instead of O(N). Destroy map after validation.
+*   **Optimization:** Use the model target index (`build_model_find_target_index`) for O(1)-style lookup.
 
 ## 4. Interface
 
@@ -81,6 +81,9 @@ bool build_model_validate(const Build_Model *model, Diag_Sink *sink);
 
 // Helper: Checks for cycles specifically (can be run independently).
 bool build_model_check_cycles(const Build_Model *model, Diag_Sink *sink);
+
+// Variant that uses caller-provided scratch arena for temporary state.
+bool build_model_check_cycles_ex(const Build_Model *model, Arena *scratch, Diag_Sink *sink);
 ```
 
 ## 5. Error Recovery Strategy

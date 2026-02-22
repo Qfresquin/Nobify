@@ -80,12 +80,81 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
             if (!ev_copy_sv_inplace(arena, &ev->as.target_link_libraries.item)) return false;
             break;
 
+        case EV_TARGET_LINK_OPTIONS:
+            if (!ev_copy_sv_inplace(arena, &ev->as.target_link_options.target_name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.target_link_options.item)) return false;
+            break;
+
+        case EV_TARGET_LINK_DIRECTORIES:
+            if (!ev_copy_sv_inplace(arena, &ev->as.target_link_directories.target_name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.target_link_directories.path)) return false;
+            break;
+
+        case EV_DIR_PUSH:
+            if (!ev_copy_sv_inplace(arena, &ev->as.dir_push.source_dir)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.dir_push.binary_dir)) return false;
+            break;
+
+        case EV_DIR_POP:
+            break;
+
+        case EV_DIRECTORY_INCLUDE_DIRECTORIES:
+            if (!ev_copy_sv_inplace(arena, &ev->as.directory_include_directories.path)) return false;
+            break;
+
+        case EV_DIRECTORY_LINK_DIRECTORIES:
+            if (!ev_copy_sv_inplace(arena, &ev->as.directory_link_directories.path)) return false;
+            break;
+
         case EV_GLOBAL_COMPILE_DEFINITIONS:
             if (!ev_copy_sv_inplace(arena, &ev->as.global_compile_definitions.item)) return false;
             break;
 
         case EV_GLOBAL_COMPILE_OPTIONS:
             if (!ev_copy_sv_inplace(arena, &ev->as.global_compile_options.item)) return false;
+            break;
+
+        case EV_GLOBAL_LINK_OPTIONS:
+            if (!ev_copy_sv_inplace(arena, &ev->as.global_link_options.item)) return false;
+            break;
+
+        case EV_GLOBAL_LINK_LIBRARIES:
+            if (!ev_copy_sv_inplace(arena, &ev->as.global_link_libraries.item)) return false;
+            break;
+
+        case EV_TESTING_ENABLE:
+            break;
+
+        case EV_TEST_ADD:
+            if (!ev_copy_sv_inplace(arena, &ev->as.test_add.name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.test_add.command)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.test_add.working_dir)) return false;
+            break;
+
+        case EV_INSTALL_ADD_RULE:
+            if (!ev_copy_sv_inplace(arena, &ev->as.install_add_rule.item)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.install_add_rule.destination)) return false;
+            break;
+
+        case EV_CPACK_ADD_INSTALL_TYPE:
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.display_name)) return false;
+            break;
+
+        case EV_CPACK_ADD_COMPONENT_GROUP:
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.display_name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.description)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.parent_group)) return false;
+            break;
+
+        case EV_CPACK_ADD_COMPONENT:
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.display_name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.description)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.group)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.depends)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.install_types)) return false;
             break;
 
         case EV_FIND_PACKAGE:
@@ -148,8 +217,22 @@ static const char *ev_kind_name(Cmake_Event_Kind kind) {
         case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
         case EV_TARGET_COMPILE_OPTIONS: return "EV_TARGET_COMPILE_OPTIONS";
         case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
+        case EV_TARGET_LINK_OPTIONS: return "EV_TARGET_LINK_OPTIONS";
+        case EV_TARGET_LINK_DIRECTORIES: return "EV_TARGET_LINK_DIRECTORIES";
+        case EV_DIR_PUSH: return "EV_DIR_PUSH";
+        case EV_DIR_POP: return "EV_DIR_POP";
+        case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "EV_DIRECTORY_INCLUDE_DIRECTORIES";
+        case EV_DIRECTORY_LINK_DIRECTORIES: return "EV_DIRECTORY_LINK_DIRECTORIES";
         case EV_GLOBAL_COMPILE_DEFINITIONS: return "EV_GLOBAL_COMPILE_DEFINITIONS";
         case EV_GLOBAL_COMPILE_OPTIONS: return "EV_GLOBAL_COMPILE_OPTIONS";
+        case EV_GLOBAL_LINK_OPTIONS: return "EV_GLOBAL_LINK_OPTIONS";
+        case EV_GLOBAL_LINK_LIBRARIES: return "EV_GLOBAL_LINK_LIBRARIES";
+        case EV_TESTING_ENABLE: return "EV_TESTING_ENABLE";
+        case EV_TEST_ADD: return "EV_TEST_ADD";
+        case EV_INSTALL_ADD_RULE: return "EV_INSTALL_ADD_RULE";
+        case EV_CPACK_ADD_INSTALL_TYPE: return "EV_CPACK_ADD_INSTALL_TYPE";
+        case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
+        case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
         case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
     }
     return "EV_UNKNOWN";
@@ -230,11 +313,83 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
                 ev_print_sv("item", ev->as.target_link_libraries.item);
                 printf(" vis=%d", (int)ev->as.target_link_libraries.visibility);
                 break;
+            case EV_TARGET_LINK_OPTIONS:
+                ev_print_sv("target", ev->as.target_link_options.target_name);
+                ev_print_sv("item", ev->as.target_link_options.item);
+                printf(" vis=%d", (int)ev->as.target_link_options.visibility);
+                break;
+            case EV_TARGET_LINK_DIRECTORIES:
+                ev_print_sv("target", ev->as.target_link_directories.target_name);
+                ev_print_sv("path", ev->as.target_link_directories.path);
+                printf(" vis=%d", (int)ev->as.target_link_directories.visibility);
+                break;
+            case EV_DIR_PUSH:
+                ev_print_sv("source_dir", ev->as.dir_push.source_dir);
+                ev_print_sv("binary_dir", ev->as.dir_push.binary_dir);
+                break;
+            case EV_DIR_POP:
+                break;
+            case EV_DIRECTORY_INCLUDE_DIRECTORIES:
+                ev_print_sv("path", ev->as.directory_include_directories.path);
+                printf(" is_system=%d is_before=%d",
+                       ev->as.directory_include_directories.is_system ? 1 : 0,
+                       ev->as.directory_include_directories.is_before ? 1 : 0);
+                break;
+            case EV_DIRECTORY_LINK_DIRECTORIES:
+                ev_print_sv("path", ev->as.directory_link_directories.path);
+                printf(" is_before=%d", ev->as.directory_link_directories.is_before ? 1 : 0);
+                break;
             case EV_GLOBAL_COMPILE_DEFINITIONS:
                 ev_print_sv("item", ev->as.global_compile_definitions.item);
                 break;
             case EV_GLOBAL_COMPILE_OPTIONS:
                 ev_print_sv("item", ev->as.global_compile_options.item);
+                break;
+            case EV_GLOBAL_LINK_OPTIONS:
+                ev_print_sv("item", ev->as.global_link_options.item);
+                break;
+            case EV_GLOBAL_LINK_LIBRARIES:
+                ev_print_sv("item", ev->as.global_link_libraries.item);
+                break;
+            case EV_TESTING_ENABLE:
+                printf(" enabled=%d", ev->as.testing_enable.enabled ? 1 : 0);
+                break;
+            case EV_TEST_ADD:
+                ev_print_sv("name", ev->as.test_add.name);
+                ev_print_sv("command", ev->as.test_add.command);
+                ev_print_sv("working_dir", ev->as.test_add.working_dir);
+                printf(" command_expand_lists=%d", ev->as.test_add.command_expand_lists ? 1 : 0);
+                break;
+            case EV_INSTALL_ADD_RULE:
+                printf(" type=%d", (int)ev->as.install_add_rule.rule_type);
+                ev_print_sv("item", ev->as.install_add_rule.item);
+                ev_print_sv("destination", ev->as.install_add_rule.destination);
+                break;
+            case EV_CPACK_ADD_INSTALL_TYPE:
+                ev_print_sv("name", ev->as.cpack_add_install_type.name);
+                ev_print_sv("display_name", ev->as.cpack_add_install_type.display_name);
+                break;
+            case EV_CPACK_ADD_COMPONENT_GROUP:
+                ev_print_sv("name", ev->as.cpack_add_component_group.name);
+                ev_print_sv("display_name", ev->as.cpack_add_component_group.display_name);
+                ev_print_sv("description", ev->as.cpack_add_component_group.description);
+                ev_print_sv("parent_group", ev->as.cpack_add_component_group.parent_group);
+                printf(" expanded=%d bold_title=%d",
+                       ev->as.cpack_add_component_group.expanded ? 1 : 0,
+                       ev->as.cpack_add_component_group.bold_title ? 1 : 0);
+                break;
+            case EV_CPACK_ADD_COMPONENT:
+                ev_print_sv("name", ev->as.cpack_add_component.name);
+                ev_print_sv("display_name", ev->as.cpack_add_component.display_name);
+                ev_print_sv("description", ev->as.cpack_add_component.description);
+                ev_print_sv("group", ev->as.cpack_add_component.group);
+                ev_print_sv("depends", ev->as.cpack_add_component.depends);
+                ev_print_sv("install_types", ev->as.cpack_add_component.install_types);
+                printf(" required=%d hidden=%d disabled=%d downloaded=%d",
+                       ev->as.cpack_add_component.required ? 1 : 0,
+                       ev->as.cpack_add_component.hidden ? 1 : 0,
+                       ev->as.cpack_add_component.disabled ? 1 : 0,
+                       ev->as.cpack_add_component.downloaded ? 1 : 0);
                 break;
             case EV_FIND_PACKAGE:
                 ev_print_sv("package", ev->as.find_package.package_name);

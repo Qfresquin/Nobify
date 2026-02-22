@@ -27,10 +27,30 @@ typedef enum {
     EV_TARGET_COMPILE_DEFINITIONS,
     EV_TARGET_COMPILE_OPTIONS,
     EV_TARGET_LINK_LIBRARIES,
+    EV_TARGET_LINK_OPTIONS,
+    EV_TARGET_LINK_DIRECTORIES,
+
+    // Directory-level state
+    EV_DIR_PUSH,
+    EV_DIR_POP,
+    EV_DIRECTORY_INCLUDE_DIRECTORIES,
+    EV_DIRECTORY_LINK_DIRECTORIES,
 
     // Global compile state
     EV_GLOBAL_COMPILE_DEFINITIONS,
     EV_GLOBAL_COMPILE_OPTIONS,
+    EV_GLOBAL_LINK_OPTIONS,
+    EV_GLOBAL_LINK_LIBRARIES,
+
+    // Testing / install
+    EV_TESTING_ENABLE,
+    EV_TEST_ADD,
+    EV_INSTALL_ADD_RULE,
+
+    // CPack subset
+    EV_CPACK_ADD_INSTALL_TYPE,
+    EV_CPACK_ADD_COMPONENT_GROUP,
+    EV_CPACK_ADD_COMPONENT,
 
     // Package discovery
     EV_FIND_PACKAGE,
@@ -63,6 +83,13 @@ typedef enum {
     EV_DIAG_WARNING = 0,
     EV_DIAG_ERROR,
 } Cmake_Diag_Severity;
+
+typedef enum {
+    EV_INSTALL_RULE_TARGET = 0,
+    EV_INSTALL_RULE_FILE,
+    EV_INSTALL_RULE_PROGRAM,
+    EV_INSTALL_RULE_DIRECTORY,
+} Cmake_Install_Rule_Type;
 
 typedef struct {
     String_View file_path;
@@ -144,12 +171,92 @@ typedef struct {
         } target_link_libraries;
 
         struct {
+            String_View target_name;
+            Cmake_Visibility visibility;
+            String_View item;
+        } target_link_options;
+
+        struct {
+            String_View target_name;
+            Cmake_Visibility visibility;
+            String_View path;
+        } target_link_directories;
+
+        struct {
+            String_View source_dir;
+            String_View binary_dir;
+        } dir_push;
+
+        struct {
+            String_View path;
+            bool is_system;
+            bool is_before;
+        } directory_include_directories;
+
+        struct {
+            String_View path;
+            bool is_before;
+        } directory_link_directories;
+
+        struct {
             String_View item;
         } global_compile_definitions;
 
         struct {
             String_View item;
         } global_compile_options;
+
+        struct {
+            String_View item;
+        } global_link_options;
+
+        struct {
+            String_View item;
+        } global_link_libraries;
+
+        struct {
+            bool enabled;
+        } testing_enable;
+
+        struct {
+            String_View name;
+            String_View command;
+            String_View working_dir;
+            bool command_expand_lists;
+        } test_add;
+
+        struct {
+            Cmake_Install_Rule_Type rule_type;
+            String_View item;
+            String_View destination;
+        } install_add_rule;
+
+        struct {
+            String_View name;
+            String_View display_name;
+        } cpack_add_install_type;
+
+        struct {
+            String_View name;
+            String_View display_name;
+            String_View description;
+            String_View parent_group;
+            bool expanded;
+            bool bold_title;
+        } cpack_add_component_group;
+
+        struct {
+            String_View name;
+            String_View display_name;
+            String_View description;
+            String_View group;
+            String_View depends; // semi-separated list
+            String_View install_types; // semi-separated list
+            bool required;
+            bool hidden;
+            bool disabled;
+            bool downloaded;
+        } cpack_add_component;
 
         struct {
             String_View package_name;

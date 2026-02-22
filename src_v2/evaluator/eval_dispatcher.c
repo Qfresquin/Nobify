@@ -23,6 +23,25 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
+static bool emit_dir_push_event(Evaluator_Context *ctx,
+                                Cmake_Event_Origin origin,
+                                String_View source_dir,
+                                String_View binary_dir) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_DIR_PUSH;
+    ev.origin = origin;
+    ev.as.dir_push.source_dir = sv_copy_to_event_arena(ctx, source_dir);
+    ev.as.dir_push.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
+    return emit_event(ctx, ev);
+}
+
+static bool emit_dir_pop_event(Evaluator_Context *ctx, Cmake_Event_Origin origin) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_DIR_POP;
+    ev.origin = origin;
+    return emit_event(ctx, ev);
+}
+
 static String_View sv_dirname(String_View path) {
     for (size_t i = path.count; i-- > 0;) {
         char c = path.data[i];
@@ -133,6 +152,31 @@ static String_View sv_join_no_sep_temp(Evaluator_Context *ctx, const String_View
         if (items[i].count == 0) continue;
         memcpy(buf + off, items[i].data, items[i].count);
         off += items[i].count;
+    }
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View sv_join_space_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
+    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) {
+        total += items[i].count;
+        if (i + 1 < count) total += 1;
+    }
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (items[i].count > 0) {
+            memcpy(buf + off, items[i].data, items[i].count);
+            off += items[i].count;
+        }
+        if (i + 1 < count) {
+            buf[off++] = ' ';
+        }
     }
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
@@ -530,6 +574,94 @@ static bool h_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
+static bool h_target_link_options(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("target_link_options() requires target and items"),
+                       nob_sv_from_cstr("Usage: target_link_options(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View tgt = a.items[0];
+    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+            vis = EV_VISIBILITY_PRIVATE;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+            vis = EV_VISIBILITY_PUBLIC;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+            vis = EV_VISIBILITY_INTERFACE;
+            continue;
+        }
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_TARGET_LINK_OPTIONS;
+        ev.origin = o;
+        ev.as.target_link_options.target_name = sv_copy_to_event_arena(ctx, tgt);
+        ev.as.target_link_options.visibility = vis;
+        ev.as.target_link_options.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+static bool h_target_link_directories(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("target_link_directories() requires target and items"),
+                       nob_sv_from_cstr("Usage: target_link_directories(<tgt> <PUBLIC|PRIVATE|INTERFACE> <dirs...>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View tgt = a.items[0];
+    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+            vis = EV_VISIBILITY_PRIVATE;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+            vis = EV_VISIBILITY_PUBLIC;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+            vis = EV_VISIBILITY_INTERFACE;
+            continue;
+        }
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_TARGET_LINK_DIRECTORIES;
+        ev.origin = o;
+        ev.as.target_link_directories.target_name = sv_copy_to_event_arena(ctx, tgt);
+        ev.as.target_link_directories.visibility = vis;
+        ev.as.target_link_directories.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
 static bool h_target_include_directories(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -891,6 +1023,533 @@ static bool h_add_definitions(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
+static bool h_add_link_options(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    for (size_t i = 0; i < a.count; i++) {
+        if (a.items[i].count == 0) continue;
+        Cmake_Event ev = {0};
+        ev.kind = EV_GLOBAL_LINK_OPTIONS;
+        ev.origin = o;
+        ev.as.global_link_options.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+    return !eval_should_stop(ctx);
+}
+
+static bool h_link_libraries(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    for (size_t i = 0; i < a.count; i++) {
+        if (a.items[i].count == 0) continue;
+        Cmake_Event ev = {0};
+        ev.kind = EV_GLOBAL_LINK_LIBRARIES;
+        ev.origin = o;
+        ev.as.global_link_libraries.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+    return !eval_should_stop(ctx);
+}
+
+static bool h_include_directories(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    bool is_system = false;
+    bool is_before = false;
+    for (size_t i = 0; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "SYSTEM")) {
+            is_system = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+            is_before = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "AFTER")) {
+            is_before = false;
+            continue;
+        }
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_DIRECTORY_INCLUDE_DIRECTORIES;
+        ev.origin = o;
+        ev.as.directory_include_directories.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.directory_include_directories.is_system = is_system;
+        ev.as.directory_include_directories.is_before = is_before;
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+static bool h_link_directories(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    bool is_before = false;
+    for (size_t i = 0; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+            is_before = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "AFTER")) {
+            is_before = false;
+            continue;
+        }
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_DIRECTORY_LINK_DIRECTORIES;
+        ev.origin = o;
+        ev.as.directory_link_directories.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.directory_link_directories.is_before = is_before;
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+static bool h_enable_testing(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count > 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("enable_testing() does not expect arguments"),
+                       nob_sv_from_cstr("Extra arguments are ignored"));
+    }
+
+    Cmake_Event ev = {0};
+    ev.kind = EV_TESTING_ENABLE;
+    ev.origin = o;
+    ev.as.testing_enable.enabled = true;
+    (void)eval_var_set(ctx, nob_sv_from_cstr("BUILD_TESTING"), nob_sv_from_cstr("1"));
+    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
+static bool h_add_test(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_test() requires at least test name and command"),
+                       nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>) or add_test(<name> <cmd...>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View name = nob_sv_from_cstr("");
+    String_View command = nob_sv_from_cstr("");
+    String_View working_dir = nob_sv_from_cstr("");
+    bool command_expand_lists = false;
+
+    if (eval_sv_eq_ci_lit(a.items[0], "NAME")) {
+        if (a.count < 4) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_test(NAME ...) requires COMMAND clause"),
+                           nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
+            return !eval_should_stop(ctx);
+        }
+        name = a.items[1];
+
+        size_t cmd_i = 2;
+        if (!eval_sv_eq_ci_lit(a.items[cmd_i], "COMMAND")) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_test(NAME ...) missing COMMAND"),
+                           nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
+            return !eval_should_stop(ctx);
+        }
+        cmd_i++;
+        size_t cmd_start = cmd_i;
+        size_t cmd_end = a.count;
+        for (size_t i = cmd_i; i < a.count; i++) {
+            if (eval_sv_eq_ci_lit(a.items[i], "WORKING_DIRECTORY") ||
+                eval_sv_eq_ci_lit(a.items[i], "COMMAND_EXPAND_LISTS")) {
+                cmd_end = i;
+                break;
+            }
+        }
+        if (cmd_end <= cmd_start) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_test(NAME ...) has empty COMMAND"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        command = sv_join_space_temp(ctx, &a.items[cmd_start], cmd_end - cmd_start);
+
+        size_t i = cmd_end;
+        while (i < a.count) {
+            if (eval_sv_eq_ci_lit(a.items[i], "WORKING_DIRECTORY")) {
+                if (i + 1 >= a.count) {
+                    eval_emit_diag(ctx,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("dispatcher"),
+                                   node->as.cmd.name,
+                                   o,
+                                   nob_sv_from_cstr("add_test() missing value after WORKING_DIRECTORY"),
+                                   nob_sv_from_cstr(""));
+                    return !eval_should_stop(ctx);
+                }
+                working_dir = a.items[i + 1];
+                i += 2;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "COMMAND_EXPAND_LISTS")) {
+                command_expand_lists = true;
+                i++;
+                continue;
+            }
+            eval_emit_diag(ctx,
+                           EV_DIAG_WARNING,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_test() has unsupported/extra argument"),
+                           a.items[i]);
+            i++;
+        }
+    } else {
+        name = a.items[0];
+        command = sv_join_space_temp(ctx, &a.items[1], a.count - 1);
+    }
+
+    Cmake_Event ev = {0};
+    ev.kind = EV_TEST_ADD;
+    ev.origin = o;
+    ev.as.test_add.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.test_add.command = sv_copy_to_event_arena(ctx, command);
+    ev.as.test_add.working_dir = sv_copy_to_event_arena(ctx, working_dir);
+    ev.as.test_add.command_expand_lists = command_expand_lists;
+    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
+static bool h_install(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 4) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("install() requires rule type, items and DESTINATION"),
+                       nob_sv_from_cstr("Usage: install(TARGETS|FILES|PROGRAMS|DIRECTORY <items...> DESTINATION <dir>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    Cmake_Install_Rule_Type rule_type = EV_INSTALL_RULE_TARGET;
+    if (eval_sv_eq_ci_lit(a.items[0], "TARGETS")) rule_type = EV_INSTALL_RULE_TARGET;
+    else if (eval_sv_eq_ci_lit(a.items[0], "FILES")) rule_type = EV_INSTALL_RULE_FILE;
+    else if (eval_sv_eq_ci_lit(a.items[0], "PROGRAMS")) rule_type = EV_INSTALL_RULE_PROGRAM;
+    else if (eval_sv_eq_ci_lit(a.items[0], "DIRECTORY")) rule_type = EV_INSTALL_RULE_DIRECTORY;
+    else {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("install() unsupported rule type in v2"),
+                       a.items[0]);
+        return !eval_should_stop(ctx);
+    }
+
+    size_t dest_i = a.count;
+    for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "DESTINATION")) {
+            dest_i = i;
+            break;
+        }
+    }
+    if (dest_i == a.count || dest_i + 1 >= a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("install() missing DESTINATION"),
+                       nob_sv_from_cstr("Usage: install(TARGETS|FILES|PROGRAMS|DIRECTORY <items...> DESTINATION <dir>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (dest_i <= 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("install() has no items before DESTINATION"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View destination = a.items[dest_i + 1];
+    for (size_t i = 1; i < dest_i; i++) {
+        Cmake_Event ev = {0};
+        ev.kind = EV_INSTALL_ADD_RULE;
+        ev.origin = o;
+        ev.as.install_add_rule.rule_type = rule_type;
+        ev.as.install_add_rule.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.install_add_rule.destination = sv_copy_to_event_arena(ctx, destination);
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+    return !eval_should_stop(ctx);
+}
+
+static bool h_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cpack_add_install_type() missing name"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View name = a.items[0];
+    String_View display_name = nob_sv_from_cstr("");
+    for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "DISPLAY_NAME") && i + 1 < a.count) {
+            display_name = a.items[++i];
+            continue;
+        }
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cpack_add_install_type() unsupported/extra argument"),
+                       a.items[i]);
+    }
+
+    Cmake_Event ev = {0};
+    ev.kind = EV_CPACK_ADD_INSTALL_TYPE;
+    ev.origin = o;
+    ev.as.cpack_add_install_type.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.cpack_add_install_type.display_name = sv_copy_to_event_arena(ctx, display_name);
+    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
+static bool h_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cpack_add_component_group() missing name"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View name = a.items[0];
+    String_View display_name = nob_sv_from_cstr("");
+    String_View description = nob_sv_from_cstr("");
+    String_View parent_group = nob_sv_from_cstr("");
+    bool expanded = false;
+    bool bold_title = false;
+
+    for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "DISPLAY_NAME") && i + 1 < a.count) {
+            display_name = a.items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "DESCRIPTION") && i + 1 < a.count) {
+            description = a.items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "PARENT_GROUP") && i + 1 < a.count) {
+            parent_group = a.items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "EXPANDED")) {
+            expanded = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "BOLD_TITLE")) {
+            bold_title = true;
+            continue;
+        }
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cpack_add_component_group() unsupported/extra argument"),
+                       a.items[i]);
+    }
+
+    Cmake_Event ev = {0};
+    ev.kind = EV_CPACK_ADD_COMPONENT_GROUP;
+    ev.origin = o;
+    ev.as.cpack_add_component_group.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.cpack_add_component_group.display_name = sv_copy_to_event_arena(ctx, display_name);
+    ev.as.cpack_add_component_group.description = sv_copy_to_event_arena(ctx, description);
+    ev.as.cpack_add_component_group.parent_group = sv_copy_to_event_arena(ctx, parent_group);
+    ev.as.cpack_add_component_group.expanded = expanded;
+    ev.as.cpack_add_component_group.bold_title = bold_title;
+    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
+static bool h_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cpack_add_component() missing name"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View name = a.items[0];
+    String_View display_name = nob_sv_from_cstr("");
+    String_View description = nob_sv_from_cstr("");
+    String_View group = nob_sv_from_cstr("");
+    String_View depends = nob_sv_from_cstr("");
+    String_View install_types = nob_sv_from_cstr("");
+    bool required = false;
+    bool hidden = false;
+    bool disabled = false;
+    bool downloaded = false;
+
+    for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "DISPLAY_NAME") && i + 1 < a.count) {
+            display_name = a.items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "DESCRIPTION") && i + 1 < a.count) {
+            description = a.items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "GROUP") && i + 1 < a.count) {
+            group = a.items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "DEPENDS")) {
+            size_t start = i + 1;
+            size_t end = start;
+            while (end < a.count) {
+                if (eval_sv_eq_ci_lit(a.items[end], "INSTALL_TYPES") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DISPLAY_NAME") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DESCRIPTION") ||
+                    eval_sv_eq_ci_lit(a.items[end], "GROUP") ||
+                    eval_sv_eq_ci_lit(a.items[end], "REQUIRED") ||
+                    eval_sv_eq_ci_lit(a.items[end], "HIDDEN") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DISABLED") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DOWNLOADED")) {
+                    break;
+                }
+                end++;
+            }
+            depends = (end > start) ? eval_sv_join_semi_temp(ctx, &a.items[start], end - start) : nob_sv_from_cstr("");
+            i = end - 1;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "INSTALL_TYPES")) {
+            size_t start = i + 1;
+            size_t end = start;
+            while (end < a.count) {
+                if (eval_sv_eq_ci_lit(a.items[end], "DEPENDS") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DISPLAY_NAME") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DESCRIPTION") ||
+                    eval_sv_eq_ci_lit(a.items[end], "GROUP") ||
+                    eval_sv_eq_ci_lit(a.items[end], "REQUIRED") ||
+                    eval_sv_eq_ci_lit(a.items[end], "HIDDEN") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DISABLED") ||
+                    eval_sv_eq_ci_lit(a.items[end], "DOWNLOADED")) {
+                    break;
+                }
+                end++;
+            }
+            install_types = (end > start) ? eval_sv_join_semi_temp(ctx, &a.items[start], end - start) : nob_sv_from_cstr("");
+            i = end - 1;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "REQUIRED")) {
+            required = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "HIDDEN")) {
+            hidden = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "DISABLED")) {
+            disabled = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "DOWNLOADED")) {
+            downloaded = true;
+            continue;
+        }
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"),
+                       a.items[i]);
+    }
+
+    Cmake_Event ev = {0};
+    ev.kind = EV_CPACK_ADD_COMPONENT;
+    ev.origin = o;
+    ev.as.cpack_add_component.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.cpack_add_component.display_name = sv_copy_to_event_arena(ctx, display_name);
+    ev.as.cpack_add_component.description = sv_copy_to_event_arena(ctx, description);
+    ev.as.cpack_add_component.group = sv_copy_to_event_arena(ctx, group);
+    ev.as.cpack_add_component.depends = sv_copy_to_event_arena(ctx, depends);
+    ev.as.cpack_add_component.install_types = sv_copy_to_event_arena(ctx, install_types);
+    ev.as.cpack_add_component.required = required;
+    ev.as.cpack_add_component.hidden = hidden;
+    ev.as.cpack_add_component.disabled = disabled;
+    ev.as.cpack_add_component.downloaded = downloaded;
+    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
 static bool h_include(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -912,7 +1571,14 @@ static bool h_include(Evaluator_Context *ctx, const Node *node) {
         file_path = eval_sv_path_join(eval_temp_arena(ctx), current_dir, file_path);
     }
 
+    String_View scope_source = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (scope_source.count == 0) scope_source = ctx->source_dir;
+    String_View scope_binary = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    if (scope_binary.count == 0) scope_binary = ctx->source_dir;
+
+    if (!emit_dir_push_event(ctx, o, scope_source, scope_binary)) return !eval_should_stop(ctx);
     bool success = eval_execute_file(ctx, file_path, false, nob_sv_from_cstr(""));
+    if (!emit_dir_pop_event(ctx, o)) return !eval_should_stop(ctx);
     if (!success && !optional && !eval_should_stop(ctx)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
@@ -960,7 +1626,10 @@ static bool h_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
         binary_dir = eval_sv_path_join(eval_temp_arena(ctx), current_bin, binary_dir);
     }
 
+    String_View scope_binary = binary_dir.count > 0 ? binary_dir : source_dir;
+    if (!emit_dir_push_event(ctx, o, source_dir, scope_binary)) return !eval_should_stop(ctx);
     bool success = eval_execute_file(ctx, full_path, true, binary_dir);
+    if (!emit_dir_pop_event(ctx, o)) return !eval_should_stop(ctx);
     if (!success && !eval_should_stop(ctx)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
@@ -1547,19 +2216,29 @@ typedef struct {
 } Command_Entry;
 
 static const Command_Entry DISPATCH[] = {
+    {"add_link_options", h_add_link_options},
     {"add_compile_options", h_add_compile_options},
     {"add_definitions", h_add_definitions},
+    {"add_test", h_add_test},
     {"add_executable", h_add_executable},
     {"add_library", h_add_library},
     {"add_subdirectory", h_add_subdirectory},
     {"break", h_break},
     {"cmake_minimum_required", h_cmake_minimum_required},
     {"cmake_policy", h_cmake_policy},
+    {"cpack_add_component", h_cpack_add_component},
+    {"cpack_add_component_group", h_cpack_add_component_group},
+    {"cpack_add_install_type", h_cpack_add_install_type},
     {"continue", h_continue},
+    {"enable_testing", h_enable_testing},
     {"file", h_file},
     {"find_package", h_find_package},
     {"include", h_include},
+    {"include_directories", h_include_directories},
+    {"install", h_install},
     {"list", h_list},
+    {"link_directories", h_link_directories},
+    {"link_libraries", h_link_libraries},
     {"math", h_math},
     {"message", h_message},
     {"project", h_project},
@@ -1571,7 +2250,9 @@ static const Command_Entry DISPATCH[] = {
     {"target_compile_definitions", h_target_compile_definitions},
     {"target_compile_options", h_target_compile_options},
     {"target_include_directories", h_target_include_directories},
+    {"target_link_directories", h_target_link_directories},
     {"target_link_libraries", h_target_link_libraries},
+    {"target_link_options", h_target_link_options},
 };
 static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
 

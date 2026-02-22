@@ -174,6 +174,22 @@ void bm_query_target_link_libraries(const Build_Target *target, const String_Vie
     if (out_count) *out_count = target->link_libraries.count;
 }
 
+bool bm_query_target_effective_link_libraries(const Build_Target *target,
+                                              Arena *scratch_arena,
+                                              const Logic_Eval_Context *logic_ctx,
+                                              const String_View **out_items,
+                                              size_t *out_count) {
+    if (out_items) *out_items = NULL;
+    if (out_count) *out_count = 0;
+    if (!target || !scratch_arena) return false;
+
+    String_List list = {0};
+    build_target_collect_effective_link_libraries((Build_Target*)target, scratch_arena, logic_ctx, &list);
+    if (out_items) *out_items = list.items;
+    if (out_count) *out_count = list.count;
+    return true;
+}
+
 String_View bm_query_project_name(const Build_Model *model) {
     return model ? model->project_name : g_empty_sv;
 }

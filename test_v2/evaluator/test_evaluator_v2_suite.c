@@ -201,8 +201,22 @@ static const char *event_kind_name(Cmake_Event_Kind kind) {
         case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
         case EV_TARGET_COMPILE_OPTIONS: return "EV_TARGET_COMPILE_OPTIONS";
         case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
+        case EV_TARGET_LINK_OPTIONS: return "EV_TARGET_LINK_OPTIONS";
+        case EV_TARGET_LINK_DIRECTORIES: return "EV_TARGET_LINK_DIRECTORIES";
+        case EV_DIR_PUSH: return "EV_DIR_PUSH";
+        case EV_DIR_POP: return "EV_DIR_POP";
+        case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "EV_DIRECTORY_INCLUDE_DIRECTORIES";
+        case EV_DIRECTORY_LINK_DIRECTORIES: return "EV_DIRECTORY_LINK_DIRECTORIES";
         case EV_GLOBAL_COMPILE_DEFINITIONS: return "EV_GLOBAL_COMPILE_DEFINITIONS";
         case EV_GLOBAL_COMPILE_OPTIONS: return "EV_GLOBAL_COMPILE_OPTIONS";
+        case EV_GLOBAL_LINK_OPTIONS: return "EV_GLOBAL_LINK_OPTIONS";
+        case EV_GLOBAL_LINK_LIBRARIES: return "EV_GLOBAL_LINK_LIBRARIES";
+        case EV_TESTING_ENABLE: return "EV_TESTING_ENABLE";
+        case EV_TEST_ADD: return "EV_TEST_ADD";
+        case EV_INSTALL_ADD_RULE: return "EV_INSTALL_ADD_RULE";
+        case EV_CPACK_ADD_INSTALL_TYPE: return "EV_CPACK_ADD_INSTALL_TYPE";
+        case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
+        case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
         case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
     }
     return "EV_UNKNOWN";
@@ -348,6 +362,47 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_link_libraries.visibility)));
             break;
 
+        case EV_TARGET_LINK_OPTIONS:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_link_options.target_name);
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.target_link_options.item);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_link_options.visibility)));
+            break;
+
+        case EV_TARGET_LINK_DIRECTORIES:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_link_directories.target_name);
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.target_link_directories.path);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_link_directories.visibility)));
+            break;
+
+        case EV_DIR_PUSH:
+            nob_sb_append_cstr(sb, " source_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.dir_push.source_dir);
+            nob_sb_append_cstr(sb, " binary_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.dir_push.binary_dir);
+            break;
+
+        case EV_DIR_POP:
+            break;
+
+        case EV_DIRECTORY_INCLUDE_DIRECTORIES:
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.directory_include_directories.path);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" is_system=%d is_before=%d",
+                ev->as.directory_include_directories.is_system ? 1 : 0,
+                ev->as.directory_include_directories.is_before ? 1 : 0));
+            break;
+
+        case EV_DIRECTORY_LINK_DIRECTORIES:
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.directory_link_directories.path);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" is_before=%d",
+                ev->as.directory_link_directories.is_before ? 1 : 0));
+            break;
+
         case EV_GLOBAL_COMPILE_DEFINITIONS:
             nob_sb_append_cstr(sb, " item=");
             snapshot_append_escaped_sv(sb, ev->as.global_compile_definitions.item);
@@ -356,6 +411,81 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
         case EV_GLOBAL_COMPILE_OPTIONS:
             nob_sb_append_cstr(sb, " item=");
             snapshot_append_escaped_sv(sb, ev->as.global_compile_options.item);
+            break;
+
+        case EV_GLOBAL_LINK_OPTIONS:
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.global_link_options.item);
+            break;
+
+        case EV_GLOBAL_LINK_LIBRARIES:
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.global_link_libraries.item);
+            break;
+
+        case EV_TESTING_ENABLE:
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" enabled=%d",
+                ev->as.testing_enable.enabled ? 1 : 0));
+            break;
+
+        case EV_TEST_ADD:
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.test_add.name);
+            nob_sb_append_cstr(sb, " command=");
+            snapshot_append_escaped_sv(sb, ev->as.test_add.command);
+            nob_sb_append_cstr(sb, " working_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.test_add.working_dir);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" command_expand_lists=%d",
+                ev->as.test_add.command_expand_lists ? 1 : 0));
+            break;
+
+        case EV_INSTALL_ADD_RULE:
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" rule_type=%d", (int)ev->as.install_add_rule.rule_type));
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.install_add_rule.item);
+            nob_sb_append_cstr(sb, " destination=");
+            snapshot_append_escaped_sv(sb, ev->as.install_add_rule.destination);
+            break;
+
+        case EV_CPACK_ADD_INSTALL_TYPE:
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_install_type.name);
+            nob_sb_append_cstr(sb, " display_name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_install_type.display_name);
+            break;
+
+        case EV_CPACK_ADD_COMPONENT_GROUP:
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component_group.name);
+            nob_sb_append_cstr(sb, " display_name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component_group.display_name);
+            nob_sb_append_cstr(sb, " description=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component_group.description);
+            nob_sb_append_cstr(sb, " parent_group=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component_group.parent_group);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" expanded=%d bold_title=%d",
+                ev->as.cpack_add_component_group.expanded ? 1 : 0,
+                ev->as.cpack_add_component_group.bold_title ? 1 : 0));
+            break;
+
+        case EV_CPACK_ADD_COMPONENT:
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.name);
+            nob_sb_append_cstr(sb, " display_name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.display_name);
+            nob_sb_append_cstr(sb, " description=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.description);
+            nob_sb_append_cstr(sb, " group=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.group);
+            nob_sb_append_cstr(sb, " depends=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.depends);
+            nob_sb_append_cstr(sb, " install_types=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.install_types);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" required=%d hidden=%d disabled=%d downloaded=%d",
+                ev->as.cpack_add_component.required ? 1 : 0,
+                ev->as.cpack_add_component.hidden ? 1 : 0,
+                ev->as.cpack_add_component.disabled ? 1 : 0,
+                ev->as.cpack_add_component.downloaded ? 1 : 0));
             break;
 
         case EV_FIND_PACKAGE:

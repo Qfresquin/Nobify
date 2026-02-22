@@ -7,5 +7,6 @@ void run_arena_v2_tests(int *passed, int *failed);
 void run_lexer_v2_tests(int *passed, int *failed);
 void run_parser_v2_tests(int *passed, int *failed);
 void run_evaluator_v2_tests(int *passed, int *failed);
+void run_pipeline_v2_tests(int *passed, int *failed);
 
 #endif // TEST_V2_SUITE_H_

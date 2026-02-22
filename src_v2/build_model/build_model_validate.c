@@ -2,7 +2,6 @@
 
 #include "../diagnostics/diagnostics.h"
 
-#include <ctype.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,11 +12,6 @@ typedef struct {
     bool has_warnings;
     void *diagnostics;
 } Build_Model_Validate_Ctx;
-
-typedef enum {
-    BM_EDGE_LINK_DIRECT = 0,
-    BM_EDGE_LINK_HEURISTIC,
-} Build_Model_Edge_Mode;
 
 static void bm_validate_report(Build_Model_Validate_Ctx *ctx,
                                bool error,
@@ -60,68 +54,6 @@ static bool bm_target_type_is_valid(Target_Type type) {
     return false;
 }
 
-static bool bm_sv_eq_ci_lit(String_View sv, const char *lit) {
-    if (!lit) return false;
-    size_t n = strlen(lit);
-    if (sv.count != n) return false;
-    for (size_t i = 0; i < n; i++) {
-        char a = (char)tolower((unsigned char)sv.data[i]);
-        char b = (char)tolower((unsigned char)lit[i]);
-        if (a != b) return false;
-    }
-    return true;
-}
-
-static bool bm_sv_ends_with_ci_lit(String_View sv, const char *lit) {
-    if (!lit) return false;
-    size_t n = strlen(lit);
-    if (sv.count < n) return false;
-    size_t start = sv.count - n;
-    for (size_t i = 0; i < n; i++) {
-        char a = (char)tolower((unsigned char)sv.data[start + i]);
-        char b = (char)tolower((unsigned char)lit[i]);
-        if (a != b) return false;
-    }
-    return true;
-}
-
-static bool bm_is_probable_target_ref(String_View item) {
-    if (item.count == 0 || !item.data) return false;
-    if (item.count >= 2 && item.data[0] == '$' && item.data[1] == '<') return false;
-
-    if (bm_sv_eq_ci_lit(item, "debug") ||
-        bm_sv_eq_ci_lit(item, "optimized") ||
-        bm_sv_eq_ci_lit(item, "general")) {
-        return false;
-    }
-
-    char c0 = item.data[0];
-    if (c0 == '-' || c0 == '/' || c0 == '\\' || c0 == '.') return false;
-
-    for (size_t i = 0; i < item.count; i++) {
-        char c = item.data[i];
-        if (c == '/' || c == '\\' || c == ':' || c == ';' || isspace((unsigned char)c)) return false;
-    }
-
-    if (bm_sv_ends_with_ci_lit(item, ".a")) return false;
-    if (bm_sv_ends_with_ci_lit(item, ".lib")) return false;
-    if (bm_sv_ends_with_ci_lit(item, ".so")) return false;
-    if (bm_sv_ends_with_ci_lit(item, ".dylib")) return false;
-    if (bm_sv_ends_with_ci_lit(item, ".dll")) return false;
-    if (bm_sv_ends_with_ci_lit(item, ".framework")) return false;
-    return true;
-}
-
-static int bm_find_target_index(const Build_Model *model, String_View name) {
-    if (!model || name.count == 0) return -1;
-    for (size_t i = 0; i < model->target_count; i++) {
-        const Build_Target *t = model->targets[i];
-        if (!t) continue;
-        if (nob_sv_eq(t->name, name)) return (int)i;
-    }
-    return -1;
-}
-
 static void bm_validate_structural(Build_Model_Validate_Ctx *ctx) {
     if (!ctx || !ctx->model) return;
 
@@ -153,6 +85,14 @@ static void bm_validate_structural(Build_Model_Validate_Ctx *ctx) {
                                "ensure target declaration uses a supported type");
         }
 
+        if (target->owner_directory_index >= model->directory_node_count) {
+            bm_validate_report(ctx,
+                               true,
+                               target,
+                               nob_temp_sprintf("target owner directory index out of range (%zu)", target->owner_directory_index),
+                               "ensure builder assigns a valid directory scope to each target");
+        }
+
         for (size_t j = i + 1; j < model->target_count; j++) {
             const Build_Target *other = model->targets[j];
             if (!other) continue;
@@ -171,22 +111,20 @@ static void bm_validate_structural(Build_Model_Validate_Ctx *ctx) {
 static void bm_validate_ref_list(Build_Model_Validate_Ctx *ctx,
                                  const Build_Target *owner,
                                  const String_List *list,
-                                 const char *list_name,
-                                 Build_Model_Edge_Mode edge_mode) {
+                                 const char *list_name) {
     if (!ctx || !ctx->model || !owner || !list) return;
 
     for (size_t i = 0; i < list->count; i++) {
         String_View ref = list->items[i];
         if (ref.count == 0) continue;
-        if (edge_mode == BM_EDGE_LINK_HEURISTIC && !bm_is_probable_target_ref(ref)) continue;
-        if (bm_find_target_index(ctx->model, ref) >= 0) continue;
+        if (build_model_find_target_index(ctx->model, ref) >= 0) continue;
 
         bm_validate_report(
             ctx,
             true,
             owner,
             nob_temp_sprintf("missing dependency in %s: '%.*s'", list_name ? list_name : "list", SV_Arg(ref)),
-            "declare the dependency target first, or use a library path/flag if it is external"
+            "declare the dependency target before using this dependency edge"
         );
     }
 }
@@ -198,11 +136,9 @@ static void bm_validate_dependencies(Build_Model_Validate_Ctx *ctx) {
         const Build_Target *target = ctx->model->targets[i];
         if (!target) continue;
 
-        bm_validate_ref_list(ctx, target, &target->dependencies, "dependencies", BM_EDGE_LINK_DIRECT);
-        bm_validate_ref_list(ctx, target, &target->object_dependencies, "object_dependencies", BM_EDGE_LINK_DIRECT);
-        bm_validate_ref_list(ctx, target, &target->interface_dependencies, "interface_dependencies", BM_EDGE_LINK_DIRECT);
-        bm_validate_ref_list(ctx, target, &target->link_libraries, "link_libraries", BM_EDGE_LINK_HEURISTIC);
-        bm_validate_ref_list(ctx, target, &target->interface_libs, "interface_libs", BM_EDGE_LINK_HEURISTIC);
+        bm_validate_ref_list(ctx, target, &target->dependencies, "dependencies");
+        bm_validate_ref_list(ctx, target, &target->object_dependencies, "object_dependencies");
+        bm_validate_ref_list(ctx, target, &target->interface_dependencies, "interface_dependencies");
     }
 }
 
@@ -224,15 +160,6 @@ static bool bm_cycle_visit(Build_Model_Validate_Ctx *ctx, size_t idx, uint8_t *s
         &target->dependencies,
         &target->object_dependencies,
         &target->interface_dependencies,
-        &target->link_libraries,
-        &target->interface_libs,
-    };
-    Build_Model_Edge_Mode modes[] = {
-        BM_EDGE_LINK_DIRECT,
-        BM_EDGE_LINK_DIRECT,
-        BM_EDGE_LINK_DIRECT,
-        BM_EDGE_LINK_HEURISTIC,
-        BM_EDGE_LINK_HEURISTIC,
     };
 
     for (size_t li = 0; li < sizeof(lists) / sizeof(lists[0]); li++) {
@@ -240,8 +167,7 @@ static bool bm_cycle_visit(Build_Model_Validate_Ctx *ctx, size_t idx, uint8_t *s
         for (size_t i = 0; i < list->count; i++) {
             String_View ref = list->items[i];
             if (ref.count == 0) continue;
-            if (modes[li] == BM_EDGE_LINK_HEURISTIC && !bm_is_probable_target_ref(ref)) continue;
-            int dep_idx = bm_find_target_index(ctx->model, ref);
+            int dep_idx = build_model_find_target_index(ctx->model, ref);
             if (dep_idx < 0) continue;
             if (bm_cycle_visit(ctx, (size_t)dep_idx, state)) return true;
         }
@@ -251,7 +177,41 @@ static bool bm_cycle_visit(Build_Model_Validate_Ctx *ctx, size_t idx, uint8_t *s
     return false;
 }
 
-bool build_model_check_cycles(const Build_Model *model, void *diagnostics) {
+static bool bm_install_rule_has_destination(String_View entry) {
+    if (entry.count == 0 || !entry.data) return false;
+    for (size_t i = 0; i < entry.count; i++) {
+        if (entry.data[i] == '\t') {
+            return (i + 1) < entry.count;
+        }
+    }
+    return false;
+}
+
+static bool bm_has_cpack_group(const Build_Model *model, String_View name) {
+    if (!model || name.count == 0) return false;
+    for (size_t i = 0; i < model->cpack_component_group_count; i++) {
+        if (nob_sv_eq(model->cpack_component_groups[i].name, name)) return true;
+    }
+    return false;
+}
+
+static bool bm_has_cpack_install_type(const Build_Model *model, String_View name) {
+    if (!model || name.count == 0) return false;
+    for (size_t i = 0; i < model->cpack_install_type_count; i++) {
+        if (nob_sv_eq(model->cpack_install_types[i].name, name)) return true;
+    }
+    return false;
+}
+
+static bool bm_has_cpack_component(const Build_Model *model, String_View name) {
+    if (!model || name.count == 0) return false;
+    for (size_t i = 0; i < model->cpack_component_count; i++) {
+        if (nob_sv_eq(model->cpack_components[i].name, name)) return true;
+    }
+    return false;
+}
+
+bool build_model_check_cycles_ex(const Build_Model *model, Arena *scratch, void *diagnostics) {
     (void)diagnostics;
     if (!model) {
         diag_log(DIAG_SEV_ERROR,
@@ -259,21 +219,28 @@ bool build_model_check_cycles(const Build_Model *model, void *diagnostics) {
                  "<build-model>",
                  0,
                  0,
-                 "build_model_check_cycles",
+                 "build_model_check_cycles_ex",
                  "null model passed to cycle checker",
                  "ensure builder_finish() succeeded before validation");
         return false;
     }
     if (model->target_count == 0) return true;
 
-    uint8_t *state = (uint8_t*)calloc(model->target_count, sizeof(uint8_t));
+    uint8_t *state = NULL;
+    bool using_heap = false;
+    if (scratch) {
+        state = arena_alloc_array_zero(scratch, uint8_t, model->target_count);
+    } else {
+        state = (uint8_t*)calloc(model->target_count, sizeof(uint8_t));
+        using_heap = true;
+    }
     if (!state) {
         diag_log(DIAG_SEV_ERROR,
                  "build_model_validate",
                  "<build-model>",
                  0,
                  0,
-                 "build_model_check_cycles",
+                 "build_model_check_cycles_ex",
                  "out of memory during cycle check",
                  "retry with more memory");
         return false;
@@ -300,8 +267,12 @@ bool build_model_check_cycles(const Build_Model *model, void *diagnostics) {
         }
     }
 
-    free(state);
+    if (using_heap) free(state);
     return !has_cycle;
+}
+
+bool build_model_check_cycles(const Build_Model *model, void *diagnostics) {
+    return build_model_check_cycles_ex(model, NULL, diagnostics);
 }
 
 static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
@@ -343,6 +314,85 @@ static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
                                target,
                                "target contains duplicate sources",
                                "deduplicate target sources to avoid repeated compilation");
+        }
+    }
+
+    for (size_t i = 0; i < ctx->model->test_count; i++) {
+        const Build_Test *test = &ctx->model->tests[i];
+        if (test->name.count == 0) {
+            bm_validate_report(ctx,
+                               true,
+                               NULL,
+                               nob_temp_sprintf("test at index %zu has empty name", i),
+                               "set a non-empty test name in add_test()");
+        }
+        if (test->command.count == 0) {
+            bm_validate_report(ctx,
+                               true,
+                               NULL,
+                               nob_temp_sprintf("test '%.*s' has empty command", SV_Arg(test->name)),
+                               "set COMMAND in add_test()");
+        }
+    }
+
+    const String_List *install_lists[] = {
+        &ctx->model->install_rules.targets,
+        &ctx->model->install_rules.files,
+        &ctx->model->install_rules.programs,
+        &ctx->model->install_rules.directories,
+    };
+    const char *install_names[] = {"TARGETS", "FILES", "PROGRAMS", "DIRECTORY"};
+    for (size_t li = 0; li < sizeof(install_lists) / sizeof(install_lists[0]); li++) {
+        const String_List *list = install_lists[li];
+        for (size_t i = 0; i < list->count; i++) {
+            if (!bm_install_rule_has_destination(list->items[i])) {
+                bm_validate_report(ctx,
+                                   true,
+                                   NULL,
+                                   nob_temp_sprintf("install(%s) rule missing destination at index %zu", install_names[li], i),
+                                   "provide DESTINATION for every install() rule");
+            }
+        }
+    }
+
+    for (size_t i = 0; i < ctx->model->cpack_component_count; i++) {
+        const CPack_Component *component = &ctx->model->cpack_components[i];
+        if (component->group.count > 0 && !bm_has_cpack_group(ctx->model, component->group)) {
+            bm_validate_report(ctx,
+                               true,
+                               NULL,
+                               nob_temp_sprintf("cpack component '%.*s' references unknown group '%.*s'",
+                                                SV_Arg(component->name),
+                                                SV_Arg(component->group)),
+                               "declare the group via cpack_add_component_group()");
+        }
+
+        for (size_t d = 0; d < component->depends.count; d++) {
+            String_View dep = component->depends.items[d];
+            if (dep.count == 0) continue;
+            if (!bm_has_cpack_component(ctx->model, dep)) {
+                bm_validate_report(ctx,
+                                   true,
+                                   NULL,
+                                   nob_temp_sprintf("cpack component '%.*s' depends on unknown component '%.*s'",
+                                                    SV_Arg(component->name),
+                                                    SV_Arg(dep)),
+                                   "declare dependency component via cpack_add_component()");
+            }
+        }
+
+        for (size_t t = 0; t < component->install_types.count; t++) {
+            String_View install_type = component->install_types.items[t];
+            if (install_type.count == 0) continue;
+            if (!bm_has_cpack_install_type(ctx->model, install_type)) {
+                bm_validate_report(ctx,
+                                   true,
+                                   NULL,
+                                   nob_temp_sprintf("cpack component '%.*s' references unknown install type '%.*s'",
+                                                    SV_Arg(component->name),
+                                                    SV_Arg(install_type)),
+                                   "declare install type via cpack_add_install_type()");
+            }
         }
     }
 }

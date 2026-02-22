@@ -3,7 +3,6 @@
 
 #include "build_model.h"
 
-
 // --- Core Lookup ---
 const Build_Target *bm_get_target(const Build_Model *m, String_View name);
 const Build_Target *bm_query_target_by_name(const Build_Model *model, String_View name);
@@ -23,6 +22,11 @@ void bm_query_target_sources(const Build_Target *target, const String_View **out
 void bm_query_target_includes(const Build_Target *target, const String_View **out_items, size_t *out_count);
 void bm_query_target_deps(const Build_Target *target, const String_View **out_items, size_t *out_count);
 void bm_query_target_link_libraries(const Build_Target *target, const String_View **out_items, size_t *out_count);
+bool bm_query_target_effective_link_libraries(const Build_Target *target,
+                                              Arena *scratch_arena,
+                                              const Logic_Eval_Context *logic_ctx,
+                                              const String_View **out_items,
+                                              size_t *out_count);
 
 // --- Project Metadata ---
 String_View bm_query_project_name(const Build_Model *model);

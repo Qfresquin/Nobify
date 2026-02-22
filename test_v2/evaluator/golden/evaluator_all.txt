@@ -12,7 +12,7 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 targ
 
 === CASE golden_targets_props_events ===
 DIAG errors=0 warnings=0
-EVENTS count=11
+EVENTS count=13
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='TargetDemo' version='' description='' languages=''
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='main.c'
@@ -22,8 +22,10 @@ EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='lib' 
 EV[6] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
 EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
 EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE
-EV[9] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=7 col=1 target='app' item='lib' vis=PRIVATE
-EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET
+EV[9] kind=EV_TARGET_LINK_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wl,--as-needed' vis=PRIVATE
+EV[10] kind=EV_TARGET_LINK_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='lib' vis=PRIVATE
+EV[11] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=9 col=1 target='app' item='lib' vis=PRIVATE
+EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET
 === END CASE ===
 
 === CASE golden_find_package_and_include ===
@@ -46,13 +48,14 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 targ
 === END CASE ===
 
 === CASE golden_cpack_commands ===
-DIAG errors=0 warnings=2
-EVENTS count=5
+DIAG errors=0 warnings=0
+EVENTS count=6
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CPackDemo' version='2.0' description='' languages=''
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='cpack_add_install_type' cause='Unknown command' hint='Ignored during evaluation'
-EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='cpack_add_component' cause='Unknown command' hint='Ignored during evaluation'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='pkg_app' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='pkg_app' path='main.c'
+EV[1] kind=EV_CPACK_ADD_INSTALL_TYPE file='CMakeLists.txt' line=2 col=1 name='Full' display_name='Full'
+EV[2] kind=EV_CPACK_ADD_COMPONENT_GROUP file='CMakeLists.txt' line=3 col=1 name='base' display_name='Base Group' description='Core Group' parent_group='' expanded=0 bold_title=0
+EV[3] kind=EV_CPACK_ADD_COMPONENT file='CMakeLists.txt' line=4 col=1 name='core' display_name='Core' description='' group='' depends='' install_types='' required=0 hidden=0 disabled=0 downloaded=0
+EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='pkg_app' type=EXECUTABLE
+EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='pkg_app' path='main.c'
 === END CASE ===
 
 === CASE golden_probes_and_try_compile ===
@@ -66,13 +69,18 @@ EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe
 === END CASE ===
 
 === CASE golden_ctest_meta ===
-DIAG errors=0 warnings=2
-EVENTS count=5
+DIAG errors=0 warnings=0
+EVENTS count=10
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages=''
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='enable_testing' cause='Unknown command' hint='Ignored during evaluation'
-EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=WARNING component='dispatcher' command='add_test' cause='Unknown command' hint='Ignored during evaluation'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='app' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='app' path='main.c'
+EV[1] kind=EV_TESTING_ENABLE file='CMakeLists.txt' line=2 col=1 enabled=1
+EV[2] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke' command='app' working_dir='' command_expand_lists=0
+EV[3] kind=EV_TEST_ADD file='CMakeLists.txt' line=4 col=1 name='legacy' command='app' working_dir='' command_expand_lists=0
+EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='app' type=EXECUTABLE
+EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='app' path='main.c'
+EV[6] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=6 col=1 rule_type=0 item='app' destination='bin'
+EV[7] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=7 col=1 rule_type=1 item='readme.txt' destination='share/doc'
+EV[8] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=8 col=1 rule_type=2 item='run.sh' destination='bin'
+EV[9] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=9 col=1 rule_type=3 item='assets' destination='share/assets'
 === END CASE ===
 
 === CASE golden_misc_path_and_property ===
@@ -97,18 +105,23 @@ EVENTS count=0
 
 === CASE dispatcher_command_handlers ===
 DIAG errors=0 warnings=0
-EVENTS count=11
+EVENTS count=16
 EV[0] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-DLEGACY=1'
 EV[1] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-fPIC'
 EV[2] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=2 col=1 item='-Wall'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='app' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='app' path='main.c'
-EV[5] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=3 col=1 target='app' item='-DLEGACY=1' vis=UNSPECIFIED
-EV[6] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=3 col=1 target='app' item='-fPIC' vis=UNSPECIFIED
-EV[7] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=3 col=1 target='app' item='-Wall' vis=UNSPECIFIED
-EV[8] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
-EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wextra' vis=PRIVATE
+EV[3] kind=EV_GLOBAL_LINK_OPTIONS file='CMakeLists.txt' line=3 col=1 item='-Wl,--gc-sections'
+EV[4] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='m'
+EV[5] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='pthread'
+EV[6] kind=EV_DIRECTORY_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=5 col=1 path='include' is_system=1 is_before=0
+EV[7] kind=EV_DIRECTORY_LINK_DIRECTORIES file='CMakeLists.txt' line=6 col=1 path='lib' is_before=1
+EV[8] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='app' type=EXECUTABLE
+EV[9] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='app' path='main.c'
+EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-DLEGACY=1' vis=UNSPECIFIED
+EV[11] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=UNSPECIFIED
+EV[12] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=UNSPECIFIED
+EV[13] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[15] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE
 === END CASE ===
 
 === CASE dispatcher_cmake_minimum_required ===

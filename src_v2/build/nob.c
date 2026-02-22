@@ -9,6 +9,7 @@ static const char *APP_BIN = "build/nobify";
 #define TEST_LEXER_BIN "build/v2/test_lexer"
 #define TEST_PARSER_BIN "build/v2/test_parser"
 #define TEST_EVALUATOR_BIN "build/v2/test_evaluator"
+#define TEST_PIPELINE_BIN "build/v2/test_pipeline"
 
 typedef bool (*Test_Module_Run_Fn)(void);
 
@@ -21,6 +22,7 @@ typedef struct {
 static bool test_lexer(void);
 static bool test_parser(void);
 static bool test_evaluator(void);
+static bool test_pipeline(void);
 static bool test_arena(void);
 
 static Test_Module TEST_MODULES[] = {
@@ -28,6 +30,7 @@ static Test_Module TEST_MODULES[] = {
     {"lexer", TEST_LEXER_BIN, test_lexer},
     {"parser", TEST_PARSER_BIN, test_parser},
     {"evaluator", TEST_EVALUATOR_BIN, test_evaluator},
+    {"pipeline", TEST_PIPELINE_BIN, test_pipeline},
 };
 
 static void append_v2_common_flags(Nob_Cmd *cmd) {
@@ -46,7 +49,6 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/evaluator",
         "-Isrc_v2/genex",
         "-Isrc_v2/build_model",
-        "-I", "src obsoleto so use de referencia/build_model",
         "-I", "src obsoleto so use de referencia/logic_model",
         "-I", "src obsoleto so use de referencia/ds_adapter",
         "-Itest_v2");
@@ -81,11 +83,11 @@ static void append_v2_parser_runtime_sources(Nob_Cmd *cmd) {
 
 static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "src_v2/build_model/build_model.c",
         "src_v2/build_model/build_model_builder.c",
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_freeze.c",
         "src_v2/build_model/build_model_query.c",
-        "src obsoleto so use de referencia/build_model/build_model.c",
         "src obsoleto so use de referencia/logic_model/logic_model.c",
         "src obsoleto so use de referencia/ds_adapter/ds_adapter.c");
 }
@@ -123,6 +125,12 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/evaluator/test_evaluator_v2_main.c",
         "test_v2/evaluator/test_evaluator_v2_suite.c");
+}
+
+static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/pipeline/test_pipeline_v2_main.c",
+        "test_v2/pipeline/test_pipeline_v2_suite.c");
 }
 
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
@@ -253,10 +261,32 @@ static bool build_test_evaluator(void) {
     return nob_cmd_run_sync(cmd);
 }
 
+static bool build_test_pipeline(void) {
+    if (!nob_mkdir_if_not_exists("build")) return false;
+    if (!nob_mkdir_if_not_exists("build/v2")) return false;
+
+    Nob_Cmd cmd = {0};
+    nob_cc(&cmd);
+    append_v2_common_flags(&cmd);
+    nob_cmd_append(&cmd, "-o", TEST_PIPELINE_BIN);
+    append_v2_pipeline_test_sources(&cmd);
+    append_v2_evaluator_runtime_sources(&cmd);
+    append_v2_build_model_runtime_sources(&cmd);
+    append_v2_pcre_sources(&cmd);
+    append_platform_link_flags(&cmd);
+    return nob_cmd_run_sync(cmd);
+}
+
 static bool test_evaluator(void) {
     nob_log(NOB_INFO, "[v2] build+run evaluator");
     if (!build_test_evaluator()) return false;
     return run_binary(TEST_EVALUATOR_BIN);
+}
+
+static bool test_pipeline(void) {
+    nob_log(NOB_INFO, "[v2] build+run pipeline");
+    if (!build_test_pipeline()) return false;
+    return run_binary(TEST_PIPELINE_BIN);
 }
 
 static bool test_arena(void) {
@@ -315,9 +345,10 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "test-lexer") == 0) return test_lexer() ? 0 : 1;
     if (strcmp(cmd, "test-parser") == 0) return test_parser() ? 0 : 1;
     if (strcmp(cmd, "test-evaluator") == 0) return test_evaluator() ? 0 : 1;
+    if (strcmp(cmd, "test-pipeline") == 0) return test_pipeline() ? 0 : 1;
     if (strcmp(cmd, "test-v2") == 0) return test_v2_all() ? 0 : 1;
     if (strcmp(cmd, "clean") == 0) return clean_all() ? 0 : 1;
 
-    nob_log(NOB_INFO, "Usage: %s [build|test-arena|test-lexer|test-parser|test-evaluator|test-v2|clean]", argv[0]);
+    nob_log(NOB_INFO, "Usage: %s [build|test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-v2|clean]", argv[0]);
     return 1;
 }

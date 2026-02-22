@@ -1,6 +1,7 @@
 #include "build_model_builder.h"
 
 #include "../diagnostics/diagnostics.h"
+#include "arena_dyn.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -16,7 +17,12 @@ struct Build_Model_Builder {
     Arena *arena;
     Build_Model *model;
     Build_Model_Builder_Scope current_scope;
+    size_t *directory_stack;
+    size_t directory_stack_count;
+    size_t directory_stack_capacity;
+    size_t current_directory_index;
     bool has_fatal_error;
+    bool warned_before_after_limitation;
     void *diagnostics;
 };
 
@@ -40,7 +46,25 @@ typedef struct {
     String_View package_name;
 } Builder_Found_Package_Ctx;
 
+typedef struct {
+    CPack_Component *component;
+    Arena *arena;
+} Builder_CPack_Component_Ctx;
+
 static bool builder_append_project_language(String_View item, void *userdata);
+static void builder_warn(const Cmake_Event *ev, const char *cause, const char *hint);
+static bool builder_push_directory_scope(Build_Model_Builder *builder, String_View source_dir, String_View binary_dir);
+static bool builder_pop_directory_scope(Build_Model_Builder *builder);
+
+static void builder_warn_before_after_once(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || builder->warned_before_after_limitation) return;
+    builder->warned_before_after_limitation = true;
+    builder_warn(
+        ev,
+        "BEFORE/AFTER ordering is not fully materialized in build model v2",
+        "event order is preserved by append; explicit precedence modeling is deferred"
+    );
+}
 
 static const char *builder_event_command_name(Cmake_Event_Kind kind) {
     switch (kind) {
@@ -55,8 +79,22 @@ static const char *builder_event_command_name(Cmake_Event_Kind kind) {
         case EV_TARGET_COMPILE_DEFINITIONS: return "target_compile_definitions";
         case EV_TARGET_COMPILE_OPTIONS: return "target_compile_options";
         case EV_TARGET_LINK_LIBRARIES: return "target_link_libraries";
+        case EV_TARGET_LINK_OPTIONS: return "target_link_options";
+        case EV_TARGET_LINK_DIRECTORIES: return "target_link_directories";
+        case EV_DIR_PUSH: return "dir_push";
+        case EV_DIR_POP: return "dir_pop";
+        case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "include_directories";
+        case EV_DIRECTORY_LINK_DIRECTORIES: return "link_directories";
         case EV_GLOBAL_COMPILE_DEFINITIONS: return "add_compile_definitions";
         case EV_GLOBAL_COMPILE_OPTIONS: return "add_compile_options";
+        case EV_GLOBAL_LINK_OPTIONS: return "add_link_options";
+        case EV_GLOBAL_LINK_LIBRARIES: return "link_libraries";
+        case EV_TESTING_ENABLE: return "enable_testing";
+        case EV_TEST_ADD: return "add_test";
+        case EV_INSTALL_ADD_RULE: return "install";
+        case EV_CPACK_ADD_INSTALL_TYPE: return "cpack_add_install_type";
+        case EV_CPACK_ADD_COMPONENT_GROUP: return "cpack_add_component_group";
+        case EV_CPACK_ADD_COMPONENT: return "cpack_add_component";
         case EV_FIND_PACKAGE: return "find_package";
     }
     return "builder";
@@ -172,6 +210,56 @@ static void builder_warn(const Cmake_Event *ev, const char *cause, const char *h
                       hint);
 }
 
+static bool builder_push_directory_scope(Build_Model_Builder *builder, String_View source_dir, String_View binary_dir) {
+    if (!builder || !builder->model || !builder->arena) return false;
+
+    if (builder->directory_stack_count > 0 &&
+        builder->current_directory_index < builder->model->directory_node_count) {
+        Build_Directory_Node *current = &builder->model->directory_nodes[builder->current_directory_index];
+        if (nob_sv_eq(current->source_dir, source_dir) &&
+            nob_sv_eq(current->binary_dir, binary_dir)) {
+            if (!arena_da_reserve(builder->arena,
+                                  (void**)&builder->directory_stack,
+                                  &builder->directory_stack_capacity,
+                                  sizeof(*builder->directory_stack),
+                                  builder->directory_stack_count + 1)) {
+                return false;
+            }
+            builder->directory_stack[builder->directory_stack_count++] = builder->current_directory_index;
+            return true;
+        }
+    }
+
+    int parent_index = builder->directory_stack_count > 0
+        ? (int)builder->directory_stack[builder->directory_stack_count - 1]
+        : -1;
+    Build_Directory_Node *node = build_model_add_directory_node(builder->model,
+                                                                 builder->arena,
+                                                                 source_dir,
+                                                                 binary_dir,
+                                                                 parent_index);
+    if (!node) return false;
+
+    if (!arena_da_reserve(builder->arena,
+                          (void**)&builder->directory_stack,
+                          &builder->directory_stack_capacity,
+                          sizeof(*builder->directory_stack),
+                          builder->directory_stack_count + 1)) {
+        return false;
+    }
+    builder->directory_stack[builder->directory_stack_count++] = node->index;
+    builder->current_directory_index = node->index;
+    return true;
+}
+
+static bool builder_pop_directory_scope(Build_Model_Builder *builder) {
+    if (!builder) return false;
+    if (builder->directory_stack_count <= 1) return true;
+    builder->directory_stack_count--;
+    builder->current_directory_index = builder->directory_stack[builder->directory_stack_count - 1];
+    return true;
+}
+
 static Target_Type builder_target_type_from_event(Cmake_Target_Type type) {
     switch (type) {
         case EV_TARGET_EXECUTABLE: return TARGET_EXECUTABLE;
@@ -183,6 +271,16 @@ static Target_Type builder_target_type_from_event(Cmake_Target_Type type) {
         case EV_TARGET_LIBRARY_UNKNOWN: return TARGET_UTILITY;
     }
     return TARGET_UTILITY;
+}
+
+static Install_Rule_Type builder_install_rule_type_from_event(Cmake_Install_Rule_Type type) {
+    switch (type) {
+        case EV_INSTALL_RULE_TARGET: return INSTALL_RULE_TARGET;
+        case EV_INSTALL_RULE_FILE: return INSTALL_RULE_FILE;
+        case EV_INSTALL_RULE_PROGRAM: return INSTALL_RULE_PROGRAM;
+        case EV_INSTALL_RULE_DIRECTORY: return INSTALL_RULE_DIRECTORY;
+    }
+    return INSTALL_RULE_FILE;
 }
 
 static Visibility builder_visibility_from_event(const Build_Target *target,
@@ -297,6 +395,20 @@ static bool builder_append_target_option_item(String_View item, void *userdata) 
     return true;
 }
 
+static bool builder_append_target_link_option_item(String_View item, void *userdata) {
+    Builder_Target_Value_Ctx *ctx = (Builder_Target_Value_Ctx*)userdata;
+    if (!ctx || !ctx->target || !ctx->arena) return false;
+    build_target_add_link_option(ctx->target, ctx->arena, item, ctx->visibility, CONFIG_ALL);
+    return true;
+}
+
+static bool builder_append_target_link_directory_item(String_View item, void *userdata) {
+    Builder_Target_Value_Ctx *ctx = (Builder_Target_Value_Ctx*)userdata;
+    if (!ctx || !ctx->target || !ctx->arena) return false;
+    build_target_add_link_directory(ctx->target, ctx->arena, item, ctx->visibility, CONFIG_ALL);
+    return true;
+}
+
 static bool builder_append_target_source_item(String_View item, void *userdata) {
     Builder_Target_Value_Ctx *ctx = (Builder_Target_Value_Ctx*)userdata;
     if (!ctx || !ctx->target || !ctx->arena) return false;
@@ -310,6 +422,20 @@ static bool builder_append_found_package_location(String_View item, void *userda
     Found_Package *pkg = build_model_add_package(ctx->builder->model, ctx->package_name, true);
     if (!pkg) return false;
     string_list_add_unique(&pkg->libraries, ctx->builder->arena, item);
+    return true;
+}
+
+static bool builder_append_cpack_component_dependency_item(String_View item, void *userdata) {
+    Builder_CPack_Component_Ctx *ctx = (Builder_CPack_Component_Ctx*)userdata;
+    if (!ctx || !ctx->component || !ctx->arena) return false;
+    build_cpack_component_add_dependency(ctx->component, ctx->arena, item);
+    return true;
+}
+
+static bool builder_append_cpack_component_install_type_item(String_View item, void *userdata) {
+    Builder_CPack_Component_Ctx *ctx = (Builder_CPack_Component_Ctx*)userdata;
+    if (!ctx || !ctx->component || !ctx->arena) return false;
+    build_cpack_component_add_install_type(ctx->component, ctx->arena, item);
     return true;
 }
 
@@ -435,6 +561,7 @@ static bool builder_handle_event_target_declare(Build_Model_Builder *builder, co
                             nob_temp_sprintf("failed to create target '"SV_Fmt"'", SV_Arg(name)),
                             "check target type consistency and memory allocation");
     }
+    target->owner_directory_index = builder->current_directory_index;
     return true;
 }
 
@@ -503,8 +630,11 @@ static bool builder_handle_event_target_include_directories(Build_Model_Builder 
         .visibility = vis,
     };
 
+    if (ev->as.target_include_directories.is_before) {
+        builder_warn_before_after_once(builder, ev);
+    }
+
     (void)ev->as.target_include_directories.is_system;
-    (void)ev->as.target_include_directories.is_before;
 
     return builder_for_each_semicolon_item(ev->as.target_include_directories.path,
                                            true,
@@ -591,6 +721,207 @@ static bool builder_handle_event_global_compile_options(Build_Model_Builder *bui
                                            builder);
 }
 
+static bool builder_handle_event_target_link_options(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !ev) return false;
+    Build_Target *target = builder_require_target(builder, ev, ev->as.target_link_options.target_name);
+    if (!target) return false;
+
+    Visibility vis = builder_visibility_from_event(target, ev->as.target_link_options.visibility);
+    Builder_Target_Value_Ctx ctx = {
+        .target = target,
+        .arena = builder->arena,
+        .visibility = vis,
+    };
+    return builder_for_each_semicolon_item(ev->as.target_link_options.item,
+                                           true,
+                                           builder_append_target_link_option_item,
+                                           &ctx);
+}
+
+static bool builder_handle_event_target_link_directories(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !ev) return false;
+    Build_Target *target = builder_require_target(builder, ev, ev->as.target_link_directories.target_name);
+    if (!target) return false;
+
+    Visibility vis = builder_visibility_from_event(target, ev->as.target_link_directories.visibility);
+    Builder_Target_Value_Ctx ctx = {
+        .target = target,
+        .arena = builder->arena,
+        .visibility = vis,
+    };
+    return builder_for_each_semicolon_item(ev->as.target_link_directories.path,
+                                           true,
+                                           builder_append_target_link_directory_item,
+                                           &ctx);
+}
+
+static bool builder_handle_event_dir_push(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !ev) return false;
+    if (!builder_push_directory_scope(builder, ev->as.dir_push.source_dir, ev->as.dir_push.binary_dir)) {
+        return builder_fail(builder, ev, "failed to push directory scope", "check memory allocation");
+    }
+    return true;
+}
+
+static bool builder_handle_event_dir_pop(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !ev) return false;
+    if (!builder_pop_directory_scope(builder)) {
+        return builder_fail(builder, ev, "failed to pop directory scope", "scope stack is inconsistent");
+    }
+    return true;
+}
+
+static bool builder_handle_event_directory_include_directories(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    if (ev->as.directory_include_directories.is_before) {
+        builder_warn_before_after_once(builder, ev);
+    }
+    build_model_add_include_directory_scoped(builder->model,
+                                             builder->arena,
+                                             builder->current_directory_index,
+                                             ev->as.directory_include_directories.path,
+                                             ev->as.directory_include_directories.is_system);
+    return true;
+}
+
+static bool builder_handle_event_directory_link_directories(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    if (ev->as.directory_link_directories.is_before) {
+        builder_warn_before_after_once(builder, ev);
+    }
+    build_model_add_link_directory_scoped(builder->model,
+                                          builder->arena,
+                                          builder->current_directory_index,
+                                          ev->as.directory_link_directories.path);
+    return true;
+}
+
+static bool builder_handle_event_global_link_options(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    build_model_add_global_link_option(builder->model, builder->arena, ev->as.global_link_options.item);
+    return true;
+}
+
+static bool builder_handle_event_global_link_libraries(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    build_model_add_global_link_library(builder->model, builder->arena, ev->as.global_link_libraries.item);
+    return true;
+}
+
+static bool builder_handle_event_testing_enable(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    build_model_set_testing_enabled(builder->model, ev->as.testing_enable.enabled);
+    return true;
+}
+
+static bool builder_handle_event_test_add(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    Build_Test *test = build_model_add_test(builder->model,
+                                            ev->as.test_add.name,
+                                            ev->as.test_add.command,
+                                            ev->as.test_add.working_dir,
+                                            ev->as.test_add.command_expand_lists);
+    if (!test) {
+        return builder_fail(builder, ev, "failed to add test from EV_TEST_ADD", "check memory allocation");
+    }
+    build_model_set_testing_enabled(builder->model, true);
+    return true;
+}
+
+static bool builder_handle_event_install_add_rule(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    Install_Rule_Type type = builder_install_rule_type_from_event(ev->as.install_add_rule.rule_type);
+    build_model_add_install_rule(builder->model,
+                                 builder->arena,
+                                 type,
+                                 ev->as.install_add_rule.item,
+                                 ev->as.install_add_rule.destination);
+    build_model_set_install_enabled(builder->model, true);
+    return true;
+}
+
+static bool builder_handle_event_cpack_add_install_type(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    CPack_Install_Type *install_type = build_model_ensure_cpack_install_type(builder->model,
+                                                                              ev->as.cpack_add_install_type.name);
+    if (!install_type) {
+        return builder_fail(builder, ev, "failed to add CPack install type", "check memory allocation");
+    }
+    if (ev->as.cpack_add_install_type.display_name.count > 0) {
+        build_cpack_install_type_set_display_name(install_type, ev->as.cpack_add_install_type.display_name);
+    }
+    return true;
+}
+
+static bool builder_handle_event_cpack_add_component_group(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    CPack_Component_Group *group = build_model_ensure_cpack_group(builder->model,
+                                                                  ev->as.cpack_add_component_group.name);
+    if (!group) {
+        return builder_fail(builder, ev, "failed to add CPack component group", "check memory allocation");
+    }
+
+    if (ev->as.cpack_add_component_group.display_name.count > 0) {
+        build_cpack_group_set_display_name(group, ev->as.cpack_add_component_group.display_name);
+    }
+    if (ev->as.cpack_add_component_group.description.count > 0) {
+        build_cpack_group_set_description(group, ev->as.cpack_add_component_group.description);
+    }
+    if (ev->as.cpack_add_component_group.parent_group.count > 0) {
+        build_cpack_group_set_parent_group(group, ev->as.cpack_add_component_group.parent_group);
+    }
+    build_cpack_group_set_expanded(group, ev->as.cpack_add_component_group.expanded);
+    build_cpack_group_set_bold_title(group, ev->as.cpack_add_component_group.bold_title);
+    return true;
+}
+
+static bool builder_handle_event_cpack_add_component(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    CPack_Component *component = build_model_ensure_cpack_component(builder->model,
+                                                                    ev->as.cpack_add_component.name);
+    if (!component) {
+        return builder_fail(builder, ev, "failed to add CPack component", "check memory allocation");
+    }
+
+    if (ev->as.cpack_add_component.display_name.count > 0) {
+        build_cpack_component_set_display_name(component, ev->as.cpack_add_component.display_name);
+    }
+    if (ev->as.cpack_add_component.description.count > 0) {
+        build_cpack_component_set_description(component, ev->as.cpack_add_component.description);
+    }
+    if (ev->as.cpack_add_component.group.count > 0) {
+        build_cpack_component_set_group(component, ev->as.cpack_add_component.group);
+    }
+
+    build_cpack_component_set_required(component, ev->as.cpack_add_component.required);
+    build_cpack_component_set_hidden(component, ev->as.cpack_add_component.hidden);
+    build_cpack_component_set_disabled(component, ev->as.cpack_add_component.disabled);
+    build_cpack_component_set_downloaded(component, ev->as.cpack_add_component.downloaded);
+
+    build_cpack_component_clear_dependencies(component);
+    build_cpack_component_clear_install_types(component);
+
+    Builder_CPack_Component_Ctx ctx = {
+        .component = component,
+        .arena = builder->arena,
+    };
+
+    if (!builder_for_each_semicolon_item(ev->as.cpack_add_component.depends,
+                                         true,
+                                         builder_append_cpack_component_dependency_item,
+                                         &ctx)) {
+        return builder_fail(builder, ev, "failed to append CPack component dependencies", "check memory allocation");
+    }
+    if (!builder_for_each_semicolon_item(ev->as.cpack_add_component.install_types,
+                                         true,
+                                         builder_append_cpack_component_install_type_item,
+                                         &ctx)) {
+        return builder_fail(builder, ev, "failed to append CPack component install types", "check memory allocation");
+    }
+
+    return true;
+}
+
 static bool builder_handle_event_find_package(Build_Model_Builder *builder, const Cmake_Event *ev) {
     if (!builder || !builder->model || !ev) return false;
 
@@ -651,6 +982,15 @@ Build_Model_Builder *builder_create(Arena *arena, void *diagnostics) {
     string_list_init(&builder->current_scope.compile_defs);
     string_list_init(&builder->current_scope.compile_options);
     builder->has_fatal_error = false;
+    builder->warned_before_after_limitation = false;
+    builder->directory_stack = NULL;
+    builder->directory_stack_count = 0;
+    builder->directory_stack_capacity = 0;
+    builder->current_directory_index = builder->model->root_directory_index;
+
+    if (!builder_push_directory_scope(builder, sv_from_cstr(""), sv_from_cstr(""))) {
+        return NULL;
+    }
 
     return builder;
 }
@@ -693,11 +1033,53 @@ bool builder_apply_event(Build_Model_Builder *builder, const Cmake_Event *ev) {
         case EV_TARGET_LINK_LIBRARIES:
             return builder_handle_event_target_link_libraries(builder, ev);
 
+        case EV_TARGET_LINK_OPTIONS:
+            return builder_handle_event_target_link_options(builder, ev);
+
+        case EV_TARGET_LINK_DIRECTORIES:
+            return builder_handle_event_target_link_directories(builder, ev);
+
+        case EV_DIR_PUSH:
+            return builder_handle_event_dir_push(builder, ev);
+
+        case EV_DIR_POP:
+            return builder_handle_event_dir_pop(builder, ev);
+
+        case EV_DIRECTORY_INCLUDE_DIRECTORIES:
+            return builder_handle_event_directory_include_directories(builder, ev);
+
+        case EV_DIRECTORY_LINK_DIRECTORIES:
+            return builder_handle_event_directory_link_directories(builder, ev);
+
         case EV_GLOBAL_COMPILE_DEFINITIONS:
             return builder_handle_event_global_compile_definitions(builder, ev);
 
         case EV_GLOBAL_COMPILE_OPTIONS:
             return builder_handle_event_global_compile_options(builder, ev);
+
+        case EV_GLOBAL_LINK_OPTIONS:
+            return builder_handle_event_global_link_options(builder, ev);
+
+        case EV_GLOBAL_LINK_LIBRARIES:
+            return builder_handle_event_global_link_libraries(builder, ev);
+
+        case EV_TESTING_ENABLE:
+            return builder_handle_event_testing_enable(builder, ev);
+
+        case EV_TEST_ADD:
+            return builder_handle_event_test_add(builder, ev);
+
+        case EV_INSTALL_ADD_RULE:
+            return builder_handle_event_install_add_rule(builder, ev);
+
+        case EV_CPACK_ADD_INSTALL_TYPE:
+            return builder_handle_event_cpack_add_install_type(builder, ev);
+
+        case EV_CPACK_ADD_COMPONENT_GROUP:
+            return builder_handle_event_cpack_add_component_group(builder, ev);
+
+        case EV_CPACK_ADD_COMPONENT:
+            return builder_handle_event_cpack_add_component(builder, ev);
 
         case EV_FIND_PACKAGE:
             return builder_handle_event_find_package(builder, ev);

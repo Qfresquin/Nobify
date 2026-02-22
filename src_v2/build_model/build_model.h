@@ -1,9 +1,13 @@
-#ifndef BUILD_MODEL_V2_COMPAT_H_
-#define BUILD_MODEL_V2_COMPAT_H_
+#ifndef BUILD_MODEL_H_
+#define BUILD_MODEL_H_
 
-// Temporary compatibility bridge:
-// v2 Build Model modules currently reuse the legacy Build_Model types/API
-// while the dedicated v2 data model is being introduced.
-#include "../../src obsoleto so use de referencia/build_model/build_model.h"
+// Umbrella header kept for backward compatibility.
+// Prefer including only the domain headers needed by each consumer.
+#include "build_model_types.h"
+#include "build_model_collections.h"
+#include "build_model_core.h"
+#include "build_model_cpack.h"
+#include "build_model_custom_command.h"
 
-#endif // BUILD_MODEL_V2_COMPAT_H_
+#endif // BUILD_MODEL_H_
+

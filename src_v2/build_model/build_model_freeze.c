@@ -196,6 +196,7 @@ static bool bm_freeze_copy_target(Build_Model_Freeze_Ctx *ctx,
     dst->name = bm_freeze_intern(ctx, src->name);
     dst->type = src->type;
     dst->owner_model = dst_model;
+    dst->owner_directory_index = src->owner_directory_index;
 
     dst->output_name = bm_freeze_intern(ctx, src->output_name);
     dst->output_directory = bm_freeze_intern(ctx, src->output_directory);
@@ -248,6 +249,38 @@ static bool bm_freeze_copy_target(Build_Model_Freeze_Ctx *ctx,
                                              &dst->post_build_count,
                                              &dst->post_build_capacity)) {
         return false;
+    }
+
+    return true;
+}
+
+static bool bm_freeze_copy_directory_nodes(Build_Model_Freeze_Ctx *ctx,
+                                           const Build_Model *src_model,
+                                           Build_Model *dst_model) {
+    if (!ctx || !src_model || !dst_model) return false;
+    dst_model->directory_node_count = src_model->directory_node_count;
+    dst_model->directory_node_capacity = src_model->directory_node_count;
+    dst_model->root_directory_index = src_model->root_directory_index;
+
+    if (src_model->directory_node_count == 0) {
+        dst_model->directory_nodes = NULL;
+        return true;
+    }
+
+    dst_model->directory_nodes = arena_alloc_array(ctx->arena, Build_Directory_Node, src_model->directory_node_count);
+    if (!dst_model->directory_nodes) return false;
+    memset(dst_model->directory_nodes, 0, sizeof(*dst_model->directory_nodes) * src_model->directory_node_count);
+
+    for (size_t i = 0; i < src_model->directory_node_count; i++) {
+        const Build_Directory_Node *src = &src_model->directory_nodes[i];
+        Build_Directory_Node *dst = &dst_model->directory_nodes[i];
+        dst->index = src->index;
+        dst->parent_index = src->parent_index;
+        dst->source_dir = bm_freeze_intern(ctx, src->source_dir);
+        dst->binary_dir = bm_freeze_intern(ctx, src->binary_dir);
+        if (!bm_freeze_copy_string_list(ctx, &src->include_dirs, &dst->include_dirs)) return false;
+        if (!bm_freeze_copy_string_list(ctx, &src->system_include_dirs, &dst->system_include_dirs)) return false;
+        if (!bm_freeze_copy_string_list(ctx, &src->link_dirs, &dst->link_dirs)) return false;
     }
 
     return true;
@@ -413,6 +446,10 @@ const Build_Model *build_model_freeze(Build_Model_Builder *builder, Arena *out_a
 
     Build_Model *dst_model = build_model_create(out_arena);
     if (!dst_model) return NULL;
+    dst_model->directory_nodes = NULL;
+    dst_model->directory_node_count = 0;
+    dst_model->directory_node_capacity = 0;
+    dst_model->root_directory_index = 0;
 
     dst_model->project_name = bm_freeze_intern(&ctx, src_model->project_name);
     dst_model->project_version = bm_freeze_intern(&ctx, src_model->project_version);
@@ -426,6 +463,7 @@ const Build_Model *build_model_freeze(Build_Model_Builder *builder, Arena *out_a
     if (!bm_freeze_copy_string_list(&ctx, &src_model->directories.include_dirs, &dst_model->directories.include_dirs)) goto fail;
     if (!bm_freeze_copy_string_list(&ctx, &src_model->directories.system_include_dirs, &dst_model->directories.system_include_dirs)) goto fail;
     if (!bm_freeze_copy_string_list(&ctx, &src_model->directories.link_dirs, &dst_model->directories.link_dirs)) goto fail;
+    if (!bm_freeze_copy_directory_nodes(&ctx, src_model, dst_model)) goto fail;
 
     if (!bm_freeze_copy_property_list(&ctx, &src_model->cache_variables, &dst_model->cache_variables)) goto fail;
     bm_freeze_build_property_index(&dst_model->cache_variables, &dst_model->cache_variable_index);

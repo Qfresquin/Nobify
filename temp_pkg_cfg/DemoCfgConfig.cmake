@@ -1,0 +1,6 @@
+if("" STREQUAL "Core;Net")
+  set(DemoCfg_FOUND 1)
+else()
+  set(DemoCfg_FOUND 0)
+endif()
+set(DemoCfg_VERSION 1.2.0)
