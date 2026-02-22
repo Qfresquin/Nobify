@@ -1,10 +1,20 @@
 #include "build_model.h"
 #include "arena_dyn.h"
 #include "ds_adapter.h"
+#include "genex_v2.h"
 #include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 
 static const String_List g_empty_string_list = {0};
 static String_View bm_sv_copy_to_arena(Arena *arena, String_View sv);
+
+typedef struct {
+    char *key;
+    int value;
+} Bm_Genex_Warn_Entry;
+
+static Bm_Genex_Warn_Entry *g_bm_genex_warned = NULL;
 
 static void build_model_heap_cleanup(void *userdata) {
     Build_Model *model = (Build_Model*)userdata;
@@ -419,6 +429,7 @@ Build_Target* build_model_add_target(Build_Model *model,
     }
     target->name = sv_from_cstr(name_copy);
     target->type = type;
+    target->owner_model = model;
     
     // Inicializa listas
     string_list_init(&target->sources);
@@ -1253,6 +1264,67 @@ static bool bm_sv_eq_ci(String_View a, String_View b) {
     return true;
 }
 
+static bool bm_sv_contains_genex(String_View sv) {
+    for (size_t i = 0; i + 1 < sv.count; i++) {
+        if (sv.data[i] == '$' && sv.data[i + 1] == '<') return true;
+    }
+    return false;
+}
+
+static bool bm_genex_warn_should_emit(String_View target_name, String_View property_name, String_View raw_value) {
+    String_Builder sb = {0};
+    nob_sb_append_buf(&sb, target_name.data, target_name.count);
+    nob_sb_append(&sb, '\x1f');
+    nob_sb_append_buf(&sb, property_name.data, property_name.count);
+    nob_sb_append(&sb, '\x1f');
+    nob_sb_append_buf(&sb, raw_value.data, raw_value.count);
+
+    if (sb.count == 0) {
+        nob_sb_free(sb);
+        return false;
+    }
+
+    char *probe = (char*)malloc(sb.count + 1);
+    if (!probe) {
+        nob_sb_free(sb);
+        return true;
+    }
+    memcpy(probe, sb.items, sb.count);
+    probe[sb.count] = '\0';
+    nob_sb_free(sb);
+
+    Bm_Genex_Warn_Entry *entry = ds_shgetp_null(g_bm_genex_warned, probe);
+    if (entry) {
+        free(probe);
+        return false;
+    }
+    ds_shput(g_bm_genex_warned, probe, 1);
+    return true;
+}
+
+static void bm_genex_warn_keep_raw(Build_Target *target,
+                                   String_View key,
+                                   String_View raw_value,
+                                   Genex_V2_Status status,
+                                   String_View diag_message) {
+    if (!target || key.count == 0 || raw_value.count == 0) return;
+    if (!bm_genex_warn_should_emit(target->name, key, raw_value)) return;
+
+    const char *status_text = "ERROR";
+    if (status == GENEX_V2_UNSUPPORTED) status_text = "UNSUPPORTED";
+    else if (status == GENEX_V2_CYCLE_GUARD_HIT) status_text = "CYCLE_GUARD_HIT";
+    else if (status == GENEX_V2_OK) status_text = "OK";
+
+    nob_log(NOB_WARNING,
+            "genex_v2: target '"SV_Fmt"', property '"SV_Fmt"' -> %s, preserving raw value '"SV_Fmt"' (%.*s)",
+            SV_Arg(target->name),
+            SV_Arg(key),
+            status_text,
+            SV_Arg(raw_value),
+            (int)diag_message.count,
+            diag_message.data ? diag_message.data : "");
+}
+
 static String_View bm_target_type_to_cmake_name(Target_Type type) {
     switch (type) {
         case TARGET_EXECUTABLE: return sv_from_cstr("EXECUTABLE");
@@ -1349,6 +1421,25 @@ static String_View bm_target_property_for_config(Build_Target *target, Build_Con
     String_View base = build_target_get_property(target, sv_from_cstr(base_key));
     if (base.count > 0) return base;
     return fallback;
+}
+
+typedef struct {
+    Build_Model *model;
+    Build_Config config;
+} Bm_Genex_Target_Property_Ctx;
+
+static String_View bm_target_get_property_raw_for_config(Build_Target *target, String_View key, Build_Config active_cfg);
+
+static String_View bm_genex_target_property_read(void *userdata,
+                                                 String_View target_name,
+                                                 String_View property_name) {
+    if (!userdata || target_name.count == 0 || property_name.count == 0) return sv_from_cstr("");
+    Bm_Genex_Target_Property_Ctx *ctx = (Bm_Genex_Target_Property_Ctx*)userdata;
+    if (!ctx->model) return sv_from_cstr("");
+
+    Build_Target *target = build_model_find_target(ctx->model, target_name);
+    if (!target) return sv_from_cstr("");
+    return bm_target_get_property_raw_for_config(target, property_name, ctx->config);
 }
 
 void build_target_set_flag(Build_Target *target, Target_Flag flag, bool value) {
@@ -1699,12 +1790,10 @@ void build_target_set_property_smart(Build_Target *target,
     }
 }
 
-String_View build_target_get_property_computed(Build_Target *target,
-                                               String_View key,
-                                               String_View default_config) {
+static String_View bm_target_get_property_raw_for_config(Build_Target *target,
+                                                         String_View key,
+                                                         Build_Config active_cfg) {
     if (!target) return sv_from_cstr("");
-    Build_Config active_cfg = build_model_config_from_string(default_config);
-
     if (bm_sv_eq_ci(key, sv_from_cstr("TYPE"))) {
         return bm_target_type_to_cmake_name(target->type);
     }
@@ -1744,6 +1833,43 @@ String_View build_target_get_property_computed(Build_Target *target,
     }
 
     return bm_target_property_for_config(target, active_cfg, nob_temp_sv_to_cstr(key), sv_from_cstr(""));
+}
+
+String_View build_target_get_property_computed(Build_Target *target,
+                                               String_View key,
+                                               String_View default_config) {
+    if (!target) return sv_from_cstr("");
+    Build_Config active_cfg = build_model_config_from_string(default_config);
+    String_View raw = bm_target_get_property_raw_for_config(target, key, active_cfg);
+    if (raw.count == 0) return raw;
+    if (!bm_sv_contains_genex(raw)) return raw;
+
+    Build_Model *model = (Build_Model*)target->owner_model;
+    if (!model) return raw;
+
+    String_View config_name = bm_config_to_cmake_build_type(active_cfg);
+    if (config_name.count == 0) config_name = default_config;
+
+    Bm_Genex_Target_Property_Ctx cb = {
+        .model = model,
+        .config = active_cfg,
+    };
+    Genex_V2_Context gx = {
+        .arena = model->arena,
+        .config = config_name,
+        .read_target_property = bm_genex_target_property_read,
+        .userdata = &cb,
+        .max_depth = 64,
+        .max_target_property_depth = 32,
+    };
+
+    Genex_V2_Result evaluated = genex_v2_eval(&gx, raw);
+    if (evaluated.status == GENEX_V2_OK) {
+        return evaluated.value;
+    }
+
+    bm_genex_warn_keep_raw(target, key, raw, evaluated.status, evaluated.diag_message);
+    return raw;
 }
 
 String_View build_target_get_name(const Build_Target *target) {

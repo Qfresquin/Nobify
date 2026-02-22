@@ -9,7 +9,8 @@
     "/Isrc\\diagnostics", \
     "/Isrc\\ds_adapter", \
     "/Isrc\\transpiler", \
-    "/Isrc\\app"
+    "/Isrc\\app", \
+    "/Isrc_v2\\genex"
 #else
 #define CMK2NOB_REBUILD_INCLUDE_FLAGS \
     "-Ivendor", \
@@ -21,7 +22,8 @@
     "-Isrc/diagnostics", \
     "-Isrc/ds_adapter", \
     "-Isrc/transpiler", \
-    "-Isrc/app"
+    "-Isrc/app", \
+    "-Isrc_v2/genex"
 #endif
 
 #define CMK2NOB_REBUILD_SOURCES \
@@ -36,6 +38,7 @@
     "src/transpiler/transpiler_effects.c", \
     "src/transpiler/math_parser.c", \
     "src/transpiler/genex_evaluator.c", \
+    "src_v2/genex/genex_v2.c", \
     "src/logic_model/logic_model.c", \
     "src/ds_adapter/ds_adapter.c", \
     "src/transpiler/cmake_path_utils.c", \

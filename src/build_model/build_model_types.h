@@ -137,6 +137,7 @@ typedef struct {
 typedef struct {
     String_View name;
     Target_Type type;
+    void *owner_model;
     
     // Fontes
     String_List sources;

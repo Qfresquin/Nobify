@@ -14,15 +14,6 @@
 #define EVAL_EXPAND_MAX_RECURSION 100
 #define EVAL_EXPAND_MAX_RECURSION_HARD_CAP 10000
 
-static bool sv_eq_ci_lit(String_View a, const char *lit) {
-    size_t n = strlen(lit);
-    if (a.count != n) return false;
-    for (size_t i = 0; i < n; i++) {
-        if (tolower((unsigned char)a.data[i]) != tolower((unsigned char)lit[i])) return false;
-    }
-    return true;
-}
-
 static bool sv_is_policy_id(String_View sv) {
     if (sv.count != 7) return false; // CMPNNNN
     if (!(sv.data[0] == 'C' || sv.data[0] == 'c')) return false;
@@ -32,15 +23,6 @@ static bool sv_is_policy_id(String_View sv) {
         if (!isdigit((unsigned char)sv.data[i])) return false;
     }
     return true;
-}
-
-static char *sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
-    if (!ctx) return NULL;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sv.count + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
-    if (sv.count) memcpy(buf, sv.data, sv.count);
-    buf[sv.count] = '\0';
-    return buf;
 }
 
 static bool path_exists_cstr(const char *path) {
@@ -121,32 +103,95 @@ static bool sv_is_drive_root(String_View sv) {
 
 static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in) {
     if (!ctx || in.count == 0) return in;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
-    if (!buf) {
+    char *seg_buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    size_t *seg_pos = (size_t*)arena_alloc(eval_temp_arena(ctx), sizeof(size_t) * (in.count + 1));
+    size_t *seg_len = (size_t*)arena_alloc(eval_temp_arena(ctx), sizeof(size_t) * (in.count + 1));
+    char *out_buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 2);
+    if (!seg_buf || !seg_pos || !seg_len || !out_buf) {
         ctx_oom(ctx);
         return nob_sv_from_cstr("");
     }
 
-    size_t off = 0;
-    bool prev_sep = false;
-    for (size_t i = 0; i < in.count; i++) {
-        char c = in.data[i];
-        if (sv_is_path_sep(c)) {
-            if (prev_sep) continue;
-            buf[off++] = '/';
-            prev_sep = true;
-            continue;
+    // root_kind: 0=relative, 1="/", 2="X:/", 3="X:" (drive-relative)
+    int root_kind = 0;
+    char drive_letter = '\0';
+    size_t i = 0;
+    if (sv_is_path_sep(in.data[0])) {
+        root_kind = 1;
+        while (i < in.count && sv_is_path_sep(in.data[i])) i++;
+    } else if (in.count >= 2 && isalpha((unsigned char)in.data[0]) && in.data[1] == ':') {
+        drive_letter = in.data[0];
+        i = 2;
+        if (i < in.count && sv_is_path_sep(in.data[i])) {
+            root_kind = 2;
+            while (i < in.count && sv_is_path_sep(in.data[i])) i++;
+        } else {
+            root_kind = 3;
         }
-        buf[off++] = c;
-        prev_sep = false;
     }
 
-    String_View out = nob_sv_from_parts(buf, off);
-    if (out.count > 1 && out.data[out.count - 1] == '/' && !sv_is_drive_root(out)) {
-        out.count--;
+    size_t seg_count = 0;
+    size_t seg_off = 0;
+    while (i <= in.count) {
+        size_t start = i;
+        while (i < in.count && !sv_is_path_sep(in.data[i])) i++;
+        size_t len = i - start;
+        while (i < in.count && sv_is_path_sep(in.data[i])) i++;
+        if (len == 0) continue;
+
+        bool is_dot = (len == 1 && in.data[start] == '.');
+        bool is_dotdot = (len == 2 && in.data[start] == '.' && in.data[start + 1] == '.');
+        if (is_dot) continue;
+
+        if (is_dotdot) {
+            if (seg_count > 0) {
+                size_t prev = seg_count - 1;
+                bool prev_is_dotdot = (seg_len[prev] == 2 &&
+                                       seg_buf[seg_pos[prev]] == '.' &&
+                                       seg_buf[seg_pos[prev] + 1] == '.');
+                if (!prev_is_dotdot) {
+                    seg_count--;
+                    continue;
+                }
+            }
+            if (root_kind == 1 || root_kind == 2) {
+                // Absolute paths do not walk above root.
+                continue;
+            }
+        }
+
+        seg_pos[seg_count] = seg_off;
+        seg_len[seg_count] = len;
+        for (size_t k = 0; k < len; k++) seg_buf[seg_off++] = in.data[start + k];
+        seg_count++;
     }
 
-    if (out.count == 0) return nob_sv_from_cstr("");
+    size_t out_off = 0;
+    if (root_kind == 1) {
+        out_buf[out_off++] = '/';
+    } else if (root_kind == 2) {
+        out_buf[out_off++] = drive_letter;
+        out_buf[out_off++] = ':';
+        out_buf[out_off++] = '/';
+    } else if (root_kind == 3) {
+        out_buf[out_off++] = drive_letter;
+        out_buf[out_off++] = ':';
+    }
+
+    for (size_t s = 0; s < seg_count; s++) {
+        bool need_sep = false;
+        if (s > 0) need_sep = true;
+        if ((root_kind == 1 || root_kind == 2) && s == 0) need_sep = false;
+        if (root_kind == 3 && s == 0) need_sep = false;
+        if (need_sep) out_buf[out_off++] = '/';
+        memcpy(out_buf + out_off, seg_buf + seg_pos[s], seg_len[s]);
+        out_off += seg_len[s];
+    }
+
+    out_buf[out_off] = '\0';
+    if (out_off == 0) return nob_sv_from_cstr("");
+    String_View out = nob_sv_from_parts(out_buf, out_off);
+    if (out.count > 1 && out.data[out.count - 1] == '/' && !sv_is_drive_root(out)) out.count--;
     return out;
 }
 
@@ -273,12 +318,12 @@ static bool eval_truthy_constant_only(String_View v, bool *known) {
     if (known) *known = true;
     if (v.count == 0) return false;
 
-    if (sv_eq_ci_lit(v, "1") || sv_eq_ci_lit(v, "ON") || sv_eq_ci_lit(v, "YES") ||
-        sv_eq_ci_lit(v, "TRUE") || sv_eq_ci_lit(v, "Y")) return true;
+    if (eval_sv_eq_ci_lit(v, "1") || eval_sv_eq_ci_lit(v, "ON") || eval_sv_eq_ci_lit(v, "YES") ||
+        eval_sv_eq_ci_lit(v, "TRUE") || eval_sv_eq_ci_lit(v, "Y")) return true;
 
-    if (sv_eq_ci_lit(v, "0") || sv_eq_ci_lit(v, "OFF") || sv_eq_ci_lit(v, "NO") ||
-        sv_eq_ci_lit(v, "FALSE") || sv_eq_ci_lit(v, "N") || sv_eq_ci_lit(v, "IGNORE") ||
-        sv_eq_ci_lit(v, "NOTFOUND")) return false;
+    if (eval_sv_eq_ci_lit(v, "0") || eval_sv_eq_ci_lit(v, "OFF") || eval_sv_eq_ci_lit(v, "NO") ||
+        eval_sv_eq_ci_lit(v, "FALSE") || eval_sv_eq_ci_lit(v, "N") || eval_sv_eq_ci_lit(v, "IGNORE") ||
+        eval_sv_eq_ci_lit(v, "NOTFOUND")) return false;
 
     if (sv_ends_with_ci_lit(v, "-NOTFOUND")) return false;
 
@@ -355,7 +400,7 @@ static String_View expand_once(struct Evaluator_Context *ctx, String_View in) {
             while (j < in.count && in.data[j] != '}') j++;
             if (j < in.count) {
                 String_View name = nob_sv_from_parts(in.data + start, j - start);
-                char *env_name = sv_to_cstr_temp(ctx, name);
+                char *env_name = eval_sv_to_cstr_temp(ctx, name);
                 if (eval_should_stop(ctx)) {
                     nob_sb_free(sb);
                     return nob_sv_from_cstr("");
@@ -459,9 +504,9 @@ static bool parse_primary(Expr *e) {
     if (!expr_has(e)) return false;
     String_View tok = expr_next(e);
 
-    if (sv_eq_ci_lit(tok, "(")) {
+    if (eval_sv_eq_ci_lit(tok, "(")) {
         bool v = parse_expr(e);
-        if (expr_has(e) && sv_eq_ci_lit(expr_peek(e), ")")) {
+        if (expr_has(e) && eval_sv_eq_ci_lit(expr_peek(e), ")")) {
             expr_next(e);
         } else {
             eval_emit_diag(e->ctx,
@@ -482,12 +527,12 @@ static bool parse_unary(Expr *e) {
     if (!expr_has(e)) return false;
     String_View tok = expr_peek(e);
 
-    if (sv_eq_ci_lit(tok, "NOT")) {
+    if (eval_sv_eq_ci_lit(tok, "NOT")) {
         expr_next(e);
         return !parse_unary(e);
     }
 
-    if (sv_eq_ci_lit(tok, "DEFINED")) {
+    if (eval_sv_eq_ci_lit(tok, "DEFINED")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         String_View var_name = expr_next(e);
@@ -495,7 +540,7 @@ static bool parse_unary(Expr *e) {
         if (var_name.count > 4 && memcmp(var_name.data, "ENV{", 4) == 0 && var_name.data[var_name.count - 1] == '}') {
             size_t n = var_name.count - 5;
             String_View env_name_sv = nob_sv_from_parts(var_name.data + 4, n);
-            char *env_name = sv_to_cstr_temp(e->ctx, env_name_sv);
+            char *env_name = eval_sv_to_cstr_temp(e->ctx, env_name_sv);
             EVAL_OOM_RETURN_IF_NULL(e->ctx, env_name, false);
             return getenv(env_name) != NULL;
         }
@@ -503,13 +548,13 @@ static bool parse_unary(Expr *e) {
         return eval_var_defined(e->ctx, var_name);
     }
 
-    if (sv_eq_ci_lit(tok, "TARGET")) {
+    if (eval_sv_eq_ci_lit(tok, "TARGET")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         return eval_target_known(e->ctx, expr_next(e));
     }
 
-    if (sv_eq_ci_lit(tok, "COMMAND")) {
+    if (eval_sv_eq_ci_lit(tok, "COMMAND")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         String_View name = expr_next(e);
@@ -517,38 +562,38 @@ static bool parse_unary(Expr *e) {
         return eval_user_cmd_find(e->ctx, name) != NULL;
     }
 
-    if (sv_eq_ci_lit(tok, "POLICY")) {
+    if (eval_sv_eq_ci_lit(tok, "POLICY")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         // Minimal policy predicate support: valid policy-id syntax.
         return sv_is_policy_id(expr_next(e));
     }
 
-    if (sv_eq_ci_lit(tok, "EXISTS")) {
+    if (eval_sv_eq_ci_lit(tok, "EXISTS")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = sv_to_cstr_temp(e->ctx, expr_next(e));
+        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
         EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
         return path_exists_cstr(path);
     }
 
-    if (sv_eq_ci_lit(tok, "IS_DIRECTORY")) {
+    if (eval_sv_eq_ci_lit(tok, "IS_DIRECTORY")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = sv_to_cstr_temp(e->ctx, expr_next(e));
+        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
         EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
         return path_is_dir_cstr(path);
     }
 
-    if (sv_eq_ci_lit(tok, "IS_SYMLINK")) {
+    if (eval_sv_eq_ci_lit(tok, "IS_SYMLINK")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = sv_to_cstr_temp(e->ctx, expr_next(e));
+        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
         EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
         return path_is_symlink_cstr(path);
     }
 
-    if (sv_eq_ci_lit(tok, "IS_ABSOLUTE")) {
+    if (eval_sv_eq_ci_lit(tok, "IS_ABSOLUTE")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         return eval_sv_is_abs_path(expr_next(e));
@@ -561,23 +606,23 @@ static bool parse_cmp(Expr *e) {
     if (!expr_has(e)) return false;
 
     String_View first = expr_peek(e);
-    if (sv_eq_ci_lit(first, "(") ||
-        sv_eq_ci_lit(first, "NOT") ||
-        sv_eq_ci_lit(first, "DEFINED") ||
-        sv_eq_ci_lit(first, "TARGET") ||
-        sv_eq_ci_lit(first, "COMMAND") ||
-        sv_eq_ci_lit(first, "POLICY") ||
-        sv_eq_ci_lit(first, "EXISTS") ||
-        sv_eq_ci_lit(first, "IS_DIRECTORY") ||
-        sv_eq_ci_lit(first, "IS_SYMLINK") ||
-        sv_eq_ci_lit(first, "IS_ABSOLUTE")) {
+    if (eval_sv_eq_ci_lit(first, "(") ||
+        eval_sv_eq_ci_lit(first, "NOT") ||
+        eval_sv_eq_ci_lit(first, "DEFINED") ||
+        eval_sv_eq_ci_lit(first, "TARGET") ||
+        eval_sv_eq_ci_lit(first, "COMMAND") ||
+        eval_sv_eq_ci_lit(first, "POLICY") ||
+        eval_sv_eq_ci_lit(first, "EXISTS") ||
+        eval_sv_eq_ci_lit(first, "IS_DIRECTORY") ||
+        eval_sv_eq_ci_lit(first, "IS_SYMLINK") ||
+        eval_sv_eq_ci_lit(first, "IS_ABSOLUTE")) {
         return parse_unary(e);
     }
 
     size_t save = e->pos;
     String_View lhs = expr_next(e);
 
-    if (sv_eq_ci_lit(lhs, "(")) {
+    if (eval_sv_eq_ci_lit(lhs, "(")) {
         e->pos = save;
         return parse_unary(e);
     }
@@ -586,13 +631,13 @@ static bool parse_cmp(Expr *e) {
 
     String_View op = expr_peek(e);
 
-    if (sv_eq_ci_lit(op, "STREQUAL")) {
+    if (eval_sv_eq_ci_lit(op, "STREQUAL")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         return sv_eq(lhs, expr_next(e));
     }
 
-    if (sv_eq_ci_lit(op, "EQUAL")) {
+    if (eval_sv_eq_ci_lit(op, "EQUAL")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         long a = 0, b = 0;
@@ -600,12 +645,12 @@ static bool parse_cmp(Expr *e) {
         return a == b;
     }
 
-    if (sv_eq_ci_lit(op, "LESS") || sv_eq_ci_lit(op, "GREATER") ||
-        sv_eq_ci_lit(op, "LESS_EQUAL") || sv_eq_ci_lit(op, "GREATER_EQUAL")) {
-        bool is_less = sv_eq_ci_lit(op, "LESS");
-        bool is_greater = sv_eq_ci_lit(op, "GREATER");
-        bool is_le = sv_eq_ci_lit(op, "LESS_EQUAL");
-        bool is_ge = sv_eq_ci_lit(op, "GREATER_EQUAL");
+    if (eval_sv_eq_ci_lit(op, "LESS") || eval_sv_eq_ci_lit(op, "GREATER") ||
+        eval_sv_eq_ci_lit(op, "LESS_EQUAL") || eval_sv_eq_ci_lit(op, "GREATER_EQUAL")) {
+        bool is_less = eval_sv_eq_ci_lit(op, "LESS");
+        bool is_greater = eval_sv_eq_ci_lit(op, "GREATER");
+        bool is_le = eval_sv_eq_ci_lit(op, "LESS_EQUAL");
+        bool is_ge = eval_sv_eq_ci_lit(op, "GREATER_EQUAL");
         expr_next(e);
         if (!expr_has(e)) return false;
         long a = 0, b = 0;
@@ -617,12 +662,12 @@ static bool parse_cmp(Expr *e) {
         return false;
     }
 
-    if (sv_eq_ci_lit(op, "STRLESS") || sv_eq_ci_lit(op, "STRGREATER") ||
-        sv_eq_ci_lit(op, "STRLESS_EQUAL") || sv_eq_ci_lit(op, "STRGREATER_EQUAL")) {
-        bool is_less = sv_eq_ci_lit(op, "STRLESS");
-        bool is_greater = sv_eq_ci_lit(op, "STRGREATER");
-        bool is_le = sv_eq_ci_lit(op, "STRLESS_EQUAL");
-        bool is_ge = sv_eq_ci_lit(op, "STRGREATER_EQUAL");
+    if (eval_sv_eq_ci_lit(op, "STRLESS") || eval_sv_eq_ci_lit(op, "STRGREATER") ||
+        eval_sv_eq_ci_lit(op, "STRLESS_EQUAL") || eval_sv_eq_ci_lit(op, "STRGREATER_EQUAL")) {
+        bool is_less = eval_sv_eq_ci_lit(op, "STRLESS");
+        bool is_greater = eval_sv_eq_ci_lit(op, "STRGREATER");
+        bool is_le = eval_sv_eq_ci_lit(op, "STRLESS_EQUAL");
+        bool is_ge = eval_sv_eq_ci_lit(op, "STRGREATER_EQUAL");
         expr_next(e);
         if (!expr_has(e)) return false;
         int cmp = sv_lex_cmp(lhs, expr_next(e));
@@ -633,14 +678,14 @@ static bool parse_cmp(Expr *e) {
         return false;
     }
 
-    if (sv_eq_ci_lit(op, "VERSION_LESS") || sv_eq_ci_lit(op, "VERSION_GREATER") ||
-        sv_eq_ci_lit(op, "VERSION_EQUAL") || sv_eq_ci_lit(op, "VERSION_LESS_EQUAL") ||
-        sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL")) {
-        bool is_less = sv_eq_ci_lit(op, "VERSION_LESS");
-        bool is_greater = sv_eq_ci_lit(op, "VERSION_GREATER");
-        bool is_eq = sv_eq_ci_lit(op, "VERSION_EQUAL");
-        bool is_le = sv_eq_ci_lit(op, "VERSION_LESS_EQUAL");
-        bool is_ge = sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL");
+    if (eval_sv_eq_ci_lit(op, "VERSION_LESS") || eval_sv_eq_ci_lit(op, "VERSION_GREATER") ||
+        eval_sv_eq_ci_lit(op, "VERSION_EQUAL") || eval_sv_eq_ci_lit(op, "VERSION_LESS_EQUAL") ||
+        eval_sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL")) {
+        bool is_less = eval_sv_eq_ci_lit(op, "VERSION_LESS");
+        bool is_greater = eval_sv_eq_ci_lit(op, "VERSION_GREATER");
+        bool is_eq = eval_sv_eq_ci_lit(op, "VERSION_EQUAL");
+        bool is_le = eval_sv_eq_ci_lit(op, "VERSION_LESS_EQUAL");
+        bool is_ge = eval_sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL");
         expr_next(e);
         if (!expr_has(e)) return false;
         int cmp = sv_version_cmp(lhs, expr_next(e));
@@ -652,13 +697,13 @@ static bool parse_cmp(Expr *e) {
         return false;
     }
 
-    if (sv_eq_ci_lit(op, "MATCHES")) {
+    if (eval_sv_eq_ci_lit(op, "MATCHES")) {
         expr_next(e);
         if (!expr_has(e)) return false;
 
         String_View rhs = expr_next(e);
-        char *pat = sv_to_cstr_temp(e->ctx, rhs);
-        char *subj = sv_to_cstr_temp(e->ctx, lhs);
+        char *pat = eval_sv_to_cstr_temp(e->ctx, rhs);
+        char *subj = eval_sv_to_cstr_temp(e->ctx, lhs);
         EVAL_OOM_RETURN_IF_NULL(e->ctx, pat, false);
         EVAL_OOM_RETURN_IF_NULL(e->ctx, subj, false);
 
@@ -669,7 +714,7 @@ static bool parse_cmp(Expr *e) {
         return rc == 0;
     }
 
-    if (sv_eq_ci_lit(op, "IN_LIST")) {
+    if (eval_sv_eq_ci_lit(op, "IN_LIST")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         String_View rhs = expr_next(e);
@@ -678,7 +723,7 @@ static bool parse_cmp(Expr *e) {
         return sv_list_contains_item(list_text, needle);
     }
 
-    if (sv_eq_ci_lit(op, "PATH_EQUAL")) {
+    if (eval_sv_eq_ci_lit(op, "PATH_EQUAL")) {
         expr_next(e);
         if (!expr_has(e)) return false;
         String_View rhs = expr_next(e);
@@ -695,7 +740,7 @@ static bool parse_cmp(Expr *e) {
 
 static bool parse_and(Expr *e) {
     bool lhs = parse_cmp(e);
-    while (expr_has(e) && sv_eq_ci_lit(expr_peek(e), "AND")) {
+    while (expr_has(e) && eval_sv_eq_ci_lit(expr_peek(e), "AND")) {
         expr_next(e);
         bool rhs = parse_cmp(e);
         lhs = lhs && rhs;
@@ -705,7 +750,7 @@ static bool parse_and(Expr *e) {
 
 static bool parse_expr(Expr *e) {
     bool lhs = parse_and(e);
-    while (expr_has(e) && sv_eq_ci_lit(expr_peek(e), "OR")) {
+    while (expr_has(e) && eval_sv_eq_ci_lit(expr_peek(e), "OR")) {
         expr_next(e);
         bool rhs = parse_and(e);
         lhs = lhs || rhs;

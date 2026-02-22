@@ -28,7 +28,8 @@ static void append_common_include_flags(Nob_Cmd *cmd) {
         "-Isrc/diagnostics",
         "-Isrc/ds_adapter",
         "-Isrc/transpiler",
-        "-Isrc/app");
+        "-Isrc/app",
+        "-Isrc_v2/genex");
 }
 
 static void append_project_sources(Nob_Cmd *cmd, bool with_app_main) {
@@ -48,6 +49,7 @@ static void append_project_sources(Nob_Cmd *cmd, bool with_app_main) {
         "src/transpiler/transpiler_effects.c",
         "src/transpiler/math_parser.c",
         "src/transpiler/genex_evaluator.c",
+        "src_v2/genex/genex_v2.c",
         "src/logic_model/logic_model.c",
         "src/ds_adapter/ds_adapter.c",
         "src/transpiler/cmake_path_utils.c",

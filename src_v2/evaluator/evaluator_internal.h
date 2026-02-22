@@ -69,6 +69,8 @@ typedef struct {
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
+    Arena *known_targets_arena;
+    Arena *user_commands_arena;
     Cmake_Event_Stream *stream;
 
     String_View source_dir;
@@ -96,6 +98,8 @@ struct Evaluator_Context {
 // ---- controle e memória ----
 bool eval_should_stop(Evaluator_Context *ctx);
 void eval_request_stop(Evaluator_Context *ctx);
+void eval_request_stop_on_error(Evaluator_Context *ctx);
+bool eval_continue_on_error(Evaluator_Context *ctx);
 bool ctx_oom(Evaluator_Context *ctx);
 
 static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr) {
@@ -116,6 +120,7 @@ Arena *eval_event_arena(Evaluator_Context *ctx);
 String_View sv_copy_to_temp_arena(Evaluator_Context *ctx, String_View sv);
 String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv);
 String_View sv_copy_to_arena(Arena *arena, String_View sv);
+char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv);
 
 // ---- rastreio de origem (NOVO) ----
 Cmake_Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node);
@@ -155,6 +160,7 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name);
 bool eval_sv_key_eq(String_View a, String_View b);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);
+bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_sv_is_abs_path(String_View p);
 String_View eval_sv_path_join(Arena *arena, String_View a, String_View b);
 

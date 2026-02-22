@@ -10,6 +10,11 @@
 #include <string.h>
 #include <ctype.h>
 
+static void destroy_sub_arena_cb(void *userdata) {
+    Arena *arena = (Arena*)userdata;
+    arena_destroy(arena);
+}
+
 // -----------------------------------------------------------------------------
 // Arena helpers and origin tracking
 // -----------------------------------------------------------------------------
@@ -46,8 +51,21 @@ bool ctx_oom(Evaluator_Context *ctx) {
     return false;
 }
 
+bool eval_continue_on_error(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"));
+    if (v.count == 0) return false;
+    return eval_truthy(ctx, v);
+}
+
 void eval_request_stop(Evaluator_Context *ctx) {
     if (ctx) ctx->stop_requested = true;
+}
+
+void eval_request_stop_on_error(Evaluator_Context *ctx) {
+    if (!ctx) return;
+    if (eval_continue_on_error(ctx)) return;
+    ctx->stop_requested = true;
 }
 
 bool eval_should_stop(Evaluator_Context *ctx) {
@@ -96,6 +114,9 @@ bool eval_emit_diag(Evaluator_Context *ctx,
     ev.as.diag.hint = sv_copy_to_event_arena(ctx, hint);
     if (!event_stream_push(ctx->event_arena, ctx->stream, ev)) {
         return ctx_oom(ctx);
+    }
+    if (sev == EV_DIAG_ERROR) {
+        eval_request_stop_on_error(ctx);
     }
     return true;
 }
@@ -224,7 +245,7 @@ bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_da_try_append(ctx->event_arena, &ctx->known_targets, name)) return ctx_oom(ctx);
+    if (!arena_da_try_append(ctx->known_targets_arena, &ctx->known_targets, name)) return ctx_oom(ctx);
     return true;
 }
 
@@ -345,18 +366,9 @@ static SV_List eval_resolve_args_impl(Evaluator_Context *ctx,
 
             // Default command/function semantics: unquoted args are list-split by ';'.
             if (expanded.count == 0) continue;
-            const char *p = expanded.data;
-            const char *end = expanded.data + expanded.count;
-            while (p < end) {
-                const char *q = p;
-                while (q < end && *q != ';') q++;
-                String_View item = nob_sv_from_parts(p, (size_t)(q - p));
-                if (!sv_list_push(ctx->arena, &out, item)) {
-                    ctx_oom(ctx);
-                    return (SV_List){0};
-                }
-                if (q >= end) break;
-                p = q + 1;
+            if (!eval_sv_split_semicolon_genex_aware(ctx->arena, expanded, &out)) {
+                ctx_oom(ctx);
+                return (SV_List){0};
             }
         }
     }
@@ -483,6 +495,17 @@ static bool eval_while(Evaluator_Context *ctx, const Node *node) {
 
 static bool eval_node(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return false;
+
+    {
+        char line_buf[32];
+        int n = snprintf(line_buf, sizeof(line_buf), "%zu", node->line);
+        if (n < 0 || (size_t)n >= sizeof(line_buf)) {
+            return ctx_oom(ctx);
+        }
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr(line_buf))) {
+            return false;
+        }
+    }
 
     // Statement-local temp allocations are rewound after each node.
     Arena_Mark mark = arena_mark(ctx->arena);
@@ -664,7 +687,7 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     cmd.param_count = param_count;
     cmd.body = body;
 
-    if (!arena_da_try_append(ctx->event_arena, &ctx->user_commands, cmd)) return ctx_oom(ctx);
+    if (!arena_da_try_append(ctx->user_commands_arena, &ctx->user_commands, cmd)) return ctx_oom(ctx);
     return true;
 }
 
@@ -1052,6 +1075,23 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->stream = init->stream;
     ctx->source_dir = init->source_dir;
     ctx->binary_dir = init->binary_dir;
+
+    ctx->known_targets_arena = arena_create(4096);
+    if (!ctx->known_targets_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->known_targets_arena)) {
+        arena_destroy(ctx->known_targets_arena);
+        ctx->known_targets_arena = NULL;
+        return NULL;
+    }
+
+    ctx->user_commands_arena = arena_create(4096);
+    if (!ctx->user_commands_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->user_commands_arena)) {
+        arena_destroy(ctx->user_commands_arena);
+        ctx->user_commands_arena = NULL;
+        return NULL;
+    }
+
     if (init->current_file) {
         ctx->current_file = arena_strndup(init->event_arena, init->current_file, strlen(init->current_file));
         if (!ctx->current_file) return NULL;
@@ -1074,6 +1114,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     } else {
         if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"), nob_sv_from_cstr(""))) return NULL;
     }
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
 
     // Inject host/platform built-ins commonly used by scripts in if() conditions.
 #if defined(_WIN32)
@@ -1114,6 +1155,8 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     // Project built-ins default to empty and are updated by project().
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_FILE_GLOB_STRICT"), nob_sv_from_cstr("0"))) return NULL;
 
     // Compiler ID can be fixed for compatibility scripts.
     String_View compiler_id = detect_compiler_id();

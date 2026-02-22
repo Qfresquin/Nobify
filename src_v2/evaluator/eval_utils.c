@@ -1,4 +1,5 @@
 #include "evaluator_internal.h"
+#include "arena_dyn.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -9,6 +10,15 @@ String_View sv_copy_to_arena(Arena *arena, String_View sv) {
     char *dup = arena_strndup(arena, sv.data, sv.count);
     if (!dup) return nob_sv_from_cstr("");
     return nob_sv_from_cstr(dup);
+}
+
+char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
+    if (!ctx) return NULL;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sv.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
+    if (sv.count) memcpy(buf, sv.data, sv.count);
+    buf[sv.count] = '\0';
+    return buf;
 }
 
 bool eval_sv_key_eq(String_View a, String_View b) {
@@ -46,6 +56,42 @@ String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, s
     }
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
+}
+
+bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out) {
+    if (!arena || !out) return false;
+    if (input.count == 0) return true;
+
+    size_t start = 0;
+    size_t genex_depth = 0;
+    for (size_t i = 0; i < input.count; i++) {
+        if (input.data[i] == '$' && (i + 1) < input.count && input.data[i + 1] == '<') {
+            genex_depth++;
+            i++;
+            continue;
+        }
+        if (input.data[i] == '>' && genex_depth > 0) {
+            genex_depth--;
+            continue;
+        }
+        if (input.data[i] == ';' && genex_depth == 0) {
+            String_View item = nob_sv_from_parts(input.data + start, i - start);
+            if (!arena_da_reserve(arena, (void**)&out->items, &out->capacity, sizeof(out->items[0]), out->count + 1)) {
+                return false;
+            }
+            out->items[out->count++] = item;
+            start = i + 1;
+        }
+    }
+
+    if (start < input.count) {
+        String_View item = nob_sv_from_parts(input.data + start, input.count - start);
+        if (!arena_da_reserve(arena, (void**)&out->items, &out->capacity, sizeof(out->items[0]), out->count + 1)) {
+            return false;
+        }
+        out->items[out->count++] = item;
+    }
+    return true;
 }
 
 static bool ch_is_sep(char c) { return c == '/' || c == '\\'; }

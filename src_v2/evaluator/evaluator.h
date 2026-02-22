@@ -52,6 +52,12 @@ typedef enum {
 } Cmake_Visibility;
 
 typedef enum {
+    EV_PROP_SET = 0,
+    EV_PROP_APPEND_LIST,
+    EV_PROP_APPEND_STRING,
+} Cmake_Target_Property_Op;
+
+typedef enum {
     EV_TARGET_EXECUTABLE = 0,
     EV_TARGET_LIBRARY_STATIC,
     EV_TARGET_LIBRARY_SHARED,
@@ -116,6 +122,7 @@ typedef struct {
             String_View target_name;
             String_View key;
             String_View value;
+            Cmake_Target_Property_Op op;
         } target_prop_set;
 
         struct {

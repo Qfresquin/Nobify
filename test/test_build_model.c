@@ -1080,6 +1080,57 @@ TEST(fase1_property_smart_and_computed) {
     TEST_PASS();
 }
 
+TEST(fase1_property_computed_genex_lazy_core) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *t = build_model_add_target(model, sv_from_cstr("app"), TARGET_EXECUTABLE);
+    ASSERT(t != NULL);
+
+    build_target_set_property_smart(t, arena, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("$<$<CONFIG:Debug>:DBG>"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("COMPILE_OPTIONS"), sv_from_cstr("$<$<BOOL:1>:-fsanitize=address>"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("INCLUDE_DIRECTORIES"), sv_from_cstr("$<$<IF:$<CONFIG:Debug>,dbg,rel>>"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("MY_PROP"), sv_from_cstr("$<$<CONFIG:Debug>:A;B>"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("SUFFIX"), sv_from_cstr("$<$<CONFIG:Debug>:_d>"));
+
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("Debug")), sv_from_cstr("DBG")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("Release")), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_OPTIONS"), sv_from_cstr("Debug")), sv_from_cstr("-fsanitize=address")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("INCLUDE_DIRECTORIES"), sv_from_cstr("Debug")), sv_from_cstr("dbg")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("INCLUDE_DIRECTORIES"), sv_from_cstr("Release")), sv_from_cstr("rel")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("MY_PROP"), sv_from_cstr("Debug")), sv_from_cstr("A;B")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("MY_PROP"), sv_from_cstr("Release")), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("SUFFIX"), sv_from_cstr("Debug")), sv_from_cstr("_d")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("SUFFIX"), sv_from_cstr("Release")), sv_from_cstr("")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(fase1_property_computed_genex_target_property_and_fallbacks) {
+    Arena *arena = arena_create(1024 * 1024);
+    Build_Model *model = build_model_create(arena);
+    Build_Target *a = build_model_add_target(model, sv_from_cstr("A"), TARGET_EXECUTABLE);
+    Build_Target *b = build_model_add_target(model, sv_from_cstr("B"), TARGET_EXECUTABLE);
+    ASSERT(a != NULL);
+    ASSERT(b != NULL);
+
+    build_target_set_property_smart(b, arena, sv_from_cstr("OUTPUT_NAME"), sv_from_cstr("b_out"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("MY_PROP"), sv_from_cstr("$<TARGET_PROPERTY:B,OUTPUT_NAME>"));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("MY_PROP"), sv_from_cstr("Debug")), sv_from_cstr("b_out")));
+
+    build_target_set_property_smart(a, arena, sv_from_cstr("CYCLE"), sv_from_cstr("$<TARGET_PROPERTY:B,CYCLE>"));
+    build_target_set_property_smart(b, arena, sv_from_cstr("CYCLE"), sv_from_cstr("$<TARGET_PROPERTY:A,CYCLE>"));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("CYCLE"), sv_from_cstr("Debug")),
+                     sv_from_cstr("$<TARGET_PROPERTY:B,CYCLE>")));
+
+    build_target_set_property_smart(a, arena, sv_from_cstr("UNSUPPORTED"), sv_from_cstr("$<TARGET_FILE:A>"));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("UNSUPPORTED"), sv_from_cstr("Debug")),
+                     sv_from_cstr("$<TARGET_FILE:A>")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(fase1_global_link_library_framework) {
     Arena *arena = arena_create(1024 * 1024);
     Build_Model *model = build_model_create(arena);
@@ -1512,6 +1563,8 @@ void run_build_model_tests(int *passed, int *failed) {
     test_fase1_target_flags_and_alias(passed, failed);
     test_fase1_env_and_global_args(passed, failed);
     test_fase1_property_smart_and_computed(passed, failed);
+    test_fase1_property_computed_genex_lazy_core(passed, failed);
+    test_fase1_property_computed_genex_target_property_and_fallbacks(passed, failed);
     test_fase1_global_link_library_framework(passed, failed);
     test_fase1_cpack_wrappers_and_setters(passed, failed);
     test_fase1_custom_commands_and_path_helpers(passed, failed);

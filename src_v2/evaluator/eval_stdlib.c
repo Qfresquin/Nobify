@@ -335,7 +335,7 @@ bool h_list(Evaluator_Context *ctx, const Node *node) {
     eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                    nob_sv_from_cstr("Unsupported list() subcommand"),
                    nob_sv_from_cstr("Implemented: APPEND, REMOVE_ITEM, LENGTH"));
-    eval_request_stop(ctx);
+    eval_request_stop_on_error(ctx);
     return !eval_should_stop(ctx);
 }
 
@@ -483,7 +483,7 @@ bool h_string(Evaluator_Context *ctx, const Node *node) {
     eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
                    nob_sv_from_cstr("Unsupported string() subcommand"),
                    nob_sv_from_cstr("Implemented: REPLACE, TOUPPER, REGEX MATCH"));
-    eval_request_stop(ctx);
+    eval_request_stop_on_error(ctx);
     return !eval_should_stop(ctx);
 }
 
