@@ -38,7 +38,7 @@
     "src/transpiler/transpiler_effects.c", \
     "src/transpiler/math_parser.c", \
     "src/transpiler/genex_evaluator.c", \
-    "src_v2/genex/genex_v2.c", \
+    "src_v2/genex/genex.c", \
     "src/logic_model/logic_model.c", \
     "src/ds_adapter/ds_adapter.c", \
     "src/transpiler/cmake_path_utils.c", \
@@ -260,3 +260,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+

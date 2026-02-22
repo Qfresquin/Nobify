@@ -1,13 +1,15 @@
 #include "build_model.h"
 #include "arena_dyn.h"
 #include "ds_adapter.h"
-#include "genex_v2.h"
+#include "genex.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
 static const String_List g_empty_string_list = {0};
 static String_View bm_sv_copy_to_arena(Arena *arena, String_View sv);
+String_View build_path_join(Arena *arena, String_View base, String_View rel);
+static bool bm_sv_eq_ci(String_View a, String_View b);
 
 typedef struct {
     char *key;
@@ -88,8 +90,16 @@ static void build_model_rebuild_property_index(Arena *arena, Property_List *list
 static Build_Target* build_model_find_target_const(const Build_Model *model, String_View name) {
     if (!model) return NULL;
     int idx = build_model_lookup_target_index(model, name);
-    if (idx < 0 || (size_t)idx >= model->target_count) return NULL;
-    return model->targets[idx];
+    if (idx >= 0 && (size_t)idx < model->target_count) return model->targets[idx];
+
+    if (model->is_windows) {
+        // Keep target-name resolution aligned with Windows case-insensitive behavior.
+        for (size_t i = 0; i < model->target_count; i++) {
+            Build_Target *t = model->targets[i];
+            if (t && bm_sv_eq_ci(t->name, name)) return t;
+        }
+    }
+    return NULL;
 }
 
 int build_model_find_target_index(const Build_Model *model, String_View name) {
@@ -1305,18 +1315,18 @@ static bool bm_genex_warn_should_emit(String_View target_name, String_View prope
 static void bm_genex_warn_keep_raw(Build_Target *target,
                                    String_View key,
                                    String_View raw_value,
-                                   Genex_V2_Status status,
+                                   Genex_Status status,
                                    String_View diag_message) {
     if (!target || key.count == 0 || raw_value.count == 0) return;
     if (!bm_genex_warn_should_emit(target->name, key, raw_value)) return;
 
     const char *status_text = "ERROR";
-    if (status == GENEX_V2_UNSUPPORTED) status_text = "UNSUPPORTED";
-    else if (status == GENEX_V2_CYCLE_GUARD_HIT) status_text = "CYCLE_GUARD_HIT";
-    else if (status == GENEX_V2_OK) status_text = "OK";
+    if (status == GENEX_UNSUPPORTED) status_text = "UNSUPPORTED";
+    else if (status == GENEX_CYCLE_GUARD_HIT) status_text = "CYCLE_GUARD_HIT";
+    else if (status == GENEX_OK) status_text = "OK";
 
     nob_log(NOB_WARNING,
-            "genex_v2: target '"SV_Fmt"', property '"SV_Fmt"' -> %s, preserving raw value '"SV_Fmt"' (%.*s)",
+            "genex: target '"SV_Fmt"', property '"SV_Fmt"' -> %s, preserving raw value '"SV_Fmt"' (%.*s)",
             SV_Arg(target->name),
             SV_Arg(key),
             status_text,
@@ -1440,6 +1450,79 @@ static String_View bm_genex_target_property_read(void *userdata,
     Build_Target *target = build_model_find_target(ctx->model, target_name);
     if (!target) return sv_from_cstr("");
     return bm_target_get_property_raw_for_config(target, property_name, ctx->config);
+}
+
+static String_View bm_genex_target_file_read(void *userdata, String_View target_name) {
+    if (!userdata || target_name.count == 0) return sv_from_cstr("");
+    Bm_Genex_Target_Property_Ctx *ctx = (Bm_Genex_Target_Property_Ctx*)userdata;
+    if (!ctx->model || !ctx->model->arena) return sv_from_cstr("");
+
+    Build_Target *target = build_model_find_target(ctx->model, target_name);
+    if (!target) return sv_from_cstr("");
+
+    String_View out_name = bm_target_property_for_config(
+        target, ctx->config, "OUTPUT_NAME",
+        target->output_name.count > 0 ? target->output_name : target->name);
+    String_View prefix = bm_target_property_for_config(target, ctx->config, "PREFIX", target->prefix);
+    String_View suffix = bm_target_property_for_config(target, ctx->config, "SUFFIX", target->suffix);
+
+    String_View out_dir = sv_from_cstr("");
+    if (target->type == TARGET_EXECUTABLE || target->type == TARGET_SHARED_LIB) {
+        out_dir = bm_target_property_for_config(target, ctx->config, "RUNTIME_OUTPUT_DIRECTORY",
+                                                target->runtime_output_directory.count > 0
+                                                    ? target->runtime_output_directory
+                                                    : target->output_directory);
+    } else {
+        out_dir = bm_target_property_for_config(target, ctx->config, "ARCHIVE_OUTPUT_DIRECTORY",
+                                                target->archive_output_directory.count > 0
+                                                    ? target->archive_output_directory
+                                                    : target->output_directory);
+    }
+    if (out_dir.count == 0) out_dir = sv_from_cstr("build");
+
+    String_Builder name_sb = {0};
+    if (prefix.count > 0) nob_sb_append_buf(&name_sb, prefix.data, prefix.count);
+    if (out_name.count > 0) nob_sb_append_buf(&name_sb, out_name.data, out_name.count);
+    if (suffix.count > 0) nob_sb_append_buf(&name_sb, suffix.data, suffix.count);
+    String_View file_name = name_sb.count > 0
+        ? sv_from_cstr(arena_strndup(ctx->model->arena, name_sb.items, name_sb.count))
+        : sv_from_cstr("");
+    nob_sb_free(name_sb);
+
+    if (out_dir.count == 0) return file_name;
+    return build_path_join(ctx->model->arena, out_dir, file_name);
+}
+
+static String_View bm_genex_target_linker_file_read(void *userdata, String_View target_name) {
+    if (!userdata || target_name.count == 0) return sv_from_cstr("");
+    Bm_Genex_Target_Property_Ctx *ctx = (Bm_Genex_Target_Property_Ctx*)userdata;
+    if (!ctx->model || !ctx->model->arena) return sv_from_cstr("");
+
+    Build_Target *target = build_model_find_target(ctx->model, target_name);
+    if (!target) return sv_from_cstr("");
+
+    String_View out_name = bm_target_property_for_config(
+        target, ctx->config, "OUTPUT_NAME",
+        target->output_name.count > 0 ? target->output_name : target->name);
+    String_View prefix = bm_target_property_for_config(target, ctx->config, "PREFIX", target->prefix);
+    String_View suffix = bm_target_property_for_config(target, ctx->config, "SUFFIX", target->suffix);
+
+    String_View out_dir = bm_target_property_for_config(
+        target, ctx->config, "ARCHIVE_OUTPUT_DIRECTORY",
+        target->archive_output_directory.count > 0 ? target->archive_output_directory : target->output_directory);
+    if (out_dir.count == 0) out_dir = sv_from_cstr("build");
+
+    String_Builder name_sb = {0};
+    if (prefix.count > 0) nob_sb_append_buf(&name_sb, prefix.data, prefix.count);
+    if (out_name.count > 0) nob_sb_append_buf(&name_sb, out_name.data, out_name.count);
+    if (suffix.count > 0) nob_sb_append_buf(&name_sb, suffix.data, suffix.count);
+    String_View file_name = name_sb.count > 0
+        ? sv_from_cstr(arena_strndup(ctx->model->arena, name_sb.items, name_sb.count))
+        : sv_from_cstr("");
+    nob_sb_free(name_sb);
+
+    if (out_dir.count == 0) return file_name;
+    return build_path_join(ctx->model->arena, out_dir, file_name);
 }
 
 void build_target_set_flag(Build_Target *target, Target_Flag flag, bool value) {
@@ -1854,17 +1937,27 @@ String_View build_target_get_property_computed(Build_Target *target,
         .model = model,
         .config = active_cfg,
     };
-    Genex_V2_Context gx = {
+    Genex_Context gx = {
         .arena = model->arena,
         .config = config_name,
+        .current_target_name = target->name,
+        .platform_id = build_model_get_system_name(model),
+        .compile_language = sv_from_cstr(""),
         .read_target_property = bm_genex_target_property_read,
+        .read_target_file = bm_genex_target_file_read,
+        .read_target_linker_file = bm_genex_target_linker_file_read,
         .userdata = &cb,
+        .link_only_active = true,
+        .build_interface_active = true,
+        .install_interface_active = false,
+        .target_name_case_insensitive = model->is_windows,
+        .max_callback_value_len = 1024 * 1024,
         .max_depth = 64,
         .max_target_property_depth = 32,
     };
 
-    Genex_V2_Result evaluated = genex_v2_eval(&gx, raw);
-    if (evaluated.status == GENEX_V2_OK) {
+    Genex_Result evaluated = genex_eval(&gx, raw);
+    if (evaluated.status == GENEX_OK) {
         return evaluated.value;
     }
 
@@ -2398,4 +2491,6 @@ String_View build_path_make_absolute(Arena *arena, String_View path) {
     if (build_path_is_absolute(path)) return bm_sv_copy_to_arena(arena, path);
     return build_path_join(arena, sv_from_cstr(nob_get_current_dir_temp()), path);
 }
+
+
 

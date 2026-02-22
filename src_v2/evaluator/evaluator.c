@@ -74,17 +74,8 @@ bool eval_should_stop(Evaluator_Context *ctx) {
 }
 
 // -----------------------------------------------------------------------------
-// Event stream + diagnostics (error as data)
+// Diagnostics (error as data)
 // -----------------------------------------------------------------------------
-
-bool event_stream_push(Arena *event_arena, Cmake_Event_Stream *stream, Cmake_Event ev) {
-    if (!event_arena || !stream) return false;
-    if (!arena_da_reserve(event_arena, (void**)&stream->items, &stream->capacity, sizeof(stream->items[0]), stream->count + 1)) {
-        return false;
-    }
-    stream->items[stream->count++] = ev;
-    return true;
-}
 
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Cmake_Diag_Severity sev,

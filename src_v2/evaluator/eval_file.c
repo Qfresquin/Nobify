@@ -287,14 +287,6 @@ static String_View sv_dirname(String_View path) {
     return nob_sv_from_cstr(".");
 }
 
-static bool sv_has_glob_meta(String_View sv) {
-    for (size_t i = 0; i < sv.count; i++) {
-        char c = sv.data[i];
-        if (c == '*' || c == '?' || c == '[') return true;
-    }
-    return false;
-}
-
 static String_View glob_base_dir(String_View pattern_abs) {
     size_t first_meta = pattern_abs.count;
     for (size_t i = 0; i < pattern_abs.count; i++) {

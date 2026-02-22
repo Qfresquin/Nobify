@@ -1091,6 +1091,7 @@ TEST(fase1_property_computed_genex_lazy_core) {
     build_target_set_property_smart(t, arena, sv_from_cstr("INCLUDE_DIRECTORIES"), sv_from_cstr("$<$<IF:$<CONFIG:Debug>,dbg,rel>>"));
     build_target_set_property_smart(t, arena, sv_from_cstr("MY_PROP"), sv_from_cstr("$<$<CONFIG:Debug>:A;B>"));
     build_target_set_property_smart(t, arena, sv_from_cstr("SUFFIX"), sv_from_cstr("$<$<CONFIG:Debug>:_d>"));
+    build_target_set_property_smart(t, arena, sv_from_cstr("ESCAPED"), sv_from_cstr("\\$<CONFIG:Debug>"));
 
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("Debug")), sv_from_cstr("DBG")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("COMPILE_DEFINITIONS"), sv_from_cstr("Release")), sv_from_cstr("")));
@@ -1101,6 +1102,7 @@ TEST(fase1_property_computed_genex_lazy_core) {
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("MY_PROP"), sv_from_cstr("Release")), sv_from_cstr("")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("SUFFIX"), sv_from_cstr("Debug")), sv_from_cstr("_d")));
     ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("SUFFIX"), sv_from_cstr("Release")), sv_from_cstr("")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(t, sv_from_cstr("ESCAPED"), sv_from_cstr("Debug")), sv_from_cstr("\\$<CONFIG:Debug>")));
 
     arena_destroy(arena);
     TEST_PASS();
@@ -1118,14 +1120,42 @@ TEST(fase1_property_computed_genex_target_property_and_fallbacks) {
     build_target_set_property_smart(a, arena, sv_from_cstr("MY_PROP"), sv_from_cstr("$<TARGET_PROPERTY:B,OUTPUT_NAME>"));
     ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("MY_PROP"), sv_from_cstr("Debug")), sv_from_cstr("b_out")));
 
+    build_target_set_property_smart(a, arena, sv_from_cstr("MY_PROP_IMPLICIT"), sv_from_cstr("$<TARGET_PROPERTY:OUTPUT_NAME>"));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("MY_PROP_IMPLICIT"), sv_from_cstr("Debug")), sv_from_cstr("A")));
+
     build_target_set_property_smart(a, arena, sv_from_cstr("CYCLE"), sv_from_cstr("$<TARGET_PROPERTY:B,CYCLE>"));
     build_target_set_property_smart(b, arena, sv_from_cstr("CYCLE"), sv_from_cstr("$<TARGET_PROPERTY:A,CYCLE>"));
     ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("CYCLE"), sv_from_cstr("Debug")),
                      sv_from_cstr("$<TARGET_PROPERTY:B,CYCLE>")));
 
-    build_target_set_property_smart(a, arena, sv_from_cstr("UNSUPPORTED"), sv_from_cstr("$<TARGET_FILE:A>"));
-    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("UNSUPPORTED"), sv_from_cstr("Debug")),
-                     sv_from_cstr("$<TARGET_FILE:A>")));
+    build_target_set_property_smart(a, arena, sv_from_cstr("OUTPUT_NAME"), sv_from_cstr("a_out"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("PREFIX"), sv_from_cstr(""));
+    build_target_set_property_smart(a, arena, sv_from_cstr("SUFFIX"), sv_from_cstr(".bin"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("OUTPUT_DIRECTORY"), sv_from_cstr("out"));
+
+    build_target_set_property_smart(a, arena, sv_from_cstr("TF"), sv_from_cstr("$<TARGET_FILE:A>"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("TF_DIR"), sv_from_cstr("$<TARGET_FILE_DIR:A>"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("TF_NAME"), sv_from_cstr("$<TARGET_FILE_NAME:A>"));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("TF"), sv_from_cstr("Debug")),
+                     sv_from_cstr("out/a_out.bin")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("TF_DIR"), sv_from_cstr("Debug")),
+                     sv_from_cstr("out")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("TF_NAME"), sv_from_cstr("Debug")),
+                     sv_from_cstr("a_out.bin")));
+
+    build_target_set_property_smart(b, arena, sv_from_cstr("OUTPUT_NAME"), sv_from_cstr("b_out"));
+    build_target_set_property_smart(b, arena, sv_from_cstr("PREFIX"), sv_from_cstr("lib"));
+    build_target_set_property_smart(b, arena, sv_from_cstr("SUFFIX"), sv_from_cstr(".a"));
+    build_target_set_property_smart(b, arena, sv_from_cstr("ARCHIVE_OUTPUT_DIRECTORY"), sv_from_cstr("libout"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("TLF"), sv_from_cstr("$<TARGET_LINKER_FILE:B>"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("TLF_DIR"), sv_from_cstr("$<TARGET_LINKER_FILE_DIR:B>"));
+    build_target_set_property_smart(a, arena, sv_from_cstr("TLF_NAME"), sv_from_cstr("$<TARGET_LINKER_FILE_NAME:B>"));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("TLF"), sv_from_cstr("Debug")),
+                     sv_from_cstr("libout/libb_out.a")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("TLF_DIR"), sv_from_cstr("Debug")),
+                     sv_from_cstr("libout")));
+    ASSERT(nob_sv_eq(build_target_get_property_computed(a, sv_from_cstr("TLF_NAME"), sv_from_cstr("Debug")),
+                     sv_from_cstr("libb_out.a")));
 
     arena_destroy(arena);
     TEST_PASS();
