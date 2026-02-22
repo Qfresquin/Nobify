@@ -1,0 +1,98 @@
+MODULE arena
+CASES 24
+
+=== CASE create_and_destroy ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE basic_allocation ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE alloc_zero ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE alloc_array ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE multiple_blocks ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE reset ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE mark_and_rewind ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE reset_runs_cleanups_once_and_not_on_destroy_again ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE rewind_runs_only_cleanups_after_mark ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE rewind_restores_exact_mark_usage_across_blocks ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE strdup ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE strndup ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE memdup ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE alignment ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE large_allocation ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE realloc_last_grow_and_shrink ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE realloc_last_non_last_pointer ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE realloc_last_invalid_old_size_is_safe ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE reset_reuses_existing_blocks ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE rewind_reuses_existing_blocks ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE invalid_inputs_are_safe ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE overflow_alloc_returns_null_and_does_not_break_arena ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE dyn_reserve_basic_and_preserves_data ===
+RESULT=PASS
+=== END CASE ===
+
+=== CASE dyn_reserve_invalid_and_overflow ===
+RESULT=PASS
+=== END CASE ===

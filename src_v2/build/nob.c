@@ -5,6 +5,7 @@
 
 static const char *APP_SRC = "src_v2/app/nobify.c";
 static const char *APP_BIN = "build/nobify";
+#define TEST_ARENA_BIN "build/v2/test_arena"
 #define TEST_LEXER_BIN "build/v2/test_lexer"
 #define TEST_PARSER_BIN "build/v2/test_parser"
 #define TEST_EVALUATOR_BIN "build/v2/test_evaluator"
@@ -20,8 +21,10 @@ typedef struct {
 static bool test_lexer(void);
 static bool test_parser(void);
 static bool test_evaluator(void);
+static bool test_arena(void);
 
 static Test_Module TEST_MODULES[] = {
+    {"arena", TEST_ARENA_BIN, test_arena},
     {"lexer", TEST_LEXER_BIN, test_lexer},
     {"parser", TEST_PARSER_BIN, test_parser},
     {"evaluator", TEST_EVALUATOR_BIN, test_evaluator},
@@ -78,6 +81,17 @@ static void append_v2_lexer_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/lexer/lexer.c");
 }
 
+static void append_v2_arena_runtime_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "src_v2/arena/arena.c");
+}
+
+static void append_v2_arena_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/arena/test_arena_v2_main.c",
+        "test_v2/arena/test_arena_v2_suite.c");
+}
+
 static void append_v2_lexer_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/lexer/test_lexer_v2_main.c",
@@ -93,9 +107,7 @@ static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/evaluator/test_evaluator_v2_main.c",
-        "test_v2/evaluator/test_evaluator_v2_snapshot.c",
-        "test_v2/evaluator/test_evaluator_v2_suite_all.c",
-        "test_v2/evaluator/test_evaluator_v2_suite_golden.c");
+        "test_v2/evaluator/test_evaluator_v2_suite.c");
 }
 
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
@@ -184,6 +196,20 @@ static bool build_test_lexer(void) {
     return nob_cmd_run_sync(cmd);
 }
 
+static bool build_test_arena(void) {
+    if (!nob_mkdir_if_not_exists("build")) return false;
+    if (!nob_mkdir_if_not_exists("build/v2")) return false;
+
+    Nob_Cmd cmd = {0};
+    nob_cc(&cmd);
+    append_v2_common_flags(&cmd);
+    nob_cmd_append(&cmd, "-o", TEST_ARENA_BIN);
+    append_v2_arena_test_sources(&cmd);
+    append_v2_arena_runtime_sources(&cmd);
+    append_platform_link_flags(&cmd);
+    return nob_cmd_run_sync(cmd);
+}
+
 static bool build_test_parser(void) {
     if (!nob_mkdir_if_not_exists("build")) return false;
     if (!nob_mkdir_if_not_exists("build/v2")) return false;
@@ -217,6 +243,12 @@ static bool test_evaluator(void) {
     nob_log(NOB_INFO, "[v2] build+run evaluator");
     if (!build_test_evaluator()) return false;
     return run_binary(TEST_EVALUATOR_BIN);
+}
+
+static bool test_arena(void) {
+    nob_log(NOB_INFO, "[v2] build+run arena");
+    if (!build_test_arena()) return false;
+    return run_binary(TEST_ARENA_BIN);
 }
 
 static bool test_lexer(void) {
@@ -265,12 +297,13 @@ static bool clean_all(void) {
 int main(int argc, char **argv) {
     const char *cmd = (argc > 1) ? argv[1] : "build";
     if (strcmp(cmd, "build") == 0) return build_app() ? 0 : 1;
+    if (strcmp(cmd, "test-arena") == 0) return test_arena() ? 0 : 1;
     if (strcmp(cmd, "test-lexer") == 0) return test_lexer() ? 0 : 1;
     if (strcmp(cmd, "test-parser") == 0) return test_parser() ? 0 : 1;
     if (strcmp(cmd, "test-evaluator") == 0) return test_evaluator() ? 0 : 1;
     if (strcmp(cmd, "test-v2") == 0) return test_v2_all() ? 0 : 1;
     if (strcmp(cmd, "clean") == 0) return clean_all() ? 0 : 1;
 
-    nob_log(NOB_INFO, "Usage: %s [build|test-lexer|test-parser|test-evaluator|test-v2|clean]", argv[0]);
+    nob_log(NOB_INFO, "Usage: %s [build|test-arena|test-lexer|test-parser|test-evaluator|test-v2|clean]", argv[0]);
     return 1;
 }

@@ -1,6 +1,16 @@
 #include "test_v2_assert.h"
+#include "test_v2_suite.h"
 
-#include "test_evaluator_v2_shared.h"
+#include "arena.h"
+#include "arena_dyn.h"
+#include "diagnostics.h"
+#include "evaluator.h"
+#include "event_ir.h"
+#include "lexer.h"
+#include "parser.h"
+
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct {
     String_View name;
@@ -12,6 +22,56 @@ typedef struct {
     size_t count;
     size_t capacity;
 } Evaluator_Case_List;
+
+static bool token_list_append(Arena *arena, Token_List *list, Token token) {
+    if (!arena || !list) return false;
+    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
+    list->items[list->count++] = token;
+    return true;
+}
+
+static Ast_Root parse_cmake(Arena *arena, const char *script) {
+    Lexer lx = lexer_init(nob_sv_from_cstr(script ? script : ""));
+    Token_List toks = {0};
+    for (;;) {
+        Token t = lexer_next(&lx);
+        if (t.kind == TOKEN_END) break;
+        if (!token_list_append(arena, &toks, t)) return (Ast_Root){0};
+    }
+    return parse_tokens(arena, toks);
+}
+
+static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
+    if (!arena || !path || !out) return false;
+
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path, &sb)) return false;
+
+    char *text = arena_strndup(arena, sb.items, sb.count);
+    size_t len = sb.count;
+    nob_sb_free(sb);
+    if (!text) return false;
+
+    *out = nob_sv_from_parts(text, len);
+    return true;
+}
+
+static String_View evaluator_normalize_newlines_to_arena(Arena *arena, String_View in) {
+    if (!arena) return nob_sv_from_cstr("");
+
+    char *buf = (char*)arena_alloc(arena, in.count + 1);
+    if (!buf) return nob_sv_from_cstr("");
+
+    size_t out_count = 0;
+    for (size_t i = 0; i < in.count; i++) {
+        char c = in.data[i];
+        if (c == '\r') continue;
+        buf[out_count++] = c;
+    }
+
+    buf[out_count] = '\0';
+    return nob_sv_from_parts(buf, out_count);
+}
 
 static bool evaluator_case_list_append(Arena *arena, Evaluator_Case_List *list, Evaluator_Case value) {
     if (!arena || !list) return false;
@@ -107,6 +167,260 @@ static bool parse_case_pack_to_arena(Arena *arena, String_View content, Evaluato
     return out->count > 0;
 }
 
+static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
+    nob_sb_append_cstr(sb, "'");
+    for (size_t i = 0; i < sv.count; i++) {
+        char c = sv.data[i];
+        if (c == '\\') {
+            nob_sb_append_cstr(sb, "\\\\");
+        } else if (c == '\n') {
+            nob_sb_append_cstr(sb, "\\n");
+        } else if (c == '\r') {
+            nob_sb_append_cstr(sb, "\\r");
+        } else if (c == '\t') {
+            nob_sb_append_cstr(sb, "\\t");
+        } else if (c == '\'') {
+            nob_sb_append_cstr(sb, "\\'");
+        } else {
+            nob_sb_append(sb, c);
+        }
+    }
+    nob_sb_append_cstr(sb, "'");
+}
+
+static const char *event_kind_name(Cmake_Event_Kind kind) {
+    switch (kind) {
+        case EV_DIAGNOSTIC: return "EV_DIAGNOSTIC";
+        case EV_PROJECT_DECLARE: return "EV_PROJECT_DECLARE";
+        case EV_VAR_SET: return "EV_VAR_SET";
+        case EV_SET_CACHE_ENTRY: return "EV_SET_CACHE_ENTRY";
+        case EV_TARGET_DECLARE: return "EV_TARGET_DECLARE";
+        case EV_TARGET_ADD_SOURCE: return "EV_TARGET_ADD_SOURCE";
+        case EV_TARGET_PROP_SET: return "EV_TARGET_PROP_SET";
+        case EV_TARGET_INCLUDE_DIRECTORIES: return "EV_TARGET_INCLUDE_DIRECTORIES";
+        case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
+        case EV_TARGET_COMPILE_OPTIONS: return "EV_TARGET_COMPILE_OPTIONS";
+        case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
+        case EV_GLOBAL_COMPILE_DEFINITIONS: return "EV_GLOBAL_COMPILE_DEFINITIONS";
+        case EV_GLOBAL_COMPILE_OPTIONS: return "EV_GLOBAL_COMPILE_OPTIONS";
+        case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
+    }
+    return "EV_UNKNOWN";
+}
+
+static const char *target_type_name(Cmake_Target_Type type) {
+    switch (type) {
+        case EV_TARGET_EXECUTABLE: return "EXECUTABLE";
+        case EV_TARGET_LIBRARY_STATIC: return "LIB_STATIC";
+        case EV_TARGET_LIBRARY_SHARED: return "LIB_SHARED";
+        case EV_TARGET_LIBRARY_MODULE: return "LIB_MODULE";
+        case EV_TARGET_LIBRARY_INTERFACE: return "LIB_INTERFACE";
+        case EV_TARGET_LIBRARY_OBJECT: return "LIB_OBJECT";
+        case EV_TARGET_LIBRARY_UNKNOWN: return "LIB_UNKNOWN";
+    }
+    return "UNKNOWN";
+}
+
+static const char *visibility_name(Cmake_Visibility vis) {
+    switch (vis) {
+        case EV_VISIBILITY_UNSPECIFIED: return "UNSPECIFIED";
+        case EV_VISIBILITY_PRIVATE: return "PRIVATE";
+        case EV_VISIBILITY_PUBLIC: return "PUBLIC";
+        case EV_VISIBILITY_INTERFACE: return "INTERFACE";
+    }
+    return "UNKNOWN";
+}
+
+static const char *diag_severity_name(Cmake_Diag_Severity sev) {
+    switch (sev) {
+        case EV_DIAG_WARNING: return "WARNING";
+        case EV_DIAG_ERROR: return "ERROR";
+    }
+    return "UNKNOWN";
+}
+
+static const char *prop_op_name(Cmake_Target_Property_Op op) {
+    switch (op) {
+        case EV_PROP_SET: return "SET";
+        case EV_PROP_APPEND_LIST: return "APPEND_LIST";
+        case EV_PROP_APPEND_STRING: return "APPEND_STRING";
+    }
+    return "UNKNOWN";
+}
+
+static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_Event *ev) {
+    nob_sb_append_cstr(sb, nob_temp_sprintf("EV[%zu] kind=%s file=", index, event_kind_name(ev->kind)));
+    snapshot_append_escaped_sv(sb, ev->origin.file_path);
+    nob_sb_append_cstr(sb, nob_temp_sprintf(" line=%zu col=%zu", ev->origin.line, ev->origin.col));
+
+    switch (ev->kind) {
+        case EV_DIAGNOSTIC:
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" sev=%s component=", diag_severity_name(ev->as.diag.severity)));
+            snapshot_append_escaped_sv(sb, ev->as.diag.component);
+            nob_sb_append_cstr(sb, " command=");
+            snapshot_append_escaped_sv(sb, ev->as.diag.command);
+            nob_sb_append_cstr(sb, " cause=");
+            snapshot_append_escaped_sv(sb, ev->as.diag.cause);
+            nob_sb_append_cstr(sb, " hint=");
+            snapshot_append_escaped_sv(sb, ev->as.diag.hint);
+            break;
+
+        case EV_PROJECT_DECLARE:
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.project_declare.name);
+            nob_sb_append_cstr(sb, " version=");
+            snapshot_append_escaped_sv(sb, ev->as.project_declare.version);
+            nob_sb_append_cstr(sb, " description=");
+            snapshot_append_escaped_sv(sb, ev->as.project_declare.description);
+            nob_sb_append_cstr(sb, " languages=");
+            snapshot_append_escaped_sv(sb, ev->as.project_declare.languages);
+            break;
+
+        case EV_VAR_SET:
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.var_set.key);
+            nob_sb_append_cstr(sb, " value=");
+            snapshot_append_escaped_sv(sb, ev->as.var_set.value);
+            break;
+
+        case EV_SET_CACHE_ENTRY:
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.cache_entry.key);
+            nob_sb_append_cstr(sb, " value=");
+            snapshot_append_escaped_sv(sb, ev->as.cache_entry.value);
+            break;
+
+        case EV_TARGET_DECLARE:
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.target_declare.name);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" type=%s", target_type_name(ev->as.target_declare.type)));
+            break;
+
+        case EV_TARGET_ADD_SOURCE:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_add_source.target_name);
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.target_add_source.path);
+            break;
+
+        case EV_TARGET_PROP_SET:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_prop_set.target_name);
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.target_prop_set.key);
+            nob_sb_append_cstr(sb, " value=");
+            snapshot_append_escaped_sv(sb, ev->as.target_prop_set.value);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" op=%s", prop_op_name(ev->as.target_prop_set.op)));
+            break;
+
+        case EV_TARGET_INCLUDE_DIRECTORIES:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_include_directories.target_name);
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.target_include_directories.path);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s is_system=%d is_before=%d",
+                visibility_name(ev->as.target_include_directories.visibility),
+                ev->as.target_include_directories.is_system ? 1 : 0,
+                ev->as.target_include_directories.is_before ? 1 : 0));
+            break;
+
+        case EV_TARGET_COMPILE_DEFINITIONS:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_compile_definitions.target_name);
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.target_compile_definitions.item);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_compile_definitions.visibility)));
+            break;
+
+        case EV_TARGET_COMPILE_OPTIONS:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_compile_options.target_name);
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.target_compile_options.item);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_compile_options.visibility)));
+            break;
+
+        case EV_TARGET_LINK_LIBRARIES:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_link_libraries.target_name);
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.target_link_libraries.item);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_link_libraries.visibility)));
+            break;
+
+        case EV_GLOBAL_COMPILE_DEFINITIONS:
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.global_compile_definitions.item);
+            break;
+
+        case EV_GLOBAL_COMPILE_OPTIONS:
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.global_compile_options.item);
+            break;
+
+        case EV_FIND_PACKAGE:
+            nob_sb_append_cstr(sb, " package=");
+            snapshot_append_escaped_sv(sb, ev->as.find_package.package_name);
+            nob_sb_append_cstr(sb, " mode=");
+            snapshot_append_escaped_sv(sb, ev->as.find_package.mode);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" required=%d found=%d location=",
+                ev->as.find_package.required ? 1 : 0,
+                ev->as.find_package.found ? 1 : 0));
+            snapshot_append_escaped_sv(sb, ev->as.find_package.location);
+            break;
+    }
+
+    nob_sb_append_cstr(sb, "\n");
+}
+
+static bool evaluator_snapshot_from_ast(Ast_Root root, const char *current_file, Nob_String_Builder *out_sb) {
+    if (!out_sb) return false;
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(4 * 1024 * 1024);
+    if (!temp_arena || !event_arena) {
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+        return false;
+    }
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    if (!stream) {
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+        return false;
+    }
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = current_file;
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    if (!ctx) {
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+        return false;
+    }
+
+    (void)evaluator_run(ctx, root);
+
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVENTS count=%zu\n", stream->count));
+
+    for (size_t i = 0; i < stream->count; i++) {
+        append_event_line(out_sb, i, &stream->items[i]);
+    }
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    return true;
+}
+
 static bool render_evaluator_case_snapshot_to_sb(Arena *arena,
                                                   Evaluator_Case eval_case,
                                                   Nob_String_Builder *out_sb) {
@@ -114,8 +428,8 @@ static bool render_evaluator_case_snapshot_to_sb(Arena *arena,
     Ast_Root root = parse_cmake(arena, eval_case.script.data);
 
     Nob_String_Builder case_sb = {0};
-    (void)evaluator_snapshot_from_ast(root, "CMakeLists.txt", &case_sb);
-    if (case_sb.count == 0) {
+    bool ok = evaluator_snapshot_from_ast(root, "CMakeLists.txt", &case_sb);
+    if (!ok || case_sb.count == 0) {
         nob_sb_free(case_sb);
         return false;
     }
@@ -229,6 +543,6 @@ TEST(evaluator_golden_all_cases) {
     TEST_PASS();
 }
 
-void run_evaluator_golden_tests(int *passed, int *failed) {
+void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_golden_all_cases(passed, failed);
 }
