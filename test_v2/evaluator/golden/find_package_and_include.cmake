@@ -1,0 +1,5 @@
+project(FindDemo)
+set(CMAKE_MODULE_PATH modules)
+include_guard(GLOBAL)
+find_package(ZLIB QUIET)
+add_executable(fp main.c)

@@ -20,8 +20,13 @@ typedef struct {
 } Eval_Test_Env;
 
 bool env_init(Eval_Test_Env *env);
+bool env_init_with_paths(Eval_Test_Env *env,
+                         const char *source_dir,
+                         const char *binary_dir,
+                         const char *current_file);
 void env_free(Eval_Test_Env *env);
 bool run_script(Eval_Test_Env *env, const char *script);
+bool run_script_with_file(Eval_Test_Env *env, const char *script, const char *current_file);
 
 size_t count_events(const Eval_Test_Env *env, Cmake_Event_Kind kind);
 bool has_event_item(const Eval_Test_Env *env, Cmake_Event_Kind kind, const char *item);

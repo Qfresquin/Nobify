@@ -20,7 +20,10 @@ static Ast_Root parse_script(Arena *arena, const char *script) {
     return parse_tokens(arena, toks);
 }
 
-bool env_init(Eval_Test_Env *env) {
+bool env_init_with_paths(Eval_Test_Env *env,
+                         const char *source_dir,
+                         const char *binary_dir,
+                         const char *current_file) {
     memset(env, 0, sizeof(*env));
     env->temp_arena = arena_create(2 * 1024 * 1024);
     env->event_arena = arena_create(2 * 1024 * 1024);
@@ -30,11 +33,15 @@ bool env_init(Eval_Test_Env *env) {
     init.arena = env->temp_arena;
     init.event_arena = env->event_arena;
     init.stream = &env->stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
-    init.current_file = "CMakeLists.txt";
+    init.source_dir = nob_sv_from_cstr(source_dir ? source_dir : ".");
+    init.binary_dir = nob_sv_from_cstr(binary_dir ? binary_dir : ".");
+    init.current_file = current_file ? current_file : "CMakeLists.txt";
     env->ctx = evaluator_create(&init);
     return env->ctx != NULL;
+}
+
+bool env_init(Eval_Test_Env *env) {
+    return env_init_with_paths(env, ".", ".", "CMakeLists.txt");
 }
 
 void env_free(Eval_Test_Env *env) {
@@ -45,6 +52,17 @@ void env_free(Eval_Test_Env *env) {
 }
 
 bool run_script(Eval_Test_Env *env, const char *script) {
+    Ast_Root ast = parse_script(env->temp_arena, script);
+    return evaluator_run(env->ctx, ast);
+}
+
+bool run_script_with_file(Eval_Test_Env *env, const char *script, const char *current_file) {
+    if (!env || !env->ctx || !script) return false;
+    const char *file_copy = current_file
+        ? arena_strndup(env->event_arena, current_file, strlen(current_file))
+        : "CMakeLists.txt";
+    if (!file_copy) return false;
+    env->ctx->current_file = file_copy;
     Ast_Root ast = parse_script(env->temp_arena, script);
     return evaluator_run(env->ctx, ast);
 }

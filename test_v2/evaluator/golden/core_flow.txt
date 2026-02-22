@@ -1,0 +1,6 @@
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CoreDemo' version='1.0' description='' languages=''
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=3 name='core_app' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=3 target='core_app' path='main.c'
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 target='core_app' item='CORE_OK=1' vis=PRIVATE

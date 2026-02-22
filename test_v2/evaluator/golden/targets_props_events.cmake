@@ -1,0 +1,8 @@
+project(TargetDemo)
+add_executable(app main.c util.c)
+add_library(lib STATIC lib.c)
+target_include_directories(app PRIVATE include)
+target_compile_definitions(app PRIVATE APPDEF=1)
+target_compile_options(app PRIVATE -Wall)
+target_link_libraries(app PRIVATE lib)
+set_target_properties(app PROPERTIES OUTPUT_NAME appx)

@@ -1,0 +1,6 @@
+project(CoreDemo VERSION 1.0)
+set(FOO ON)
+if(FOO)
+  add_executable(core_app main.c)
+  target_compile_definitions(core_app PRIVATE CORE_OK=1)
+endif()

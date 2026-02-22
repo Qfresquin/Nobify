@@ -1,0 +1,13 @@
+DIAG errors=0 warnings=0
+EVENTS count=11
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='TargetDemo' version='' description='' languages=''
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='app' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='main.c'
+EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='util.c'
+EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='lib' type=LIB_STATIC
+EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='lib' path='lib.c'
+EV[6] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE
+EV[9] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=7 col=1 target='app' item='lib' vis=PRIVATE
+EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET

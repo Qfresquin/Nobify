@@ -94,9 +94,20 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/evaluator/test_evaluator_v2_main.c",
         "test_v2/evaluator/test_evaluator_v2_env.c",
-        "test_v2/evaluator/test_evaluator_v2_suite_parser.c",
+        "test_v2/evaluator/test_evaluator_v2_snapshot.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_all.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_expr.c",
         "test_v2/evaluator/test_evaluator_v2_suite_dispatcher.c",
-        "test_v2/evaluator/test_evaluator_v2_suite_file_security.c");
+        "test_v2/evaluator/test_evaluator_v2_suite_file_security.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_core.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_targets.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_find_include.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_file_io.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_cpack.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_probes.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_ctest_meta.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_misc.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_golden.c");
 }
 
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
