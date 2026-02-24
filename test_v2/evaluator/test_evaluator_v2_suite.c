@@ -11,6 +11,16 @@
 
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#ifndef SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+#define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
+#endif
+#else
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 typedef struct {
     String_View name;
@@ -22,6 +32,76 @@ typedef struct {
     size_t count;
     size_t capacity;
 } Evaluator_Case_List;
+
+static bool evaluator_remove_link_like_path(const char *path) {
+    if (!path) return false;
+#if defined(_WIN32)
+    DWORD attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        DWORD err = GetLastError();
+        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+    }
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
+        if (RemoveDirectoryA(path)) return true;
+    }
+    if (DeleteFileA(path)) return true;
+    if (RemoveDirectoryA(path)) return true;
+    return false;
+#else
+    struct stat st = {0};
+    if (lstat(path, &st) != 0) {
+        return errno == ENOENT;
+    }
+    if (S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode)) {
+        return rmdir(path) == 0;
+    }
+    return unlink(path) == 0;
+#endif
+}
+
+static bool evaluator_prepare_symlink_escape_fixture(void) {
+    const char *outside_dir = "../evaluator_symlink_outside";
+    const char *outside_file = "../evaluator_symlink_outside/outside.txt";
+    const char *inside_link = "temp_symlink_escape_link";
+
+    if (!nob_mkdir_if_not_exists(outside_dir)) {
+        nob_log(NOB_ERROR, "evaluator fixture: failed to create %s", outside_dir);
+        return false;
+    }
+    if (!nob_write_entire_file(outside_file, "outside\n", 8)) {
+        nob_log(NOB_ERROR, "evaluator fixture: failed to write %s", outside_file);
+        return false;
+    }
+
+    if (!evaluator_remove_link_like_path(inside_link)) {
+        nob_log(NOB_ERROR, "evaluator fixture: failed to clean %s", inside_link);
+        return false;
+    }
+
+#if defined(_WIN32)
+    DWORD flags = SYMBOLIC_LINK_FLAG_DIRECTORY;
+    if (CreateSymbolicLinkA(inside_link, "..\\evaluator_symlink_outside",
+                            flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
+        return true;
+    }
+    if (CreateSymbolicLinkA(inside_link, "..\\evaluator_symlink_outside", flags) != 0) {
+        return true;
+    }
+
+    int mklink_rc = system("cmd /C mklink /J temp_symlink_escape_link ..\\evaluator_symlink_outside >NUL 2>NUL");
+    if (mklink_rc == 0) return true;
+
+    nob_log(NOB_ERROR, "evaluator fixture: failed to create symlink/junction at %s", inside_link);
+    return false;
+#else
+    if (symlink("../evaluator_symlink_outside", inside_link) == 0) return true;
+    if (errno == EEXIST) return true;
+
+    nob_log(NOB_ERROR, "evaluator fixture: failed to create symlink %s -> %s: %s",
+            inside_link, outside_dir, strerror(errno));
+    return false;
+#endif
+}
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
@@ -667,6 +747,11 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
     String_View actual = {0};
     bool ok = true;
 
+    if (!evaluator_prepare_symlink_escape_fixture()) {
+        ok = false;
+        goto done;
+    }
+
     if (!evaluator_load_text_file_to_arena(arena, input_path, &input)) {
         nob_log(NOB_ERROR, "golden: failed to read input: %s", input_path);
         ok = false;
@@ -679,8 +764,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 28) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=28", cases.count);
+    if (cases.count != 42) {
+        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=42", cases.count);
         ok = false;
         goto done;
     }

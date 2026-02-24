@@ -51,6 +51,49 @@ try_compile(HAVE_X ${CMAKE_BINARY_DIR} probe.c)
 add_executable(probe_app main.c)
 #@@ENDCASE
 
+#@@CASE try_compile_source_from_content_copy_file_and_cache
+try_compile(TC_CONTENT_OK tc_build
+  SOURCE_FROM_CONTENT tc_generated.c "ok_content"
+  OUTPUT_VARIABLE TC_CONTENT_MSG
+  COPY_FILE tc_copy_out.txt
+  CMAKE_FLAGS -DTC_FLAG:STRING=ready)
+file(READ tc_copy_out.txt TC_COPY_TEXT)
+add_executable(tc_content main.c)
+target_compile_definitions(tc_content PRIVATE TC_CONTENT_OK=${TC_CONTENT_OK} TC_FLAG=${TC_FLAG} TC_CONTENT_MSG=${TC_CONTENT_MSG} TC_COPY_TEXT=${TC_COPY_TEXT})
+#@@ENDCASE
+
+#@@CASE try_compile_sources_missing_with_no_cache
+try_compile(TC_MISSING tc_build SOURCES missing_a.c missing_b.c OUTPUT_VARIABLE TC_MISSING_MSG NO_CACHE)
+add_executable(tc_missing main.c)
+target_compile_definitions(tc_missing PRIVATE TC_MISSING=${TC_MISSING} "TC_MISSING_MSG=${TC_MISSING_MSG}")
+#@@ENDCASE
+
+#@@CASE try_compile_source_from_var_and_file_with_log_description
+file(WRITE tc_real_src.c "from_file_src")
+set(TC_VAR_SRC "from_var_src")
+try_compile(TC_MIX_OK tc_build
+  SOURCE_FROM_VAR from_var.c TC_VAR_SRC
+  SOURCE_FROM_FILE from_file.c tc_real_src.c
+  OUTPUT_VARIABLE TC_MIX_MSG
+  LOG_DESCRIPTION mix_log_ok
+  COPY_FILE tc_mix_copy.txt
+  COPY_FILE_ERROR TC_COPY_ERR
+  NO_CACHE)
+file(READ tc_mix_copy.txt TC_MIX_COPY_TXT)
+add_executable(tc_mix main.c)
+target_compile_definitions(tc_mix PRIVATE TC_MIX_OK=${TC_MIX_OK} TC_MIX_MSG=${TC_MIX_MSG} TC_COPY_ERR=${TC_COPY_ERR} TC_MIX_COPY_TXT=${TC_MIX_COPY_TXT})
+#@@ENDCASE
+
+#@@CASE try_compile_project_signature_success_and_failure
+file(MAKE_DIRECTORY tc_proj_ok)
+file(WRITE tc_proj_ok/CMakeLists.txt "project(TryProj)")
+try_compile(TC_PROJ_OK PROJECT TryProj SOURCE_DIR tc_proj_ok BINARY_DIR tc_proj_bin OUTPUT_VARIABLE TC_PROJ_MSG CMAKE_FLAGS -DTC_PROJ_FLAG:BOOL=ON)
+file(MAKE_DIRECTORY tc_proj_fail)
+try_compile(TC_PROJ_FAIL PROJECT TryProjFail SOURCE_DIR tc_proj_fail OUTPUT_VARIABLE TC_PROJ_FAIL_MSG NO_CACHE)
+add_executable(tc_proj main.c)
+target_compile_definitions(tc_proj PRIVATE TC_PROJ_OK=${TC_PROJ_OK} TC_PROJ_MSG=${TC_PROJ_MSG} TC_PROJ_FLAG=${TC_PROJ_FLAG} TC_PROJ_FAIL=${TC_PROJ_FAIL} "TC_PROJ_FAIL_MSG=${TC_PROJ_FAIL_MSG}")
+#@@ENDCASE
+
 #@@CASE golden_ctest_meta
 project(CTestDemo)
 enable_testing()
@@ -91,8 +134,8 @@ endif()
 
 #@@CASE flow_while_simple_counter
 set(C 0)
-while(C LESS 3)
-  math(EXPR C "${C} + 1")
+while(${C} LESS 3)
+  math(EXPR C "${C}+1")
 endwhile()
 add_executable(loop_simple main.c)
 target_compile_definitions(loop_simple PRIVATE SIMPLE_C=${C})
@@ -101,20 +144,20 @@ target_compile_definitions(loop_simple PRIVATE SIMPLE_C=${C})
 #@@CASE flow_while_break_and_continue
 set(I 0)
 set(OUT "")
-while(I LESS 5)
-  if(I EQUAL 1)
-    math(EXPR I "${I} + 1")
+while(${I} LESS 5)
+  if(${I} EQUAL 1)
+    math(EXPR I "${I}+1")
     continue()
   endif()
-  if(I EQUAL 3)
+  if(${I} EQUAL 3)
     break()
   endif()
-  if(OUT STREQUAL "")
+  if("${OUT}" STREQUAL "")
     set(OUT "${I}")
   else()
     set(OUT "${OUT}_${I}")
   endif()
-  math(EXPR I "${I} + 1")
+  math(EXPR I "${I}+1")
 endwhile()
 add_executable(loop_flow main.c)
 target_compile_definitions(loop_flow PRIVATE LOOP_OUT=${OUT})
@@ -123,22 +166,106 @@ target_compile_definitions(loop_flow PRIVATE LOOP_OUT=${OUT})
 #@@CASE flow_while_nested_break_continue
 set(O 0)
 set(ACC 0)
-while(O LESS 2)
+while(${O} LESS 2)
   set(I 0)
-  while(I LESS 4)
-    math(EXPR I "${I} + 1")
-    if(I EQUAL 2)
+  while(${I} LESS 4)
+    math(EXPR I "${I}+1")
+    if(${I} EQUAL 2)
       continue()
     endif()
-    if(I EQUAL 4)
+    if(${I} EQUAL 4)
       break()
     endif()
-    math(EXPR ACC "${ACC} + 1")
+    math(EXPR ACC "${ACC}+1")
   endwhile()
-  math(EXPR O "${O} + 1")
+  math(EXPR O "${O}+1")
 endwhile()
 add_executable(loop_nested main.c)
 target_compile_definitions(loop_nested PRIVATE NESTED_ACC=${ACC})
+#@@ENDCASE
+
+#@@CASE usercmd_function_scope_and_parent_scope
+set(FN_GLOBAL 10)
+function(fn_apply value)
+  set(FN_GLOBAL "${value}")
+  set(FN_LOCAL "${value}")
+  set(FN_PARENT "${value}" PARENT_SCOPE)
+endfunction()
+fn_apply(42)
+add_executable(fn_scope main.c)
+target_compile_definitions(fn_scope PRIVATE FN_GLOBAL=${FN_GLOBAL} FN_PARENT=${FN_PARENT})
+#@@ENDCASE
+
+#@@CASE usercmd_macro_args_and_caller_scope
+macro(mc_apply value)
+  set(MC_OUT "${value}")
+  set(MC_ARGC "${ARGC}")
+  set(MC_ARGV0 "${ARGV0}")
+  set(MC_ARGV1 "${ARGV1}")
+endmacro()
+mc_apply(alpha beta)
+add_executable(macro_scope main.c)
+target_compile_definitions(macro_scope PRIVATE MC_OUT=${MC_OUT} MC_ARGC=${MC_ARGC} MC_ARGV0=${MC_ARGV0} MC_ARGV1=${MC_ARGV1})
+#@@ENDCASE
+
+#@@CASE usercmd_nested_macro_calls_function
+function(fn_inner out value)
+  set(${out} "F_${value}" PARENT_SCOPE)
+endfunction()
+macro(mc_wrap out value)
+  fn_inner(${out} "${value}")
+endmacro()
+mc_wrap(NESTED_VAL zed)
+add_executable(nested_usercmd main.c)
+target_compile_definitions(nested_usercmd PRIVATE NESTED_VAL=${NESTED_VAL})
+#@@ENDCASE
+
+#@@CASE stdlib_list_get_find_extended
+set(LST "aa;bb;cc;dd")
+list(GET LST 1 -1 PICKS)
+list(FIND LST cc IDX_CC)
+list(FIND LST zz IDX_ZZ)
+add_executable(list_ext main.c)
+target_compile_definitions(list_ext PRIVATE "PICKS=${PICKS}" IDX_CC=${IDX_CC} IDX_ZZ=${IDX_ZZ})
+#@@ENDCASE
+
+#@@CASE stdlib_string_tolower_substring_extended
+string(TOLOWER "AbC-XyZ" STR_LOW)
+string(SUBSTRING "${STR_LOW}" 2 3 STR_SUB)
+string(SUBSTRING "${STR_LOW}" 4 -1 STR_TAIL)
+add_executable(string_ext main.c)
+target_compile_definitions(string_ext PRIVATE STR_LOW=${STR_LOW} STR_SUB=${STR_SUB} STR_TAIL=${STR_TAIL})
+#@@ENDCASE
+
+#@@CASE stdlib_string_regex_replace_extended
+string(REGEX REPLACE "[0-9]+" "N" STR_RX "v1-v22-v333")
+string(REGEX REPLACE "v([0-9]+)" "x\\1" STR_RX_BREF "v7")
+add_executable(string_regex_ext main.c)
+target_compile_definitions(string_regex_ext PRIVATE STR_RX=${STR_RX} STR_RX_BREF=${STR_RX_BREF})
+#@@ENDCASE
+
+#@@CASE stdlib_math_bitwise_and_precedence
+math(EXPR M_SHL "1 << 2")
+math(EXPR M_SHR "8 >> 1")
+math(EXPR M_AND "3 & 1")
+math(EXPR M_XOR "6 ^ 3")
+math(EXPR M_OR "1 | 2")
+math(EXPR M_PAREN "(1+2)*3")
+math(EXPR M_PREC "1 + 2 * 3 << 1 & 14 | 1")
+math(EXPR M_UNARY "~1")
+math(EXPR M_DIV "8/3")
+math(EXPR M_MOD "7%4")
+add_executable(math_ext main.c)
+target_compile_definitions(math_ext PRIVATE M_SHL=${M_SHL} M_SHR=${M_SHR} M_AND=${M_AND} M_XOR=${M_XOR} M_OR=${M_OR} M_PAREN=${M_PAREN} M_PREC=${M_PREC} M_UNARY=${M_UNARY} M_DIV=${M_DIV} M_MOD=${M_MOD})
+#@@ENDCASE
+
+#@@CASE dispatcher_custom_command_multiple_commands
+add_custom_command(OUTPUT multi.c
+  COMMAND echo first
+  COMMAND echo second
+  DEPENDS in.txt
+  BYPRODUCTS multi.log)
+add_executable(custom_multi main.c)
 #@@ENDCASE
 
 #@@CASE dispatcher_command_handlers
@@ -229,6 +356,14 @@ file(READ /tmp/nobify_forbidden OUT)
 
 #@@CASE file_security_strings_rejects_absolute_outside_project_scope
 file(STRINGS /tmp/nobify_forbidden OUT)
+#@@ENDCASE
+
+#@@CASE file_security_read_rejects_symlink_escape_outside_project_scope
+file(READ temp_symlink_escape_link/outside.txt OUT)
+#@@ENDCASE
+
+#@@CASE file_security_strings_rejects_symlink_escape_outside_project_scope
+file(STRINGS temp_symlink_escape_link/outside.txt OUT)
 #@@ENDCASE
 
 #@@CASE file_security_read_relative_inside_project_scope_still_works

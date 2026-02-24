@@ -12,11 +12,15 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include "pcre/pcre2posix.h"
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #if !defined(_WIN32)
 #include <glob.h>
 #endif
 
 static bool ch_is_sep(char c) { return c == '/' || c == '\\'; }
+static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
 
 static String_View current_src_dir(Evaluator_Context *ctx) {
     String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
@@ -57,6 +61,158 @@ static bool is_path_safe(String_View path) {
     return true;
 }
 
+static bool scope_char_eq(char a, char b, bool ci) {
+    if (a == '\\') a = '/';
+    if (b == '\\') b = '/';
+    if (ci) {
+        a = (char)tolower((unsigned char)a);
+        b = (char)tolower((unsigned char)b);
+    }
+    return a == b;
+}
+
+static bool scope_is_root_like(String_View p) {
+    if (p.count == 1 && p.data[0] == '/') return true;
+    if (p.count == 3 &&
+        isalpha((unsigned char)p.data[0]) &&
+        p.data[1] == ':' &&
+        p.data[2] == '/') return true;
+    return false;
+}
+
+static String_View scope_trim_trailing_seps(String_View p) {
+    while (p.count > 0 && ch_is_sep(p.data[p.count - 1]) && !scope_is_root_like(p)) {
+        p.count--;
+    }
+    return p;
+}
+
+static bool scope_path_has_prefix(String_View path, String_View prefix, bool ci) {
+    path = scope_trim_trailing_seps(path);
+    prefix = scope_trim_trailing_seps(prefix);
+    if (prefix.count == 0) return false;
+    if (path.count < prefix.count) return false;
+
+    for (size_t i = 0; i < prefix.count; i++) {
+        if (!scope_char_eq(path.data[i], prefix.data[i], ci)) return false;
+    }
+
+    if (path.count == prefix.count) return true;
+    if (prefix.data[prefix.count - 1] == '/' || prefix.data[prefix.count - 1] == '\\') return true;
+    return ch_is_sep(path.data[prefix.count]);
+}
+
+static void scope_normalize_slashes_in_place(char *s) {
+    if (!s) return;
+    for (size_t i = 0; s[i] != '\0'; i++) {
+        if (s[i] == '\\') s[i] = '/';
+    }
+}
+
+static bool scope_canonicalize_existing_cstr_temp(Evaluator_Context *ctx,
+                                                  const char *path_c,
+                                                  char **out_canon_cstr) {
+    if (!ctx || !path_c || !out_canon_cstr) return false;
+    *out_canon_cstr = NULL;
+
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path_c,
+                           FILE_READ_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    DWORD need = GetFinalPathNameByHandleA(h, NULL, 0, FILE_NAME_NORMALIZED);
+    if (need == 0) {
+        CloseHandle(h);
+        return false;
+    }
+
+    DWORD cap = need + 1;
+    char *raw = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)cap);
+    EVAL_OOM_RETURN_IF_NULL(ctx, raw, false);
+
+    DWORD wrote = GetFinalPathNameByHandleA(h, raw, cap, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    if (wrote == 0 || wrote >= cap) return false;
+
+    const char *view = raw;
+    char *unc_fixed = NULL;
+    if (strncmp(view, "\\\\?\\UNC\\", 8) == 0) {
+        size_t rest = strlen(view + 8);
+        unc_fixed = (char*)arena_alloc(eval_temp_arena(ctx), rest + 3);
+        EVAL_OOM_RETURN_IF_NULL(ctx, unc_fixed, false);
+        unc_fixed[0] = '/';
+        unc_fixed[1] = '/';
+        memcpy(unc_fixed + 2, view + 8, rest + 1);
+        view = unc_fixed;
+    } else if (strncmp(view, "\\\\?\\", 4) == 0) {
+        view += 4;
+    }
+
+    size_t len = strlen(view);
+    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, norm, false);
+    memcpy(norm, view, len + 1);
+    scope_normalize_slashes_in_place(norm);
+    *out_canon_cstr = norm;
+    return true;
+#else
+    char *real = realpath(path_c, NULL);
+    if (!real) return false;
+    size_t len = strlen(real);
+    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, norm, false);
+    memcpy(norm, real, len + 1);
+    free(real);
+    *out_canon_cstr = norm;
+    return true;
+#endif
+}
+
+static bool scope_canonicalize_existing_or_parent_temp(Evaluator_Context *ctx,
+                                                       String_View path,
+                                                       String_View *out) {
+    if (!ctx || !out || path.count == 0) return false;
+
+    char *probe = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, probe, false);
+    scope_normalize_slashes_in_place(probe);
+
+    for (;;) {
+        char *canon = NULL;
+        if (scope_canonicalize_existing_cstr_temp(ctx, probe, &canon)) {
+            *out = nob_sv_from_cstr(canon);
+            return true;
+        }
+
+        size_t len = strlen(probe);
+        while (len > 0 && probe[len - 1] == '/') {
+            if (len == 1) break;
+            if (len == 3 && isalpha((unsigned char)probe[0]) && probe[1] == ':') break;
+            probe[--len] = '\0';
+        }
+
+        char *last = strrchr(probe, '/');
+        if (!last) return false;
+
+        if (last == probe) {
+            probe[1] = '\0';
+            continue;
+        }
+        if (last == probe + 2 && isalpha((unsigned char)probe[0]) && probe[1] == ':') {
+            probe[3] = '\0';
+            continue;
+        }
+        *last = '\0';
+    }
+
+    return false;
+}
+
 static bool resolve_project_scoped_path(Evaluator_Context *ctx,
                                         const Node *node,
                                         Cmake_Event_Origin origin,
@@ -80,8 +236,16 @@ static bool resolve_project_scoped_path(Evaluator_Context *ctx,
     if (!eval_sv_is_abs_path(path)) {
         path = eval_sv_path_join(eval_temp_arena(ctx), relative_base, path);
     }
+    path = cmk_path_normalize_temp(ctx, path);
+    if (eval_should_stop(ctx) || path.count == 0) return false;
 
-    if (!sv_starts_with(path, ctx->binary_dir) && !sv_starts_with(path, ctx->source_dir)) {
+    bool ci = false;
+#if defined(_WIN32)
+    ci = true;
+#endif
+
+    if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
+        !scope_path_has_prefix(path, ctx->source_dir, ci)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_file"),
@@ -90,6 +254,34 @@ static bool resolve_project_scoped_path(Evaluator_Context *ctx,
                        nob_sv_from_cstr("Security Violation: Absolute path outside project scope"),
                        path);
         return false;
+    }
+
+    String_View resolved_probe = nob_sv_from_cstr("");
+    if (scope_canonicalize_existing_or_parent_temp(ctx, path, &resolved_probe)) {
+        String_View source_scope = ctx->source_dir;
+        String_View binary_scope = ctx->binary_dir;
+
+        String_View source_scope_canon = nob_sv_from_cstr("");
+        if (scope_canonicalize_existing_or_parent_temp(ctx, ctx->source_dir, &source_scope_canon)) {
+            source_scope = source_scope_canon;
+        }
+
+        String_View binary_scope_canon = nob_sv_from_cstr("");
+        if (scope_canonicalize_existing_or_parent_temp(ctx, ctx->binary_dir, &binary_scope_canon)) {
+            binary_scope = binary_scope_canon;
+        }
+
+        if (!scope_path_has_prefix(resolved_probe, binary_scope, ci) &&
+            !scope_path_has_prefix(resolved_probe, source_scope, ci)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_file"),
+                           node->as.cmd.name,
+                           origin,
+                           nob_sv_from_cstr("Security Violation: Absolute path outside project scope"),
+                           input_path);
+            return false;
+        }
     }
 
     *out_path = path;

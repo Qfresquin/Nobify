@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 28
+CASES 42
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -59,11 +59,57 @@ EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='pkg_a
 
 === CASE golden_probes_and_try_compile ===
 DIAG errors=0 warnings=1
-EVENTS count=4
+EVENTS count=5
 EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_minimum_required' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
 EV[1] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages=''
-EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
-EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
+EV[2] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='HAVE_X' value='0'
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
+=== END CASE ===
+
+=== CASE try_compile_source_from_content_copy_file_and_cache ===
+DIAG errors=0 warnings=0
+EVENTS count=7
+EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=1 col=1 key='TC_CONTENT_OK' value='1'
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='tc_content' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='tc_content' path='main.c'
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='tc_content' item='TC_CONTENT_OK=1' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='tc_content' item='TC_FLAG=ready' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='tc_content' item='TC_CONTENT_MSG=try_compile simulated success' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='tc_content' item='TC_COPY_TEXT=ok_content' vis=PRIVATE
+=== END CASE ===
+
+=== CASE try_compile_sources_missing_with_no_cache ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='tc_missing' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='tc_missing' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING=0' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING_MSG=try_compile source file not found: missing_a.c' vis=PRIVATE
+=== END CASE ===
+
+=== CASE try_compile_source_from_var_and_file_with_log_description ===
+DIAG errors=0 warnings=0
+EVENTS count=6
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=12 col=1 name='tc_mix' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=12 col=1 target='tc_mix' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=13 col=1 target='tc_mix' item='TC_MIX_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=13 col=1 target='tc_mix' item='TC_MIX_MSG=mix_log_ok' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=13 col=1 target='tc_mix' item='TC_COPY_ERR=' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=13 col=1 target='tc_mix' item='TC_MIX_COPY_TXT=from_var_src' vis=PRIVATE
+=== END CASE ===
+
+=== CASE try_compile_project_signature_success_and_failure ===
+DIAG errors=0 warnings=0
+EVENTS count=8
+EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='TC_PROJ_OK' value='1'
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='tc_proj' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='tc_proj' path='main.c'
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='tc_proj' item='TC_PROJ_OK=1' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='tc_proj' item='TC_PROJ_MSG=try_compile(PROJECT) simulated success' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='tc_proj' item='TC_PROJ_FLAG=ON' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='tc_proj' item='TC_PROJ_FAIL=0' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='tc_proj' item='TC_PROJ_FAIL_MSG=try_compile project source directory missing CMakeLists.txt: tc_proj_fail' vis=PRIVATE
 === END CASE ===
 
 === CASE golden_ctest_meta ===
@@ -101,21 +147,109 @@ EVENTS count=0
 === END CASE ===
 
 === CASE flow_while_simple_counter ===
-DIAG errors=1 warnings=0
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='' line=0 col=0 sev=ERROR component='eval_expr' command='if' cause='Invalid if() syntax' hint='Check operators and parentheses'
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='loop_simple' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='loop_simple' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='loop_simple' item='SIMPLE_C=3' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_while_break_and_continue ===
-DIAG errors=1 warnings=0
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='' line=0 col=0 sev=ERROR component='eval_expr' command='if' cause='Invalid if() syntax' hint='Check operators and parentheses'
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=18 col=1 name='loop_flow' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=18 col=1 target='loop_flow' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=19 col=1 target='loop_flow' item='LOOP_OUT=0_2' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_while_nested_break_continue ===
-DIAG errors=1 warnings=0
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='' line=0 col=0 sev=ERROR component='eval_expr' command='if' cause='Invalid if() syntax' hint='Check operators and parentheses'
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=17 col=1 name='loop_nested' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=17 col=1 target='loop_nested' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='loop_nested' item='NESTED_ACC=4' vis=PRIVATE
+=== END CASE ===
+
+=== CASE usercmd_function_scope_and_parent_scope ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='fn_scope' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='fn_scope' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='fn_scope' item='FN_GLOBAL=10' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='fn_scope' item='FN_PARENT=42' vis=PRIVATE
+=== END CASE ===
+
+=== CASE usercmd_macro_args_and_caller_scope ===
+DIAG errors=0 warnings=0
+EVENTS count=6
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='macro_scope' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='macro_scope' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_OUT=alpha' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGC=2' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGV0=alpha' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGV1=beta' vis=PRIVATE
+=== END CASE ===
+
+=== CASE usercmd_nested_macro_calls_function ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='nested_usercmd' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='nested_usercmd' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='nested_usercmd' item='NESTED_VAL=F_zed' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_list_get_find_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_ext' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_ext' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='PICKS=bb;dd' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_CC=2' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_ZZ=-1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_tolower_substring_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='string_ext' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='string_ext' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_LOW=abc-xyz' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_SUB=c-x' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_TAIL=xyz' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_regex_replace_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_regex_ext' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_regex_ext' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX=vN-vN-vN' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX_BREF=x\\1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_math_bitwise_and_precedence ===
+DIAG errors=0 warnings=0
+EVENTS count=12
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='math_ext' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='math_ext' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_SHL=4' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_SHR=4' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_AND=1' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_XOR=5' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_OR=3' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_PAREN=9' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_PREC=15' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_UNARY=-2' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_DIV=2' vis=PRIVATE
+EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_MOD=3' vis=PRIVATE
+=== END CASE ===
+
+=== CASE dispatcher_custom_command_multiple_commands ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_CUSTOM_COMMAND_OUTPUT file='CMakeLists.txt' line=1 col=1 command='echo first && echo second' working_dir='' comment='' outputs='multi.c' byproducts='multi.log' depends='in.txt' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='custom_multi' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='custom_multi' path='main.c'
 === END CASE ===
 
 === CASE dispatcher_command_handlers ===
@@ -209,6 +343,18 @@ EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component=
 DIAG errors=1 warnings=0
 EVENTS count=1
 EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
+=== END CASE ===
+
+=== CASE file_security_read_rejects_symlink_escape_outside_project_scope ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='temp_symlink_escape_link/outside.txt'
+=== END CASE ===
+
+=== CASE file_security_strings_rejects_symlink_escape_outside_project_scope ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='temp_symlink_escape_link/outside.txt'
 === END CASE ===
 
 === CASE file_security_read_relative_inside_project_scope_still_works ===
