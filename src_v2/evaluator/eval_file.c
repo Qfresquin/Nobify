@@ -579,7 +579,7 @@ static bool mkdir_p(Evaluator_Context *ctx, String_View path) {
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
 
     size_t len0 = strlen(path_c);
-    char *tmp = (char*)malloc(len0 + 1);
+    char *tmp = (char*)arena_alloc(eval_temp_arena(ctx), len0 + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, tmp, false);
     memcpy(tmp, path_c, len0 + 1);
 
@@ -597,7 +597,6 @@ static bool mkdir_p(Evaluator_Context *ctx, String_View path) {
     size_t start = prefix_len;
     while (start < len && tmp[start] == '/') start++;
     if (start >= len) {
-        free(tmp);
         return true;
     }
 
@@ -605,15 +604,12 @@ static bool mkdir_p(Evaluator_Context *ctx, String_View path) {
         if (tmp[i] != '/') continue;
         tmp[i] = '\0';
         if (!nob_mkdir_if_not_exists(tmp)) {
-            free(tmp);
             return false;
         }
         tmp[i] = '/';
     }
 
-    bool ok = nob_mkdir_if_not_exists(tmp);
-    free(tmp);
-    return ok;
+    return nob_mkdir_if_not_exists(tmp);
 }
 
 static bool glob_match_sv(String_View pat, String_View str, bool ci) {

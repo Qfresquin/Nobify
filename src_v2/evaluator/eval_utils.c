@@ -186,31 +186,20 @@ bool eval_has_env(Evaluator_Context *ctx, const char *name) {
     if (!name || name[0] == '\0') return false;
 
 #if defined(_WIN32)
+    if (!ctx) return false;
     const char *lookup_name = name;
-    char *heap_lookup_name = NULL;
     size_t name_len = strlen(name);
-    if (ctx) {
-        char *arena_name = (char*)arena_alloc(eval_temp_arena(ctx), name_len + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, arena_name, false);
-        for (size_t i = 0; i < name_len; i++) {
-            arena_name[i] = (char)toupper((unsigned char)name[i]);
-        }
-        arena_name[name_len] = '\0';
-        lookup_name = arena_name;
-    } else {
-        heap_lookup_name = (char*)malloc(name_len + 1);
-        if (!heap_lookup_name) return false;
-        for (size_t i = 0; i < name_len; i++) {
-            heap_lookup_name[i] = (char)toupper((unsigned char)name[i]);
-        }
-        heap_lookup_name[name_len] = '\0';
-        lookup_name = heap_lookup_name;
+    char *arena_name = (char*)arena_alloc(eval_temp_arena(ctx), name_len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, arena_name, false);
+    for (size_t i = 0; i < name_len; i++) {
+        arena_name[i] = (char)toupper((unsigned char)name[i]);
     }
+    arena_name[name_len] = '\0';
+    lookup_name = arena_name;
 
     SetLastError(ERROR_SUCCESS);
     DWORD needed = GetEnvironmentVariableA(lookup_name, NULL, 0);
     bool exists = (needed > 0) || (GetLastError() == ERROR_SUCCESS);
-    free(heap_lookup_name);
     return exists;
 #else
     (void)ctx;

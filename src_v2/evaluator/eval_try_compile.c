@@ -24,11 +24,11 @@ static bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
     return nob_file_exists(path_c) != 0;
 }
 
-static bool mkdir_p_local(const char *path) {
-    if (!path) return false;
+static bool mkdir_p_local(Evaluator_Context *ctx, const char *path) {
+    if (!ctx || !path) return false;
     size_t len0 = strlen(path);
-    char *tmp = (char*)malloc(len0 + 1);
-    if (!tmp) return false;
+    char *tmp = (char*)arena_alloc(eval_temp_arena(ctx), len0 + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, tmp, false);
     memcpy(tmp, path, len0 + 1);
     for (size_t i = 0; i < len0; i++) {
         if (tmp[i] == '\\') tmp[i] = '/';
@@ -40,7 +40,6 @@ static bool mkdir_p_local(const char *path) {
         len--;
     }
     if (len == 0) {
-        free(tmp);
         return false;
     }
 
@@ -52,9 +51,7 @@ static bool mkdir_p_local(const char *path) {
             *p = '/';
         }
     }
-    bool ok = nob_mkdir_if_not_exists(tmp);
-    free(tmp);
-    return ok;
+    return nob_mkdir_if_not_exists(tmp);
 }
 
 static bool try_compile_noop_positional(Evaluator_Context *ctx,
@@ -348,7 +345,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         }
         char *bindir_c = eval_sv_to_cstr_temp(ctx, bindir);
         EVAL_OOM_RETURN_IF_NULL(ctx, bindir_c, !eval_should_stop(ctx));
-        (void)mkdir_p_local(bindir_c);
+        (void)mkdir_p_local(ctx, bindir_c);
 
         String_View cmakelists_path = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr("CMakeLists.txt"));
         bool compile_ok = file_exists_sv(ctx, cmakelists_path);
@@ -390,7 +387,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
     }
     char *bindir_c = eval_sv_to_cstr_temp(ctx, bindir);
     EVAL_OOM_RETURN_IF_NULL(ctx, bindir_c, !eval_should_stop(ctx));
-    (void)mkdir_p_local(bindir_c);
+    (void)mkdir_p_local(ctx, bindir_c);
 
     Try_Compile_Option_State opt = {
         .bindir = bindir,
@@ -477,7 +474,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         String_View dst_parent = svu_dirname(dst);
         char *dst_parent_c = eval_sv_to_cstr_temp(ctx, dst_parent);
         EVAL_OOM_RETURN_IF_NULL(ctx, dst_parent_c, !eval_should_stop(ctx));
-        (void)mkdir_p_local(dst_parent_c);
+        (void)mkdir_p_local(ctx, dst_parent_c);
 
         char *src_c = eval_sv_to_cstr_temp(ctx, first_resolved_source);
         char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
