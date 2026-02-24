@@ -2444,6 +2444,15 @@ void build_cpack_component_set_downloaded(CPack_Component *component, bool downl
     component->downloaded = downloaded;
 }
 
+void build_custom_command_add_command(Custom_Command *cmd, Arena *arena, String_View command) {
+    if (!cmd || !arena || command.count == 0) return;
+    String_View copied = bm_sv_copy_to_arena(arena, command);
+    string_list_add(&cmd->commands, arena, copied);
+    if (cmd->command.count == 0) {
+        cmd->command = copied;
+    }
+}
+
 Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
                                                    Arena *arena,
                                                    bool pre_build,
@@ -2464,14 +2473,15 @@ Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
     Custom_Command *cmd = &list[*count];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = CUSTOM_COMMAND_SHELL;
-    cmd->command = bm_sv_copy_to_arena(arena, command);
     cmd->working_dir = bm_sv_copy_to_arena(arena, working_dir);
     cmd->comment = bm_sv_copy_to_arena(arena, comment);
     cmd->echo = true;
+    string_list_init(&cmd->commands);
     string_list_init(&cmd->outputs);
     string_list_init(&cmd->byproducts);
     string_list_init(&cmd->inputs);
     string_list_init(&cmd->depends);
+    build_custom_command_add_command(cmd, arena, command);
     (*count)++;
     return cmd;
 }
@@ -2496,14 +2506,15 @@ Custom_Command* build_model_add_custom_command_output_ex(Build_Model *model,
     Custom_Command *cmd = &model->output_custom_commands[model->output_custom_command_count++];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = CUSTOM_COMMAND_SHELL;
-    cmd->command = bm_sv_copy_to_arena(arena, command);
     cmd->working_dir = bm_sv_copy_to_arena(arena, working_dir);
     cmd->comment = bm_sv_copy_to_arena(arena, comment);
     cmd->echo = true;
+    string_list_init(&cmd->commands);
     string_list_init(&cmd->outputs);
     string_list_init(&cmd->byproducts);
     string_list_init(&cmd->inputs);
     string_list_init(&cmd->depends);
+    build_custom_command_add_command(cmd, arena, command);
     return cmd;
 }
 
@@ -2596,16 +2607,12 @@ void build_custom_command_merge_flags(Custom_Command *cmd,
 
 void build_custom_command_append_command(Custom_Command *cmd, Arena *arena, String_View extra) {
     if (!cmd || !arena || extra.count == 0) return;
-    if (cmd->command.count == 0) {
-        cmd->command = bm_sv_copy_to_arena(arena, extra);
-        return;
-    }
-    String_Builder sb = {0};
-    sb_append_buf(&sb, cmd->command.data, cmd->command.count);
-    sb_append_cstr(&sb, " && ");
-    sb_append_buf(&sb, extra.data, extra.count);
-    cmd->command = sb.count > 0 ? sv_from_cstr(arena_strndup(arena, sb.items, sb.count)) : sv_from_cstr("");
-    nob_sb_free(sb);
+    build_custom_command_add_command(cmd, arena, extra);
+}
+
+const String_List* build_custom_command_get_commands(const Custom_Command *cmd) {
+    if (!cmd) return &g_empty_string_list;
+    return &cmd->commands;
 }
 
 Custom_Command* build_model_find_output_custom_command_by_output(Build_Model *model, String_View output) {

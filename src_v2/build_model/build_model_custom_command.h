@@ -45,7 +45,9 @@ void build_custom_command_merge_flags(Custom_Command *cmd,
                                       bool command_expand_lists,
                                       bool depends_explicit_only,
                                       bool codegen);
+void build_custom_command_add_command(Custom_Command *cmd, Arena *arena, String_View command);
 void build_custom_command_append_command(Custom_Command *cmd, Arena *arena, String_View extra);
+const String_List* build_custom_command_get_commands(const Custom_Command *cmd);
 
 const Custom_Command* build_model_get_output_custom_commands(const Build_Model *model, size_t *out_count);
 const Custom_Command* build_target_get_custom_commands(const Build_Target *target, bool pre_build, size_t *out_count);

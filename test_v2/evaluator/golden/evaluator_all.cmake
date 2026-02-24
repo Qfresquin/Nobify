@@ -409,6 +409,15 @@ file(WRITE temp_copy_perm_src.txt "x")
 file(COPY temp_copy_perm_src.txt DESTINATION temp_copy_perm_dst PERMISSIONS OWNER_READ OWNER_WRITE)
 #@@ENDCASE
 
+#@@CASE file_copy_follow_symlink_chain_regular_file_no_warning
+file(WRITE temp_copy_chain_src.txt "ok")
+file(MAKE_DIRECTORY temp_copy_chain_dst)
+file(COPY temp_copy_chain_src.txt DESTINATION temp_copy_chain_dst FOLLOW_SYMLINK_CHAIN)
+file(READ temp_copy_chain_dst/temp_copy_chain_src.txt COPY_CHAIN_TXT)
+add_executable(copy_chain_file main.c)
+target_compile_definitions(copy_chain_file PRIVATE COPY_CHAIN_TXT=${COPY_CHAIN_TXT})
+#@@ENDCASE
+
 #@@CASE dispatcher_custom_command_and_target
 add_custom_target(gen ALL
   COMMAND echo gen

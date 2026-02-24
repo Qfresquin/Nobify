@@ -1017,18 +1017,21 @@ static bool builder_handle_event_custom_command_target(Build_Model_Builder *buil
     Build_Target *target = builder_require_target(builder, ev, ev->as.custom_command_target.target_name);
     if (!target) return false;
 
-    if (ev->as.custom_command_target.command.count == 0) {
+    if (ev->as.custom_command_target.command_count == 0 || !ev->as.custom_command_target.commands) {
         return builder_fail(builder, ev, "custom TARGET command has empty command text", "provide COMMAND in add_custom_command(TARGET ...)");
     }
 
     Custom_Command *cmd = build_target_add_custom_command_ex(target,
                                                              builder->arena,
                                                              ev->as.custom_command_target.pre_build,
-                                                             ev->as.custom_command_target.command,
+                                                             ev->as.custom_command_target.commands[0],
                                                              ev->as.custom_command_target.working_dir,
                                                              ev->as.custom_command_target.comment);
     if (!cmd) {
         return builder_fail(builder, ev, "failed to allocate target custom command", "check memory allocation");
+    }
+    for (size_t i = 1; i < ev->as.custom_command_target.command_count; i++) {
+        build_custom_command_append_command(cmd, builder->arena, ev->as.custom_command_target.commands[i]);
     }
 
     if (!builder_fill_custom_command_from_event(builder,
@@ -1059,7 +1062,7 @@ static bool builder_handle_event_custom_command_target(Build_Model_Builder *buil
 
 static bool builder_handle_event_custom_command_output(Build_Model_Builder *builder, const Cmake_Event *ev) {
     if (!builder || !builder->model || !ev) return false;
-    if (ev->as.custom_command_output.command.count == 0) {
+    if (ev->as.custom_command_output.command_count == 0 || !ev->as.custom_command_output.commands) {
         return builder_fail(builder, ev, "custom OUTPUT command has empty command text", "provide COMMAND in add_custom_command(OUTPUT ...)");
     }
 
@@ -1082,14 +1085,19 @@ static bool builder_handle_event_custom_command_output(Build_Model_Builder *buil
     if (!cmd) {
         cmd = build_model_add_custom_command_output_ex(builder->model,
                                                        builder->arena,
-                                                       ev->as.custom_command_output.command,
+                                                       ev->as.custom_command_output.commands[0],
                                                        ev->as.custom_command_output.working_dir,
                                                        ev->as.custom_command_output.comment);
         if (!cmd) {
             return builder_fail(builder, ev, "failed to allocate output custom command", "check memory allocation");
         }
+        for (size_t i = 1; i < ev->as.custom_command_output.command_count; i++) {
+            build_custom_command_append_command(cmd, builder->arena, ev->as.custom_command_output.commands[i]);
+        }
     } else {
-        build_custom_command_append_command(cmd, builder->arena, ev->as.custom_command_output.command);
+        for (size_t i = 0; i < ev->as.custom_command_output.command_count; i++) {
+            build_custom_command_append_command(cmd, builder->arena, ev->as.custom_command_output.commands[i]);
+        }
     }
 
     String_List outputs_list = {0};

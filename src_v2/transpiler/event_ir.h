@@ -187,7 +187,8 @@ typedef struct {
         struct {
             String_View target_name;
             bool pre_build;
-            String_View command;
+            String_View *commands;
+            size_t command_count;
             String_View working_dir;
             String_View comment;
             String_View outputs; // semi-separated list
@@ -204,7 +205,8 @@ typedef struct {
         } custom_command_target;
 
         struct {
-            String_View command;
+            String_View *commands;
+            size_t command_count;
             String_View working_dir;
             String_View comment;
             String_View outputs; // semi-separated list

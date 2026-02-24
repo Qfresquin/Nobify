@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 44
+CASES 45
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -246,7 +246,7 @@ EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 ta
 === CASE dispatcher_custom_command_multiple_commands ===
 DIAG errors=0 warnings=0
 EVENTS count=3
-EV[0] kind=EV_CUSTOM_COMMAND_OUTPUT file='CMakeLists.txt' line=1 col=1 command='echo first && echo second' working_dir='' comment='' outputs='multi.c' byproducts='multi.log' depends='in.txt' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
+EV[0] kind=EV_CUSTOM_COMMAND_OUTPUT file='CMakeLists.txt' line=1 col=1 commands=['echo first','echo second'] working_dir='' comment='' outputs='multi.c' byproducts='multi.log' depends='in.txt' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='custom_multi' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='custom_multi' path='main.c'
 === END CASE ===
@@ -388,13 +388,21 @@ DIAG errors=0 warnings=0
 EVENTS count=0
 === END CASE ===
 
+=== CASE file_copy_follow_symlink_chain_regular_file_no_warning ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='copy_chain_file' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='copy_chain_file' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='copy_chain_file' item='COPY_CHAIN_TXT=ok' vis=PRIVATE
+=== END CASE ===
+
 === CASE dispatcher_custom_command_and_target ===
 DIAG errors=0 warnings=0
 EVENTS count=6
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=1 col=1 name='gen' type=LIB_UNKNOWN
 EV[1] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=1 col=1 target='gen' key='EXCLUDE_FROM_ALL' value='0' op=SET
 EV[2] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=1 col=1 target='gen' item='seed.txt' vis=PRIVATE
-EV[3] kind=EV_CUSTOM_COMMAND_TARGET file='CMakeLists.txt' line=1 col=1 target='gen' pre_build=1 command='echo gen' working_dir='tools' comment='gen' outputs='' byproducts='out.txt' depends='seed.txt' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
-EV[4] kind=EV_CUSTOM_COMMAND_TARGET file='CMakeLists.txt' line=7 col=1 target='gen' pre_build=0 command='echo post' working_dir='' comment='' outputs='' byproducts='post.txt' depends='dep1' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
-EV[5] kind=EV_CUSTOM_COMMAND_OUTPUT file='CMakeLists.txt' line=11 col=1 command='python gen.py' working_dir='' comment='' outputs='generated.c;generated.h' byproducts='gen.log;gen.d' depends='schema.idl;schema.idl' main_dependency='schema.idl' depfile='gen.d' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
+EV[3] kind=EV_CUSTOM_COMMAND_TARGET file='CMakeLists.txt' line=1 col=1 target='gen' pre_build=1 commands=['echo gen'] working_dir='tools' comment='gen' outputs='' byproducts='out.txt' depends='seed.txt' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
+EV[4] kind=EV_CUSTOM_COMMAND_TARGET file='CMakeLists.txt' line=7 col=1 target='gen' pre_build=0 commands=['echo post'] working_dir='' comment='' outputs='' byproducts='post.txt' depends='dep1' main_dependency='' depfile='' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
+EV[5] kind=EV_CUSTOM_COMMAND_OUTPUT file='CMakeLists.txt' line=11 col=1 commands=['python gen.py'] working_dir='' comment='' outputs='generated.c;generated.h' byproducts='gen.log;gen.d' depends='schema.idl;schema.idl' main_dependency='schema.idl' depfile='gen.d' append=0 verbatim=0 uses_terminal=0 command_expand_lists=0 depends_explicit_only=0 codegen=0
 === END CASE ===

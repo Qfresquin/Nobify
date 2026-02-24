@@ -18,6 +18,7 @@
 #endif
 #if !defined(_WIN32)
 #include <glob.h>
+#include <unistd.h>
 #endif
 
 static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
@@ -1288,6 +1289,223 @@ static bool copy_apply_permissions(const char *path, mode_t mode) {
 #endif
 }
 
+static String_View copy_basename_sv(String_View path) {
+    size_t base = 0;
+    for (size_t i = 0; i < path.count; i++) {
+        if (path.data[i] == '/' || path.data[i] == '\\') base = i + 1;
+    }
+    return nob_sv_from_parts(path.data + base, path.count - base);
+}
+
+static bool copy_copy_entry_raw(const char *src_c, const char *dst_c, bool *out_src_is_dir) {
+    if (!src_c || !dst_c) return false;
+    bool src_is_dir = false;
+    bool ok = true;
+    tinydir_file tf = {0};
+    if (tinydir_file_open(&tf, src_c) == 0) {
+        src_is_dir = tf.is_dir != 0;
+        ok = tf.is_dir ? nob_copy_directory_recursively(src_c, dst_c)
+                       : nob_copy_file(src_c, dst_c);
+    } else {
+        ok = nob_copy_file(src_c, dst_c);
+    }
+    if (out_src_is_dir) *out_src_is_dir = src_is_dir;
+    return ok;
+}
+
+static bool copy_path_is_symlink(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    DWORD attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#elif defined(S_ISLNK)
+    struct stat st = {0};
+    if (lstat(path, &st) != 0) return false;
+    return S_ISLNK(st.st_mode);
+#else
+    return false;
+#endif
+}
+
+static bool copy_read_symlink_target_temp(Evaluator_Context *ctx, const char *path, String_View *out_target) {
+    if (!ctx || !path || !out_target) return false;
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path,
+                           FILE_READ_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    DWORD need = GetFinalPathNameByHandleA(h, NULL, 0, FILE_NAME_NORMALIZED);
+    if (need == 0) {
+        CloseHandle(h);
+        return false;
+    }
+
+    DWORD cap = need + 1;
+    char *raw = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)cap);
+    EVAL_OOM_RETURN_IF_NULL(ctx, raw, false);
+
+    DWORD wrote = GetFinalPathNameByHandleA(h, raw, cap, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    if (wrote == 0 || wrote >= cap) return false;
+
+    const char *view = raw;
+    char *unc_fixed = NULL;
+    if (strncmp(view, "\\\\?\\UNC\\", 8) == 0) {
+        size_t rest = strlen(view + 8);
+        unc_fixed = (char*)arena_alloc(eval_temp_arena(ctx), rest + 3);
+        EVAL_OOM_RETURN_IF_NULL(ctx, unc_fixed, false);
+        unc_fixed[0] = '/';
+        unc_fixed[1] = '/';
+        memcpy(unc_fixed + 2, view + 8, rest + 1);
+        view = unc_fixed;
+    } else if (strncmp(view, "\\\\?\\", 4) == 0) {
+        view += 4;
+    }
+
+    size_t len = strlen(view);
+    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, norm, false);
+    memcpy(norm, view, len + 1);
+    for (size_t i = 0; i < len; i++) {
+        if (norm[i] == '\\') norm[i] = '/';
+    }
+    *out_target = nob_sv_from_cstr(norm);
+    return true;
+#else
+    char buf[4096];
+    ssize_t n = readlink(path, buf, sizeof(buf) - 1);
+    if (n < 0) return false;
+    buf[n] = '\0';
+    *out_target = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+    return !eval_should_stop(ctx);
+#endif
+}
+
+#if !defined(_WIN32)
+static bool copy_remove_existing_leaf(const char *path) {
+    if (!path || path[0] == '\0') return false;
+    struct stat st = {0};
+    if (lstat(path, &st) != 0) return errno == ENOENT;
+    if (S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode)) return false;
+    return remove(path) == 0;
+}
+
+static bool copy_create_symlink_like(const char *target, const char *link_path) {
+    if (!target || !link_path) return false;
+    if (!copy_remove_existing_leaf(link_path)) return false;
+    return symlink(target, link_path) == 0;
+}
+#endif
+
+static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
+                                      const Node *node,
+                                      Cmake_Event_Origin o,
+                                      String_View src,
+                                      String_View dest_dir,
+                                      const Copy_Permissions *perms,
+                                      bool *io_applied_any_permissions) {
+    if (!ctx || !node) return false;
+    String_View current = src;
+    SV_List link_names = {0};
+
+    for (size_t depth = 0; depth < 64; depth++) {
+        char *current_c = eval_sv_to_cstr_temp(ctx, current);
+        EVAL_OOM_RETURN_IF_NULL(ctx, current_c, false);
+
+        if (!copy_path_is_symlink(current_c)) {
+            String_View base = copy_basename_sv(current);
+            String_View dst = eval_sv_path_join(eval_temp_arena(ctx), dest_dir, base);
+            char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+            EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
+
+            bool src_is_dir = false;
+            if (!copy_copy_entry_raw(current_c, dst_c, &src_is_dir)) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(COPY) failed to copy entry"),
+                               current);
+                return false;
+            }
+
+#if defined(_WIN32)
+            // Windows fallback: materialize symlink aliases as copied entries.
+            for (size_t i = 0; i < link_names.count; i++) {
+                if (eval_sv_key_eq(link_names.items[i], base)) continue;
+                String_View alias_dst = eval_sv_path_join(eval_temp_arena(ctx), dest_dir, link_names.items[i]);
+                char *alias_dst_c = eval_sv_to_cstr_temp(ctx, alias_dst);
+                EVAL_OOM_RETURN_IF_NULL(ctx, alias_dst_c, false);
+
+                bool alias_ok = src_is_dir ? nob_copy_directory_recursively(dst_c, alias_dst_c)
+                                           : nob_copy_file(dst_c, alias_dst_c);
+                if (!alias_ok) {
+                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                                   nob_sv_from_cstr("file(COPY) failed to materialize FOLLOW_SYMLINK_CHAIN alias on Windows"),
+                                   alias_dst);
+                    return false;
+                }
+            }
+#endif
+
+            mode_t mode = 0;
+            if (perms && copy_permissions_pick_mode(perms, src_is_dir, &mode)) {
+                if (!copy_apply_permissions(dst_c, mode)) {
+                    eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                                   nob_sv_from_cstr("file(COPY) copied entry but failed to apply permissions"),
+                                   dst);
+                } else if (io_applied_any_permissions) {
+                    *io_applied_any_permissions = true;
+                }
+            }
+
+            return true;
+        }
+
+        String_View target = nob_sv_from_cstr("");
+        if (!copy_read_symlink_target_temp(ctx, current_c, &target) || target.count == 0) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(COPY) failed to resolve symlink target in FOLLOW_SYMLINK_CHAIN"),
+                           current);
+            return false;
+        }
+
+        String_View link_name = copy_basename_sv(current);
+        String_View dst_link = eval_sv_path_join(eval_temp_arena(ctx), dest_dir, link_name);
+        char *dst_link_c = eval_sv_to_cstr_temp(ctx, dst_link);
+        EVAL_OOM_RETURN_IF_NULL(ctx, dst_link_c, false);
+
+#if !defined(_WIN32)
+        char *target_c = eval_sv_to_cstr_temp(ctx, target);
+        EVAL_OOM_RETURN_IF_NULL(ctx, target_c, false);
+        if (!copy_create_symlink_like(target_c, dst_link_c)) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(COPY) failed to recreate symlink in FOLLOW_SYMLINK_CHAIN"),
+                           dst_link);
+            return false;
+        }
+#else
+        if (!svu_list_push_temp(ctx, &link_names, link_name)) return false;
+#endif
+
+        if (eval_sv_is_abs_path(target)) {
+            current = cmk_path_normalize_temp(ctx, target);
+        } else {
+            String_View parent = svu_dirname(current);
+            current = cmk_path_normalize_temp(ctx, eval_sv_path_join(eval_temp_arena(ctx), parent, target));
+        }
+        if (eval_should_stop(ctx) || current.count == 0) return false;
+    }
+
+    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                   nob_sv_from_cstr("file(COPY) FOLLOW_SYMLINK_CHAIN exceeded maximum link depth"),
+                   src);
+    return false;
+}
+
 static bool copy_filter_matches(Evaluator_Context *ctx, Copy_Filter *f, String_View src, String_View base) {
     if (!ctx || !f) return false;
     if (!f->is_regex) {
@@ -1501,7 +1719,6 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
     }
     bool files_matching = parsed.files_matching;
     bool follow_symlink_chain = parsed.follow_symlink_chain;
-    bool saw_follow_symlink_option = parsed.saw_follow_symlink_option;
     bool saw_unknown_permission_token = parsed.saw_unknown_permission_token;
     Copy_Filter *filters = parsed.filters;
     size_t filter_count = parsed.filter_count;
@@ -1552,18 +1769,15 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
         char *dst_c = eval_sv_to_cstr_temp(ctx, dst_sv);
         EVAL_OOM_RETURN_VOID_IF_NULL(ctx, dst_c);
 
-        bool ok = true;
-        bool src_is_dir = false;
-        tinydir_file tf = {0};
-        if (tinydir_file_open(&tf, src_c) == 0) {
-            src_is_dir = tf.is_dir != 0;
-            ok = tf.is_dir ? nob_copy_directory_recursively(src_c, dst_c)
-                           : nob_copy_file(src_c, dst_c);
-        } else {
-            ok = nob_copy_file(src_c, dst_c);
+        if (follow_symlink_chain && copy_path_is_symlink(src_c)) {
+            if (!copy_follow_symlink_chain(ctx, node, o, src, dest, &perms, &applied_any_permissions)) {
+                return;
+            }
+            continue;
         }
 
-        if (!ok) {
+        bool src_is_dir = false;
+        if (!copy_copy_entry_raw(src_c, dst_c, &src_is_dir)) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                            nob_sv_from_cstr("file(COPY) failed to copy entry"),
                            src);
@@ -1593,11 +1807,6 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
         eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(COPY) USE_SOURCE_PERMISSIONS/NO_SOURCE_PERMISSIONS are not implemented"),
                        nob_sv_from_cstr("Use explicit PERMISSIONS/FILE_PERMISSIONS/DIRECTORY_PERMISSIONS"));
-    }
-    if (saw_follow_symlink_option && follow_symlink_chain) {
-        eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(COPY) FOLLOW_SYMLINK_CHAIN is parsed but not fully implemented"),
-                       nob_sv_from_cstr("Current behavior uses default copy semantics"));
     }
 
     for (size_t i = 0; i < filter_count; i++) {

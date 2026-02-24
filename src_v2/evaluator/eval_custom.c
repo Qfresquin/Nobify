@@ -30,28 +30,15 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
     ev.as.target_prop_set.op = op;
     return emit_event(ctx, ev);
 }
-static String_View sv_join_and_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
-    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) {
-        total += items[i].count;
-        if (i + 1 < count) total += 4;
+
+static String_View *sv_list_copy_to_event_arena(Evaluator_Context *ctx, const SV_List *list) {
+    if (!ctx || !list || list->count == 0) return NULL;
+    String_View *items = arena_alloc_array(eval_event_arena(ctx), String_View, list->count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, items, NULL);
+    for (size_t i = 0; i < list->count; i++) {
+        items[i] = sv_copy_to_event_arena(ctx, list->items[i]);
     }
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count > 0) {
-            memcpy(buf + off, items[i].data, items[i].count);
-            off += items[i].count;
-        }
-        if (i + 1 < count) {
-            memcpy(buf + off, " && ", 4);
-            off += 4;
-        }
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
+    return items;
 }
 
 enum {
@@ -366,7 +353,11 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
         cmd_ev.origin = o;
         cmd_ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, name);
         cmd_ev.as.custom_command_target.pre_build = true;
-        cmd_ev.as.custom_command_target.command = sv_copy_to_event_arena(ctx, sv_join_and_temp(ctx, opt.commands.items, opt.commands.count));
+        cmd_ev.as.custom_command_target.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
+        cmd_ev.as.custom_command_target.command_count = opt.commands.count;
+        if (opt.commands.count > 0) {
+            EVAL_OOM_RETURN_IF_NULL(ctx, cmd_ev.as.custom_command_target.commands, !eval_should_stop(ctx));
+        }
         cmd_ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
         cmd_ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
         cmd_ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
@@ -495,7 +486,11 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         ev.origin = o;
         ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, target_name);
         ev.as.custom_command_target.pre_build = opt.pre_build;
-        ev.as.custom_command_target.command = sv_copy_to_event_arena(ctx, sv_join_and_temp(ctx, opt.commands.items, opt.commands.count));
+        ev.as.custom_command_target.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
+        ev.as.custom_command_target.command_count = opt.commands.count;
+        if (opt.commands.count > 0) {
+            EVAL_OOM_RETURN_IF_NULL(ctx, ev.as.custom_command_target.commands, !eval_should_stop(ctx));
+        }
         ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
         ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
         ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs.items, opt.outputs.count));
@@ -514,7 +509,11 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         Cmake_Event ev = {0};
         ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
         ev.origin = o;
-        ev.as.custom_command_output.command = sv_copy_to_event_arena(ctx, sv_join_and_temp(ctx, opt.commands.items, opt.commands.count));
+        ev.as.custom_command_output.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
+        ev.as.custom_command_output.command_count = opt.commands.count;
+        if (opt.commands.count > 0) {
+            EVAL_OOM_RETURN_IF_NULL(ctx, ev.as.custom_command_output.commands, !eval_should_stop(ctx));
+        }
         ev.as.custom_command_output.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
         ev.as.custom_command_output.comment = sv_copy_to_event_arena(ctx, opt.comment);
         ev.as.custom_command_output.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs.items, opt.outputs.count));

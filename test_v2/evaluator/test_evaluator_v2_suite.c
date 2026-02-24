@@ -268,6 +268,19 @@ static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
     nob_sb_append_cstr(sb, "'");
 }
 
+static void snapshot_append_escaped_sv_list(Nob_String_Builder *sb, String_View *items, size_t count) {
+    nob_sb_append_cstr(sb, "[");
+    if (!items) {
+        nob_sb_append_cstr(sb, "]");
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) nob_sb_append_cstr(sb, ",");
+        snapshot_append_escaped_sv(sb, items[i]);
+    }
+    nob_sb_append_cstr(sb, "]");
+}
+
 static const char *event_kind_name(Cmake_Event_Kind kind) {
     switch (kind) {
         case EV_DIAGNOSTIC: return "EV_DIAGNOSTIC";
@@ -463,9 +476,11 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
         case EV_CUSTOM_COMMAND_TARGET:
             nob_sb_append_cstr(sb, " target=");
             snapshot_append_escaped_sv(sb, ev->as.custom_command_target.target_name);
-            nob_sb_append_cstr(sb, nob_temp_sprintf(" pre_build=%d command=",
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" pre_build=%d commands=",
                 ev->as.custom_command_target.pre_build ? 1 : 0));
-            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.command);
+            snapshot_append_escaped_sv_list(sb,
+                                            ev->as.custom_command_target.commands,
+                                            ev->as.custom_command_target.command_count);
             nob_sb_append_cstr(sb, " working_dir=");
             snapshot_append_escaped_sv(sb, ev->as.custom_command_target.working_dir);
             nob_sb_append_cstr(sb, " comment=");
@@ -490,8 +505,10 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             break;
 
         case EV_CUSTOM_COMMAND_OUTPUT:
-            nob_sb_append_cstr(sb, " command=");
-            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.command);
+            nob_sb_append_cstr(sb, " commands=");
+            snapshot_append_escaped_sv_list(sb,
+                                            ev->as.custom_command_output.commands,
+                                            ev->as.custom_command_output.command_count);
             nob_sb_append_cstr(sb, " working_dir=");
             snapshot_append_escaped_sv(sb, ev->as.custom_command_output.working_dir);
             nob_sb_append_cstr(sb, " comment=");
@@ -764,8 +781,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 44) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=44", cases.count);
+    if (cases.count != 45) {
+        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=45", cases.count);
         ok = false;
         goto done;
     }

@@ -15,6 +15,25 @@ static bool ev_copy_sv_inplace(Arena *arena, String_View *sv) {
     return true;
 }
 
+static bool ev_copy_sv_array_inplace(Arena *arena, String_View **items, size_t count) {
+    if (!arena || !items) return false;
+    if (!*items || count == 0) {
+        *items = NULL;
+        return true;
+    }
+
+    String_View *copy = arena_alloc_array(arena, String_View, count);
+    if (!copy) return false;
+
+    for (size_t i = 0; i < count; i++) {
+        copy[i] = (*items)[i];
+        if (!ev_copy_sv_inplace(arena, &copy[i])) return false;
+    }
+
+    *items = copy;
+    return true;
+}
+
 static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
     if (!arena || !ev) return false;
 
@@ -92,7 +111,9 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
 
         case EV_CUSTOM_COMMAND_TARGET:
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.target_name)) return false;
-            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.command)) return false;
+            if (!ev_copy_sv_array_inplace(arena,
+                                          &ev->as.custom_command_target.commands,
+                                          ev->as.custom_command_target.command_count)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.working_dir)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.comment)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.outputs)) return false;
@@ -103,7 +124,9 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
             break;
 
         case EV_CUSTOM_COMMAND_OUTPUT:
-            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.command)) return false;
+            if (!ev_copy_sv_array_inplace(arena,
+                                          &ev->as.custom_command_output.commands,
+                                          ev->as.custom_command_output.command_count)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.working_dir)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.comment)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.outputs)) return false;
@@ -267,6 +290,19 @@ static void ev_print_sv(const char *label, String_View sv) {
     printf(" %s=\"%.*s\"", label, (int)sv.count, sv.data ? sv.data : "");
 }
 
+static void ev_print_sv_list(const char *label, String_View *items, size_t count) {
+    printf(" %s=[", label);
+    if (!items) {
+        printf("]");
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) printf(", ");
+        printf("\"%.*s\"", (int)items[i].count, items[i].data ? items[i].data : "");
+    }
+    printf("]");
+}
+
 void event_stream_dump(const Cmake_Event_Stream *stream) {
     if (!stream) {
         printf("EventStream(NULL)\n");
@@ -351,7 +387,9 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
             case EV_CUSTOM_COMMAND_TARGET:
                 ev_print_sv("target", ev->as.custom_command_target.target_name);
                 printf(" pre_build=%d", ev->as.custom_command_target.pre_build ? 1 : 0);
-                ev_print_sv("command", ev->as.custom_command_target.command);
+                ev_print_sv_list("commands",
+                                 ev->as.custom_command_target.commands,
+                                 ev->as.custom_command_target.command_count);
                 ev_print_sv("working_dir", ev->as.custom_command_target.working_dir);
                 ev_print_sv("comment", ev->as.custom_command_target.comment);
                 ev_print_sv("outputs", ev->as.custom_command_target.outputs);
@@ -368,7 +406,9 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
                        ev->as.custom_command_target.codegen ? 1 : 0);
                 break;
             case EV_CUSTOM_COMMAND_OUTPUT:
-                ev_print_sv("command", ev->as.custom_command_output.command);
+                ev_print_sv_list("commands",
+                                 ev->as.custom_command_output.commands,
+                                 ev->as.custom_command_output.command_count);
                 ev_print_sv("working_dir", ev->as.custom_command_output.working_dir);
                 ev_print_sv("comment", ev->as.custom_command_output.comment);
                 ev_print_sv("outputs", ev->as.custom_command_output.outputs);

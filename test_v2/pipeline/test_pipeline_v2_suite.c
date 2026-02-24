@@ -538,7 +538,9 @@ TEST(pipeline_builder_custom_command_events) {
     ev.kind = EV_CUSTOM_COMMAND_TARGET;
     ev.as.custom_command_target.target_name = nob_sv_from_cstr("gen");
     ev.as.custom_command_target.pre_build = true;
-    ev.as.custom_command_target.command = nob_sv_from_cstr("echo gen");
+    String_View target_cmds[] = {nob_sv_from_cstr("echo gen")};
+    ev.as.custom_command_target.commands = target_cmds;
+    ev.as.custom_command_target.command_count = NOB_ARRAY_LEN(target_cmds);
     ev.as.custom_command_target.working_dir = nob_sv_from_cstr("tools");
     ev.as.custom_command_target.comment = nob_sv_from_cstr("gen step");
     ev.as.custom_command_target.outputs = nob_sv_from_cstr("");
@@ -555,7 +557,9 @@ TEST(pipeline_builder_custom_command_events) {
     ASSERT(event_stream_push(arena, stream, ev));
 
     ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
-    ev.as.custom_command_output.command = nob_sv_from_cstr("python gen.py");
+    String_View output_cmds[] = {nob_sv_from_cstr("python gen.py"), nob_sv_from_cstr("echo done")};
+    ev.as.custom_command_output.commands = output_cmds;
+    ev.as.custom_command_output.command_count = NOB_ARRAY_LEN(output_cmds);
     ev.as.custom_command_output.working_dir = nob_sv_from_cstr("scripts");
     ev.as.custom_command_output.comment = nob_sv_from_cstr("codegen");
     ev.as.custom_command_output.outputs = nob_sv_from_cstr("generated.c;generated.h");
@@ -586,13 +590,17 @@ TEST(pipeline_builder_custom_command_events) {
     const Custom_Command *pre_cmds = build_target_get_custom_commands(target, true, &pre_count);
     ASSERT(pre_cmds != NULL);
     ASSERT(pre_count == 1);
-    ASSERT(nob_sv_eq(pre_cmds[0].command, nob_sv_from_cstr("echo gen")));
+    ASSERT(pre_cmds[0].commands.count == 1);
+    ASSERT(nob_sv_eq(pre_cmds[0].commands.items[0], nob_sv_from_cstr("echo gen")));
     ASSERT(pre_cmds[0].byproducts.count == 1);
 
     size_t out_count = 0;
     const Custom_Command *out_cmds = build_model_get_output_custom_commands(model, &out_count);
     ASSERT(out_cmds != NULL);
     ASSERT(out_count == 1);
+    ASSERT(out_cmds[0].commands.count == 2);
+    ASSERT(nob_sv_eq(out_cmds[0].commands.items[0], nob_sv_from_cstr("python gen.py")));
+    ASSERT(nob_sv_eq(out_cmds[0].commands.items[1], nob_sv_from_cstr("echo done")));
     ASSERT(out_cmds[0].outputs.count == 2);
     ASSERT(out_cmds[0].depends.count == 1);
 

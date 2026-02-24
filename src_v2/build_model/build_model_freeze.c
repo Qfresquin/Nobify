@@ -140,6 +140,7 @@ static bool bm_freeze_copy_custom_command(Build_Model_Freeze_Ctx *ctx,
 
     dst->type = src->type;
     dst->command = bm_freeze_intern(ctx, src->command);
+    if (!bm_freeze_copy_string_list(ctx, &src->commands, &dst->commands)) return false;
     dst->main_dependency = bm_freeze_intern(ctx, src->main_dependency);
     dst->depfile = bm_freeze_intern(ctx, src->depfile);
     dst->working_dir = bm_freeze_intern(ctx, src->working_dir);

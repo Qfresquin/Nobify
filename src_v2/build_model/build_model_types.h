@@ -80,7 +80,8 @@ typedef enum {
 
 typedef struct {
     Custom_Command_Type type;
-    String_View command;      // Comando shell ou script
+    String_View command;      // Compat: primeiro comando
+    String_List commands;     // Sequencia de comandos em ordem
     String_List outputs;      // Arquivos de saida
     String_List byproducts;   // Arquivos gerados adicionais
     String_List inputs;       // Arquivos de entrada
