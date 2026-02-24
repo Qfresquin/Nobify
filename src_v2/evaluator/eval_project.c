@@ -61,33 +61,37 @@ static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
     return true;
 }
 
-static bool is_cmp_policy_id(String_View sv) {
-    if (sv.count != 7) return false;
-    if (!svu_has_prefix_ci_lit(sv, "CMP")) return false;
-    for (size_t i = 3; i < 7; i++) {
-        if (!isdigit((unsigned char)sv.data[i])) return false;
+static bool policy_parse_version_range(String_View token,
+                                       String_View *out_min_version,
+                                       String_View *out_policy_version) {
+    if (!out_min_version || !out_policy_version) return false;
+    *out_min_version = token;
+    *out_policy_version = token;
+    for (size_t i = 0; i + 2 < token.count; i++) {
+        if (token.data[i] == '.' && token.data[i + 1] == '.' && token.data[i + 2] == '.') {
+            *out_min_version = nob_sv_from_parts(token.data, i);
+            *out_policy_version = nob_sv_from_parts(token.data + i + 3, token.count - (i + 3));
+            break;
+        }
     }
-    return true;
+    if (out_min_version->count == 0) *out_min_version = token;
+    if (out_policy_version->count == 0) *out_policy_version = *out_min_version;
+    return out_min_version->count > 0 && out_policy_version->count > 0;
 }
 
-static String_View policy_key_from_id(Evaluator_Context *ctx, String_View policy_id) {
-    return svu_concat_suffix_temp(ctx, nob_sv_from_cstr("CMAKE_POLICY_"), eval_sv_to_cstr_temp(ctx, policy_id));
+static size_t policy_depth_or_one(String_View depth_sv) {
+    size_t depth = 1;
+    if (depth_sv.count == 0) return depth;
+    size_t acc = 0;
+    for (size_t i = 0; i < depth_sv.count; i++) {
+        char c = depth_sv.data[i];
+        if (c < '0' || c > '9') return 1;
+        acc = (acc * 10) + (size_t)(c - '0');
+    }
+    if (acc == 0) return 1;
+    return acc;
 }
 
-static void emit_policy_partial_warning_once(Evaluator_Context *ctx,
-                                             Cmake_Event_Origin o,
-                                             String_View command_name) {
-    String_View warned_key = nob_sv_from_cstr("NOBIFY_POLICY_PARTIAL_WARNED");
-    if (eval_var_defined(ctx, warned_key)) return;
-    (void)eval_var_set(ctx, warned_key, nob_sv_from_cstr("1"));
-    eval_emit_diag(ctx,
-                   EV_DIAG_WARNING,
-                   nob_sv_from_cstr("dispatcher"),
-                   command_name,
-                   o,
-                   nob_sv_from_cstr("Policy semantics are only partially modeled in evaluator v2"),
-                   nob_sv_from_cstr("Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied"));
-}
 bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -104,23 +108,32 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    String_View version = a.items[1];
-    String_View min_version = version;
-    String_View policy_version = version;
-    for (size_t i = 0; i + 2 < version.count; i++) {
-        if (version.data[i] == '.' && version.data[i + 1] == '.' && version.data[i + 2] == '.') {
-            min_version = nob_sv_from_parts(version.data, i);
-            policy_version = nob_sv_from_parts(version.data + i + 3, version.count - (i + 3));
-            break;
-        }
+    String_View min_version = nob_sv_from_cstr("");
+    String_View policy_version = nob_sv_from_cstr("");
+    if (!policy_parse_version_range(a.items[1], &min_version, &policy_version)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_minimum_required() received invalid VERSION token"),
+                       a.items[1]);
+        return !eval_should_stop(ctx);
     }
-    if (min_version.count == 0) min_version = version;
-    if (policy_version.count == 0) policy_version = min_version;
+
+    for (size_t i = 2; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "FATAL_ERROR")) continue;
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_minimum_required() argument is ignored in evaluator v2"),
+                       a.items[i]);
+    }
 
     (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_version);
     (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version);
-
-    emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
     return !eval_should_stop(ctx);
 }
 
@@ -151,13 +164,24 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), a.items[1]);
-        emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+        String_View min_version = nob_sv_from_cstr("");
+        String_View policy_version = nob_sv_from_cstr("");
+        if (!policy_parse_version_range(a.items[1], &min_version, &policy_version)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(VERSION ...) received invalid version token"),
+                           a.items[1]);
+            return !eval_should_stop(ctx);
+        }
+        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version);
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "SET")) {
-        if (a.count < 3 || !is_cmp_policy_id(a.items[1])) {
+        if (a.count < 3 || !eval_policy_is_id(a.items[1])) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -170,22 +194,20 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
         String_View value = a.items[2];
         if (!(eval_sv_eq_ci_lit(value, "OLD") || eval_sv_eq_ci_lit(value, "NEW"))) {
             eval_emit_diag(ctx,
-                           EV_DIAG_WARNING,
+                           EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
-                           nob_sv_from_cstr("cmake_policy(SET ...) supports only OLD/NEW in v2"),
+                           nob_sv_from_cstr("cmake_policy(SET ...) requires OLD or NEW"),
                            value);
+            return !eval_should_stop(ctx);
         }
-        String_View key = policy_key_from_id(ctx, a.items[1]);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-        (void)eval_var_set(ctx, key, value);
-        emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+        if (!eval_policy_set(ctx, a.items[1], value)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "GET")) {
-        if (a.count < 3 || !is_cmp_policy_id(a.items[1])) {
+        if (a.count < 3 || !eval_policy_is_id(a.items[1])) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -195,33 +217,41 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
             return !eval_should_stop(ctx);
         }
-        String_View key = policy_key_from_id(ctx, a.items[1]);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-        String_View val = eval_var_get(ctx, key);
+        String_View val = eval_policy_get_effective(ctx, a.items[1]);
         (void)eval_var_set(ctx, a.items[2], val);
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "PUSH") || eval_sv_eq_ci_lit(a.items[0], "POP")) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cmake_policy(PUSH/POP) is not implemented in evaluator v2"),
-                       nob_sv_from_cstr("Policy stack semantics are currently ignored"));
-        emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+    if (eval_sv_eq_ci_lit(a.items[0], "PUSH")) {
+        if (!eval_policy_push(ctx)) return !eval_should_stop(ctx);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[0], "POP")) {
+        size_t depth = policy_depth_or_one(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH")));
+        if (depth <= 1) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(POP) called without matching PUSH"),
+                           nob_sv_from_cstr("Add cmake_policy(PUSH) before POP"));
+            eval_request_stop_on_error(ctx);
+            return !eval_should_stop(ctx);
+        }
+        if (!eval_policy_pop(ctx)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
     eval_emit_diag(ctx,
-                   EV_DIAG_WARNING,
+                   EV_DIAG_ERROR,
                    nob_sv_from_cstr("dispatcher"),
                    node->as.cmd.name,
                    o,
                    nob_sv_from_cstr("Unknown cmake_policy() subcommand"),
                    a.items[0]);
-    emit_policy_partial_warning_once(ctx, o, node->as.cmd.name);
+    eval_request_stop_on_error(ctx);
     return !eval_should_stop(ctx);
 }
 

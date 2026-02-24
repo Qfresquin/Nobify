@@ -176,6 +176,12 @@ bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *o
 bool eval_scope_push(Evaluator_Context *ctx);
 void eval_scope_pop(Evaluator_Context *ctx);
 
+bool eval_policy_is_id(String_View policy_id);
+bool eval_policy_push(Evaluator_Context *ctx);
+bool eval_policy_pop(Evaluator_Context *ctx);
+bool eval_policy_set(Evaluator_Context *ctx, String_View policy_id, String_View value);
+String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id);
+
 // ---- Execução Externa (Subdiretórios e Includes) ----
 // Retorna false em caso de OOM ou erro fatal.
 bool eval_execute_file(Evaluator_Context *ctx, String_View file_path, bool is_add_subdirectory, String_View explicit_bin_dir);

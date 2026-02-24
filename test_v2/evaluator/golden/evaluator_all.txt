@@ -58,13 +58,12 @@ EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='pkg_a
 === END CASE ===
 
 === CASE golden_probes_and_try_compile ===
-DIAG errors=0 warnings=1
-EVENTS count=5
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_minimum_required' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
-EV[1] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages=''
-EV[2] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='HAVE_X' value='0'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages=''
+EV[1] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='HAVE_X' value='0'
+EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
+EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
 === END CASE ===
 
 === CASE try_compile_source_from_content_copy_file_and_cache ===
@@ -274,15 +273,13 @@ EV[15] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target
 === END CASE ===
 
 === CASE dispatcher_cmake_minimum_required ===
-DIAG errors=0 warnings=1
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_minimum_required' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
+DIAG errors=0 warnings=0
+EVENTS count=0
 === END CASE ===
 
 === CASE dispatcher_cmake_policy_set_get_roundtrip ===
-DIAG errors=0 warnings=1
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_policy' cause='Policy semantics are only partially modeled in evaluator v2' hint='Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied'
+DIAG errors=0 warnings=0
+EVENTS count=0
 === END CASE ===
 
 === CASE dispatcher_find_package_handler_module_mode ===

@@ -387,7 +387,7 @@ static bool mkdir_p(Evaluator_Context *ctx, String_View path) {
 
     size_t len0 = strlen(path_c);
     char *tmp = (char*)malloc(len0 + 1);
-    if (!tmp) return false;
+    EVAL_OOM_RETURN_IF_NULL(ctx, tmp, false);
     memcpy(tmp, path_c, len0 + 1);
 
     for (size_t i = 0; i < len0; i++) {
@@ -943,8 +943,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
     char *hex_buf = (char*)arena_alloc(eval_temp_arena(ctx), (n * 2) + 1);
     if (!hex_buf) {
         nob_sb_free(sb);
-        ctx_oom(ctx);
-        return;
+        EVAL_OOM_RETURN_VOID_IF_NULL(ctx, hex_buf);
     }
     for (size_t i = 0; i < n; i++) {
         unsigned char b = (unsigned char)sb.items[begin + i];

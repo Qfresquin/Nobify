@@ -14,17 +14,6 @@
 #define EVAL_EXPAND_MAX_RECURSION 100
 #define EVAL_EXPAND_MAX_RECURSION_HARD_CAP 10000
 
-static bool sv_is_policy_id(String_View sv) {
-    if (sv.count != 7) return false; // CMPNNNN
-    if (!(sv.data[0] == 'C' || sv.data[0] == 'c')) return false;
-    if (!(sv.data[1] == 'M' || sv.data[1] == 'm')) return false;
-    if (!(sv.data[2] == 'P' || sv.data[2] == 'p')) return false;
-    for (size_t i = 3; i < 7; i++) {
-        if (!isdigit((unsigned char)sv.data[i])) return false;
-    }
-    return true;
-}
-
 static bool path_exists_cstr(const char *path) {
     if (!path || path[0] == '\0') return false;
     struct stat st;
@@ -100,13 +89,13 @@ static bool sv_is_drive_root(String_View sv) {
 static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in) {
     if (!ctx || in.count == 0) return in;
     char *seg_buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, seg_buf, nob_sv_from_cstr(""));
     size_t *seg_pos = (size_t*)arena_alloc(eval_temp_arena(ctx), sizeof(size_t) * (in.count + 1));
+    EVAL_OOM_RETURN_IF_NULL(ctx, seg_pos, nob_sv_from_cstr(""));
     size_t *seg_len = (size_t*)arena_alloc(eval_temp_arena(ctx), sizeof(size_t) * (in.count + 1));
+    EVAL_OOM_RETURN_IF_NULL(ctx, seg_len, nob_sv_from_cstr(""));
     char *out_buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 2);
-    if (!seg_buf || !seg_pos || !seg_len || !out_buf) {
-        ctx_oom(ctx);
-        return nob_sv_from_cstr("");
-    }
+    EVAL_OOM_RETURN_IF_NULL(ctx, out_buf, nob_sv_from_cstr(""));
 
     // root_kind: 0=relative, 1="/", 2="X:/", 3="X:" (drive-relative)
     int root_kind = 0;
@@ -561,8 +550,7 @@ static bool parse_unary(Expr *e) {
     if (eval_sv_eq_ci_lit(tok, "POLICY")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        // Minimal policy predicate support: valid policy-id syntax.
-        return sv_is_policy_id(expr_next(e));
+        return eval_policy_is_id(expr_next(e));
     }
 
     if (eval_sv_eq_ci_lit(tok, "EXISTS")) {

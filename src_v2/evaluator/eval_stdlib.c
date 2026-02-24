@@ -262,10 +262,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         size_t total = existing.count + 1 + appended.count;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        if (!buf) {
-            ctx_oom(ctx);
-            return !eval_should_stop(ctx);
-        }
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
         memcpy(buf, existing.data, existing.count);
         buf[existing.count] = ';';
         memcpy(buf + existing.count + 1, appended.data, appended.count);
@@ -310,10 +307,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         size_t total = keep_total + (keep_count - 1);
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        if (!buf) {
-            ctx_oom(ctx);
-            return !eval_should_stop(ctx);
-        }
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
 
         size_t off = 0;
         size_t emitted = 0;
@@ -479,10 +473,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             total -= hits * (match.count - repl.count);
         }
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        if (!buf) {
-            ctx_oom(ctx);
-            return !eval_should_stop(ctx);
-        }
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
 
         size_t off = 0;
         i = 0;
@@ -515,10 +506,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-        if (!buf) {
-            ctx_oom(ctx);
-            return !eval_should_stop(ctx);
-        }
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
         for (size_t i = 0; i < input.count; i++) {
             buf[i] = (char)toupper((unsigned char)input.data[i]);
         }
@@ -540,10 +528,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-        if (!buf) {
-            ctx_oom(ctx);
-            return !eval_should_stop(ctx);
-        }
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
         for (size_t i = 0; i < input.count; i++) {
             buf[i] = (char)tolower((unsigned char)input.data[i]);
         }
@@ -607,18 +592,12 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
             char *pat_buf = (char*)arena_alloc(eval_temp_arena(ctx), pattern.count + 1);
-            if (!pat_buf) {
-                ctx_oom(ctx);
-                return !eval_should_stop(ctx);
-            }
+            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, !eval_should_stop(ctx));
             memcpy(pat_buf, pattern.data, pattern.count);
             pat_buf[pattern.count] = '\0';
 
             char *in_buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-            if (!in_buf) {
-                ctx_oom(ctx);
-                return !eval_should_stop(ctx);
-            }
+            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, !eval_should_stop(ctx));
             memcpy(in_buf, input.data, input.count);
             in_buf[input.count] = '\0';
 
@@ -721,8 +700,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             char *out_buf = (char*)arena_alloc(eval_temp_arena(ctx), sb.count + 1);
             if (!out_buf) {
                 nob_sb_free(sb);
-                ctx_oom(ctx);
-                return !eval_should_stop(ctx);
+                EVAL_OOM_RETURN_IF_NULL(ctx, out_buf, !eval_should_stop(ctx));
             }
             if (sb.count) memcpy(out_buf, sb.items, sb.count);
             out_buf[sb.count] = '\0';
@@ -769,10 +747,7 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     char *expr_buf = (char*)arena_alloc(eval_temp_arena(ctx), expr_sv.count + 1);
-    if (!expr_buf) {
-        ctx_oom(ctx);
-        return !eval_should_stop(ctx);
-    }
+    EVAL_OOM_RETURN_IF_NULL(ctx, expr_buf, !eval_should_stop(ctx));
     memcpy(expr_buf, expr_sv.data, expr_sv.count);
     expr_buf[expr_sv.count] = '\0';
 

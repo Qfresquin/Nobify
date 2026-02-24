@@ -137,7 +137,7 @@ bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
     }
 
     b = arena_alloc_zero(ctx->event_arena, sizeof(*b));
-    if (!b) return ctx_oom(ctx);
+    EVAL_OOM_RETURN_IF_NULL(ctx, b, false);
     b->key = sv_copy_to_event_arena(ctx, key);
     b->value = sv_copy_to_event_arena(ctx, value);
     if (eval_should_stop(ctx)) return false;
@@ -295,10 +295,7 @@ static String_View arg_to_sv_flat(Evaluator_Context *ctx, const Arg *arg) {
 
     // Flatten into temp arena; caller rewinds at statement boundary.
     char *buf = (char*)arena_alloc(ctx->arena, total + 1);
-    if (!buf) {
-        ctx_oom(ctx);
-        return nob_sv_from_cstr("");
-    }
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
 
     size_t off = 0;
     for (size_t i = 0; i < arg->count; i++) {
@@ -545,7 +542,7 @@ static bool clone_args_to_event(Evaluator_Context *ctx, const Args *src, Args *d
     if (src->count == 0) return true;
 
     dst->items = arena_alloc_array(ctx->event_arena, Arg, src->count);
-    if (!dst->items) return ctx_oom(ctx);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
     dst->count = src->count;
     dst->capacity = src->count;
 
@@ -556,7 +553,7 @@ static bool clone_args_to_event(Evaluator_Context *ctx, const Args *src, Args *d
         if (src->items[i].count == 0) continue;
 
         dst->items[i].items = arena_alloc_array(ctx->event_arena, Token, src->items[i].count);
-        if (!dst->items[i].items) return ctx_oom(ctx);
+        EVAL_OOM_RETURN_IF_NULL(ctx, dst->items[i].items, false);
 
         for (size_t k = 0; k < src->items[i].count; k++) {
             Token t = src->items[i].items[k];
@@ -613,7 +610,7 @@ static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clau
     if (src->count == 0) return true;
 
     dst->items = arena_alloc_array(ctx->event_arena, ElseIf_Clause, src->count);
-    if (!dst->items) return ctx_oom(ctx);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
     dst->count = src->count;
     dst->capacity = src->count;
 
@@ -630,7 +627,7 @@ static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *sr
     if (src->count == 0) return true;
 
     dst->items = arena_alloc_array(ctx->event_arena, Node, src->count);
-    if (!dst->items) return ctx_oom(ctx);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
     dst->count = src->count;
     dst->capacity = src->count;
 
@@ -655,7 +652,7 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     String_View *params = NULL;
     if (param_count > 0) {
         params = (String_View*)arena_alloc(ctx->event_arena, param_count * sizeof(String_View));
-        if (!params) return ctx_oom(ctx);
+        EVAL_OOM_RETURN_IF_NULL(ctx, params, false);
         for (size_t i = 0; i < param_count; i++) {
             const Arg *param = &node->as.func_def.params.items[i];
             if (param->count == 0) {
@@ -799,7 +796,7 @@ static bool ensure_scope_capacity(Evaluator_Context *ctx, size_t min_cap) {
     // many interleaved allocations (vars, macro frames, user commands).
     // Growing by allocate+copy is stable and preserves existing scope payloads.
     Var_Scope *new_scopes = arena_alloc_array_zero(ctx->event_arena, Var_Scope, new_cap);
-    if (!new_scopes) return false;
+    EVAL_OOM_RETURN_IF_NULL(ctx, new_scopes, false);
     if (ctx->scopes && ctx->scope_capacity > 0) {
         memcpy(new_scopes, ctx->scopes, ctx->scope_capacity * sizeof(Var_Scope));
     }
@@ -821,6 +818,193 @@ void eval_scope_pop(Evaluator_Context *ctx) {
     if (ctx && ctx->scope_depth > 1) {
         ctx->scope_depth--;
     }
+}
+
+// -----------------------------------------------------------------------------
+// CMake policy stack/state
+// -----------------------------------------------------------------------------
+
+static bool policy_parse_depth(String_View sv, size_t *out_depth) {
+    if (!out_depth || sv.count == 0) return false;
+    size_t acc = 0;
+    for (size_t i = 0; i < sv.count; i++) {
+        char c = sv.data[i];
+        if (c < '0' || c > '9') return false;
+        size_t digit = (size_t)(c - '0');
+        if (acc > (SIZE_MAX / 10)) return false;
+        acc = (acc * 10) + digit;
+    }
+    if (acc == 0) return false;
+    *out_depth = acc;
+    return true;
+}
+
+static size_t policy_current_depth(Evaluator_Context *ctx) {
+    if (!ctx) return 1;
+    String_View depth_sv = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"));
+    size_t depth = 1;
+    if (!policy_parse_depth(depth_sv, &depth)) depth = 1;
+    return depth;
+}
+
+static bool policy_set_depth(Evaluator_Context *ctx, size_t depth) {
+    if (!ctx || depth == 0) return false;
+    char depth_buf[32];
+    int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", depth);
+    if (n < 0 || (size_t)n >= sizeof(depth_buf)) return ctx_oom(ctx);
+    return eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr(depth_buf));
+}
+
+static String_View policy_canonical_id_temp(Evaluator_Context *ctx, String_View policy_id) {
+    if (!ctx || !eval_policy_is_id(policy_id)) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), 8);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < 7; i++) {
+        buf[i] = (char)toupper((unsigned char)policy_id.data[i]);
+    }
+    buf[7] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View policy_slot_key_temp(Evaluator_Context *ctx, size_t depth, String_View canonical_id) {
+    if (!ctx || canonical_id.count == 0) return nob_sv_from_cstr("");
+    static const char *prefix = "NOBIFY_POLICY_D";
+
+    char depth_buf[32];
+    int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", depth);
+    if (n < 0 || (size_t)n >= sizeof(depth_buf)) return nob_sv_from_cstr("");
+    size_t depth_len = (size_t)n;
+
+    size_t prefix_len = strlen(prefix);
+    size_t total = prefix_len + depth_len + 1 + canonical_id.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix, prefix_len);
+    off += prefix_len;
+    memcpy(buf + off, depth_buf, depth_len);
+    off += depth_len;
+    buf[off++] = '_';
+    memcpy(buf + off, canonical_id.data, canonical_id.count);
+    off += canonical_id.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View policy_default_key_temp(Evaluator_Context *ctx, String_View canonical_id) {
+    if (!ctx || canonical_id.count == 0) return nob_sv_from_cstr("");
+    static const char *prefix = "CMAKE_POLICY_DEFAULT_";
+    size_t prefix_len = strlen(prefix);
+    size_t total = prefix_len + canonical_id.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    memcpy(buf, prefix, prefix_len);
+    memcpy(buf + prefix_len, canonical_id.data, canonical_id.count);
+    buf[total] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View policy_legacy_key_temp(Evaluator_Context *ctx, String_View canonical_id) {
+    if (!ctx || canonical_id.count == 0) return nob_sv_from_cstr("");
+    static const char *prefix = "CMAKE_POLICY_";
+    size_t prefix_len = strlen(prefix);
+    size_t total = prefix_len + canonical_id.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    memcpy(buf, prefix, prefix_len);
+    memcpy(buf + prefix_len, canonical_id.data, canonical_id.count);
+    buf[total] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View policy_normalize_status(String_View v) {
+    if (eval_sv_eq_ci_lit(v, "NEW")) return nob_sv_from_cstr("NEW");
+    if (eval_sv_eq_ci_lit(v, "OLD")) return nob_sv_from_cstr("OLD");
+    return nob_sv_from_cstr("");
+}
+
+bool eval_policy_is_id(String_View policy_id) {
+    if (policy_id.count != 7) return false;
+    if (!(policy_id.data[0] == 'C' || policy_id.data[0] == 'c')) return false;
+    if (!(policy_id.data[1] == 'M' || policy_id.data[1] == 'm')) return false;
+    if (!(policy_id.data[2] == 'P' || policy_id.data[2] == 'p')) return false;
+    for (size_t i = 3; i < 7; i++) {
+        if (!isdigit((unsigned char)policy_id.data[i])) return false;
+    }
+    return true;
+}
+
+bool eval_policy_push(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    size_t depth = policy_current_depth(ctx);
+    return policy_set_depth(ctx, depth + 1);
+}
+
+bool eval_policy_pop(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    size_t depth = policy_current_depth(ctx);
+    if (depth <= 1) return false;
+    return policy_set_depth(ctx, depth - 1);
+}
+
+bool eval_policy_set(Evaluator_Context *ctx, String_View policy_id, String_View value) {
+    if (!ctx || eval_should_stop(ctx)) return false;
+    String_View canonical_id = policy_canonical_id_temp(ctx, policy_id);
+    if (eval_should_stop(ctx) || canonical_id.count == 0) return false;
+
+    String_View normalized = policy_normalize_status(value);
+    if (normalized.count == 0) return false;
+
+    size_t depth = policy_current_depth(ctx);
+    if (depth == 0) depth = 1;
+
+    String_View slot_key = policy_slot_key_temp(ctx, depth, canonical_id);
+    if (eval_should_stop(ctx) || slot_key.count == 0) return false;
+    if (!eval_var_set(ctx, slot_key, normalized)) return false;
+
+    // Keep compatibility mirror for scripts reading CMAKE_POLICY_CMP<NNNN>.
+    String_View legacy_key = policy_legacy_key_temp(ctx, canonical_id);
+    if (eval_should_stop(ctx) || legacy_key.count == 0) return false;
+    return eval_var_set(ctx, legacy_key, normalized);
+}
+
+String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id) {
+    if (!ctx || eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    String_View canonical_id = policy_canonical_id_temp(ctx, policy_id);
+    if (eval_should_stop(ctx) || canonical_id.count == 0) return nob_sv_from_cstr("");
+
+    size_t depth = policy_current_depth(ctx);
+    for (size_t d = depth; d > 0; d--) {
+        String_View slot_key = policy_slot_key_temp(ctx, d, canonical_id);
+        if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+        if (!eval_var_defined(ctx, slot_key)) continue;
+        String_View v = policy_normalize_status(eval_var_get(ctx, slot_key));
+        if (v.count > 0) return v;
+    }
+
+    // Backward compatibility with legacy variable path.
+    String_View legacy_key = policy_legacy_key_temp(ctx, canonical_id);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (eval_var_defined(ctx, legacy_key)) {
+        String_View v = policy_normalize_status(eval_var_get(ctx, legacy_key));
+        if (v.count > 0) return v;
+    }
+
+    // Honor documented default override variable.
+    String_View default_key = policy_default_key_temp(ctx, canonical_id);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (eval_var_defined(ctx, default_key)) {
+        String_View v = policy_normalize_status(eval_var_get(ctx, default_key));
+        if (v.count > 0) return v;
+    }
+
+    // Heuristic fallback: if policy-version is set, prefer NEW defaults.
+    // This mirrors cmake_policy(VERSION) intent in evaluator contexts.
+    String_View policy_version = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"));
+    if (policy_version.count > 0) return nob_sv_from_cstr("NEW");
+
+    return nob_sv_from_cstr("");
 }
 
 // -----------------------------------------------------------------------------
@@ -1106,6 +1290,8 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
         if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"), nob_sv_from_cstr(""))) return NULL;
     }
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
 
     // Inject host/platform built-ins commonly used by scripts in if() conditions.
 #if defined(_WIN32)

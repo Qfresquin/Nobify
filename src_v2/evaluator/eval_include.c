@@ -89,11 +89,15 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
 
     String_View file_path = a.items[0];
     bool optional = false;
+    bool no_policy_scope = false;
 
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "OPTIONAL")) {
             optional = true;
-            break;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "NO_POLICY_SCOPE")) {
+            no_policy_scope = true;
         }
     }
 
@@ -109,7 +113,24 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     if (scope_binary.count == 0) scope_binary = ctx->source_dir;
 
     if (!emit_dir_push_event(ctx, o, scope_source, scope_binary)) return !eval_should_stop(ctx);
+    bool pushed_policy = false;
+    if (!no_policy_scope) {
+        if (!eval_policy_push(ctx)) {
+            (void)emit_dir_pop_event(ctx, o);
+            return !eval_should_stop(ctx);
+        }
+        pushed_policy = true;
+    }
     bool success = eval_execute_file(ctx, file_path, false, nob_sv_from_cstr(""));
+    if (pushed_policy && !eval_policy_pop(ctx) && !eval_should_stop(ctx)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("include() failed to restore policy stack"),
+                       nob_sv_from_cstr("cmake_policy(POP) underflow while leaving include()"));
+    }
     if (!emit_dir_pop_event(ctx, o)) return !eval_should_stop(ctx);
     if (!success && !optional && !eval_should_stop(ctx)) {
         eval_emit_diag(ctx,
