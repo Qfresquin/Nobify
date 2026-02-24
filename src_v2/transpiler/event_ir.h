@@ -29,6 +29,8 @@ typedef enum {
     EV_TARGET_LINK_LIBRARIES,
     EV_TARGET_LINK_OPTIONS,
     EV_TARGET_LINK_DIRECTORIES,
+    EV_CUSTOM_COMMAND_TARGET,
+    EV_CUSTOM_COMMAND_OUTPUT,
 
     // Directory-level state
     EV_DIR_PUSH,
@@ -181,6 +183,42 @@ typedef struct {
             Cmake_Visibility visibility;
             String_View path;
         } target_link_directories;
+
+        struct {
+            String_View target_name;
+            bool pre_build;
+            String_View command;
+            String_View working_dir;
+            String_View comment;
+            String_View outputs; // semi-separated list
+            String_View byproducts; // semi-separated list
+            String_View depends; // semi-separated list
+            String_View main_dependency;
+            String_View depfile;
+            bool append;
+            bool verbatim;
+            bool uses_terminal;
+            bool command_expand_lists;
+            bool depends_explicit_only;
+            bool codegen;
+        } custom_command_target;
+
+        struct {
+            String_View command;
+            String_View working_dir;
+            String_View comment;
+            String_View outputs; // semi-separated list
+            String_View byproducts; // semi-separated list
+            String_View depends; // semi-separated list
+            String_View main_dependency;
+            String_View depfile;
+            bool append;
+            bool verbatim;
+            bool uses_terminal;
+            bool command_expand_lists;
+            bool depends_explicit_only;
+            bool codegen;
+        } custom_command_output;
 
         struct {
             String_View source_dir;

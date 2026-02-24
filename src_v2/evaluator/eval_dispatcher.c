@@ -6,11 +6,13 @@
 #include "eval_diag.h"
 #include "eval_flow.h"
 #include "eval_expr.h"
+#include "eval_opt_parser.h"
 #include "arena_dyn.h"
 
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
@@ -247,6 +249,546 @@ static void emit_policy_partial_warning_once(Evaluator_Context *ctx,
                    o,
                    nob_sv_from_cstr("Policy semantics are only partially modeled in evaluator v2"),
                    nob_sv_from_cstr("Commands parse and store basic policy state, but policy-driven behavior changes are not fully applied"));
+}
+
+static bool mkdir_p_local(const char *path) {
+    if (!path) return false;
+    size_t len0 = strlen(path);
+    char *tmp = (char*)malloc(len0 + 1);
+    if (!tmp) return false;
+    memcpy(tmp, path, len0 + 1);
+    for (size_t i = 0; i < len0; i++) {
+        if (tmp[i] == '\\') tmp[i] = '/';
+    }
+
+    size_t len = strlen(tmp);
+    while (len > 0 && tmp[len - 1] == '/') {
+        tmp[len - 1] = '\0';
+        len--;
+    }
+    if (len == 0) {
+        free(tmp);
+        return false;
+    }
+
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            if ((p == tmp + 2) && isalpha((unsigned char)tmp[0]) && tmp[1] == ':') continue;
+            *p = '\0';
+            (void)nob_mkdir_if_not_exists(tmp);
+            *p = '/';
+        }
+    }
+    bool ok = nob_mkdir_if_not_exists(tmp);
+    free(tmp);
+    return ok;
+}
+
+static bool sv_eq_ci_sv(String_View a, String_View b) {
+    if (a.count != b.count) return false;
+    for (size_t i = 0; i < a.count; i++) {
+        char ca = (char)tolower((unsigned char)a.data[i]);
+        char cb = (char)tolower((unsigned char)b.data[i]);
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
+static bool ch_is_sep(char c) {
+    return c == '/' || c == '\\';
+}
+
+static size_t path_last_separator_index(String_View path) {
+    for (size_t i = path.count; i > 0; i--) {
+        if (ch_is_sep(path.data[i - 1])) return i - 1;
+    }
+    return SIZE_MAX;
+}
+
+static String_View cmk_path_root_name_sv(String_View path) {
+    if (path.count >= 2 && isalpha((unsigned char)path.data[0]) && path.data[1] == ':') {
+        return nob_sv_from_parts(path.data, 2);
+    }
+    return nob_sv_from_cstr("");
+}
+
+static String_View cmk_path_root_directory_sv(String_View path) {
+    if (path.count == 0) return nob_sv_from_cstr("");
+    if (ch_is_sep(path.data[0])) return nob_sv_from_cstr("/");
+    if (path.count >= 3 &&
+        isalpha((unsigned char)path.data[0]) &&
+        path.data[1] == ':' &&
+        ch_is_sep(path.data[2])) {
+        return nob_sv_from_cstr("/");
+    }
+    return nob_sv_from_cstr("");
+}
+
+static String_View cmk_path_root_path_temp(Evaluator_Context *ctx, String_View path) {
+    String_View root_name = cmk_path_root_name_sv(path);
+    String_View root_dir = cmk_path_root_directory_sv(path);
+    if (root_name.count == 0) return root_dir;
+    if (root_dir.count == 0) return root_name;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), root_name.count + root_dir.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    memcpy(buf, root_name.data, root_name.count);
+    memcpy(buf + root_name.count, root_dir.data, root_dir.count);
+    buf[root_name.count + root_dir.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View cmk_path_basename_sv(String_View path) {
+    size_t sep = path_last_separator_index(path);
+    if (sep == SIZE_MAX) return path;
+    return nob_sv_from_parts(path.data + sep + 1, path.count - sep - 1);
+}
+
+static String_View cmk_path_extension_sv(String_View name) {
+    size_t dot = SIZE_MAX;
+    for (size_t i = 0; i < name.count; i++) {
+        if (name.data[i] == '.') dot = i;
+    }
+    if (dot == SIZE_MAX || dot == 0) return nob_sv_from_cstr("");
+    return nob_sv_from_parts(name.data + dot, name.count - dot);
+}
+
+static String_View cmk_path_stem_sv(String_View name) {
+    size_t dot = SIZE_MAX;
+    for (size_t i = 0; i < name.count; i++) {
+        if (name.data[i] == '.') dot = i;
+    }
+    if (dot == SIZE_MAX || dot == 0) return name;
+    return nob_sv_from_parts(name.data, dot);
+}
+
+static String_View cmk_path_relative_part_temp(Evaluator_Context *ctx, String_View path) {
+    String_View root = cmk_path_root_path_temp(ctx, path);
+    if (root.count == 0) return path;
+    if (path.count <= root.count) return nob_sv_from_cstr("");
+    String_View rel = nob_sv_from_parts(path.data + root.count, path.count - root.count);
+    while (rel.count > 0 && ch_is_sep(rel.data[0])) {
+        rel = nob_sv_from_parts(rel.data + 1, rel.count - 1);
+    }
+    return rel;
+}
+
+static String_View cmk_path_parent_part_sv(String_View path) {
+    size_t sep = path_last_separator_index(path);
+    if (sep == SIZE_MAX) return nob_sv_from_cstr("");
+    if (sep == 0) return nob_sv_from_cstr("/");
+    if (sep == 2 && path.count >= 3 && path.data[1] == ':') {
+        return nob_sv_from_parts(path.data, 3);
+    }
+    return nob_sv_from_parts(path.data, sep);
+}
+
+static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (input.count == 0) return nob_sv_from_cstr(".");
+
+    bool has_drive = input.count >= 2 &&
+                     isalpha((unsigned char)input.data[0]) &&
+                     input.data[1] == ':';
+    bool absolute = false;
+    size_t pos = 0;
+    if (has_drive) {
+        pos = 2;
+        if (pos < input.count && ch_is_sep(input.data[pos])) {
+            absolute = true;
+            while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+        }
+    } else if (ch_is_sep(input.data[0])) {
+        absolute = true;
+        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+    }
+
+    SV_List segments = {0};
+    while (pos < input.count) {
+        size_t start = pos;
+        while (pos < input.count && !ch_is_sep(input.data[pos])) pos++;
+        String_View seg = nob_sv_from_parts(input.data + start, pos - start);
+        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+
+        if (seg.count == 0 || nob_sv_eq(seg, nob_sv_from_cstr("."))) continue;
+        if (nob_sv_eq(seg, nob_sv_from_cstr(".."))) {
+            if (segments.count > 0 && !nob_sv_eq(segments.items[segments.count - 1], nob_sv_from_cstr(".."))) {
+                segments.count--;
+            } else if (!absolute) {
+                if (!sv_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
+            }
+            continue;
+        }
+        if (!sv_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
+    }
+
+    size_t total = 0;
+    if (has_drive) total += 2;
+    if (absolute) total += 1;
+    for (size_t i = 0; i < segments.count; i++) {
+        total += segments.items[i].count;
+        if (i > 0) total += 1;
+    }
+    if (segments.count == 0) {
+        if (has_drive && absolute) total += 1;
+        else if (!has_drive && !absolute) total += 1;
+    }
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    size_t off = 0;
+
+    if (has_drive) {
+        buf[off++] = input.data[0];
+        buf[off++] = ':';
+    }
+    if (absolute) {
+        buf[off++] = '/';
+    }
+
+    for (size_t i = 0; i < segments.count; i++) {
+        if ((absolute || has_drive) && off > 0 && buf[off - 1] != '/') buf[off++] = '/';
+        if (!(absolute || has_drive) && i > 0) buf[off++] = '/';
+        memcpy(buf + off, segments.items[i].data, segments.items[i].count);
+        off += segments.items[i].count;
+    }
+
+    if (segments.count == 0) {
+        if (has_drive && absolute) {
+            if (off == 2) buf[off++] = '/';
+        } else if (!has_drive && !absolute) {
+            buf[off++] = '.';
+        }
+    }
+
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static void cmk_path_collect_segments_after_root(Evaluator_Context *ctx,
+                                                 String_View path,
+                                                 String_View root,
+                                                 SV_List *out) {
+    if (!ctx || !out) return;
+    size_t pos = root.count;
+    while (pos < path.count && ch_is_sep(path.data[pos])) pos++;
+    while (pos < path.count) {
+        size_t start = pos;
+        while (pos < path.count && !ch_is_sep(path.data[pos])) pos++;
+        if (pos > start) (void)sv_list_push_temp(ctx, out, nob_sv_from_parts(path.data + start, pos - start));
+        while (pos < path.count && ch_is_sep(path.data[pos])) pos++;
+    }
+}
+
+static String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View path, String_View base_dir) {
+    String_View a = cmk_path_normalize_temp(ctx, path);
+    String_View b = cmk_path_normalize_temp(ctx, base_dir);
+    if (ctx->oom) return nob_sv_from_cstr("");
+
+    String_View root_a = cmk_path_root_path_temp(ctx, a);
+    String_View root_b = cmk_path_root_path_temp(ctx, b);
+    if (!sv_eq_ci_sv(root_a, root_b)) return a;
+
+    SV_List seg_a = {0};
+    SV_List seg_b = {0};
+    cmk_path_collect_segments_after_root(ctx, a, root_a, &seg_a);
+    cmk_path_collect_segments_after_root(ctx, b, root_b, &seg_b);
+    if (ctx->oom) return nob_sv_from_cstr("");
+
+    size_t common = 0;
+    while (common < seg_a.count && common < seg_b.count && sv_eq_ci_sv(seg_a.items[common], seg_b.items[common])) {
+        common++;
+    }
+
+    size_t total = 0;
+    size_t count = 0;
+    for (size_t i = common; i < seg_b.count; i++) {
+        total += 2;
+        if (count > 0) total += 1;
+        count++;
+    }
+    for (size_t i = common; i < seg_a.count; i++) {
+        total += seg_a.items[i].count;
+        if (count > 0) total += 1;
+        count++;
+    }
+    if (count == 0) total = 1;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    size_t off = 0;
+    size_t emitted = 0;
+    for (size_t i = common; i < seg_b.count; i++) {
+        if (emitted > 0) buf[off++] = '/';
+        buf[off++] = '.';
+        buf[off++] = '.';
+        emitted++;
+    }
+    for (size_t i = common; i < seg_a.count; i++) {
+        if (emitted > 0) buf[off++] = '/';
+        memcpy(buf + off, seg_a.items[i].data, seg_a.items[i].count);
+        off += seg_a.items[i].count;
+        emitted++;
+    }
+    if (emitted == 0) buf[off++] = '.';
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View cmk_path_get_component_temp(Evaluator_Context *ctx,
+                                               String_View input,
+                                               String_View component,
+                                               bool *supported) {
+    if (supported) *supported = true;
+    if (eval_sv_eq_ci_lit(component, "ROOT_NAME")) return cmk_path_root_name_sv(input);
+    if (eval_sv_eq_ci_lit(component, "ROOT_DIRECTORY")) return cmk_path_root_directory_sv(input);
+    if (eval_sv_eq_ci_lit(component, "ROOT_PATH")) return cmk_path_root_path_temp(ctx, input);
+    if (eval_sv_eq_ci_lit(component, "FILENAME")) return cmk_path_basename_sv(input);
+    if (eval_sv_eq_ci_lit(component, "STEM")) return cmk_path_stem_sv(cmk_path_basename_sv(input));
+    if (eval_sv_eq_ci_lit(component, "EXTENSION")) return cmk_path_extension_sv(cmk_path_basename_sv(input));
+    if (eval_sv_eq_ci_lit(component, "RELATIVE_PART")) return cmk_path_relative_part_temp(ctx, input);
+    if (eval_sv_eq_ci_lit(component, "PARENT_PATH")) return cmk_path_parent_part_sv(input);
+    if (supported) *supported = false;
+    return nob_sv_from_cstr("");
+}
+
+static String_View sv_join_and_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
+    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) {
+        total += items[i].count;
+        if (i + 1 < count) total += 4;
+    }
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    size_t off = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (items[i].count > 0) {
+            memcpy(buf + off, items[i].data, items[i].count);
+            off += items[i].count;
+        }
+        if (i + 1 < count) {
+            memcpy(buf + off, " && ", 4);
+            off += 4;
+        }
+    }
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+enum {
+    CUSTOM_TARGET_OPT_DEPENDS = 1,
+    CUSTOM_TARGET_OPT_BYPRODUCTS,
+    CUSTOM_TARGET_OPT_SOURCES,
+    CUSTOM_TARGET_OPT_WORKING_DIRECTORY,
+    CUSTOM_TARGET_OPT_COMMENT,
+    CUSTOM_TARGET_OPT_VERBATIM,
+    CUSTOM_TARGET_OPT_USES_TERMINAL,
+    CUSTOM_TARGET_OPT_COMMAND_EXPAND_LISTS,
+    CUSTOM_TARGET_OPT_COMMAND,
+};
+
+typedef struct {
+    String_View working_dir;
+    String_View comment;
+    bool verbatim;
+    bool uses_terminal;
+    bool command_expand_lists;
+    SV_List depends;
+    SV_List byproducts;
+    SV_List commands;
+    SV_List sources;
+} Add_Custom_Target_Opts;
+
+static bool add_custom_target_on_option(Evaluator_Context *ctx,
+                                        void *userdata,
+                                        int id,
+                                        SV_List values,
+                                        size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Add_Custom_Target_Opts *st = (Add_Custom_Target_Opts*)userdata;
+    switch (id) {
+    case CUSTOM_TARGET_OPT_DEPENDS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_TARGET_OPT_BYPRODUCTS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_TARGET_OPT_SOURCES:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->sources, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_TARGET_OPT_WORKING_DIRECTORY:
+        if (values.count > 0) st->working_dir = values.items[0];
+        return true;
+    case CUSTOM_TARGET_OPT_COMMENT:
+        if (values.count > 0) st->comment = values.items[0];
+        return true;
+    case CUSTOM_TARGET_OPT_VERBATIM:
+        st->verbatim = true;
+        return true;
+    case CUSTOM_TARGET_OPT_USES_TERMINAL:
+        st->uses_terminal = true;
+        return true;
+    case CUSTOM_TARGET_OPT_COMMAND_EXPAND_LISTS:
+        st->command_expand_lists = true;
+        return true;
+    case CUSTOM_TARGET_OPT_COMMAND: {
+        size_t start = 0;
+        if (values.count > 0 && eval_sv_eq_ci_lit(values.items[0], "ARGS")) start = 1;
+        if (start < values.count) {
+            String_View cmd = sv_join_space_temp(ctx, &values.items[start], values.count - start);
+            if (!sv_list_push_temp(ctx, &st->commands, cmd)) return false;
+        }
+        return true;
+    }
+    default:
+        return true;
+    }
+}
+
+static bool add_custom_noop_positional(Evaluator_Context *ctx,
+                                       void *userdata,
+                                       String_View value,
+                                       size_t token_index) {
+    (void)ctx;
+    (void)userdata;
+    (void)value;
+    (void)token_index;
+    return true;
+}
+
+enum {
+    CUSTOM_CMD_OPT_OUTPUT = 1,
+    CUSTOM_CMD_OPT_PRE_BUILD,
+    CUSTOM_CMD_OPT_PRE_LINK,
+    CUSTOM_CMD_OPT_POST_BUILD,
+    CUSTOM_CMD_OPT_COMMAND,
+    CUSTOM_CMD_OPT_DEPENDS,
+    CUSTOM_CMD_OPT_BYPRODUCTS,
+    CUSTOM_CMD_OPT_MAIN_DEPENDENCY,
+    CUSTOM_CMD_OPT_IMPLICIT_DEPENDS,
+    CUSTOM_CMD_OPT_DEPFILE,
+    CUSTOM_CMD_OPT_WORKING_DIRECTORY,
+    CUSTOM_CMD_OPT_COMMENT,
+    CUSTOM_CMD_OPT_APPEND,
+    CUSTOM_CMD_OPT_VERBATIM,
+    CUSTOM_CMD_OPT_USES_TERMINAL,
+    CUSTOM_CMD_OPT_COMMAND_EXPAND_LISTS,
+    CUSTOM_CMD_OPT_DEPENDS_EXPLICIT_ONLY,
+    CUSTOM_CMD_OPT_CODEGEN,
+    CUSTOM_CMD_OPT_JOB_POOL,
+    CUSTOM_CMD_OPT_JOB_SERVER_AWARE,
+};
+
+typedef struct {
+    bool pre_build;
+    bool got_stage;
+    bool append;
+    bool verbatim;
+    bool uses_terminal;
+    bool command_expand_lists;
+    bool depends_explicit_only;
+    bool codegen;
+    String_View working_dir;
+    String_View comment;
+    String_View main_dependency;
+    String_View depfile;
+    SV_List outputs;
+    SV_List byproducts;
+    SV_List depends;
+    SV_List commands;
+} Add_Custom_Command_Opts;
+
+static bool add_custom_command_on_option(Evaluator_Context *ctx,
+                                         void *userdata,
+                                         int id,
+                                         SV_List values,
+                                         size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Add_Custom_Command_Opts *st = (Add_Custom_Command_Opts*)userdata;
+    switch (id) {
+    case CUSTOM_CMD_OPT_OUTPUT:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->outputs, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_CMD_OPT_PRE_BUILD:
+    case CUSTOM_CMD_OPT_PRE_LINK:
+        st->got_stage = true;
+        st->pre_build = true;
+        return true;
+    case CUSTOM_CMD_OPT_POST_BUILD:
+        st->got_stage = true;
+        st->pre_build = false;
+        return true;
+    case CUSTOM_CMD_OPT_COMMAND: {
+        size_t start = 0;
+        if (values.count > 0 && eval_sv_eq_ci_lit(values.items[0], "ARGS")) start = 1;
+        if (start < values.count) {
+            String_View cmd = sv_join_space_temp(ctx, &values.items[start], values.count - start);
+            if (!sv_list_push_temp(ctx, &st->commands, cmd)) return false;
+        }
+        return true;
+    }
+    case CUSTOM_CMD_OPT_DEPENDS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_CMD_OPT_BYPRODUCTS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_CMD_OPT_MAIN_DEPENDENCY:
+        if (values.count > 0) st->main_dependency = values.items[0];
+        return true;
+    case CUSTOM_CMD_OPT_IMPLICIT_DEPENDS:
+        for (size_t i = 1; i < values.count; i += 2) {
+            if (!sv_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+        }
+        return true;
+    case CUSTOM_CMD_OPT_DEPFILE:
+        if (values.count > 0) st->depfile = values.items[0];
+        return true;
+    case CUSTOM_CMD_OPT_WORKING_DIRECTORY:
+        if (values.count > 0) st->working_dir = values.items[0];
+        return true;
+    case CUSTOM_CMD_OPT_COMMENT:
+        if (values.count > 0) st->comment = values.items[0];
+        return true;
+    case CUSTOM_CMD_OPT_APPEND:
+        st->append = true;
+        return true;
+    case CUSTOM_CMD_OPT_VERBATIM:
+        st->verbatim = true;
+        return true;
+    case CUSTOM_CMD_OPT_USES_TERMINAL:
+        st->uses_terminal = true;
+        return true;
+    case CUSTOM_CMD_OPT_COMMAND_EXPAND_LISTS:
+        st->command_expand_lists = true;
+        return true;
+    case CUSTOM_CMD_OPT_DEPENDS_EXPLICIT_ONLY:
+        st->depends_explicit_only = true;
+        return true;
+    case CUSTOM_CMD_OPT_CODEGEN:
+        st->codegen = true;
+        return true;
+    case CUSTOM_CMD_OPT_JOB_POOL:
+    case CUSTOM_CMD_OPT_JOB_SERVER_AWARE:
+        return true;
+    default:
+        return true;
+    }
 }
 
 static bool h_cmake_minimum_required(Evaluator_Context *ctx, const Node *node) {
@@ -538,6 +1080,673 @@ static bool h_add_library(Evaluator_Context *ctx, const Node *node) {
     }
 
     (void)apply_global_compile_state_to_target(ctx, o, name);
+    return !eval_should_stop(ctx);
+}
+
+static bool h_add_custom_target(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_target() missing target name"),
+                       nob_sv_from_cstr("Usage: add_custom_target(<name> [ALL] [COMMAND ...])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View name = a.items[0];
+    bool all = false;
+    size_t parse_start = 1;
+    if (parse_start < a.count && eval_sv_eq_ci_lit(a.items[parse_start], "ALL")) {
+        all = true;
+        parse_start++;
+    }
+
+    static const Eval_Opt_Spec k_custom_target_specs[] = {
+        {CUSTOM_TARGET_OPT_DEPENDS, "DEPENDS", EVAL_OPT_MULTI},
+        {CUSTOM_TARGET_OPT_BYPRODUCTS, "BYPRODUCTS", EVAL_OPT_MULTI},
+        {CUSTOM_TARGET_OPT_SOURCES, "SOURCES", EVAL_OPT_MULTI},
+        {CUSTOM_TARGET_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE},
+        {CUSTOM_TARGET_OPT_COMMENT, "COMMENT", EVAL_OPT_SINGLE},
+        {CUSTOM_TARGET_OPT_VERBATIM, "VERBATIM", EVAL_OPT_FLAG},
+        {CUSTOM_TARGET_OPT_USES_TERMINAL, "USES_TERMINAL", EVAL_OPT_FLAG},
+        {CUSTOM_TARGET_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
+        {CUSTOM_TARGET_OPT_COMMAND, "COMMAND", EVAL_OPT_MULTI},
+    };
+    Add_Custom_Target_Opts opt = {0};
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             a,
+                             parse_start,
+                             k_custom_target_specs,
+                             NOB_ARRAY_LEN(k_custom_target_specs),
+                             cfg,
+                             add_custom_target_on_option,
+                             add_custom_noop_positional,
+                             &opt)) {
+        return !eval_should_stop(ctx);
+    }
+
+    (void)eval_target_register(ctx, name);
+
+    Cmake_Event decl = {0};
+    decl.kind = EV_TARGET_DECLARE;
+    decl.origin = o;
+    decl.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
+    decl.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
+    if (!emit_event(ctx, decl)) return !eval_should_stop(ctx);
+
+    if (!emit_target_prop_set(ctx,
+                              o,
+                              name,
+                              nob_sv_from_cstr("EXCLUDE_FROM_ALL"),
+                              all ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"),
+                              EV_PROP_SET)) {
+        return !eval_should_stop(ctx);
+    }
+
+    for (size_t s = 0; s < opt.sources.count; s++) {
+        Cmake_Event src_ev = {0};
+        src_ev.kind = EV_TARGET_ADD_SOURCE;
+        src_ev.origin = o;
+        src_ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, name);
+        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, opt.sources.items[s]);
+        if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
+    }
+
+    for (size_t d = 0; d < opt.depends.count; d++) {
+        Cmake_Event dep_ev = {0};
+        dep_ev.kind = EV_TARGET_LINK_LIBRARIES;
+        dep_ev.origin = o;
+        dep_ev.as.target_link_libraries.target_name = sv_copy_to_event_arena(ctx, name);
+        dep_ev.as.target_link_libraries.visibility = EV_VISIBILITY_PRIVATE;
+        dep_ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, opt.depends.items[d]);
+        if (!emit_event(ctx, dep_ev)) return !eval_should_stop(ctx);
+    }
+
+    if (opt.commands.count > 0 || opt.byproducts.count > 0) {
+        Cmake_Event cmd_ev = {0};
+        cmd_ev.kind = EV_CUSTOM_COMMAND_TARGET;
+        cmd_ev.origin = o;
+        cmd_ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, name);
+        cmd_ev.as.custom_command_target.pre_build = true;
+        cmd_ev.as.custom_command_target.command = sv_copy_to_event_arena(ctx, sv_join_and_temp(ctx, opt.commands.items, opt.commands.count));
+        cmd_ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
+        cmd_ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
+        cmd_ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
+        cmd_ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts.items, opt.byproducts.count));
+        cmd_ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends.items, opt.depends.count));
+        cmd_ev.as.custom_command_target.main_dependency = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
+        cmd_ev.as.custom_command_target.depfile = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
+        cmd_ev.as.custom_command_target.append = false;
+        cmd_ev.as.custom_command_target.verbatim = opt.verbatim;
+        cmd_ev.as.custom_command_target.uses_terminal = opt.uses_terminal;
+        cmd_ev.as.custom_command_target.command_expand_lists = opt.command_expand_lists;
+        cmd_ev.as.custom_command_target.depends_explicit_only = false;
+        cmd_ev.as.custom_command_target.codegen = false;
+        if (!emit_event(ctx, cmd_ev)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+static bool h_add_custom_command(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_command() requires TARGET or OUTPUT signature"),
+                       nob_sv_from_cstr("Usage: add_custom_command(TARGET <tgt> ... ) or add_custom_command(OUTPUT <files...> ...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    bool mode_target = eval_sv_eq_ci_lit(a.items[0], "TARGET");
+    bool mode_output = eval_sv_eq_ci_lit(a.items[0], "OUTPUT");
+    if (!mode_target && !mode_output) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("Unsupported add_custom_command() signature"),
+                       nob_sv_from_cstr("Use TARGET or OUTPUT signatures"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View target_name = nob_sv_from_cstr("");
+    size_t parse_start = 0;
+    if (mode_target) {
+        target_name = a.items[1];
+        parse_start = 2;
+    }
+
+    static const Eval_Opt_Spec k_custom_command_specs[] = {
+        {CUSTOM_CMD_OPT_OUTPUT, "OUTPUT", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_PRE_BUILD, "PRE_BUILD", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_PRE_LINK, "PRE_LINK", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_POST_BUILD, "POST_BUILD", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_COMMAND, "COMMAND", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_DEPENDS, "DEPENDS", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_BYPRODUCTS, "BYPRODUCTS", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_MAIN_DEPENDENCY, "MAIN_DEPENDENCY", EVAL_OPT_SINGLE},
+        {CUSTOM_CMD_OPT_IMPLICIT_DEPENDS, "IMPLICIT_DEPENDS", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_DEPFILE, "DEPFILE", EVAL_OPT_SINGLE},
+        {CUSTOM_CMD_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE},
+        {CUSTOM_CMD_OPT_COMMENT, "COMMENT", EVAL_OPT_SINGLE},
+        {CUSTOM_CMD_OPT_APPEND, "APPEND", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_VERBATIM, "VERBATIM", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_USES_TERMINAL, "USES_TERMINAL", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_DEPENDS_EXPLICIT_ONLY, "DEPENDS_EXPLICIT_ONLY", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_CODEGEN, "CODEGEN", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_JOB_POOL, "JOB_POOL", EVAL_OPT_OPTIONAL_SINGLE},
+        {CUSTOM_CMD_OPT_JOB_SERVER_AWARE, "JOB_SERVER_AWARE", EVAL_OPT_OPTIONAL_SINGLE},
+    };
+    Add_Custom_Command_Opts opt = {0};
+    opt.pre_build = true;
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             a,
+                             parse_start,
+                             k_custom_command_specs,
+                             NOB_ARRAY_LEN(k_custom_command_specs),
+                             cfg,
+                             add_custom_command_on_option,
+                             add_custom_noop_positional,
+                             &opt)) {
+        return !eval_should_stop(ctx);
+    }
+
+    if (mode_target && !opt.got_stage) opt.pre_build = true;
+
+    if (opt.commands.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_command() has no COMMAND entries"),
+                       nob_sv_from_cstr("Command was ignored"));
+        return !eval_should_stop(ctx);
+    }
+    if (mode_output && opt.outputs.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_command(OUTPUT ...) requires at least one output"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+    if (opt.main_dependency.count > 0) (void)sv_list_push_temp(ctx, &opt.depends, opt.main_dependency);
+    if (opt.depfile.count > 0) (void)sv_list_push_temp(ctx, &opt.byproducts, opt.depfile);
+
+    if (mode_target) {
+        Cmake_Event ev = {0};
+        ev.kind = EV_CUSTOM_COMMAND_TARGET;
+        ev.origin = o;
+        ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, target_name);
+        ev.as.custom_command_target.pre_build = opt.pre_build;
+        ev.as.custom_command_target.command = sv_copy_to_event_arena(ctx, sv_join_and_temp(ctx, opt.commands.items, opt.commands.count));
+        ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
+        ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
+        ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs.items, opt.outputs.count));
+        ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts.items, opt.byproducts.count));
+        ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends.items, opt.depends.count));
+        ev.as.custom_command_target.main_dependency = sv_copy_to_event_arena(ctx, opt.main_dependency);
+        ev.as.custom_command_target.depfile = sv_copy_to_event_arena(ctx, opt.depfile);
+        ev.as.custom_command_target.append = opt.append;
+        ev.as.custom_command_target.verbatim = opt.verbatim;
+        ev.as.custom_command_target.uses_terminal = opt.uses_terminal;
+        ev.as.custom_command_target.command_expand_lists = opt.command_expand_lists;
+        ev.as.custom_command_target.depends_explicit_only = opt.depends_explicit_only;
+        ev.as.custom_command_target.codegen = opt.codegen;
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    } else {
+        Cmake_Event ev = {0};
+        ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
+        ev.origin = o;
+        ev.as.custom_command_output.command = sv_copy_to_event_arena(ctx, sv_join_and_temp(ctx, opt.commands.items, opt.commands.count));
+        ev.as.custom_command_output.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
+        ev.as.custom_command_output.comment = sv_copy_to_event_arena(ctx, opt.comment);
+        ev.as.custom_command_output.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs.items, opt.outputs.count));
+        ev.as.custom_command_output.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts.items, opt.byproducts.count));
+        ev.as.custom_command_output.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends.items, opt.depends.count));
+        ev.as.custom_command_output.main_dependency = sv_copy_to_event_arena(ctx, opt.main_dependency);
+        ev.as.custom_command_output.depfile = sv_copy_to_event_arena(ctx, opt.depfile);
+        ev.as.custom_command_output.append = opt.append;
+        ev.as.custom_command_output.verbatim = opt.verbatim;
+        ev.as.custom_command_output.uses_terminal = opt.uses_terminal;
+        ev.as.custom_command_output.command_expand_lists = opt.command_expand_lists;
+        ev.as.custom_command_output.depends_explicit_only = opt.depends_explicit_only;
+        ev.as.custom_command_output.codegen = opt.codegen;
+        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+enum {
+    TRY_COMPILE_OPT_OUTPUT_VARIABLE = 1,
+    TRY_COMPILE_OPT_COPY_FILE,
+    TRY_COMPILE_OPT_SOURCE_FROM_CONTENT,
+    TRY_COMPILE_OPT_SOURCE_FROM_VAR,
+    TRY_COMPILE_OPT_SOURCES,
+    TRY_COMPILE_OPT_CMAKE_FLAGS,
+    TRY_COMPILE_OPT_COMPILE_DEFINITIONS,
+    TRY_COMPILE_OPT_LINK_OPTIONS,
+    TRY_COMPILE_OPT_LINK_LIBRARIES,
+    TRY_COMPILE_OPT_NO_CACHE,
+    TRY_COMPILE_OPT_LOG_DESCRIPTION,
+};
+
+typedef struct {
+    String_View src;
+    String_View output_var;
+    String_View copy_file_path;
+    bool has_source_from_content;
+    bool has_source_from_var;
+    String_View source_name;
+    String_View source_content;
+} Try_Compile_Option_State;
+
+static bool try_compile_on_option(Evaluator_Context *ctx,
+                                  void *userdata,
+                                  int id,
+                                  SV_List values,
+                                  size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Try_Compile_Option_State *st = (Try_Compile_Option_State*)userdata;
+    switch (id) {
+    case TRY_COMPILE_OPT_OUTPUT_VARIABLE:
+        if (values.count > 0) st->output_var = values.items[0];
+        return true;
+    case TRY_COMPILE_OPT_COPY_FILE:
+        if (values.count > 0) st->copy_file_path = values.items[0];
+        return true;
+    case TRY_COMPILE_OPT_SOURCE_FROM_CONTENT:
+        if (values.count >= 2) {
+            st->has_source_from_content = true;
+            st->source_name = values.items[0];
+            st->source_content = values.items[1];
+        }
+        return true;
+    case TRY_COMPILE_OPT_SOURCE_FROM_VAR:
+        if (values.count >= 2) {
+            st->has_source_from_var = true;
+            st->source_name = values.items[0];
+            st->source_content = eval_var_get(ctx, values.items[1]);
+        }
+        return true;
+    case TRY_COMPILE_OPT_SOURCES:
+        if (values.count > 0) st->src = values.items[0];
+        return true;
+    case TRY_COMPILE_OPT_CMAKE_FLAGS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (values.items[i].count > 2 && values.items[i].data[0] == '-' && values.items[i].data[1] == 'D') {
+                String_View kv = nob_sv_from_parts(values.items[i].data + 2, values.items[i].count - 2);
+                const char *eq = memchr(kv.data, '=', kv.count);
+                if (eq) {
+                    size_t klen = (size_t)(eq - kv.data);
+                    String_View k = nob_sv_from_parts(kv.data, klen);
+                    String_View v = nob_sv_from_parts(eq + 1, kv.count - klen - 1);
+                    (void)eval_var_set(ctx, k, v);
+                }
+            }
+        }
+        return true;
+    case TRY_COMPILE_OPT_COMPILE_DEFINITIONS:
+    case TRY_COMPILE_OPT_LINK_OPTIONS:
+    case TRY_COMPILE_OPT_LINK_LIBRARIES:
+    case TRY_COMPILE_OPT_NO_CACHE:
+    case TRY_COMPILE_OPT_LOG_DESCRIPTION:
+        return true;
+    default:
+        return true;
+    }
+}
+
+static bool h_try_compile(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("try_compile() requires at least result var, bindir and source"),
+                       nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> [OUTPUT_VARIABLE var])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View out_var = a.items[0];
+    String_View bindir = a.items[1];
+    Try_Compile_Option_State opt = {
+        .src = a.items[2],
+        .output_var = nob_sv_from_cstr(""),
+        .copy_file_path = nob_sv_from_cstr(""),
+        .has_source_from_content = false,
+        .has_source_from_var = false,
+        .source_name = nob_sv_from_cstr(""),
+        .source_content = nob_sv_from_cstr(""),
+    };
+
+    if (!eval_sv_is_abs_path(bindir)) {
+        String_View curr_bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+        if (curr_bin.count == 0) curr_bin = ctx->binary_dir;
+        bindir = eval_sv_path_join(eval_temp_arena(ctx), curr_bin, bindir);
+    }
+    char *bindir_c = eval_sv_to_cstr_temp(ctx, bindir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, bindir_c, !eval_should_stop(ctx));
+    (void)mkdir_p_local(bindir_c);
+    static const Eval_Opt_Spec k_try_compile_specs[] = {
+        {TRY_COMPILE_OPT_OUTPUT_VARIABLE, "OUTPUT_VARIABLE", EVAL_OPT_OPTIONAL_SINGLE},
+        {TRY_COMPILE_OPT_COPY_FILE, "COPY_FILE", EVAL_OPT_OPTIONAL_SINGLE},
+        {TRY_COMPILE_OPT_SOURCE_FROM_CONTENT, "SOURCE_FROM_CONTENT", EVAL_OPT_MULTI},
+        {TRY_COMPILE_OPT_SOURCE_FROM_VAR, "SOURCE_FROM_VAR", EVAL_OPT_MULTI},
+        {TRY_COMPILE_OPT_SOURCES, "SOURCES", EVAL_OPT_OPTIONAL_SINGLE},
+        {TRY_COMPILE_OPT_CMAKE_FLAGS, "CMAKE_FLAGS", EVAL_OPT_MULTI},
+        {TRY_COMPILE_OPT_COMPILE_DEFINITIONS, "COMPILE_DEFINITIONS", EVAL_OPT_MULTI},
+        {TRY_COMPILE_OPT_LINK_OPTIONS, "LINK_OPTIONS", EVAL_OPT_MULTI},
+        {TRY_COMPILE_OPT_LINK_LIBRARIES, "LINK_LIBRARIES", EVAL_OPT_MULTI},
+        {TRY_COMPILE_OPT_NO_CACHE, "NO_CACHE", EVAL_OPT_FLAG},
+        {TRY_COMPILE_OPT_LOG_DESCRIPTION, "LOG_DESCRIPTION", EVAL_OPT_OPTIONAL_SINGLE},
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             a,
+                             3,
+                             k_try_compile_specs,
+                             NOB_ARRAY_LEN(k_try_compile_specs),
+                             cfg,
+                             try_compile_on_option,
+                             add_custom_noop_positional,
+                             &opt)) {
+        return !eval_should_stop(ctx);
+    }
+
+    String_View src_path = opt.src;
+    if (opt.has_source_from_content || opt.has_source_from_var) {
+        if (opt.source_name.count == 0) opt.source_name = nob_sv_from_cstr("try_compile_source.c");
+        src_path = eval_sv_path_join(eval_temp_arena(ctx), bindir, opt.source_name);
+        char *src_path_c = eval_sv_to_cstr_temp(ctx, src_path);
+        EVAL_OOM_RETURN_IF_NULL(ctx, src_path_c, !eval_should_stop(ctx));
+        (void)nob_write_entire_file(src_path_c, opt.source_content.data ? opt.source_content.data : "", opt.source_content.count);
+    } else if (!eval_sv_is_abs_path(src_path)) {
+        String_View curr_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+        if (curr_src.count == 0) curr_src = ctx->source_dir;
+        src_path = eval_sv_path_join(eval_temp_arena(ctx), curr_src, src_path);
+    }
+
+    bool compile_ok = file_exists_sv(ctx, src_path);
+    (void)eval_var_set(ctx, out_var, compile_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+
+    if (compile_ok && opt.copy_file_path.count > 0) {
+        String_View dst = opt.copy_file_path;
+        if (!eval_sv_is_abs_path(dst)) {
+            String_View curr_bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+            if (curr_bin.count == 0) curr_bin = ctx->binary_dir;
+            dst = eval_sv_path_join(eval_temp_arena(ctx), curr_bin, dst);
+        }
+        char *src_c = eval_sv_to_cstr_temp(ctx, src_path);
+        char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+        EVAL_OOM_RETURN_IF_NULL(ctx, src_c, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, !eval_should_stop(ctx));
+        (void)nob_copy_file(src_c, dst_c);
+    }
+
+    if (opt.output_var.count > 0) {
+        String_View out_msg = compile_ok
+            ? nob_sv_from_cstr("try_compile simulated success")
+            : sv_concat_suffix_temp(ctx, nob_sv_from_cstr("try_compile source file not found: "), eval_sv_to_cstr_temp(ctx, src_path));
+        (void)eval_var_set(ctx, opt.output_var, out_msg);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+static bool h_include_guard(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    String_View mode = nob_sv_from_cstr("DIRECTORY");
+    if (a.count > 0) {
+        mode = a.items[0];
+        if (!(eval_sv_eq_ci_lit(mode, "DIRECTORY") || eval_sv_eq_ci_lit(mode, "GLOBAL"))) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_WARNING,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("include_guard() unsupported mode"),
+                           mode);
+            mode = nob_sv_from_cstr("DIRECTORY");
+        }
+    }
+
+    String_View current_file = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"));
+    if (current_file.count == 0 && ctx->current_file) {
+        current_file = nob_sv_from_cstr(ctx->current_file);
+    }
+    String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
+
+    String_View key = nob_sv_from_cstr("");
+    if (eval_sv_eq_ci_lit(mode, "GLOBAL")) {
+        String_View parts[2] = {nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_GLOBAL::"), current_file};
+        key = sv_join_no_sep_temp(ctx, parts, 2);
+    } else {
+        String_View parts[4] = {
+            nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_DIR::"),
+            current_dir,
+            nob_sv_from_cstr("::"),
+            current_file
+        };
+        key = sv_join_no_sep_temp(ctx, parts, 4);
+    }
+    if (ctx->oom) return !eval_should_stop(ctx);
+
+    if (eval_var_defined(ctx, key)) {
+        ctx->return_requested = true;
+        return !eval_should_stop(ctx);
+    }
+    (void)eval_var_set(ctx, key, nob_sv_from_cstr("1"));
+    return !eval_should_stop(ctx);
+}
+
+static bool h_cmake_path(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) return !eval_should_stop(ctx);
+
+    String_View mode = a.items[0];
+    if (eval_sv_eq_ci_lit(mode, "SET") && a.count >= 2) {
+        String_View out_var = a.items[1];
+        bool normalize = false;
+        String_View value = nob_sv_from_cstr("");
+        for (size_t i = 2; i < a.count; i++) {
+            if (eval_sv_eq_ci_lit(a.items[i], "NORMALIZE")) {
+                normalize = true;
+                continue;
+            }
+            value = a.items[i];
+            break;
+        }
+        if (normalize) value = cmk_path_normalize_temp(ctx, value);
+        (void)eval_var_set(ctx, out_var, value);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "GET") && a.count >= 4) {
+        String_View input_var = a.items[1];
+        String_View input = eval_var_get(ctx, input_var);
+        if (input.count == 0) input = input_var;
+        input = cmk_path_normalize_temp(ctx, input);
+        String_View component = a.items[2];
+        String_View out_var = a.items[3];
+        bool supported = false;
+        String_View result = cmk_path_get_component_temp(ctx, input, component, &supported);
+        if (!supported) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_WARNING,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_path(GET ...) unsupported component"),
+                           component);
+        }
+        (void)eval_var_set(ctx, out_var, result);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "APPEND") && a.count >= 2) {
+        String_View path_var = a.items[1];
+        String_View current = eval_var_get(ctx, path_var);
+        if (current.count == 0) current = path_var;
+
+        bool normalize = false;
+        String_View out_var = path_var;
+        for (size_t i = 2; i < a.count; i++) {
+            if (eval_sv_eq_ci_lit(a.items[i], "NORMALIZE")) {
+                normalize = true;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE") && i + 1 < a.count) {
+                out_var = a.items[++i];
+                continue;
+            }
+            current = eval_sv_path_join(eval_temp_arena(ctx), current, a.items[i]);
+        }
+        if (normalize) current = cmk_path_normalize_temp(ctx, current);
+        (void)eval_var_set(ctx, out_var, current);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "NORMAL_PATH") && a.count >= 2) {
+        String_View path_var = a.items[1];
+        String_View value = eval_var_get(ctx, path_var);
+        if (value.count == 0) value = path_var;
+        String_View out_var = path_var;
+        for (size_t i = 2; i < a.count; i++) {
+            if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE") && i + 1 < a.count) {
+                out_var = a.items[++i];
+            }
+        }
+        (void)eval_var_set(ctx, out_var, cmk_path_normalize_temp(ctx, value));
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "RELATIVE_PATH") && a.count >= 2) {
+        String_View path_var = a.items[1];
+        String_View value = eval_var_get(ctx, path_var);
+        if (value.count == 0) value = path_var;
+        String_View base_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
+        if (base_dir.count == 0) base_dir = ctx->source_dir;
+        String_View out_var = path_var;
+        for (size_t i = 2; i < a.count; i++) {
+            if (eval_sv_eq_ci_lit(a.items[i], "BASE_DIRECTORY") && i + 1 < a.count) {
+                base_dir = a.items[++i];
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE") && i + 1 < a.count) {
+                out_var = a.items[++i];
+            }
+        }
+        (void)eval_var_set(ctx, out_var, cmk_path_relativize_temp(ctx, value, base_dir));
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "COMPARE") && a.count >= 5) {
+        String_View lhs = cmk_path_normalize_temp(ctx, a.items[1]);
+        String_View op = a.items[2];
+        String_View rhs = cmk_path_normalize_temp(ctx, a.items[3]);
+        String_View out_var = a.items[4];
+
+        char *lhs_c = eval_sv_to_cstr_temp(ctx, lhs);
+        char *rhs_c = eval_sv_to_cstr_temp(ctx, rhs);
+        EVAL_OOM_RETURN_IF_NULL(ctx, lhs_c, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, rhs_c, !eval_should_stop(ctx));
+        int cmp = strcmp(lhs_c, rhs_c);
+        bool ok = false;
+        if (eval_sv_eq_ci_lit(op, "EQUAL")) ok = cmp == 0;
+        else if (eval_sv_eq_ci_lit(op, "NOT_EQUAL")) ok = cmp != 0;
+        else if (eval_sv_eq_ci_lit(op, "LESS")) ok = cmp < 0;
+        else if (eval_sv_eq_ci_lit(op, "LESS_EQUAL")) ok = cmp <= 0;
+        else if (eval_sv_eq_ci_lit(op, "GREATER")) ok = cmp > 0;
+        else if (eval_sv_eq_ci_lit(op, "GREATER_EQUAL")) ok = cmp >= 0;
+        (void)eval_var_set(ctx, out_var, ok ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (sv_has_prefix_ci_lit(mode, "HAS_") && a.count >= 3) {
+        String_View path_var = a.items[1];
+        String_View value = eval_var_get(ctx, path_var);
+        if (value.count == 0) value = path_var;
+        String_View input = cmk_path_normalize_temp(ctx, value);
+        String_View component = nob_sv_from_parts(mode.data + 4, mode.count - 4);
+        String_View out_var = a.items[2];
+        bool supported = false;
+        String_View comp = cmk_path_get_component_temp(ctx, input, component, &supported);
+        bool has = supported && comp.count > 0;
+        (void)eval_var_set(ctx, out_var, has ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (sv_has_prefix_ci_lit(mode, "IS_") && a.count >= 3) {
+        String_View path_var = a.items[1];
+        String_View value = eval_var_get(ctx, path_var);
+        if (value.count == 0) value = path_var;
+        value = cmk_path_normalize_temp(ctx, value);
+        String_View out_var = a.items[2];
+        bool result = false;
+        if (eval_sv_eq_ci_lit(mode, "IS_ABSOLUTE")) {
+            result = eval_sv_is_abs_path(value);
+        } else if (eval_sv_eq_ci_lit(mode, "IS_RELATIVE")) {
+            result = !eval_sv_is_abs_path(value);
+        }
+        (void)eval_var_set(ctx, out_var, result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+        return !eval_should_stop(ctx);
+    }
+
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   node->as.cmd.name,
+                   o,
+                   nob_sv_from_cstr("cmake_path() subcommand is not implemented in evaluator v2"),
+                   nob_sv_from_cstr("Implemented: SET, GET, APPEND, NORMAL_PATH, RELATIVE_PATH, COMPARE, HAS_*, IS_*"));
     return !eval_should_stop(ctx);
 }
 
@@ -1138,6 +2347,55 @@ static bool h_enable_testing(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
+enum {
+    ADD_TEST_OPT_WORKING_DIRECTORY = 1,
+    ADD_TEST_OPT_COMMAND_EXPAND_LISTS,
+};
+
+typedef struct {
+    Cmake_Event_Origin origin;
+    String_View command_name;
+    String_View working_dir;
+    bool command_expand_lists;
+} Add_Test_Option_State;
+
+static bool add_test_on_option(Evaluator_Context *ctx,
+                               void *userdata,
+                               int id,
+                               SV_List values,
+                               size_t token_index) {
+    (void)token_index;
+    (void)ctx;
+    if (!userdata) return false;
+    Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
+    if (id == ADD_TEST_OPT_WORKING_DIRECTORY) {
+        if (values.count > 0) st->working_dir = values.items[0];
+        return true;
+    }
+    if (id == ADD_TEST_OPT_COMMAND_EXPAND_LISTS) {
+        st->command_expand_lists = true;
+        return true;
+    }
+    return true;
+}
+
+static bool add_test_on_positional(Evaluator_Context *ctx,
+                                   void *userdata,
+                                   String_View value,
+                                   size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   st->command_name,
+                   st->origin,
+                   nob_sv_from_cstr("add_test() has unsupported/extra argument"),
+                   value);
+    return !eval_should_stop(ctx);
+}
+
 static bool h_add_test(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -1184,13 +2442,14 @@ static bool h_add_test(Evaluator_Context *ctx, const Node *node) {
         }
         cmd_i++;
         size_t cmd_start = cmd_i;
-        size_t cmd_end = a.count;
-        for (size_t i = cmd_i; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "WORKING_DIRECTORY") ||
-                eval_sv_eq_ci_lit(a.items[i], "COMMAND_EXPAND_LISTS")) {
-                cmd_end = i;
-                break;
-            }
+        const Eval_Opt_Spec add_test_specs[] = {
+            {ADD_TEST_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE},
+            {ADD_TEST_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
+        };
+        size_t cmd_end = cmd_i;
+        while (cmd_end < a.count &&
+               !eval_opt_token_is_keyword(a.items[cmd_end], add_test_specs, NOB_ARRAY_LEN(add_test_specs))) {
+            cmd_end++;
         }
         if (cmd_end <= cmd_start) {
             eval_emit_diag(ctx,
@@ -1204,37 +2463,32 @@ static bool h_add_test(Evaluator_Context *ctx, const Node *node) {
         }
         command = sv_join_space_temp(ctx, &a.items[cmd_start], cmd_end - cmd_start);
 
-        size_t i = cmd_end;
-        while (i < a.count) {
-            if (eval_sv_eq_ci_lit(a.items[i], "WORKING_DIRECTORY")) {
-                if (i + 1 >= a.count) {
-                    eval_emit_diag(ctx,
-                                   EV_DIAG_ERROR,
-                                   nob_sv_from_cstr("dispatcher"),
-                                   node->as.cmd.name,
-                                   o,
-                                   nob_sv_from_cstr("add_test() missing value after WORKING_DIRECTORY"),
-                                   nob_sv_from_cstr(""));
-                    return !eval_should_stop(ctx);
-                }
-                working_dir = a.items[i + 1];
-                i += 2;
-                continue;
-            }
-            if (eval_sv_eq_ci_lit(a.items[i], "COMMAND_EXPAND_LISTS")) {
-                command_expand_lists = true;
-                i++;
-                continue;
-            }
-            eval_emit_diag(ctx,
-                           EV_DIAG_WARNING,
-                           nob_sv_from_cstr("dispatcher"),
-                           node->as.cmd.name,
-                           o,
-                           nob_sv_from_cstr("add_test() has unsupported/extra argument"),
-                           a.items[i]);
-            i++;
+        Add_Test_Option_State st = {
+            .origin = o,
+            .command_name = node->as.cmd.name,
+            .working_dir = working_dir,
+            .command_expand_lists = command_expand_lists,
+        };
+        Eval_Opt_Parse_Config cfg = {
+            .origin = o,
+            .component = nob_sv_from_cstr("dispatcher"),
+            .command = node->as.cmd.name,
+            .unknown_as_positional = true,
+            .warn_unknown = false,
+        };
+        if (!eval_opt_parse_walk(ctx,
+                                 a,
+                                 cmd_end,
+                                 add_test_specs,
+                                 NOB_ARRAY_LEN(add_test_specs),
+                                 cfg,
+                                 add_test_on_option,
+                                 add_test_on_positional,
+                                 &st)) {
+            return !eval_should_stop(ctx);
         }
+        working_dir = st.working_dir;
+        command_expand_lists = st.command_expand_lists;
     } else {
         name = a.items[0];
         command = sv_join_space_temp(ctx, &a.items[1], a.count - 1);
@@ -1324,6 +2578,195 @@ static bool h_install(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
+enum {
+    CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME = 1,
+};
+
+typedef struct {
+    Cmake_Event_Origin origin;
+    String_View command_name;
+    String_View display_name;
+} Cpack_Install_Type_Opts;
+
+static bool cpack_install_type_on_option(Evaluator_Context *ctx,
+                                         void *userdata,
+                                         int id,
+                                         SV_List values,
+                                         size_t token_index) {
+    (void)ctx;
+    (void)token_index;
+    if (!userdata) return false;
+    Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
+    if (id == CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME && values.count > 0) st->display_name = values.items[0];
+    return true;
+}
+
+static bool cpack_install_type_on_positional(Evaluator_Context *ctx,
+                                             void *userdata,
+                                             String_View value,
+                                             size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   st->command_name,
+                   st->origin,
+                   nob_sv_from_cstr("cpack_add_install_type() unsupported/extra argument"),
+                   value);
+    return !eval_should_stop(ctx);
+}
+
+enum {
+    CPACK_GROUP_OPT_DISPLAY_NAME = 1,
+    CPACK_GROUP_OPT_DESCRIPTION,
+    CPACK_GROUP_OPT_PARENT_GROUP,
+    CPACK_GROUP_OPT_EXPANDED,
+    CPACK_GROUP_OPT_BOLD_TITLE,
+};
+
+typedef struct {
+    Cmake_Event_Origin origin;
+    String_View command_name;
+    String_View display_name;
+    String_View description;
+    String_View parent_group;
+    bool expanded;
+    bool bold_title;
+} Cpack_Group_Opts;
+
+static bool cpack_group_on_option(Evaluator_Context *ctx,
+                                  void *userdata,
+                                  int id,
+                                  SV_List values,
+                                  size_t token_index) {
+    (void)ctx;
+    (void)token_index;
+    if (!userdata) return false;
+    Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
+    switch (id) {
+    case CPACK_GROUP_OPT_DISPLAY_NAME:
+        if (values.count > 0) st->display_name = values.items[0];
+        return true;
+    case CPACK_GROUP_OPT_DESCRIPTION:
+        if (values.count > 0) st->description = values.items[0];
+        return true;
+    case CPACK_GROUP_OPT_PARENT_GROUP:
+        if (values.count > 0) st->parent_group = values.items[0];
+        return true;
+    case CPACK_GROUP_OPT_EXPANDED:
+        st->expanded = true;
+        return true;
+    case CPACK_GROUP_OPT_BOLD_TITLE:
+        st->bold_title = true;
+        return true;
+    default:
+        return true;
+    }
+}
+
+static bool cpack_group_on_positional(Evaluator_Context *ctx,
+                                      void *userdata,
+                                      String_View value,
+                                      size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   st->command_name,
+                   st->origin,
+                   nob_sv_from_cstr("cpack_add_component_group() unsupported/extra argument"),
+                   value);
+    return !eval_should_stop(ctx);
+}
+
+enum {
+    CPACK_COMPONENT_OPT_DISPLAY_NAME = 1,
+    CPACK_COMPONENT_OPT_DESCRIPTION,
+    CPACK_COMPONENT_OPT_GROUP,
+    CPACK_COMPONENT_OPT_DEPENDS,
+    CPACK_COMPONENT_OPT_INSTALL_TYPES,
+    CPACK_COMPONENT_OPT_REQUIRED,
+    CPACK_COMPONENT_OPT_HIDDEN,
+    CPACK_COMPONENT_OPT_DISABLED,
+    CPACK_COMPONENT_OPT_DOWNLOADED,
+};
+
+typedef struct {
+    Cmake_Event_Origin origin;
+    String_View command_name;
+    String_View display_name;
+    String_View description;
+    String_View group;
+    String_View depends;
+    String_View install_types;
+    bool required;
+    bool hidden;
+    bool disabled;
+    bool downloaded;
+} Cpack_Component_Opts;
+
+static bool cpack_component_on_option(Evaluator_Context *ctx,
+                                      void *userdata,
+                                      int id,
+                                      SV_List values,
+                                      size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
+    switch (id) {
+    case CPACK_COMPONENT_OPT_DISPLAY_NAME:
+        if (values.count > 0) st->display_name = values.items[0];
+        return true;
+    case CPACK_COMPONENT_OPT_DESCRIPTION:
+        if (values.count > 0) st->description = values.items[0];
+        return true;
+    case CPACK_COMPONENT_OPT_GROUP:
+        if (values.count > 0) st->group = values.items[0];
+        return true;
+    case CPACK_COMPONENT_OPT_DEPENDS:
+        st->depends = values.count > 0 ? eval_sv_join_semi_temp(ctx, values.items, values.count) : nob_sv_from_cstr("");
+        return true;
+    case CPACK_COMPONENT_OPT_INSTALL_TYPES:
+        st->install_types = values.count > 0 ? eval_sv_join_semi_temp(ctx, values.items, values.count) : nob_sv_from_cstr("");
+        return true;
+    case CPACK_COMPONENT_OPT_REQUIRED:
+        st->required = true;
+        return true;
+    case CPACK_COMPONENT_OPT_HIDDEN:
+        st->hidden = true;
+        return true;
+    case CPACK_COMPONENT_OPT_DISABLED:
+        st->disabled = true;
+        return true;
+    case CPACK_COMPONENT_OPT_DOWNLOADED:
+        st->downloaded = true;
+        return true;
+    default:
+        return true;
+    }
+}
+
+static bool cpack_component_on_positional(Evaluator_Context *ctx,
+                                          void *userdata,
+                                          String_View value,
+                                          size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
+    eval_emit_diag(ctx,
+                   EV_DIAG_WARNING,
+                   nob_sv_from_cstr("dispatcher"),
+                   st->command_name,
+                   st->origin,
+                   nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"),
+                   value);
+    return !eval_should_stop(ctx);
+}
+
 static bool h_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -1340,26 +2783,38 @@ static bool h_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View name = a.items[0];
-    String_View display_name = nob_sv_from_cstr("");
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "DISPLAY_NAME") && i + 1 < a.count) {
-            display_name = a.items[++i];
-            continue;
-        }
-        eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cpack_add_install_type() unsupported/extra argument"),
-                       a.items[i]);
+    Cpack_Install_Type_Opts opt = {
+        .origin = o,
+        .command_name = node->as.cmd.name,
+        .display_name = nob_sv_from_cstr(""),
+    };
+    static const Eval_Opt_Spec k_specs[] = {
+        {CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME, "DISPLAY_NAME", EVAL_OPT_SINGLE},
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             a,
+                             1,
+                             k_specs,
+                             NOB_ARRAY_LEN(k_specs),
+                             cfg,
+                             cpack_install_type_on_option,
+                             cpack_install_type_on_positional,
+                             &opt)) {
+        return !eval_should_stop(ctx);
     }
 
     Cmake_Event ev = {0};
     ev.kind = EV_CPACK_ADD_INSTALL_TYPE;
     ev.origin = o;
     ev.as.cpack_add_install_type.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.cpack_add_install_type.display_name = sv_copy_to_event_arena(ctx, display_name);
+    ev.as.cpack_add_install_type.display_name = sv_copy_to_event_arena(ctx, opt.display_name);
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
@@ -1380,51 +2835,50 @@ static bool h_cpack_add_component_group(Evaluator_Context *ctx, const Node *node
     }
 
     String_View name = a.items[0];
-    String_View display_name = nob_sv_from_cstr("");
-    String_View description = nob_sv_from_cstr("");
-    String_View parent_group = nob_sv_from_cstr("");
-    bool expanded = false;
-    bool bold_title = false;
-
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "DISPLAY_NAME") && i + 1 < a.count) {
-            display_name = a.items[++i];
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "DESCRIPTION") && i + 1 < a.count) {
-            description = a.items[++i];
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "PARENT_GROUP") && i + 1 < a.count) {
-            parent_group = a.items[++i];
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "EXPANDED")) {
-            expanded = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "BOLD_TITLE")) {
-            bold_title = true;
-            continue;
-        }
-        eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cpack_add_component_group() unsupported/extra argument"),
-                       a.items[i]);
+    Cpack_Group_Opts opt = {
+        .origin = o,
+        .command_name = node->as.cmd.name,
+        .display_name = nob_sv_from_cstr(""),
+        .description = nob_sv_from_cstr(""),
+        .parent_group = nob_sv_from_cstr(""),
+        .expanded = false,
+        .bold_title = false,
+    };
+    static const Eval_Opt_Spec k_specs[] = {
+        {CPACK_GROUP_OPT_DISPLAY_NAME, "DISPLAY_NAME", EVAL_OPT_SINGLE},
+        {CPACK_GROUP_OPT_DESCRIPTION, "DESCRIPTION", EVAL_OPT_SINGLE},
+        {CPACK_GROUP_OPT_PARENT_GROUP, "PARENT_GROUP", EVAL_OPT_SINGLE},
+        {CPACK_GROUP_OPT_EXPANDED, "EXPANDED", EVAL_OPT_FLAG},
+        {CPACK_GROUP_OPT_BOLD_TITLE, "BOLD_TITLE", EVAL_OPT_FLAG},
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             a,
+                             1,
+                             k_specs,
+                             NOB_ARRAY_LEN(k_specs),
+                             cfg,
+                             cpack_group_on_option,
+                             cpack_group_on_positional,
+                             &opt)) {
+        return !eval_should_stop(ctx);
     }
 
     Cmake_Event ev = {0};
     ev.kind = EV_CPACK_ADD_COMPONENT_GROUP;
     ev.origin = o;
     ev.as.cpack_add_component_group.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.cpack_add_component_group.display_name = sv_copy_to_event_arena(ctx, display_name);
-    ev.as.cpack_add_component_group.description = sv_copy_to_event_arena(ctx, description);
-    ev.as.cpack_add_component_group.parent_group = sv_copy_to_event_arena(ctx, parent_group);
-    ev.as.cpack_add_component_group.expanded = expanded;
-    ev.as.cpack_add_component_group.bold_title = bold_title;
+    ev.as.cpack_add_component_group.display_name = sv_copy_to_event_arena(ctx, opt.display_name);
+    ev.as.cpack_add_component_group.description = sv_copy_to_event_arena(ctx, opt.description);
+    ev.as.cpack_add_component_group.parent_group = sv_copy_to_event_arena(ctx, opt.parent_group);
+    ev.as.cpack_add_component_group.expanded = opt.expanded;
+    ev.as.cpack_add_component_group.bold_title = opt.bold_title;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
@@ -1445,107 +2899,62 @@ static bool h_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View name = a.items[0];
-    String_View display_name = nob_sv_from_cstr("");
-    String_View description = nob_sv_from_cstr("");
-    String_View group = nob_sv_from_cstr("");
-    String_View depends = nob_sv_from_cstr("");
-    String_View install_types = nob_sv_from_cstr("");
-    bool required = false;
-    bool hidden = false;
-    bool disabled = false;
-    bool downloaded = false;
-
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "DISPLAY_NAME") && i + 1 < a.count) {
-            display_name = a.items[++i];
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "DESCRIPTION") && i + 1 < a.count) {
-            description = a.items[++i];
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "GROUP") && i + 1 < a.count) {
-            group = a.items[++i];
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "DEPENDS")) {
-            size_t start = i + 1;
-            size_t end = start;
-            while (end < a.count) {
-                if (eval_sv_eq_ci_lit(a.items[end], "INSTALL_TYPES") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DISPLAY_NAME") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DESCRIPTION") ||
-                    eval_sv_eq_ci_lit(a.items[end], "GROUP") ||
-                    eval_sv_eq_ci_lit(a.items[end], "REQUIRED") ||
-                    eval_sv_eq_ci_lit(a.items[end], "HIDDEN") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DISABLED") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DOWNLOADED")) {
-                    break;
-                }
-                end++;
-            }
-            depends = (end > start) ? eval_sv_join_semi_temp(ctx, &a.items[start], end - start) : nob_sv_from_cstr("");
-            i = end - 1;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "INSTALL_TYPES")) {
-            size_t start = i + 1;
-            size_t end = start;
-            while (end < a.count) {
-                if (eval_sv_eq_ci_lit(a.items[end], "DEPENDS") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DISPLAY_NAME") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DESCRIPTION") ||
-                    eval_sv_eq_ci_lit(a.items[end], "GROUP") ||
-                    eval_sv_eq_ci_lit(a.items[end], "REQUIRED") ||
-                    eval_sv_eq_ci_lit(a.items[end], "HIDDEN") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DISABLED") ||
-                    eval_sv_eq_ci_lit(a.items[end], "DOWNLOADED")) {
-                    break;
-                }
-                end++;
-            }
-            install_types = (end > start) ? eval_sv_join_semi_temp(ctx, &a.items[start], end - start) : nob_sv_from_cstr("");
-            i = end - 1;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "REQUIRED")) {
-            required = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "HIDDEN")) {
-            hidden = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "DISABLED")) {
-            disabled = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a.items[i], "DOWNLOADED")) {
-            downloaded = true;
-            continue;
-        }
-        eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"),
-                       a.items[i]);
+    Cpack_Component_Opts opt = {
+        .origin = o,
+        .command_name = node->as.cmd.name,
+        .display_name = nob_sv_from_cstr(""),
+        .description = nob_sv_from_cstr(""),
+        .group = nob_sv_from_cstr(""),
+        .depends = nob_sv_from_cstr(""),
+        .install_types = nob_sv_from_cstr(""),
+        .required = false,
+        .hidden = false,
+        .disabled = false,
+        .downloaded = false,
+    };
+    static const Eval_Opt_Spec k_specs[] = {
+        {CPACK_COMPONENT_OPT_DISPLAY_NAME, "DISPLAY_NAME", EVAL_OPT_SINGLE},
+        {CPACK_COMPONENT_OPT_DESCRIPTION, "DESCRIPTION", EVAL_OPT_SINGLE},
+        {CPACK_COMPONENT_OPT_GROUP, "GROUP", EVAL_OPT_SINGLE},
+        {CPACK_COMPONENT_OPT_DEPENDS, "DEPENDS", EVAL_OPT_MULTI},
+        {CPACK_COMPONENT_OPT_INSTALL_TYPES, "INSTALL_TYPES", EVAL_OPT_MULTI},
+        {CPACK_COMPONENT_OPT_REQUIRED, "REQUIRED", EVAL_OPT_FLAG},
+        {CPACK_COMPONENT_OPT_HIDDEN, "HIDDEN", EVAL_OPT_FLAG},
+        {CPACK_COMPONENT_OPT_DISABLED, "DISABLED", EVAL_OPT_FLAG},
+        {CPACK_COMPONENT_OPT_DOWNLOADED, "DOWNLOADED", EVAL_OPT_FLAG},
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             a,
+                             1,
+                             k_specs,
+                             NOB_ARRAY_LEN(k_specs),
+                             cfg,
+                             cpack_component_on_option,
+                             cpack_component_on_positional,
+                             &opt)) {
+        return !eval_should_stop(ctx);
     }
 
     Cmake_Event ev = {0};
     ev.kind = EV_CPACK_ADD_COMPONENT;
     ev.origin = o;
     ev.as.cpack_add_component.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.cpack_add_component.display_name = sv_copy_to_event_arena(ctx, display_name);
-    ev.as.cpack_add_component.description = sv_copy_to_event_arena(ctx, description);
-    ev.as.cpack_add_component.group = sv_copy_to_event_arena(ctx, group);
-    ev.as.cpack_add_component.depends = sv_copy_to_event_arena(ctx, depends);
-    ev.as.cpack_add_component.install_types = sv_copy_to_event_arena(ctx, install_types);
-    ev.as.cpack_add_component.required = required;
-    ev.as.cpack_add_component.hidden = hidden;
-    ev.as.cpack_add_component.disabled = disabled;
-    ev.as.cpack_add_component.downloaded = downloaded;
+    ev.as.cpack_add_component.display_name = sv_copy_to_event_arena(ctx, opt.display_name);
+    ev.as.cpack_add_component.description = sv_copy_to_event_arena(ctx, opt.description);
+    ev.as.cpack_add_component.group = sv_copy_to_event_arena(ctx, opt.group);
+    ev.as.cpack_add_component.depends = sv_copy_to_event_arena(ctx, opt.depends);
+    ev.as.cpack_add_component.install_types = sv_copy_to_event_arena(ctx, opt.install_types);
+    ev.as.cpack_add_component.required = opt.required;
+    ev.as.cpack_add_component.hidden = opt.hidden;
+    ev.as.cpack_add_component.disabled = opt.disabled;
+    ev.as.cpack_add_component.downloaded = opt.downloaded;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
@@ -1728,7 +3137,7 @@ static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
                                                   size_t cap,
                                                   const char *env_name) {
     if (!ctx || !env_name) return;
-    const char *raw = getenv(env_name);
+    const char *raw = eval_getenv_temp(ctx, env_name);
     if (!raw || raw[0] == '\0') return;
     String_View root = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(raw));
     if (eval_should_stop(ctx)) return;
@@ -1854,19 +3263,42 @@ typedef struct {
     bool saw_registry_view;
 } Find_Package_Options;
 
-static bool find_package_is_option_keyword(String_View t) {
-    return eval_sv_eq_ci_lit(t, "REQUIRED") ||
-           eval_sv_eq_ci_lit(t, "QUIET") ||
-           eval_sv_eq_ci_lit(t, "MODULE") ||
-           eval_sv_eq_ci_lit(t, "CONFIG") ||
-           eval_sv_eq_ci_lit(t, "EXACT") ||
-           eval_sv_eq_ci_lit(t, "COMPONENTS") ||
-           eval_sv_eq_ci_lit(t, "OPTIONAL_COMPONENTS") ||
-           eval_sv_eq_ci_lit(t, "HINTS") ||
-           eval_sv_eq_ci_lit(t, "PATHS") ||
-           eval_sv_eq_ci_lit(t, "NO_DEFAULT_PATH") ||
-           eval_sv_eq_ci_lit(t, "REGISTRY_VIEW");
-}
+enum {
+    FIND_PKG_OPT_REQUIRED = 1,
+    FIND_PKG_OPT_QUIET,
+    FIND_PKG_OPT_MODULE,
+    FIND_PKG_OPT_CONFIG,
+    FIND_PKG_OPT_EXACT,
+    FIND_PKG_OPT_COMPONENTS,
+    FIND_PKG_OPT_OPTIONAL_COMPONENTS,
+    FIND_PKG_OPT_HINTS,
+    FIND_PKG_OPT_PATHS,
+    FIND_PKG_OPT_NO_DEFAULT_PATH,
+    FIND_PKG_OPT_REGISTRY_VIEW,
+};
+
+typedef struct {
+    Find_Package_Options *out;
+    bool module_mode;
+    bool config_mode;
+    SV_List components;
+    SV_List optional_components;
+    SV_List prefixes;
+} Find_Package_Parse_State;
+
+static const Eval_Opt_Spec k_find_pkg_specs[] = {
+    {FIND_PKG_OPT_REQUIRED, "REQUIRED", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_QUIET, "QUIET", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_MODULE, "MODULE", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_CONFIG, "CONFIG", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_EXACT, "EXACT", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_COMPONENTS, "COMPONENTS", EVAL_OPT_MULTI},
+    {FIND_PKG_OPT_OPTIONAL_COMPONENTS, "OPTIONAL_COMPONENTS", EVAL_OPT_MULTI},
+    {FIND_PKG_OPT_HINTS, "HINTS", EVAL_OPT_MULTI},
+    {FIND_PKG_OPT_PATHS, "PATHS", EVAL_OPT_MULTI},
+    {FIND_PKG_OPT_NO_DEFAULT_PATH, "NO_DEFAULT_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_REGISTRY_VIEW, "REGISTRY_VIEW", EVAL_OPT_OPTIONAL_SINGLE},
+};
 
 static bool find_package_looks_like_version(String_View t) {
     if (t.count == 0) return false;
@@ -1933,58 +3365,110 @@ static int find_package_version_cmp(String_View a, String_View b) {
     }
 }
 
+static bool find_package_parse_on_option(Evaluator_Context *ctx,
+                                         void *userdata,
+                                         int id,
+                                         SV_List values,
+                                         size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Find_Package_Parse_State *st = (Find_Package_Parse_State*)userdata;
+    switch (id) {
+    case FIND_PKG_OPT_REQUIRED:
+        st->out->required = true;
+        return true;
+    case FIND_PKG_OPT_QUIET:
+        st->out->quiet = true;
+        return true;
+    case FIND_PKG_OPT_MODULE:
+        st->module_mode = true;
+        return true;
+    case FIND_PKG_OPT_CONFIG:
+        st->config_mode = true;
+        return true;
+    case FIND_PKG_OPT_EXACT:
+        st->out->exact_version = true;
+        return true;
+    case FIND_PKG_OPT_COMPONENTS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->components, values.items[i])) return false;
+        }
+        return true;
+    case FIND_PKG_OPT_OPTIONAL_COMPONENTS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->optional_components, values.items[i])) return false;
+        }
+        return true;
+    case FIND_PKG_OPT_HINTS:
+    case FIND_PKG_OPT_PATHS:
+        for (size_t i = 0; i < values.count; i++) {
+            if (!sv_list_push_temp(ctx, &st->prefixes, values.items[i])) return false;
+        }
+        return true;
+    case FIND_PKG_OPT_NO_DEFAULT_PATH:
+        st->out->no_default_path = true;
+        return true;
+    case FIND_PKG_OPT_REGISTRY_VIEW:
+        st->out->saw_registry_view = true;
+        return true;
+    default:
+        return true;
+    }
+}
+
+static bool find_package_parse_on_positional(Evaluator_Context *ctx,
+                                             void *userdata,
+                                             String_View value,
+                                             size_t token_index) {
+    (void)ctx;
+    (void)token_index;
+    if (!userdata) return false;
+    Find_Package_Parse_State *st = (Find_Package_Parse_State*)userdata;
+    if (st->out->requested_version.count == 0 && find_package_looks_like_version(value)) {
+        st->out->requested_version = value;
+    }
+    return true;
+}
+
 static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, SV_List args) {
     Find_Package_Options out = {0};
     out.pkg = args.count > 0 ? args.items[0] : nob_sv_from_cstr("");
     out.mode = nob_sv_from_cstr("AUTO");
 
-    bool module_mode = false;
-    bool config_mode = false;
-    String_View comps[64] = {0};
-    size_t comps_n = 0;
-    String_View opt_comps[64] = {0};
-    size_t opt_comps_n = 0;
-    String_View prefixes[64] = {0};
-    size_t prefixes_n = 0;
-
-    for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "REQUIRED")) out.required = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "QUIET")) out.quiet = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "MODULE")) module_mode = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "CONFIG")) config_mode = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "EXACT")) out.exact_version = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "NO_DEFAULT_PATH")) out.no_default_path = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "REGISTRY_VIEW")) {
-            out.saw_registry_view = true;
-            if (i + 1 < args.count && !find_package_is_option_keyword(args.items[i + 1])) i++;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "COMPONENTS")) {
-            for (size_t j = i + 1; j < args.count; j++) {
-                if (find_package_is_option_keyword(args.items[j])) break;
-                if (comps_n < 64) comps[comps_n++] = args.items[j];
-                i = j;
-            }
-        } else if (eval_sv_eq_ci_lit(args.items[i], "OPTIONAL_COMPONENTS")) {
-            for (size_t j = i + 1; j < args.count; j++) {
-                if (find_package_is_option_keyword(args.items[j])) break;
-                if (opt_comps_n < 64) opt_comps[opt_comps_n++] = args.items[j];
-                i = j;
-            }
-        } else if (eval_sv_eq_ci_lit(args.items[i], "HINTS") || eval_sv_eq_ci_lit(args.items[i], "PATHS")) {
-            for (size_t j = i + 1; j < args.count; j++) {
-                if (find_package_is_option_keyword(args.items[j])) break;
-                if (prefixes_n < 64) prefixes[prefixes_n++] = args.items[j];
-                i = j;
-            }
-        } else if (out.requested_version.count == 0 && find_package_looks_like_version(args.items[i])) {
-            out.requested_version = args.items[i];
-        }
+    Find_Package_Parse_State st = {
+        .out = &out,
+        .module_mode = false,
+        .config_mode = false,
+        .components = {0},
+        .optional_components = {0},
+        .prefixes = {0},
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = nob_sv_from_cstr("find_package"),
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = (Cmake_Event_Origin){0};
+    if (!eval_opt_parse_walk(ctx,
+                             args,
+                             1,
+                             k_find_pkg_specs,
+                             NOB_ARRAY_LEN(k_find_pkg_specs),
+                             cfg,
+                             find_package_parse_on_option,
+                             find_package_parse_on_positional,
+                             &st)) {
+        return out;
     }
 
-    if (module_mode && !config_mode) out.mode = nob_sv_from_cstr("MODULE");
-    if (config_mode && !module_mode) out.mode = nob_sv_from_cstr("CONFIG");
-    if (comps_n > 0) out.components = eval_sv_join_semi_temp(ctx, comps, comps_n);
-    if (opt_comps_n > 0) out.optional_components = eval_sv_join_semi_temp(ctx, opt_comps, opt_comps_n);
-    if (prefixes_n > 0) out.extra_prefixes = eval_sv_join_semi_temp(ctx, prefixes, prefixes_n);
+    if (st.module_mode && !st.config_mode) out.mode = nob_sv_from_cstr("MODULE");
+    if (st.config_mode && !st.module_mode) out.mode = nob_sv_from_cstr("CONFIG");
+    if (st.components.count > 0) out.components = eval_sv_join_semi_temp(ctx, st.components.items, st.components.count);
+    if (st.optional_components.count > 0) {
+        out.optional_components = eval_sv_join_semi_temp(ctx, st.optional_components.items, st.optional_components.count);
+    }
+    if (st.prefixes.count > 0) out.extra_prefixes = eval_sv_join_semi_temp(ctx, st.prefixes.items, st.prefixes.count);
     return out;
 }
 
@@ -2218,6 +3702,8 @@ typedef struct {
 static const Command_Entry DISPATCH[] = {
     {"add_link_options", h_add_link_options},
     {"add_compile_options", h_add_compile_options},
+    {"add_custom_command", h_add_custom_command},
+    {"add_custom_target", h_add_custom_target},
     {"add_definitions", h_add_definitions},
     {"add_test", h_add_test},
     {"add_executable", h_add_executable},
@@ -2230,9 +3716,11 @@ static const Command_Entry DISPATCH[] = {
     {"cpack_add_component_group", h_cpack_add_component_group},
     {"cpack_add_install_type", h_cpack_add_install_type},
     {"continue", h_continue},
+    {"cmake_path", h_cmake_path},
     {"enable_testing", h_enable_testing},
     {"file", h_file},
     {"find_package", h_find_package},
+    {"include_guard", h_include_guard},
     {"include", h_include},
     {"include_directories", h_include_directories},
     {"install", h_install},
@@ -2253,6 +3741,7 @@ static const Command_Entry DISPATCH[] = {
     {"target_link_directories", h_target_link_directories},
     {"target_link_libraries", h_target_link_libraries},
     {"target_link_options", h_target_link_options},
+    {"try_compile", h_try_compile},
 };
 static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
 

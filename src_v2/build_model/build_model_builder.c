@@ -51,6 +51,11 @@ typedef struct {
     Arena *arena;
 } Builder_CPack_Component_Ctx;
 
+typedef struct {
+    String_List *list;
+    Arena *arena;
+} Builder_String_List_Ctx;
+
 static bool builder_append_project_language(String_View item, void *userdata);
 static void builder_warn(const Cmake_Event *ev, const char *cause, const char *hint);
 static bool builder_push_directory_scope(Build_Model_Builder *builder, String_View source_dir, String_View binary_dir);
@@ -81,6 +86,8 @@ static const char *builder_event_command_name(Cmake_Event_Kind kind) {
         case EV_TARGET_LINK_LIBRARIES: return "target_link_libraries";
         case EV_TARGET_LINK_OPTIONS: return "target_link_options";
         case EV_TARGET_LINK_DIRECTORIES: return "target_link_directories";
+        case EV_CUSTOM_COMMAND_TARGET: return "add_custom_command(TARGET)";
+        case EV_CUSTOM_COMMAND_OUTPUT: return "add_custom_command(OUTPUT)";
         case EV_DIR_PUSH: return "dir_push";
         case EV_DIR_POP: return "dir_pop";
         case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "include_directories";
@@ -439,6 +446,13 @@ static bool builder_append_cpack_component_install_type_item(String_View item, v
     return true;
 }
 
+static bool builder_append_string_list_item(String_View item, void *userdata) {
+    Builder_String_List_Ctx *ctx = (Builder_String_List_Ctx*)userdata;
+    if (!ctx || !ctx->list || !ctx->arena) return false;
+    string_list_add(ctx->list, ctx->arena, item);
+    return true;
+}
+
 static bool builder_append_target_link_item(String_View item, void *userdata) {
     Builder_Link_Value_Ctx *ctx = (Builder_Link_Value_Ctx*)userdata;
     if (!ctx || !ctx->builder || !ctx->target || !ctx->builder->model) return false;
@@ -466,6 +480,81 @@ static bool builder_append_target_link_item(String_View item, void *userdata) {
                      nob_temp_sprintf("link item '"SV_Fmt"' looks like a target but is not declared", SV_Arg(item)),
                      "declare the dependency target before linking, or use a full path / linker flag");
     }
+    return true;
+}
+
+static bool builder_add_target_dependencies_from_list(Build_Model_Builder *builder,
+                                                      Build_Target *target,
+                                                      String_View depends) {
+    if (!builder || !builder->model || !target) return false;
+    if (depends.count == 0) return true;
+
+    const char *p = depends.data;
+    const char *end = depends.data + depends.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != ';') q++;
+        String_View item = builder_trim_ws(nob_sv_from_parts(p, (size_t)(q - p)));
+        if (item.count > 0) {
+            Build_Target *dep = build_model_find_target(builder->model, item);
+            if (dep) {
+                build_target_add_dependency(target, builder->arena, dep->name);
+            }
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
+    return true;
+}
+
+static bool builder_collect_semicolon_list(Build_Model_Builder *builder,
+                                           String_View raw,
+                                           String_List *out) {
+    if (!out) return false;
+    string_list_init(out);
+    if (!builder || raw.count == 0) return true;
+
+    Builder_String_List_Ctx ctx = {
+        .list = out,
+        .arena = builder->arena,
+    };
+    return builder_for_each_semicolon_item(raw,
+                                           true,
+                                           builder_append_string_list_item,
+                                           &ctx);
+}
+
+static String_View builder_first_semicolon_item(String_View raw) {
+    size_t i = 0;
+    while (i < raw.count && raw.data[i] != ';') i++;
+    return builder_trim_ws(nob_sv_from_parts(raw.data, i));
+}
+
+static bool builder_fill_custom_command_from_event(Build_Model_Builder *builder,
+                                                   const Cmake_Event *ev,
+                                                   Custom_Command *cmd,
+                                                   String_View outputs,
+                                                   String_View byproducts,
+                                                   String_View depends) {
+    if (!builder || !ev || !cmd) return false;
+
+    String_List outputs_list = {0};
+    String_List byproducts_list = {0};
+    String_List depends_list = {0};
+
+    if (!builder_collect_semicolon_list(builder, outputs, &outputs_list)) {
+        return builder_fail(builder, ev, "failed to parse custom command outputs", "check event payload formatting");
+    }
+    if (!builder_collect_semicolon_list(builder, byproducts, &byproducts_list)) {
+        return builder_fail(builder, ev, "failed to parse custom command byproducts", "check event payload formatting");
+    }
+    if (!builder_collect_semicolon_list(builder, depends, &depends_list)) {
+        return builder_fail(builder, ev, "failed to parse custom command depends", "check event payload formatting");
+    }
+
+    build_custom_command_add_outputs(cmd, builder->arena, &outputs_list);
+    build_custom_command_add_byproducts(cmd, builder->arena, &byproducts_list);
+    build_custom_command_add_depends(cmd, builder->arena, &depends_list);
     return true;
 }
 
@@ -922,6 +1011,129 @@ static bool builder_handle_event_cpack_add_component(Build_Model_Builder *builde
     return true;
 }
 
+static bool builder_handle_event_custom_command_target(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+
+    Build_Target *target = builder_require_target(builder, ev, ev->as.custom_command_target.target_name);
+    if (!target) return false;
+
+    if (ev->as.custom_command_target.command.count == 0) {
+        return builder_fail(builder, ev, "custom TARGET command has empty command text", "provide COMMAND in add_custom_command(TARGET ...)");
+    }
+
+    Custom_Command *cmd = build_target_add_custom_command_ex(target,
+                                                             builder->arena,
+                                                             ev->as.custom_command_target.pre_build,
+                                                             ev->as.custom_command_target.command,
+                                                             ev->as.custom_command_target.working_dir,
+                                                             ev->as.custom_command_target.comment);
+    if (!cmd) {
+        return builder_fail(builder, ev, "failed to allocate target custom command", "check memory allocation");
+    }
+
+    if (!builder_fill_custom_command_from_event(builder,
+                                                ev,
+                                                cmd,
+                                                ev->as.custom_command_target.outputs,
+                                                ev->as.custom_command_target.byproducts,
+                                                ev->as.custom_command_target.depends)) {
+        return false;
+    }
+
+    build_custom_command_set_main_dependency(cmd, ev->as.custom_command_target.main_dependency);
+    build_custom_command_set_depfile(cmd, ev->as.custom_command_target.depfile);
+    build_custom_command_set_flags(cmd,
+                                   ev->as.custom_command_target.append,
+                                   ev->as.custom_command_target.verbatim,
+                                   ev->as.custom_command_target.uses_terminal,
+                                   ev->as.custom_command_target.command_expand_lists,
+                                   ev->as.custom_command_target.depends_explicit_only,
+                                   ev->as.custom_command_target.codegen);
+
+    if (!builder_add_target_dependencies_from_list(builder, target, ev->as.custom_command_target.depends)) {
+        return builder_fail(builder, ev, "failed to link custom command target dependencies", "check dependency processing");
+    }
+
+    return true;
+}
+
+static bool builder_handle_event_custom_command_output(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !builder->model || !ev) return false;
+    if (ev->as.custom_command_output.command.count == 0) {
+        return builder_fail(builder, ev, "custom OUTPUT command has empty command text", "provide COMMAND in add_custom_command(OUTPUT ...)");
+    }
+
+    Custom_Command *cmd = NULL;
+    bool append_to_existing = false;
+
+    if (ev->as.custom_command_output.append) {
+        String_View first_output = builder_first_semicolon_item(ev->as.custom_command_output.outputs);
+        if (first_output.count > 0) {
+            cmd = build_model_find_output_custom_command_by_output(builder->model, first_output);
+            append_to_existing = (cmd != NULL);
+        }
+        if (!cmd) {
+            builder_warn(ev,
+                         "add_custom_command(OUTPUT ... APPEND) had no matching previous OUTPUT",
+                         "a new output custom command was created");
+        }
+    }
+
+    if (!cmd) {
+        cmd = build_model_add_custom_command_output_ex(builder->model,
+                                                       builder->arena,
+                                                       ev->as.custom_command_output.command,
+                                                       ev->as.custom_command_output.working_dir,
+                                                       ev->as.custom_command_output.comment);
+        if (!cmd) {
+            return builder_fail(builder, ev, "failed to allocate output custom command", "check memory allocation");
+        }
+    } else {
+        build_custom_command_append_command(cmd, builder->arena, ev->as.custom_command_output.command);
+    }
+
+    String_List outputs_list = {0};
+    String_List byproducts_list = {0};
+    String_List depends_list = {0};
+    if (!builder_collect_semicolon_list(builder, ev->as.custom_command_output.outputs, &outputs_list)) {
+        return builder_fail(builder, ev, "failed to parse output custom command outputs", "check event payload formatting");
+    }
+    if (!builder_collect_semicolon_list(builder, ev->as.custom_command_output.byproducts, &byproducts_list)) {
+        return builder_fail(builder, ev, "failed to parse output custom command byproducts", "check event payload formatting");
+    }
+    if (!builder_collect_semicolon_list(builder, ev->as.custom_command_output.depends, &depends_list)) {
+        return builder_fail(builder, ev, "failed to parse output custom command depends", "check event payload formatting");
+    }
+
+    if (!append_to_existing) {
+        build_custom_command_add_outputs(cmd, builder->arena, &outputs_list);
+    }
+    build_custom_command_add_byproducts(cmd, builder->arena, &byproducts_list);
+    build_custom_command_add_depends(cmd, builder->arena, &depends_list);
+    if (append_to_existing) {
+        build_custom_command_set_main_dependency_if_empty(cmd, ev->as.custom_command_output.main_dependency);
+        build_custom_command_set_depfile_if_empty(cmd, ev->as.custom_command_output.depfile);
+        build_custom_command_merge_flags(cmd,
+                                         ev->as.custom_command_output.append,
+                                         ev->as.custom_command_output.verbatim,
+                                         ev->as.custom_command_output.uses_terminal,
+                                         ev->as.custom_command_output.command_expand_lists,
+                                         ev->as.custom_command_output.depends_explicit_only,
+                                         ev->as.custom_command_output.codegen);
+    } else {
+        build_custom_command_set_main_dependency(cmd, ev->as.custom_command_output.main_dependency);
+        build_custom_command_set_depfile(cmd, ev->as.custom_command_output.depfile);
+        build_custom_command_set_flags(cmd,
+                                       ev->as.custom_command_output.append,
+                                       ev->as.custom_command_output.verbatim,
+                                       ev->as.custom_command_output.uses_terminal,
+                                       ev->as.custom_command_output.command_expand_lists,
+                                       ev->as.custom_command_output.depends_explicit_only,
+                                       ev->as.custom_command_output.codegen);
+    }
+    return true;
+}
+
 static bool builder_handle_event_find_package(Build_Model_Builder *builder, const Cmake_Event *ev) {
     if (!builder || !builder->model || !ev) return false;
 
@@ -1038,6 +1250,12 @@ bool builder_apply_event(Build_Model_Builder *builder, const Cmake_Event *ev) {
 
         case EV_TARGET_LINK_DIRECTORIES:
             return builder_handle_event_target_link_directories(builder, ev);
+
+        case EV_CUSTOM_COMMAND_TARGET:
+            return builder_handle_event_custom_command_target(builder, ev);
+
+        case EV_CUSTOM_COMMAND_OUTPUT:
+            return builder_handle_event_custom_command_output(builder, ev);
 
         case EV_DIR_PUSH:
             return builder_handle_event_dir_push(builder, ev);

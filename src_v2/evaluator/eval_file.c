@@ -1,6 +1,7 @@
 #include "eval_file.h"
 #include "evaluator_internal.h"
 #include "eval_expr.h"
+#include "eval_opt_parser.h"
 #include "arena_dyn.h"
 #include "tinydir.h"
 
@@ -95,35 +96,136 @@ static bool resolve_project_scoped_path(Evaluator_Context *ctx,
     return true;
 }
 
-static bool mkdir_p(const char *path) {
-    if (!path) return false;
-    size_t len0 = strlen(path);
+static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (input.count == 0) return nob_sv_from_cstr("");
+
+    bool is_unc = input.count >= 2 && ch_is_sep(input.data[0]) && ch_is_sep(input.data[1]);
+    bool has_drive = input.count >= 2 &&
+                     isalpha((unsigned char)input.data[0]) &&
+                     input.data[1] == ':';
+    bool absolute = false;
+    size_t pos = 0;
+
+    if (is_unc) {
+        pos = 2;
+    } else if (has_drive) {
+        pos = 2;
+        if (pos < input.count && ch_is_sep(input.data[pos])) {
+            absolute = true;
+            while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+        }
+    } else if (ch_is_sep(input.data[0])) {
+        absolute = true;
+        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+    }
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 3);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    size_t off = 0;
+
+    if (is_unc) {
+        buf[off++] = '/';
+        buf[off++] = '/';
+        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+    } else if (has_drive) {
+        buf[off++] = input.data[0];
+        buf[off++] = ':';
+        if (absolute) buf[off++] = '/';
+    } else if (absolute) {
+        buf[off++] = '/';
+    }
+
+    bool prev_sep = (off > 0 && buf[off - 1] == '/');
+    for (; pos < input.count; pos++) {
+        char c = input.data[pos];
+        if (ch_is_sep(c)) {
+            if (!prev_sep) {
+                buf[off++] = '/';
+                prev_sep = true;
+            }
+            continue;
+        }
+        buf[off++] = c;
+        prev_sep = false;
+    }
+
+    size_t min_len = 0;
+    if (is_unc) min_len = 2;
+    else if (has_drive && absolute) min_len = 3;
+    else if (has_drive) min_len = 2;
+    else if (absolute) min_len = 1;
+
+    while (off > min_len && buf[off - 1] == '/') off--;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static size_t mkdir_root_prefix_len(const char *path) {
+    if (!path) return 0;
+    size_t len = strlen(path);
+    if (len == 0) return 0;
+
+    if (len >= 3 && isalpha((unsigned char)path[0]) && path[1] == ':' && path[2] == '/') {
+        return 3;
+    }
+    if (len >= 2 && isalpha((unsigned char)path[0]) && path[1] == ':') {
+        return 2;
+    }
+    if (len >= 2 && path[0] == '/' && path[1] == '/') {
+        size_t i = 2;
+        while (i < len && path[i] == '/') i++;
+        while (i < len && path[i] != '/') i++;
+        while (i < len && path[i] == '/') i++;
+        while (i < len && path[i] != '/') i++;
+        return i;
+    }
+    if (path[0] == '/') return 1;
+    return 0;
+}
+
+static bool mkdir_p(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return false;
+
+    String_View normalized = cmk_path_normalize_temp(ctx, path);
+    if (eval_should_stop(ctx) || normalized.count == 0) return false;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, normalized);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    size_t len0 = strlen(path_c);
     char *tmp = (char*)malloc(len0 + 1);
     if (!tmp) return false;
-    memcpy(tmp, path, len0 + 1);
+    memcpy(tmp, path_c, len0 + 1);
+
     for (size_t i = 0; i < len0; i++) {
         if (tmp[i] == '\\') tmp[i] = '/';
     }
 
     size_t len = strlen(tmp);
-    while (len > 0 && tmp[len - 1] == '/') {
+    size_t prefix_len = mkdir_root_prefix_len(tmp);
+    while (len > prefix_len && tmp[len - 1] == '/') {
         tmp[len - 1] = '\0';
         len--;
     }
-    if (len == 0) {
+
+    size_t start = prefix_len;
+    while (start < len && tmp[start] == '/') start++;
+    if (start >= len) {
         free(tmp);
-        return false;
+        return true;
     }
 
-    for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            // Keep "C:/" intact before creating nested directories.
-            if ((p == tmp + 2) && isalpha((unsigned char)tmp[0]) && tmp[1] == ':') continue;
-            *p = 0;
-            nob_mkdir_if_not_exists(tmp);
-            *p = '/';
+    for (size_t i = start; i < len; i++) {
+        if (tmp[i] != '/') continue;
+        tmp[i] = '\0';
+        if (!nob_mkdir_if_not_exists(tmp)) {
+            free(tmp);
+            return false;
         }
+        tmp[i] = '/';
     }
+
     bool ok = nob_mkdir_if_not_exists(tmp);
     free(tmp);
     return ok;
@@ -540,7 +642,17 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
     if (!last_slash) last_slash = strrchr(dir_c, '\\');
     if (last_slash) {
         *last_slash = '\0';
-        mkdir_p(dir_c);
+        String_View dir = nob_sv_from_cstr(dir_c);
+        if (dir.count > 0 && !mkdir_p(ctx, dir)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_file"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("file(WRITE) failed to create parent directory"),
+                           dir);
+            return;
+        }
     }
 
     FILE *f = fopen(path_c, "wb");
@@ -559,6 +671,36 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
         fwrite(args.items[i].data, 1, args.items[i].count, f);
     }
     fclose(f);
+}
+
+static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node, SV_List args) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    if (args.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_file"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("file(MAKE_DIRECTORY) requires at least one path"),
+                       nob_sv_from_cstr("Usage: file(MAKE_DIRECTORY <dir>...)"));
+        return;
+    }
+
+    for (size_t i = 1; i < args.count; i++) {
+        String_View path = nob_sv_from_cstr("");
+        if (!resolve_project_scoped_path(ctx, node, o, args.items[i], current_bin_dir(ctx), &path)) return;
+
+        if (!mkdir_p(ctx, path)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_file"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("file(MAKE_DIRECTORY) failed to create directory"),
+                           path);
+            return;
+        }
+    }
 }
 
 static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List args) {
@@ -879,21 +1021,6 @@ enum {
     COPY_KEY_UNKNOWN,
 };
 
-static int copy_key_kind(String_View t) {
-    if (eval_sv_eq_ci_lit(t, "DESTINATION")) return COPY_KEY_DESTINATION;
-    if (eval_sv_eq_ci_lit(t, "FILES_MATCHING")) return COPY_KEY_FILES_MATCHING;
-    if (eval_sv_eq_ci_lit(t, "PATTERN")) return COPY_KEY_PATTERN;
-    if (eval_sv_eq_ci_lit(t, "REGEX")) return COPY_KEY_REGEX;
-    if (eval_sv_eq_ci_lit(t, "EXCLUDE")) return COPY_KEY_EXCLUDE;
-    if (eval_sv_eq_ci_lit(t, "FOLLOW_SYMLINK_CHAIN")) return COPY_KEY_FOLLOW_SYMLINK_CHAIN;
-    if (eval_sv_eq_ci_lit(t, "PERMISSIONS")) return COPY_KEY_PERMISSIONS;
-    if (eval_sv_eq_ci_lit(t, "FILE_PERMISSIONS")) return COPY_KEY_FILE_PERMISSIONS;
-    if (eval_sv_eq_ci_lit(t, "DIRECTORY_PERMISSIONS")) return COPY_KEY_DIRECTORY_PERMISSIONS;
-    if (eval_sv_eq_ci_lit(t, "USE_SOURCE_PERMISSIONS")) return COPY_KEY_USE_SOURCE_PERMISSIONS;
-    if (eval_sv_eq_ci_lit(t, "NO_SOURCE_PERMISSIONS")) return COPY_KEY_NO_SOURCE_PERMISSIONS;
-    return COPY_KEY_UNKNOWN;
-}
-
 static bool copy_permission_add_token(mode_t *mode, String_View token) {
     if (!mode) return false;
     if (eval_sv_eq_ci_lit(token, "OWNER_READ")) {
@@ -972,7 +1099,12 @@ static bool copy_permissions_pick_mode(const Copy_Permissions *perms, bool is_di
 
 static bool copy_apply_permissions(const char *path, mode_t mode) {
     if (!path) return false;
+#if defined(_WIN32)
+    (void)mode;
+    return true;
+#else
     return chmod(path, mode) == 0;
+#endif
 }
 
 static bool copy_filter_matches(Evaluator_Context *ctx, Copy_Filter *f, String_View src, String_View base) {
@@ -999,6 +1131,122 @@ static bool copy_should_include(Evaluator_Context *ctx,
         else include = true;
     }
     return include;
+}
+
+typedef struct {
+    Cmake_Event_Origin origin;
+    String_View command_name;
+    SV_List args;
+    bool files_matching;
+    bool follow_symlink_chain;
+    bool saw_follow_symlink_option;
+    bool saw_unknown_permission_token;
+    Copy_Filter filters[64];
+    size_t filter_count;
+    Copy_Permissions perms;
+} Copy_Parse_State;
+
+static bool copy_parse_on_option(Evaluator_Context *ctx,
+                                 void *userdata,
+                                 int id,
+                                 SV_List values,
+                                 size_t token_index) {
+    if (!ctx || !userdata) return false;
+    Copy_Parse_State *st = (Copy_Parse_State*)userdata;
+    String_View token = nob_sv_from_cstr("");
+    if (token_index < st->args.count) {
+        token = st->args.items[token_index];
+    }
+
+    if (id == COPY_KEY_FILES_MATCHING) {
+        st->files_matching = true;
+        return true;
+    }
+    if (id == COPY_KEY_PATTERN || id == COPY_KEY_REGEX) {
+        if (values.count == 0) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+                           nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"),
+                           token);
+            return false;
+        }
+        if (st->filter_count >= NOB_ARRAY_LEN(st->filters)) {
+            eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+                           nob_sv_from_cstr("file(COPY) filter limit reached; extra filters ignored"),
+                           token);
+            return true;
+        }
+        st->filters[st->filter_count].is_regex = (id == COPY_KEY_REGEX);
+        st->filters[st->filter_count].expr = values.items[0];
+        st->filter_count++;
+        return true;
+    }
+    if (id == COPY_KEY_EXCLUDE) {
+        if (st->filter_count == 0) {
+            eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+                           nob_sv_from_cstr("file(COPY) EXCLUDE without a previous PATTERN/REGEX is ignored"),
+                           token);
+        } else {
+            st->filters[st->filter_count - 1].exclude = true;
+        }
+        return true;
+    }
+    if (id == COPY_KEY_FOLLOW_SYMLINK_CHAIN) {
+        st->follow_symlink_chain = true;
+        st->saw_follow_symlink_option = true;
+        return true;
+    }
+    if (id == COPY_KEY_USE_SOURCE_PERMISSIONS) {
+        st->perms.saw_use_source_permissions = true;
+        return true;
+    }
+    if (id == COPY_KEY_NO_SOURCE_PERMISSIONS) {
+        st->perms.saw_no_source_permissions = true;
+        return true;
+    }
+    if (id == COPY_KEY_PERMISSIONS ||
+        id == COPY_KEY_FILE_PERMISSIONS ||
+        id == COPY_KEY_DIRECTORY_PERMISSIONS) {
+        mode_t parsed_mode = 0;
+        bool has_any = false;
+        for (size_t i = 0; i < values.count; i++) {
+            if (copy_permission_add_token(&parsed_mode, values.items[i])) {
+                has_any = true;
+            } else {
+                st->saw_unknown_permission_token = true;
+                eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+                               nob_sv_from_cstr("file(COPY) unknown permission token"),
+                               values.items[i]);
+            }
+        }
+        if (!has_any) {
+            eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+                           nob_sv_from_cstr("file(COPY) permission list has no valid tokens"),
+                           token);
+        } else if (id == COPY_KEY_PERMISSIONS) {
+            st->perms.has_permissions = true;
+            st->perms.permissions_mode = parsed_mode;
+        } else if (id == COPY_KEY_FILE_PERMISSIONS) {
+            st->perms.has_file_permissions = true;
+            st->perms.file_permissions_mode = parsed_mode;
+        } else if (id == COPY_KEY_DIRECTORY_PERMISSIONS) {
+            st->perms.has_directory_permissions = true;
+            st->perms.directory_permissions_mode = parsed_mode;
+        }
+        return true;
+    }
+
+    return true;
+}
+
+static bool copy_parse_on_positional(Evaluator_Context *ctx,
+                                     void *userdata,
+                                     String_View value,
+                                     size_t token_index) {
+    (void)ctx;
+    (void)userdata;
+    (void)value;
+    (void)token_index;
+    return true;
 }
 
 static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List args) {
@@ -1029,98 +1277,54 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
         dest = eval_sv_path_join(eval_temp_arena(ctx), current_bin_dir(ctx), dest);
     }
 
-    bool files_matching = false;
-    bool follow_symlink_chain = false;
-    bool saw_follow_symlink_option = false;
-    bool saw_unknown_permission_token = false;
-    Copy_Filter filters[64] = {0};
-    size_t filter_count = 0;
-    Copy_Permissions perms = {0};
-
-    for (size_t i = dest_idx + 2; i < args.count; i++) {
-        String_View tok = args.items[i];
-        int key = copy_key_kind(tok);
-
-        if (key == COPY_KEY_FILES_MATCHING) {
-            files_matching = true;
-            continue;
-        }
-        if (key == COPY_KEY_PATTERN || key == COPY_KEY_REGEX) {
-            if (i + 1 >= args.count) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"),
-                               tok);
-                return;
-            }
-            if (filter_count >= 64) {
-                eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(COPY) filter limit reached; extra filters ignored"),
-                               tok);
-                break;
-            }
-            filters[filter_count].is_regex = (key == COPY_KEY_REGEX);
-            filters[filter_count].expr = args.items[++i];
-            filter_count++;
-            continue;
-        }
-        if (key == COPY_KEY_EXCLUDE) {
-            if (filter_count == 0) {
-                eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(COPY) EXCLUDE without a previous PATTERN/REGEX is ignored"),
-                               tok);
-            } else {
-                filters[filter_count - 1].exclude = true;
-            }
-            continue;
-        }
-        if (key == COPY_KEY_FOLLOW_SYMLINK_CHAIN) {
-            follow_symlink_chain = true;
-            saw_follow_symlink_option = true;
-            continue;
-        }
-        if (key == COPY_KEY_USE_SOURCE_PERMISSIONS) {
-            perms.saw_use_source_permissions = true;
-            continue;
-        }
-        if (key == COPY_KEY_NO_SOURCE_PERMISSIONS) {
-            perms.saw_no_source_permissions = true;
-            continue;
-        }
-        if (key == COPY_KEY_PERMISSIONS ||
-            key == COPY_KEY_FILE_PERMISSIONS ||
-            key == COPY_KEY_DIRECTORY_PERMISSIONS) {
-            mode_t parsed_mode = 0;
-            bool has_any = false;
-            size_t j = i + 1;
-            while (j < args.count && copy_key_kind(args.items[j]) == COPY_KEY_UNKNOWN) {
-                if (copy_permission_add_token(&parsed_mode, args.items[j])) {
-                    has_any = true;
-                } else {
-                    saw_unknown_permission_token = true;
-                    eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("file(COPY) unknown permission token"),
-                                   args.items[j]);
-                }
-                j++;
-            }
-            if (!has_any) {
-                eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(COPY) permission list has no valid tokens"),
-                               args.items[i]);
-            } else if (key == COPY_KEY_PERMISSIONS) {
-                perms.has_permissions = true;
-                perms.permissions_mode = parsed_mode;
-            } else if (key == COPY_KEY_FILE_PERMISSIONS) {
-                perms.has_file_permissions = true;
-                perms.file_permissions_mode = parsed_mode;
-            } else if (key == COPY_KEY_DIRECTORY_PERMISSIONS) {
-                perms.has_directory_permissions = true;
-                perms.directory_permissions_mode = parsed_mode;
-            }
-            i = (j == 0) ? i : (j - 1);
-            continue;
-        }
+    static const Eval_Opt_Spec k_copy_specs[] = {
+        {COPY_KEY_FILES_MATCHING, "FILES_MATCHING", EVAL_OPT_FLAG},
+        {COPY_KEY_PATTERN, "PATTERN", EVAL_OPT_OPTIONAL_SINGLE},
+        {COPY_KEY_REGEX, "REGEX", EVAL_OPT_OPTIONAL_SINGLE},
+        {COPY_KEY_EXCLUDE, "EXCLUDE", EVAL_OPT_FLAG},
+        {COPY_KEY_FOLLOW_SYMLINK_CHAIN, "FOLLOW_SYMLINK_CHAIN", EVAL_OPT_FLAG},
+        {COPY_KEY_PERMISSIONS, "PERMISSIONS", EVAL_OPT_MULTI},
+        {COPY_KEY_FILE_PERMISSIONS, "FILE_PERMISSIONS", EVAL_OPT_MULTI},
+        {COPY_KEY_DIRECTORY_PERMISSIONS, "DIRECTORY_PERMISSIONS", EVAL_OPT_MULTI},
+        {COPY_KEY_USE_SOURCE_PERMISSIONS, "USE_SOURCE_PERMISSIONS", EVAL_OPT_FLAG},
+        {COPY_KEY_NO_SOURCE_PERMISSIONS, "NO_SOURCE_PERMISSIONS", EVAL_OPT_FLAG},
+    };
+    Copy_Parse_State parsed = {
+        .origin = o,
+        .command_name = node->as.cmd.name,
+        .args = args,
+        .files_matching = false,
+        .follow_symlink_chain = false,
+        .saw_follow_symlink_option = false,
+        .saw_unknown_permission_token = false,
+        .filter_count = 0,
+        .perms = {0},
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .component = nob_sv_from_cstr("eval_file"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    cfg.origin = o;
+    if (!eval_opt_parse_walk(ctx,
+                             args,
+                             dest_idx + 2,
+                             k_copy_specs,
+                             NOB_ARRAY_LEN(k_copy_specs),
+                             cfg,
+                             copy_parse_on_option,
+                             copy_parse_on_positional,
+                             &parsed)) {
+        return;
     }
+    bool files_matching = parsed.files_matching;
+    bool follow_symlink_chain = parsed.follow_symlink_chain;
+    bool saw_follow_symlink_option = parsed.saw_follow_symlink_option;
+    bool saw_unknown_permission_token = parsed.saw_unknown_permission_token;
+    Copy_Filter *filters = parsed.filters;
+    size_t filter_count = parsed.filter_count;
+    Copy_Permissions perms = parsed.perms;
 
     for (size_t i = 0; i < filter_count; i++) {
         if (!filters[i].is_regex) continue;
@@ -1138,9 +1342,7 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
         filters[i].regex_ready = true;
     }
 
-    char *dest_c = eval_sv_to_cstr_temp(ctx, dest);
-    EVAL_OOM_RETURN_VOID_IF_NULL(ctx, dest_c);
-    if (!mkdir_p(dest_c)) {
+    if (!mkdir_p(ctx, dest)) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(COPY) failed to create destination"),
                        dest);
@@ -1241,6 +1443,8 @@ bool h_file(Evaluator_Context *ctx, const Node *node) {
         handle_file_copy(ctx, node, args);
     } else if (eval_sv_eq_ci_lit(subcmd, "WRITE")) {
         handle_file_write(ctx, node, args);
+    } else if (eval_sv_eq_ci_lit(subcmd, "MAKE_DIRECTORY")) {
+        handle_file_make_directory(ctx, node, args);
     } else {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         eval_emit_diag(ctx,

@@ -203,6 +203,8 @@ static const char *event_kind_name(Cmake_Event_Kind kind) {
         case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
         case EV_TARGET_LINK_OPTIONS: return "EV_TARGET_LINK_OPTIONS";
         case EV_TARGET_LINK_DIRECTORIES: return "EV_TARGET_LINK_DIRECTORIES";
+        case EV_CUSTOM_COMMAND_TARGET: return "EV_CUSTOM_COMMAND_TARGET";
+        case EV_CUSTOM_COMMAND_OUTPUT: return "EV_CUSTOM_COMMAND_OUTPUT";
         case EV_DIR_PUSH: return "EV_DIR_PUSH";
         case EV_DIR_POP: return "EV_DIR_POP";
         case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "EV_DIRECTORY_INCLUDE_DIRECTORIES";
@@ -376,6 +378,61 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             nob_sb_append_cstr(sb, " path=");
             snapshot_append_escaped_sv(sb, ev->as.target_link_directories.path);
             nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_link_directories.visibility)));
+            break;
+
+        case EV_CUSTOM_COMMAND_TARGET:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.target_name);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" pre_build=%d command=",
+                ev->as.custom_command_target.pre_build ? 1 : 0));
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.command);
+            nob_sb_append_cstr(sb, " working_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.working_dir);
+            nob_sb_append_cstr(sb, " comment=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.comment);
+            nob_sb_append_cstr(sb, " outputs=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.outputs);
+            nob_sb_append_cstr(sb, " byproducts=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.byproducts);
+            nob_sb_append_cstr(sb, " depends=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.depends);
+            nob_sb_append_cstr(sb, " main_dependency=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.main_dependency);
+            nob_sb_append_cstr(sb, " depfile=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_target.depfile);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" append=%d verbatim=%d uses_terminal=%d command_expand_lists=%d depends_explicit_only=%d codegen=%d",
+                ev->as.custom_command_target.append ? 1 : 0,
+                ev->as.custom_command_target.verbatim ? 1 : 0,
+                ev->as.custom_command_target.uses_terminal ? 1 : 0,
+                ev->as.custom_command_target.command_expand_lists ? 1 : 0,
+                ev->as.custom_command_target.depends_explicit_only ? 1 : 0,
+                ev->as.custom_command_target.codegen ? 1 : 0));
+            break;
+
+        case EV_CUSTOM_COMMAND_OUTPUT:
+            nob_sb_append_cstr(sb, " command=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.command);
+            nob_sb_append_cstr(sb, " working_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.working_dir);
+            nob_sb_append_cstr(sb, " comment=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.comment);
+            nob_sb_append_cstr(sb, " outputs=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.outputs);
+            nob_sb_append_cstr(sb, " byproducts=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.byproducts);
+            nob_sb_append_cstr(sb, " depends=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.depends);
+            nob_sb_append_cstr(sb, " main_dependency=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.main_dependency);
+            nob_sb_append_cstr(sb, " depfile=");
+            snapshot_append_escaped_sv(sb, ev->as.custom_command_output.depfile);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" append=%d verbatim=%d uses_terminal=%d command_expand_lists=%d depends_explicit_only=%d codegen=%d",
+                ev->as.custom_command_output.append ? 1 : 0,
+                ev->as.custom_command_output.verbatim ? 1 : 0,
+                ev->as.custom_command_output.uses_terminal ? 1 : 0,
+                ev->as.custom_command_output.command_expand_lists ? 1 : 0,
+                ev->as.custom_command_output.depends_explicit_only ? 1 : 0,
+                ev->as.custom_command_output.codegen ? 1 : 0));
             break;
 
         case EV_DIR_PUSH:
@@ -622,8 +679,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 24) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=24", cases.count);
+    if (cases.count != 28) {
+        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=28", cases.count);
         ok = false;
         goto done;
     }

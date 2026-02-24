@@ -2,7 +2,11 @@
 #include "arena_dyn.h"
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 String_View sv_copy_to_arena(Arena *arena, String_View sv) {
     if (!arena) return nob_sv_from_cstr("");
@@ -98,8 +102,13 @@ static bool ch_is_sep(char c) { return c == '/' || c == '\\'; }
 
 bool eval_sv_is_abs_path(String_View p) {
     if (p.count == 0) return false;
-    if (p.data[0] == '/' || p.data[0] == '\\') return true;
+    if ((p.count >= 2) &&
+        (p.data[0] == '/' || p.data[0] == '\\') &&
+        (p.data[1] == '/' || p.data[1] == '\\')) {
+        return true; // UNC/network path: //server/share or \\server\share
+    }
     if (p.count > 1 && p.data[1] == ':') return true;
+    if (p.data[0] == '/' || p.data[0] == '\\') return true;
     return false;
 }
 
@@ -123,4 +132,90 @@ String_View eval_sv_path_join(Arena *arena, String_View a, String_View b) {
     buf[off] = '\0';
 
     return nob_sv_from_cstr(buf);
+}
+
+const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name) {
+    if (!name || name[0] == '\0') return NULL;
+
+#if defined(_WIN32)
+    if (!ctx) return NULL;
+
+    size_t name_len = strlen(name);
+    char *lookup_name = (char*)arena_alloc(eval_temp_arena(ctx), name_len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, lookup_name, NULL);
+    for (size_t i = 0; i < name_len; i++) {
+        lookup_name[i] = (char)toupper((unsigned char)name[i]);
+    }
+    lookup_name[name_len] = '\0';
+
+    SetLastError(ERROR_SUCCESS);
+    DWORD needed = GetEnvironmentVariableA(lookup_name, NULL, 0);
+    if (needed == 0) {
+        DWORD err = GetLastError();
+        if (err == ERROR_ENVVAR_NOT_FOUND) return NULL;
+
+        if (err == ERROR_SUCCESS) {
+            char *empty = (char*)arena_alloc(eval_temp_arena(ctx), 1);
+            EVAL_OOM_RETURN_IF_NULL(ctx, empty, NULL);
+            empty[0] = '\0';
+            return empty;
+        }
+
+        return NULL;
+    }
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)needed);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
+
+    DWORD written = GetEnvironmentVariableA(lookup_name, buf, needed);
+    if (written >= needed) {
+        char *retry = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)written + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, retry, NULL);
+        DWORD retry_written = GetEnvironmentVariableA(lookup_name, retry, written + 1);
+        if (retry_written == 0 && GetLastError() == ERROR_ENVVAR_NOT_FOUND) return NULL;
+        return retry;
+    }
+
+    if (written == 0 && GetLastError() == ERROR_ENVVAR_NOT_FOUND) return NULL;
+    return buf;
+#else
+    (void)ctx;
+    return getenv(name);
+#endif
+}
+
+bool eval_has_env(Evaluator_Context *ctx, const char *name) {
+    if (!name || name[0] == '\0') return false;
+
+#if defined(_WIN32)
+    const char *lookup_name = name;
+    char *heap_lookup_name = NULL;
+    size_t name_len = strlen(name);
+    if (ctx) {
+        char *arena_name = (char*)arena_alloc(eval_temp_arena(ctx), name_len + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, arena_name, false);
+        for (size_t i = 0; i < name_len; i++) {
+            arena_name[i] = (char)toupper((unsigned char)name[i]);
+        }
+        arena_name[name_len] = '\0';
+        lookup_name = arena_name;
+    } else {
+        heap_lookup_name = (char*)malloc(name_len + 1);
+        if (!heap_lookup_name) return false;
+        for (size_t i = 0; i < name_len; i++) {
+            heap_lookup_name[i] = (char)toupper((unsigned char)name[i]);
+        }
+        heap_lookup_name[name_len] = '\0';
+        lookup_name = heap_lookup_name;
+    }
+
+    SetLastError(ERROR_SUCCESS);
+    DWORD needed = GetEnvironmentVariableA(lookup_name, NULL, 0);
+    bool exists = (needed > 0) || (GetLastError() == ERROR_SUCCESS);
+    free(heap_lookup_name);
+    return exists;
+#else
+    (void)ctx;
+    return getenv(name) != NULL;
+#endif
 }

@@ -302,7 +302,7 @@ static int eval_expand_limit(struct Evaluator_Context *ctx) {
 
     // Priority 2: process environment override.
     {
-        const char *env = getenv("NOBIFY_EVAL_EXPAND_MAX_RECURSION");
+        const char *env = eval_getenv_temp(ctx, "NOBIFY_EVAL_EXPAND_MAX_RECURSION");
         if (env && env[0] != '\0') {
             int parsed = 0;
             if (sv_parse_positive_int(nob_sv_from_cstr(env), &parsed)) {
@@ -405,7 +405,7 @@ static String_View expand_once(struct Evaluator_Context *ctx, String_View in) {
                     nob_sb_free(sb);
                     return nob_sv_from_cstr("");
                 }
-                const char *v = getenv(env_name);
+                const char *v = eval_getenv_temp(ctx, env_name);
                 if (v) nob_sb_append_cstr(&sb, v);
                 i = j;
                 continue;
@@ -542,7 +542,7 @@ static bool parse_unary(Expr *e) {
             String_View env_name_sv = nob_sv_from_parts(var_name.data + 4, n);
             char *env_name = eval_sv_to_cstr_temp(e->ctx, env_name_sv);
             EVAL_OOM_RETURN_IF_NULL(e->ctx, env_name, false);
-            return getenv(env_name) != NULL;
+            return eval_has_env(e->ctx, env_name);
         }
 
         return eval_var_defined(e->ctx, var_name);

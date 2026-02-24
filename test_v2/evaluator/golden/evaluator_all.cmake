@@ -89,6 +89,58 @@ if((A AND B) OR C)
 endif()
 #@@ENDCASE
 
+#@@CASE flow_while_simple_counter
+set(C 0)
+while(C LESS 3)
+  math(EXPR C "${C} + 1")
+endwhile()
+add_executable(loop_simple main.c)
+target_compile_definitions(loop_simple PRIVATE SIMPLE_C=${C})
+#@@ENDCASE
+
+#@@CASE flow_while_break_and_continue
+set(I 0)
+set(OUT "")
+while(I LESS 5)
+  if(I EQUAL 1)
+    math(EXPR I "${I} + 1")
+    continue()
+  endif()
+  if(I EQUAL 3)
+    break()
+  endif()
+  if(OUT STREQUAL "")
+    set(OUT "${I}")
+  else()
+    set(OUT "${OUT}_${I}")
+  endif()
+  math(EXPR I "${I} + 1")
+endwhile()
+add_executable(loop_flow main.c)
+target_compile_definitions(loop_flow PRIVATE LOOP_OUT=${OUT})
+#@@ENDCASE
+
+#@@CASE flow_while_nested_break_continue
+set(O 0)
+set(ACC 0)
+while(O LESS 2)
+  set(I 0)
+  while(I LESS 4)
+    math(EXPR I "${I} + 1")
+    if(I EQUAL 2)
+      continue()
+    endif()
+    if(I EQUAL 4)
+      break()
+    endif()
+    math(EXPR ACC "${ACC} + 1")
+  endwhile()
+  math(EXPR O "${O} + 1")
+endwhile()
+add_executable(loop_nested main.c)
+target_compile_definitions(loop_nested PRIVATE NESTED_ACC=${ACC})
+#@@ENDCASE
+
 #@@CASE dispatcher_command_handlers
 add_definitions(-DLEGACY=1 -fPIC)
 add_compile_options(-Wall)
@@ -181,10 +233,30 @@ file(STRINGS /tmp/nobify_forbidden OUT)
 
 #@@CASE file_security_read_relative_inside_project_scope_still_works
 file(WRITE temp_read_ok.txt "hello\n")
+file(MAKE_DIRECTORY temp_read_win_nested\\a\\b\\c)
 file(READ temp_read_ok.txt OUT)
 #@@ENDCASE
 
 #@@CASE file_security_copy_with_permissions_executes_without_legacy_no_effect_warning
 file(WRITE temp_copy_perm_src.txt "x")
 file(COPY temp_copy_perm_src.txt DESTINATION temp_copy_perm_dst PERMISSIONS OWNER_READ OWNER_WRITE)
+#@@ENDCASE
+
+#@@CASE dispatcher_custom_command_and_target
+add_custom_target(gen ALL
+  COMMAND echo gen
+  DEPENDS seed.txt
+  BYPRODUCTS out.txt
+  WORKING_DIRECTORY tools
+  COMMENT "gen")
+add_custom_command(TARGET gen POST_BUILD
+  COMMAND echo post
+  BYPRODUCTS post.txt
+  DEPENDS dep1)
+add_custom_command(OUTPUT generated.c generated.h
+  COMMAND python gen.py
+  DEPENDS schema.idl
+  BYPRODUCTS gen.log
+  MAIN_DEPENDENCY schema.idl
+  DEPFILE gen.d)
 #@@ENDCASE

@@ -90,6 +90,29 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
             if (!ev_copy_sv_inplace(arena, &ev->as.target_link_directories.path)) return false;
             break;
 
+        case EV_CUSTOM_COMMAND_TARGET:
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.target_name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.command)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.working_dir)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.comment)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.outputs)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.byproducts)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.depends)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.main_dependency)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_target.depfile)) return false;
+            break;
+
+        case EV_CUSTOM_COMMAND_OUTPUT:
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.command)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.working_dir)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.comment)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.outputs)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.byproducts)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.depends)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.main_dependency)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.custom_command_output.depfile)) return false;
+            break;
+
         case EV_DIR_PUSH:
             if (!ev_copy_sv_inplace(arena, &ev->as.dir_push.source_dir)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.dir_push.binary_dir)) return false;
@@ -219,6 +242,8 @@ static const char *ev_kind_name(Cmake_Event_Kind kind) {
         case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
         case EV_TARGET_LINK_OPTIONS: return "EV_TARGET_LINK_OPTIONS";
         case EV_TARGET_LINK_DIRECTORIES: return "EV_TARGET_LINK_DIRECTORIES";
+        case EV_CUSTOM_COMMAND_TARGET: return "EV_CUSTOM_COMMAND_TARGET";
+        case EV_CUSTOM_COMMAND_OUTPUT: return "EV_CUSTOM_COMMAND_OUTPUT";
         case EV_DIR_PUSH: return "EV_DIR_PUSH";
         case EV_DIR_POP: return "EV_DIR_POP";
         case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "EV_DIRECTORY_INCLUDE_DIRECTORIES";
@@ -322,6 +347,42 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
                 ev_print_sv("target", ev->as.target_link_directories.target_name);
                 ev_print_sv("path", ev->as.target_link_directories.path);
                 printf(" vis=%d", (int)ev->as.target_link_directories.visibility);
+                break;
+            case EV_CUSTOM_COMMAND_TARGET:
+                ev_print_sv("target", ev->as.custom_command_target.target_name);
+                printf(" pre_build=%d", ev->as.custom_command_target.pre_build ? 1 : 0);
+                ev_print_sv("command", ev->as.custom_command_target.command);
+                ev_print_sv("working_dir", ev->as.custom_command_target.working_dir);
+                ev_print_sv("comment", ev->as.custom_command_target.comment);
+                ev_print_sv("outputs", ev->as.custom_command_target.outputs);
+                ev_print_sv("byproducts", ev->as.custom_command_target.byproducts);
+                ev_print_sv("depends", ev->as.custom_command_target.depends);
+                ev_print_sv("main_dependency", ev->as.custom_command_target.main_dependency);
+                ev_print_sv("depfile", ev->as.custom_command_target.depfile);
+                printf(" append=%d verbatim=%d uses_terminal=%d command_expand_lists=%d depends_explicit_only=%d codegen=%d",
+                       ev->as.custom_command_target.append ? 1 : 0,
+                       ev->as.custom_command_target.verbatim ? 1 : 0,
+                       ev->as.custom_command_target.uses_terminal ? 1 : 0,
+                       ev->as.custom_command_target.command_expand_lists ? 1 : 0,
+                       ev->as.custom_command_target.depends_explicit_only ? 1 : 0,
+                       ev->as.custom_command_target.codegen ? 1 : 0);
+                break;
+            case EV_CUSTOM_COMMAND_OUTPUT:
+                ev_print_sv("command", ev->as.custom_command_output.command);
+                ev_print_sv("working_dir", ev->as.custom_command_output.working_dir);
+                ev_print_sv("comment", ev->as.custom_command_output.comment);
+                ev_print_sv("outputs", ev->as.custom_command_output.outputs);
+                ev_print_sv("byproducts", ev->as.custom_command_output.byproducts);
+                ev_print_sv("depends", ev->as.custom_command_output.depends);
+                ev_print_sv("main_dependency", ev->as.custom_command_output.main_dependency);
+                ev_print_sv("depfile", ev->as.custom_command_output.depfile);
+                printf(" append=%d verbatim=%d uses_terminal=%d command_expand_lists=%d depends_explicit_only=%d codegen=%d",
+                       ev->as.custom_command_output.append ? 1 : 0,
+                       ev->as.custom_command_output.verbatim ? 1 : 0,
+                       ev->as.custom_command_output.uses_terminal ? 1 : 0,
+                       ev->as.custom_command_output.command_expand_lists ? 1 : 0,
+                       ev->as.custom_command_output.depends_explicit_only ? 1 : 0,
+                       ev->as.custom_command_output.codegen ? 1 : 0);
                 break;
             case EV_DIR_PUSH:
                 ev_print_sv("source_dir", ev->as.dir_push.source_dir);

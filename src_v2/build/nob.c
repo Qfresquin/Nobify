@@ -68,6 +68,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_expr.c",
         "src_v2/evaluator/eval_file.c",
         "src_v2/evaluator/eval_flow.c",
+        "src_v2/evaluator/eval_opt_parser.c",
         "src_v2/evaluator/eval_stdlib.c",
         "src_v2/evaluator/eval_utils.c",
         "src_v2/evaluator/eval_vars.c");

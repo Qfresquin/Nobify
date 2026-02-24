@@ -518,8 +518,91 @@ TEST(pipeline_validate_does_not_infer_link_library_targets) {
     TEST_PASS();
 }
 
+TEST(pipeline_builder_custom_command_events) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    ASSERT(arena != NULL);
+
+    Cmake_Event_Stream *stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    Cmake_Event ev = {0};
+    ev.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
+    ev.origin.line = 1;
+    ev.origin.col = 1;
+
+    ev.kind = EV_TARGET_DECLARE;
+    ev.as.target_declare.name = nob_sv_from_cstr("gen");
+    ev.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
+    ASSERT(event_stream_push(arena, stream, ev));
+
+    ev.kind = EV_CUSTOM_COMMAND_TARGET;
+    ev.as.custom_command_target.target_name = nob_sv_from_cstr("gen");
+    ev.as.custom_command_target.pre_build = true;
+    ev.as.custom_command_target.command = nob_sv_from_cstr("echo gen");
+    ev.as.custom_command_target.working_dir = nob_sv_from_cstr("tools");
+    ev.as.custom_command_target.comment = nob_sv_from_cstr("gen step");
+    ev.as.custom_command_target.outputs = nob_sv_from_cstr("");
+    ev.as.custom_command_target.byproducts = nob_sv_from_cstr("out.txt");
+    ev.as.custom_command_target.depends = nob_sv_from_cstr("seed.txt");
+    ev.as.custom_command_target.main_dependency = nob_sv_from_cstr("");
+    ev.as.custom_command_target.depfile = nob_sv_from_cstr("");
+    ev.as.custom_command_target.append = false;
+    ev.as.custom_command_target.verbatim = true;
+    ev.as.custom_command_target.uses_terminal = false;
+    ev.as.custom_command_target.command_expand_lists = false;
+    ev.as.custom_command_target.depends_explicit_only = false;
+    ev.as.custom_command_target.codegen = false;
+    ASSERT(event_stream_push(arena, stream, ev));
+
+    ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
+    ev.as.custom_command_output.command = nob_sv_from_cstr("python gen.py");
+    ev.as.custom_command_output.working_dir = nob_sv_from_cstr("scripts");
+    ev.as.custom_command_output.comment = nob_sv_from_cstr("codegen");
+    ev.as.custom_command_output.outputs = nob_sv_from_cstr("generated.c;generated.h");
+    ev.as.custom_command_output.byproducts = nob_sv_from_cstr("gen.log");
+    ev.as.custom_command_output.depends = nob_sv_from_cstr("schema.idl");
+    ev.as.custom_command_output.main_dependency = nob_sv_from_cstr("schema.idl");
+    ev.as.custom_command_output.depfile = nob_sv_from_cstr("gen.d");
+    ev.as.custom_command_output.append = false;
+    ev.as.custom_command_output.verbatim = true;
+    ev.as.custom_command_output.uses_terminal = false;
+    ev.as.custom_command_output.command_expand_lists = false;
+    ev.as.custom_command_output.depends_explicit_only = false;
+    ev.as.custom_command_output.codegen = true;
+    ASSERT(event_stream_push(arena, stream, ev));
+
+    Build_Model_Builder *builder = builder_create(arena, NULL);
+    ASSERT(builder != NULL);
+    ASSERT(builder_apply_stream(builder, stream));
+
+    Build_Model *model = builder_finish(builder);
+    ASSERT(model != NULL);
+
+    Build_Target *target = build_model_find_target(model, nob_sv_from_cstr("gen"));
+    ASSERT(target != NULL);
+    ASSERT(target->type == TARGET_UTILITY);
+
+    size_t pre_count = 0;
+    const Custom_Command *pre_cmds = build_target_get_custom_commands(target, true, &pre_count);
+    ASSERT(pre_cmds != NULL);
+    ASSERT(pre_count == 1);
+    ASSERT(nob_sv_eq(pre_cmds[0].command, nob_sv_from_cstr("echo gen")));
+    ASSERT(pre_cmds[0].byproducts.count == 1);
+
+    size_t out_count = 0;
+    const Custom_Command *out_cmds = build_model_get_output_custom_commands(model, &out_count);
+    ASSERT(out_cmds != NULL);
+    ASSERT(out_count == 1);
+    ASSERT(out_cmds[0].outputs.count == 2);
+    ASSERT(out_cmds[0].depends.count == 1);
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 void run_pipeline_v2_tests(int *passed, int *failed) {
     test_pipeline_golden_all_cases(passed, failed);
     test_pipeline_builder_directory_scope_events(passed, failed);
     test_pipeline_validate_does_not_infer_link_library_targets(passed, failed);
+    test_pipeline_builder_custom_command_events(passed, failed);
 }
