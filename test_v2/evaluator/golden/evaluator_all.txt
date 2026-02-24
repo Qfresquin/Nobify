@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 42
+CASES 44
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -305,6 +305,19 @@ EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=12 col=1 package='DemoCfg'
 DIAG errors=0 warnings=0
 EVENTS count=1
 EV[0] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=10 col=1 package='DemoVer' mode='CONFIG' required=0 found=0 location='./temp_pkg_cfgver/DemoVerConfig.cmake'
+=== END CASE ===
+
+=== CASE dispatcher_find_package_no_cmake_path_ignores_cmake_prefix_path ===
+DIAG errors=0 warnings=0
+EVENTS count=2
+EV[0] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=5 col=1 package='NoCmake' mode='CONFIG' required=0 found=0 location=''
+EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=6 col=1 package='NoCmake' mode='CONFIG' required=0 found=1 location='./temp_pkg_no_cmake_path/NoCmakeConfig.cmake'
+=== END CASE ===
+
+=== CASE dispatcher_find_package_path_controls_still_allow_explicit_paths ===
+DIAG errors=0 warnings=0
+EVENTS count=1
+EV[0] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=5 col=1 package='PathCtl' mode='CONFIG' required=0 found=1 location='./temp_pkg_path_controls/PathCtlConfig.cmake'
 === END CASE ===
 
 === CASE dispatcher_set_target_properties_preserves_genex_semicolon_unquoted ===

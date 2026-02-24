@@ -35,20 +35,63 @@ static String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
     return nob_sv_from_cstr(buf);
 }
 
+static void find_package_push_env_list(Evaluator_Context *ctx,
+                                       String_View *items,
+                                       size_t *io_count,
+                                       size_t cap,
+                                       const char *env_name) {
+    if (!ctx || !items || !io_count || !env_name) return;
+    const char *raw = eval_getenv_temp(ctx, env_name);
+    if (!raw || raw[0] == '\0') return;
+
+    String_View sv = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(raw));
+    if (eval_should_stop(ctx) || sv.count == 0) return;
+
+#if defined(_WIN32)
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+
+    const char *p = sv.data;
+    const char *end = sv.data + sv.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != sep) q++;
+        String_View item = nob_sv_from_parts(p, (size_t)(q - p));
+        if (item.count > 0 && *io_count < cap) {
+            items[(*io_count)++] = item;
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
+}
+
+static void find_package_push_prefix(String_View *items, size_t *io_count, size_t cap, String_View v);
+
 static bool find_package_try_module(Evaluator_Context *ctx,
                                     String_View pkg,
                                     String_View extra_paths,
                                     bool no_default_path,
+                                    bool no_cmake_path,
+                                    bool no_cmake_environment_path,
                                     String_View *out_path) {
     String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (current_src.count == 0) current_src = ctx->source_dir;
-    String_View module_paths = extra_paths;
+    String_View module_paths[64] = {0};
+    size_t module_count = 0;
+    find_package_push_prefix(module_paths, &module_count, NOB_ARRAY_LEN(module_paths), extra_paths);
     if (!no_default_path) {
-        String_View var_module_paths = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH"));
-        if (module_paths.count > 0 && var_module_paths.count > 0) {
-            module_paths = eval_sv_join_semi_temp(ctx, (String_View[]){module_paths, var_module_paths}, 2);
-        } else if (module_paths.count == 0) {
-            module_paths = var_module_paths;
+        if (!no_cmake_path) {
+            String_View var_module_paths = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH"));
+            find_package_push_prefix(module_paths, &module_count, NOB_ARRAY_LEN(module_paths), var_module_paths);
+        }
+        if (!no_cmake_environment_path) {
+            find_package_push_env_list(ctx,
+                                       module_paths,
+                                       &module_count,
+                                       NOB_ARRAY_LEN(module_paths),
+                                       "CMAKE_MODULE_PATH");
         }
     }
 
@@ -63,17 +106,12 @@ static bool find_package_try_module(Evaluator_Context *ctx,
         module_name = nob_sv_from_cstr(buf);
     }
 
-    String_View fallback = no_default_path
-        ? nob_sv_from_cstr("")
-        : eval_sv_path_join(eval_temp_arena(ctx), current_src, nob_sv_from_cstr("CMake"));
-    String_View search = module_paths;
-    if (fallback.count > 0) {
-        if (search.count > 0) {
-            search = eval_sv_join_semi_temp(ctx, (String_View[]){module_paths, fallback}, 2);
-        } else {
-            search = fallback;
-        }
+    if (!no_default_path && !no_cmake_path) {
+        String_View fallback = eval_sv_path_join(eval_temp_arena(ctx), current_src, nob_sv_from_cstr("CMake"));
+        find_package_push_prefix(module_paths, &module_count, NOB_ARRAY_LEN(module_paths), fallback);
     }
+    String_View search = eval_sv_join_semi_temp(ctx, module_paths, module_count);
+    if (eval_should_stop(ctx)) return false;
 
     const char *p = search.data;
     const char *end = search.data + search.count;
@@ -128,6 +166,34 @@ static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
     find_package_push_prefix_variants(ctx, items, io_count, cap, root);
 }
 
+static void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
+                                                    String_View pkg,
+                                                    bool no_default_path,
+                                                    bool no_package_root_path,
+                                                    bool no_cmake_environment_path,
+                                                    String_View *items,
+                                                    size_t *io_count,
+                                                    size_t cap) {
+    if (!ctx || pkg.count == 0 || !items || !io_count) return;
+    if (no_default_path || no_package_root_path) return;
+
+    String_View root_var = svu_concat_suffix_temp(ctx, pkg, "_ROOT");
+    if (eval_should_stop(ctx)) return;
+
+    String_View root_val = eval_var_get(ctx, root_var);
+    if (root_val.count > 0) {
+        find_package_push_prefix_variants(ctx, items, io_count, cap, root_val);
+    }
+
+    if (!no_cmake_environment_path) {
+        char *env_name = (char*)arena_alloc(eval_temp_arena(ctx), root_var.count + 1);
+        EVAL_OOM_RETURN_VOID_IF_NULL(ctx, env_name);
+        memcpy(env_name, root_var.data, root_var.count);
+        env_name[root_var.count] = '\0';
+        find_package_push_env_prefix_variants(ctx, items, io_count, cap, env_name);
+    }
+}
+
 static bool find_package_try_config_in_prefixes(Evaluator_Context *ctx,
                                                 String_View current_src,
                                                 String_View pkg,
@@ -170,6 +236,12 @@ static bool find_package_try_config(Evaluator_Context *ctx,
                                     String_View pkg,
                                     String_View extra_prefixes,
                                     bool no_default_path,
+                                    bool no_package_root_path,
+                                    bool no_cmake_path,
+                                    bool no_cmake_environment_path,
+                                    bool no_system_environment_path,
+                                    bool no_cmake_system_path,
+                                    bool no_cmake_install_prefix,
                                     String_View *out_path) {
     String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (current_src.count == 0) current_src = ctx->source_dir;
@@ -203,24 +275,57 @@ static bool find_package_try_config(Evaluator_Context *ctx,
     size_t merged_count = 0;
     find_package_push_prefix(merged_prefixes, &merged_count, 64, extra_prefixes);
     if (!no_default_path) {
-        String_View prefixes = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH"));
-        find_package_push_prefix(merged_prefixes, &merged_count, 64, prefixes);
+        find_package_push_package_root_prefixes(ctx,
+                                                pkg,
+                                                no_default_path,
+                                                no_package_root_path,
+                                                no_cmake_environment_path,
+                                                merged_prefixes,
+                                                &merged_count,
+                                                NOB_ARRAY_LEN(merged_prefixes));
+
+        if (!no_cmake_path) {
+            String_View prefixes = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH"));
+            find_package_push_prefix(merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), prefixes);
+        }
+        if (!no_cmake_environment_path) {
+            find_package_push_env_list(ctx,
+                                       merged_prefixes,
+                                       &merged_count,
+                                       NOB_ARRAY_LEN(merged_prefixes),
+                                       "CMAKE_PREFIX_PATH");
+        }
+        if (!no_cmake_install_prefix) {
+            String_View install_prefix = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_INSTALL_PREFIX"));
+            if (install_prefix.count > 0) {
+                find_package_push_prefix_variants(ctx,
+                                                  merged_prefixes,
+                                                  &merged_count,
+                                                  NOB_ARRAY_LEN(merged_prefixes),
+                                                  install_prefix);
+            }
+        }
     }
 
-    if (!no_default_path) {
+    if (!no_default_path && !no_system_environment_path) {
 #if defined(_WIN32)
-        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "ProgramFiles");
-        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "ProgramFiles(x86)");
-        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "ProgramW6432");
-        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, 64, "VCPKG_ROOT");
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("C:/Program Files"));
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("C:/Program Files (x86)"));
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), "ProgramFiles");
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), "ProgramFiles(x86)");
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), "ProgramW6432");
+        find_package_push_env_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), "VCPKG_ROOT");
+#endif
+    }
+
+    if (!no_default_path && !no_cmake_system_path) {
+#if defined(_WIN32)
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("C:/Program Files"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("C:/Program Files (x86)"));
 #else
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/usr/local"));
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/usr"));
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/opt/local"));
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/opt/homebrew"));
-        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, 64, nob_sv_from_cstr("/opt"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("/usr/local"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("/usr"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("/opt/local"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("/opt/homebrew"));
+        find_package_push_prefix_variants(ctx, merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), nob_sv_from_cstr("/opt"));
 #endif
     }
 
@@ -244,6 +349,14 @@ typedef struct {
     String_View optional_components;
     String_View extra_prefixes;
     bool no_default_path;
+    bool no_package_root_path;
+    bool no_cmake_path;
+    bool no_cmake_environment_path;
+    bool no_system_environment_path;
+    bool no_cmake_system_path;
+    bool no_cmake_install_prefix;
+    bool no_cmake_package_registry;
+    bool no_cmake_system_package_registry;
     bool saw_registry_view;
 } Find_Package_Options;
 
@@ -258,6 +371,14 @@ enum {
     FIND_PKG_OPT_HINTS,
     FIND_PKG_OPT_PATHS,
     FIND_PKG_OPT_NO_DEFAULT_PATH,
+    FIND_PKG_OPT_NO_PACKAGE_ROOT_PATH,
+    FIND_PKG_OPT_NO_CMAKE_PATH,
+    FIND_PKG_OPT_NO_CMAKE_ENVIRONMENT_PATH,
+    FIND_PKG_OPT_NO_SYSTEM_ENVIRONMENT_PATH,
+    FIND_PKG_OPT_NO_CMAKE_SYSTEM_PATH,
+    FIND_PKG_OPT_NO_CMAKE_INSTALL_PREFIX,
+    FIND_PKG_OPT_NO_CMAKE_PACKAGE_REGISTRY,
+    FIND_PKG_OPT_NO_CMAKE_SYSTEM_PACKAGE_REGISTRY,
     FIND_PKG_OPT_REGISTRY_VIEW,
 };
 
@@ -281,6 +402,14 @@ static const Eval_Opt_Spec k_find_pkg_specs[] = {
     {FIND_PKG_OPT_HINTS, "HINTS", EVAL_OPT_MULTI},
     {FIND_PKG_OPT_PATHS, "PATHS", EVAL_OPT_MULTI},
     {FIND_PKG_OPT_NO_DEFAULT_PATH, "NO_DEFAULT_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_PACKAGE_ROOT_PATH, "NO_PACKAGE_ROOT_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_CMAKE_PATH, "NO_CMAKE_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_CMAKE_ENVIRONMENT_PATH, "NO_CMAKE_ENVIRONMENT_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_SYSTEM_ENVIRONMENT_PATH, "NO_SYSTEM_ENVIRONMENT_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_CMAKE_SYSTEM_PATH, "NO_CMAKE_SYSTEM_PATH", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_CMAKE_INSTALL_PREFIX, "NO_CMAKE_INSTALL_PREFIX", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_CMAKE_PACKAGE_REGISTRY, "NO_CMAKE_PACKAGE_REGISTRY", EVAL_OPT_FLAG},
+    {FIND_PKG_OPT_NO_CMAKE_SYSTEM_PACKAGE_REGISTRY, "NO_CMAKE_SYSTEM_PACKAGE_REGISTRY", EVAL_OPT_FLAG},
     {FIND_PKG_OPT_REGISTRY_VIEW, "REGISTRY_VIEW", EVAL_OPT_OPTIONAL_SINGLE},
 };
 
@@ -392,6 +521,30 @@ static bool find_package_parse_on_option(Evaluator_Context *ctx,
     case FIND_PKG_OPT_NO_DEFAULT_PATH:
         st->out->no_default_path = true;
         return true;
+    case FIND_PKG_OPT_NO_PACKAGE_ROOT_PATH:
+        st->out->no_package_root_path = true;
+        return true;
+    case FIND_PKG_OPT_NO_CMAKE_PATH:
+        st->out->no_cmake_path = true;
+        return true;
+    case FIND_PKG_OPT_NO_CMAKE_ENVIRONMENT_PATH:
+        st->out->no_cmake_environment_path = true;
+        return true;
+    case FIND_PKG_OPT_NO_SYSTEM_ENVIRONMENT_PATH:
+        st->out->no_system_environment_path = true;
+        return true;
+    case FIND_PKG_OPT_NO_CMAKE_SYSTEM_PATH:
+        st->out->no_cmake_system_path = true;
+        return true;
+    case FIND_PKG_OPT_NO_CMAKE_INSTALL_PREFIX:
+        st->out->no_cmake_install_prefix = true;
+        return true;
+    case FIND_PKG_OPT_NO_CMAKE_PACKAGE_REGISTRY:
+        st->out->no_cmake_package_registry = true;
+        return true;
+    case FIND_PKG_OPT_NO_CMAKE_SYSTEM_PACKAGE_REGISTRY:
+        st->out->no_cmake_system_package_registry = true;
+        return true;
     case FIND_PKG_OPT_REGISTRY_VIEW:
         st->out->saw_registry_view = true;
         return true;
@@ -463,14 +616,48 @@ static bool find_package_resolve(Evaluator_Context *ctx,
     *out_found_path = nob_sv_from_cstr("");
 
     if (eval_sv_eq_ci_lit(opt->mode, "MODULE")) {
-        return find_package_try_module(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+        return find_package_try_module(ctx,
+                                       opt->pkg,
+                                       opt->extra_prefixes,
+                                       opt->no_default_path,
+                                       opt->no_cmake_path,
+                                       opt->no_cmake_environment_path,
+                                       out_found_path);
     }
     if (eval_sv_eq_ci_lit(opt->mode, "CONFIG")) {
-        return find_package_try_config(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+        return find_package_try_config(ctx,
+                                       opt->pkg,
+                                       opt->extra_prefixes,
+                                       opt->no_default_path,
+                                       opt->no_package_root_path,
+                                       opt->no_cmake_path,
+                                       opt->no_cmake_environment_path,
+                                       opt->no_system_environment_path,
+                                       opt->no_cmake_system_path,
+                                       opt->no_cmake_install_prefix,
+                                       out_found_path);
     }
 
-    bool found = find_package_try_module(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
-    if (!found) found = find_package_try_config(ctx, opt->pkg, opt->extra_prefixes, opt->no_default_path, out_found_path);
+    bool found = find_package_try_module(ctx,
+                                         opt->pkg,
+                                         opt->extra_prefixes,
+                                         opt->no_default_path,
+                                         opt->no_cmake_path,
+                                         opt->no_cmake_environment_path,
+                                         out_found_path);
+    if (!found) {
+        found = find_package_try_config(ctx,
+                                        opt->pkg,
+                                        opt->extra_prefixes,
+                                        opt->no_default_path,
+                                        opt->no_package_root_path,
+                                        opt->no_cmake_path,
+                                        opt->no_cmake_environment_path,
+                                        opt->no_system_environment_path,
+                                        opt->no_cmake_system_path,
+                                        opt->no_cmake_install_prefix,
+                                        out_found_path);
+    }
     return found;
 }
 

@@ -335,6 +335,32 @@ set(CMAKE_PREFIX_PATH temp_pkg_cfgver)
 find_package(DemoVer 1.0 CONFIG QUIET)
 #@@ENDCASE
 
+#@@CASE dispatcher_find_package_no_cmake_path_ignores_cmake_prefix_path
+file(MAKE_DIRECTORY temp_pkg_no_cmake_path)
+file(WRITE temp_pkg_no_cmake_path/NoCmakeConfig.cmake [=[set(NoCmake_FOUND 1)
+]=])
+set(CMAKE_PREFIX_PATH temp_pkg_no_cmake_path)
+find_package(NoCmake CONFIG QUIET NO_CMAKE_PATH)
+find_package(NoCmake CONFIG QUIET)
+#@@ENDCASE
+
+#@@CASE dispatcher_find_package_path_controls_still_allow_explicit_paths
+file(MAKE_DIRECTORY temp_pkg_path_controls)
+file(WRITE temp_pkg_path_controls/PathCtlConfig.cmake [=[set(PathCtl_FOUND 1)
+]=])
+set(CMAKE_PREFIX_PATH temp_pkg_not_used)
+find_package(PathCtl CONFIG QUIET
+  NO_CMAKE_PATH
+  NO_CMAKE_ENVIRONMENT_PATH
+  NO_SYSTEM_ENVIRONMENT_PATH
+  NO_CMAKE_SYSTEM_PATH
+  NO_CMAKE_INSTALL_PREFIX
+  NO_PACKAGE_ROOT_PATH
+  NO_CMAKE_PACKAGE_REGISTRY
+  NO_CMAKE_SYSTEM_PACKAGE_REGISTRY
+  PATHS temp_pkg_path_controls)
+#@@ENDCASE
+
 #@@CASE dispatcher_set_target_properties_preserves_genex_semicolon_unquoted
 add_executable(t main.c)
 set_target_properties(t PROPERTIES MY_PROP $<$<CONFIG:Debug>:A;B>)
