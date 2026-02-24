@@ -2,7 +2,7 @@
 
 #include "evaluator_internal.h"
 
-bool h_break(Evaluator_Context *ctx, const Node *node) {
+bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (ctx->loop_depth == 0) {
         (void)eval_emit_diag(ctx,
@@ -18,7 +18,7 @@ bool h_break(Evaluator_Context *ctx, const Node *node) {
     return true;
 }
 
-bool h_continue(Evaluator_Context *ctx, const Node *node) {
+bool eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (ctx->loop_depth == 0) {
         (void)eval_emit_diag(ctx,
@@ -34,7 +34,7 @@ bool h_continue(Evaluator_Context *ctx, const Node *node) {
     return true;
 }
 
-bool h_return(Evaluator_Context *ctx, const Node *node) {
+bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
     (void)node;
     if (!ctx || eval_should_stop(ctx)) return false;
     ctx->return_requested = true;

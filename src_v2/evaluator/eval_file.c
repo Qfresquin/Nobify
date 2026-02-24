@@ -1616,7 +1616,7 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
     }
 }
 
-bool h_file(Evaluator_Context *ctx, const Node *node) {
+bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx) || args.count == 0) return !eval_should_stop(ctx);

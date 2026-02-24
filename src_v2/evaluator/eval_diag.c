@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 
-bool h_message(Evaluator_Context *ctx, const Node *node) {
+bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);

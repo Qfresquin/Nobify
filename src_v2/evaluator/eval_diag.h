@@ -4,7 +4,7 @@
 #include "parser.h"
 #include "evaluator.h"
 
-bool h_message(struct Evaluator_Context *ctx, const Node *node);
+bool eval_handle_message(struct Evaluator_Context *ctx, const Node *node);
 
 #endif // EVAL_DIAG_H_
 

@@ -9,7 +9,7 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
-bool h_set(Evaluator_Context *ctx, const Node *node) {
+bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx) || a.count == 0) return !eval_should_stop(ctx);
