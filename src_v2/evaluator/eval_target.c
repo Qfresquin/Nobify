@@ -4,7 +4,11 @@
 #include "sv_utils.h"
 #include "arena_dyn.h"
 
+#include <ctype.h>
 #include <string.h>
+
+static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
+static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 
 static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     if (!ctx) return false;
@@ -28,6 +32,141 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
     ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
     ev.as.target_prop_set.op = op;
     return emit_event(ctx, ev);
+}
+
+static bool emit_var_set(Evaluator_Context *ctx, Cmake_Event_Origin o, String_View key, String_View value) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_VAR_SET;
+    ev.origin = o;
+    ev.as.var_set.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.var_set.value = sv_copy_to_event_arena(ctx, value);
+    return emit_event(ctx, ev);
+}
+
+static String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < in.count; i++) {
+        buf[i] = (char)toupper((unsigned char)in.data[i]);
+    }
+    buf[in.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View merge_property_value_temp(Evaluator_Context *ctx,
+                                             String_View current,
+                                             String_View incoming,
+                                             Cmake_Target_Property_Op op) {
+    if (op == EV_PROP_SET) return incoming;
+    if (incoming.count == 0) return current;
+    if (current.count == 0) return incoming;
+
+    bool with_semicolon = (op == EV_PROP_APPEND_LIST);
+    size_t total = current.count + incoming.count + (with_semicolon ? 1 : 0);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, current.data, current.count);
+    off += current.count;
+    if (with_semicolon) buf[off++] = ';';
+    memcpy(buf + off, incoming.data, incoming.count);
+    off += incoming.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View make_property_store_key_temp(Evaluator_Context *ctx,
+                                                String_View scope_upper,
+                                                String_View object_id,
+                                                String_View prop_upper) {
+    static const char prefix[] = "NOBIFY_PROPERTY_";
+    bool has_obj = object_id.count > 0;
+    size_t total = (sizeof(prefix) - 1) + scope_upper.count + 2 + prop_upper.count;
+    if (has_obj) total += 2 + object_id.count;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix, sizeof(prefix) - 1);
+    off += sizeof(prefix) - 1;
+    memcpy(buf + off, scope_upper.data, scope_upper.count);
+    off += scope_upper.count;
+    buf[off++] = ':';
+    buf[off++] = ':';
+    if (has_obj) {
+        memcpy(buf + off, object_id.data, object_id.count);
+        off += object_id.count;
+        buf[off++] = ':';
+        buf[off++] = ':';
+    }
+    memcpy(buf + off, prop_upper.data, prop_upper.count);
+    off += prop_upper.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static bool is_current_directory_object(Evaluator_Context *ctx, String_View object_id) {
+    if (!ctx) return false;
+    if (object_id.count == 0) return true;
+    if (eval_sv_eq_ci_lit(object_id, ".")) return true;
+
+    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View cur_bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    if (svu_eq_ci_sv(object_id, cur_src)) return true;
+    if (svu_eq_ci_sv(object_id, cur_bin)) return true;
+    return false;
+}
+
+static bool set_non_target_property(Evaluator_Context *ctx,
+                                    Cmake_Event_Origin o,
+                                    String_View scope_upper,
+                                    String_View object_id,
+                                    String_View prop_key,
+                                    String_View value,
+                                    Cmake_Target_Property_Op op) {
+    String_View prop_upper = sv_to_upper_temp(ctx, prop_key);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View store_key = make_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View current = eval_var_get(ctx, store_key);
+    String_View merged = merge_property_value_temp(ctx, current, value, op);
+    if (eval_should_stop(ctx)) return false;
+
+    if (!eval_var_set(ctx, store_key, merged)) return false;
+    if (!emit_var_set(ctx, o, store_key, merged)) return false;
+
+    // Bridge common DIRECTORY properties to existing evaluator behavior.
+    if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY") && is_current_directory_object(ctx, object_id)) {
+        if (eval_sv_eq_ci_lit(prop_upper, "COMPILE_OPTIONS")) {
+            String_View cur = eval_var_get(ctx, nob_sv_from_cstr(k_global_opts_var));
+            String_View next = merge_property_value_temp(ctx, cur, value, op);
+            if (eval_should_stop(ctx)) return false;
+            if (!eval_var_set(ctx, nob_sv_from_cstr(k_global_opts_var), next)) return false;
+        } else if (eval_sv_eq_ci_lit(prop_upper, "COMPILE_DEFINITIONS")) {
+            String_View cur = eval_var_get(ctx, nob_sv_from_cstr(k_global_defs_var));
+            String_View next = merge_property_value_temp(ctx, cur, value, op);
+            if (eval_should_stop(ctx)) return false;
+            if (!eval_var_set(ctx, nob_sv_from_cstr(k_global_defs_var), next)) return false;
+        }
+    }
+
+    // Pragmatic CACHE behavior: PROPERTY VALUE mutates cache entry variable.
+    if (eval_sv_eq_ci_lit(scope_upper, "CACHE") && eval_sv_eq_ci_lit(prop_upper, "VALUE")) {
+        if (!eval_var_set(ctx, object_id, merged)) return false;
+
+        Cmake_Event ce = {0};
+        ce.kind = EV_SET_CACHE_ENTRY;
+        ce.origin = o;
+        ce.as.cache_entry.key = sv_copy_to_event_arena(ctx, object_id);
+        ce.as.cache_entry.value = sv_copy_to_event_arena(ctx, merged);
+        if (!emit_event(ctx, ce)) return false;
+    }
+
+    return true;
 }
 
 bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
@@ -380,24 +519,32 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("set_property() missing scope"),
-                       nob_sv_from_cstr("Usage: set_property(TARGET <t...> [APPEND|APPEND_STRING] PROPERTY <k> [v...])"));
+                       nob_sv_from_cstr("Usage: set_property(<GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE> ... PROPERTY <k> [v...])"));
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_sv_eq_ci_lit(a.items[0], "TARGET")) {
+    String_View scope = a.items[0];
+    bool is_target_scope = eval_sv_eq_ci_lit(scope, "TARGET");
+    bool is_global_scope = eval_sv_eq_ci_lit(scope, "GLOBAL");
+    bool is_dir_scope = eval_sv_eq_ci_lit(scope, "DIRECTORY");
+    bool is_source_scope = eval_sv_eq_ci_lit(scope, "SOURCE");
+    bool is_install_scope = eval_sv_eq_ci_lit(scope, "INSTALL");
+    bool is_test_scope = eval_sv_eq_ci_lit(scope, "TEST");
+    bool is_cache_scope = eval_sv_eq_ci_lit(scope, "CACHE");
+    if (!(is_target_scope || is_global_scope || is_dir_scope || is_source_scope || is_install_scope || is_test_scope || is_cache_scope)) {
         eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
+                       EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
-                       nob_sv_from_cstr("set_property() V1 supports only TARGET scope"),
-                       nob_sv_from_cstr("GLOBAL/DIRECTORY/SOURCE/INSTALL/TEST/CACHE scopes are ignored in v2"));
+                       nob_sv_from_cstr("set_property() unknown scope"),
+                       scope);
         return !eval_should_stop(ctx);
     }
 
     bool append = false;
     bool append_string = false;
-    SV_List targets = {0};
+    SV_List objects = {0};
 
     size_t i = 1;
     for (; i < a.count; i++) {
@@ -410,10 +557,10 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
             append_string = true;
             continue;
         }
-        if (!svu_list_push_temp(ctx, &targets, a.items[i])) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &objects, a.items[i])) return !eval_should_stop(ctx);
     }
 
-    if (targets.count == 0) {
+    if (is_target_scope && objects.count == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -424,13 +571,35 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
+    if (is_global_scope && objects.count > 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property(GLOBAL ...) does not take object names"),
+                       nob_sv_from_cstr("Use: set_property(GLOBAL PROPERTY <key> [value...])"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (!is_target_scope && !is_global_scope && !is_dir_scope && objects.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_property() scope requires at least one object"),
+                       nob_sv_from_cstr("SOURCE/INSTALL/TEST/CACHE require object names"));
+        return !eval_should_stop(ctx);
+    }
+
     if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
-                       nob_sv_from_cstr("set_property(TARGET ...) missing PROPERTY keyword"),
+                       nob_sv_from_cstr("set_property() missing PROPERTY keyword"),
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
@@ -441,7 +610,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
-                       nob_sv_from_cstr("set_property(TARGET ...) missing property key"),
+                       nob_sv_from_cstr("set_property() missing property key"),
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
@@ -467,11 +636,39 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr("Using APPEND_STRING behavior"));
     }
 
-    for (size_t ti = 0; ti < targets.count; ti++) {
-        if (!emit_target_prop_set(ctx, o, targets.items[ti], key, value, op)) {
+    if (is_target_scope) {
+        for (size_t ti = 0; ti < objects.count; ti++) {
+            if (!emit_target_prop_set(ctx, o, objects.items[ti], key, value, op)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    String_View scope_upper = sv_to_upper_temp(ctx, scope);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (is_global_scope) {
+        if (!set_non_target_property(ctx, o, scope_upper, nob_sv_from_cstr(""), key, value, op)) {
+            return !eval_should_stop(ctx);
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    if (is_dir_scope && objects.count == 0) {
+        String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+        if (!set_non_target_property(ctx, o, scope_upper, current_dir, key, value, op)) {
+            return !eval_should_stop(ctx);
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    for (size_t oi = 0; oi < objects.count; oi++) {
+        if (!set_non_target_property(ctx, o, scope_upper, objects.items[oi], key, value, op)) {
             return !eval_should_stop(ctx);
         }
     }
+
     return !eval_should_stop(ctx);
 }
 

@@ -346,8 +346,14 @@ set_property(TARGET t APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Debug>:-g>)
 set_property(TARGET t APPEND_STRING PROPERTY SUFFIX $<$<CONFIG:Debug>:_d>)
 #@@ENDCASE
 
-#@@CASE dispatcher_set_property_non_target_scope_emits_warning
+#@@CASE dispatcher_set_property_non_target_scopes_apply
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set_property(DIRECTORY PROPERTY COMPILE_OPTIONS -Wall)
+set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS -Wextra)
+set_property(DIRECTORY PROPERTY COMPILE_DEFINITIONS DIR_DEF=1)
+set_property(CACHE CACHED_X PROPERTY VALUE cache_ok)
+add_executable(non_target_prop main.c)
+target_compile_definitions(non_target_prop PRIVATE CACHED_X=${CACHED_X})
 #@@ENDCASE
 
 #@@CASE file_security_read_rejects_absolute_outside_project_scope
