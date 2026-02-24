@@ -1,6 +1,7 @@
 #include "eval_custom.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "eval_opt_parser.h"
 #include "arena_dyn.h"
 
@@ -12,40 +13,6 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
         return ctx_oom(ctx);
     }
     return true;
-}
-
-static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
-    return true;
-}
-
-static String_View sv_join_space_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
-    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) {
-        total += items[i].count;
-        if (i + 1 < count) total += 1;
-    }
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count > 0) {
-            memcpy(buf + off, items[i].data, items[i].count);
-            off += items[i].count;
-        }
-        if (i + 1 < count) {
-            buf[off++] = ' ';
-        }
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
 }
 
 static bool emit_target_prop_set(Evaluator_Context *ctx,
@@ -122,17 +89,17 @@ static bool add_custom_target_on_option(Evaluator_Context *ctx,
     switch (id) {
     case CUSTOM_TARGET_OPT_DEPENDS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
         }
         return true;
     case CUSTOM_TARGET_OPT_BYPRODUCTS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
         }
         return true;
     case CUSTOM_TARGET_OPT_SOURCES:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->sources, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->sources, values.items[i])) return false;
         }
         return true;
     case CUSTOM_TARGET_OPT_WORKING_DIRECTORY:
@@ -154,8 +121,8 @@ static bool add_custom_target_on_option(Evaluator_Context *ctx,
         size_t start = 0;
         if (values.count > 0 && eval_sv_eq_ci_lit(values.items[0], "ARGS")) start = 1;
         if (start < values.count) {
-            String_View cmd = sv_join_space_temp(ctx, &values.items[start], values.count - start);
-            if (!sv_list_push_temp(ctx, &st->commands, cmd)) return false;
+            String_View cmd = svu_join_space_temp(ctx, &values.items[start], values.count - start);
+            if (!svu_list_push_temp(ctx, &st->commands, cmd)) return false;
         }
         return true;
     }
@@ -228,7 +195,7 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
     switch (id) {
     case CUSTOM_CMD_OPT_OUTPUT:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->outputs, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->outputs, values.items[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_PRE_BUILD:
@@ -244,19 +211,19 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         size_t start = 0;
         if (values.count > 0 && eval_sv_eq_ci_lit(values.items[0], "ARGS")) start = 1;
         if (start < values.count) {
-            String_View cmd = sv_join_space_temp(ctx, &values.items[start], values.count - start);
-            if (!sv_list_push_temp(ctx, &st->commands, cmd)) return false;
+            String_View cmd = svu_join_space_temp(ctx, &values.items[start], values.count - start);
+            if (!svu_list_push_temp(ctx, &st->commands, cmd)) return false;
         }
         return true;
     }
     case CUSTOM_CMD_OPT_DEPENDS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_BYPRODUCTS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_MAIN_DEPENDENCY:
@@ -264,7 +231,7 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         return true;
     case CUSTOM_CMD_OPT_IMPLICIT_DEPENDS:
         for (size_t i = 1; i < values.count; i += 2) {
-            if (!sv_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_DEPFILE:
@@ -519,8 +486,8 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
-    if (opt.main_dependency.count > 0) (void)sv_list_push_temp(ctx, &opt.depends, opt.main_dependency);
-    if (opt.depfile.count > 0) (void)sv_list_push_temp(ctx, &opt.byproducts, opt.depfile);
+    if (opt.main_dependency.count > 0) (void)svu_list_push_temp(ctx, &opt.depends, opt.main_dependency);
+    if (opt.depfile.count > 0) (void)svu_list_push_temp(ctx, &opt.byproducts, opt.depfile);
 
     if (mode_target) {
         Cmake_Event ev = {0};

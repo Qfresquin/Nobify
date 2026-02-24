@@ -2,35 +2,13 @@
 
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
+#include "sv_utils.h"
 
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "pcre/pcre2posix.h"
-
-static String_View sv_join_no_sep_temp(Evaluator_Context *ctx, String_View *items, size_t count) {
-    if (!ctx || count == 0) return nob_sv_from_cstr("");
-
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) total += items[i].count;
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    if (!buf) {
-        ctx_oom(ctx);
-        return nob_sv_from_cstr("");
-    }
-
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count) {
-            memcpy(buf + off, items[i].data, items[i].count);
-            off += items[i].count;
-        }
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
 
 static size_t list_count_items(String_View list_sv) {
     if (list_sv.count == 0) return 0;
@@ -168,15 +146,6 @@ static bool math_parse_shift(Math_Parser *p, long long *out) {
     return true;
 }
 
-static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
-    return true;
-}
-
 static bool list_split_semicolon_preserve_empty(Evaluator_Context *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
     if (input.count == 0) return true;
@@ -186,7 +155,7 @@ static bool list_split_semicolon_preserve_empty(Evaluator_Context *ctx, String_V
     while (p <= end) {
         const char *q = p;
         while (q < end && *q != ';') q++;
-        if (!sv_list_push_temp(ctx, out, nob_sv_from_parts(p, (size_t)(q - p)))) return false;
+        if (!svu_list_push_temp(ctx, out, nob_sv_from_parts(p, (size_t)(q - p)))) return false;
         if (q == end) break;
         p = q + 1;
     }
@@ -422,7 +391,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 return !eval_should_stop(ctx);
             }
 
-            if (!sv_list_push_temp(ctx, &picked, list_items.items[(size_t)idx])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &picked, list_items.items[(size_t)idx])) return !eval_should_stop(ctx);
         }
 
         String_View out = eval_sv_join_semi_temp(ctx, picked.items, picked.count);
@@ -796,7 +765,7 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View out_var = a.items[1];
-    String_View expr_sv = (a.count == 3) ? a.items[2] : sv_join_no_sep_temp(ctx, &a.items[2], a.count - 2);
+    String_View expr_sv = (a.count == 3) ? a.items[2] : svu_join_no_sep_temp(ctx, &a.items[2], a.count - 2);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     char *expr_buf = (char*)arena_alloc(eval_temp_arena(ctx), expr_sv.count + 1);

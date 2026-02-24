@@ -1,6 +1,7 @@
 #include "eval_project.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 
 #include <string.h>
 #include <ctype.h>
@@ -14,17 +15,6 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
         return ctx_oom(ctx);
     }
     return true;
-}
-
-static String_View sv_concat_suffix_temp(Evaluator_Context *ctx, String_View base, const char *suffix) {
-    if (!ctx || !suffix) return nob_sv_from_cstr("");
-    size_t suffix_len = strlen(suffix);
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), base.count + suffix_len + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    if (base.count) memcpy(buf, base.data, base.count);
-    if (suffix_len) memcpy(buf + base.count, suffix, suffix_len);
-    buf[base.count + suffix_len] = '\0';
-    return nob_sv_from_cstr(buf);
 }
 
 static bool emit_items_from_list(Evaluator_Context *ctx,
@@ -71,21 +61,9 @@ static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
     return true;
 }
 
-static bool sv_has_prefix_ci_lit(String_View sv, const char *lit) {
-    if (!lit || sv.count == 0) return false;
-    size_t n = strlen(lit);
-    if (sv.count < n) return false;
-    for (size_t i = 0; i < n; i++) {
-        char a = (char)tolower((unsigned char)sv.data[i]);
-        char b = (char)tolower((unsigned char)lit[i]);
-        if (a != b) return false;
-    }
-    return true;
-}
-
 static bool is_cmp_policy_id(String_View sv) {
     if (sv.count != 7) return false;
-    if (!sv_has_prefix_ci_lit(sv, "CMP")) return false;
+    if (!svu_has_prefix_ci_lit(sv, "CMP")) return false;
     for (size_t i = 3; i < 7; i++) {
         if (!isdigit((unsigned char)sv.data[i])) return false;
     }
@@ -93,7 +71,7 @@ static bool is_cmp_policy_id(String_View sv) {
 }
 
 static String_View policy_key_from_id(Evaluator_Context *ctx, String_View policy_id) {
-    return sv_concat_suffix_temp(ctx, nob_sv_from_cstr("CMAKE_POLICY_"), eval_sv_to_cstr_temp(ctx, policy_id));
+    return svu_concat_suffix_temp(ctx, nob_sv_from_cstr("CMAKE_POLICY_"), eval_sv_to_cstr_temp(ctx, policy_id));
 }
 
 static void emit_policy_partial_warning_once(Evaluator_Context *ctx,
@@ -301,9 +279,9 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"), name);
     }
 
-    String_View key_src = sv_concat_suffix_temp(ctx, name, "_SOURCE_DIR");
-    String_View key_bin = sv_concat_suffix_temp(ctx, name, "_BINARY_DIR");
-    String_View key_ver = sv_concat_suffix_temp(ctx, name, "_VERSION");
+    String_View key_src = svu_concat_suffix_temp(ctx, name, "_SOURCE_DIR");
+    String_View key_bin = svu_concat_suffix_temp(ctx, name, "_BINARY_DIR");
+    String_View key_ver = svu_concat_suffix_temp(ctx, name, "_VERSION");
     (void)eval_var_set(ctx, key_src, project_src_dir);
     (void)eval_var_set(ctx, key_bin, project_bin_dir);
     (void)eval_var_set(ctx, key_ver, version);

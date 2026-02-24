@@ -1,6 +1,7 @@
 #include "eval_target.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "arena_dyn.h"
 
 #include <string.h>
@@ -29,31 +30,6 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
     return emit_event(ctx, ev);
 }
 
-static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
-    return true;
-}
-
-static String_View sv_join_no_sep_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
-    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) total += items[i].count;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count == 0) continue;
-        memcpy(buf + off, items[i].data, items[i].count);
-        off += items[i].count;
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
 bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -434,7 +410,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
             append_string = true;
             continue;
         }
-        if (!sv_list_push_temp(ctx, &targets, a.items[i])) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &targets, a.items[i])) return !eval_should_stop(ctx);
     }
 
     if (targets.count == 0) {
@@ -473,7 +449,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     String_View key = a.items[i++];
     String_View value = nob_sv_from_cstr("");
     if (i < a.count) {
-        if (append_string) value = sv_join_no_sep_temp(ctx, &a.items[i], a.count - i);
+        if (append_string) value = svu_join_no_sep_temp(ctx, &a.items[i], a.count - i);
         else value = eval_sv_join_semi_temp(ctx, &a.items[i], a.count - i);
     }
 

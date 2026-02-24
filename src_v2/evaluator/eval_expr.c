@@ -1,7 +1,7 @@
 #include "eval_expr.h"
 #include "evaluator_internal.h"
 #include "eval_dispatcher.h"
-
+#include "sv_utils.h"
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
@@ -90,10 +90,6 @@ static int sv_lex_cmp(String_View a, String_View b) {
     return 0;
 }
 
-static bool sv_is_path_sep(char c) {
-    return c == '/' || c == '\\';
-}
-
 static bool sv_is_drive_root(String_View sv) {
     return sv.count == 3 &&
            isalpha((unsigned char)sv.data[0]) &&
@@ -116,15 +112,15 @@ static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in
     int root_kind = 0;
     char drive_letter = '\0';
     size_t i = 0;
-    if (sv_is_path_sep(in.data[0])) {
+    if (svu_is_path_sep(in.data[0])) {
         root_kind = 1;
-        while (i < in.count && sv_is_path_sep(in.data[i])) i++;
+        while (i < in.count && svu_is_path_sep(in.data[i])) i++;
     } else if (in.count >= 2 && isalpha((unsigned char)in.data[0]) && in.data[1] == ':') {
         drive_letter = in.data[0];
         i = 2;
-        if (i < in.count && sv_is_path_sep(in.data[i])) {
+        if (i < in.count && svu_is_path_sep(in.data[i])) {
             root_kind = 2;
-            while (i < in.count && sv_is_path_sep(in.data[i])) i++;
+            while (i < in.count && svu_is_path_sep(in.data[i])) i++;
         } else {
             root_kind = 3;
         }
@@ -134,9 +130,9 @@ static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in
     size_t seg_off = 0;
     while (i < in.count) {
         size_t start = i;
-        while (i < in.count && !sv_is_path_sep(in.data[i])) i++;
+        while (i < in.count && !svu_is_path_sep(in.data[i])) i++;
         size_t len = i - start;
-        while (i < in.count && sv_is_path_sep(in.data[i])) i++;
+        while (i < in.count && svu_is_path_sep(in.data[i])) i++;
         if (len == 0) continue;
 
         bool is_dot = (len == 1 && in.data[start] == '.');

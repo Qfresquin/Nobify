@@ -1,6 +1,7 @@
 #include "eval_include.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "arena_dyn.h"
 
 #include <string.h>
@@ -32,22 +33,6 @@ static bool emit_dir_pop_event(Evaluator_Context *ctx, Cmake_Event_Origin origin
     return emit_event(ctx, ev);
 }
 
-static String_View sv_join_no_sep_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
-    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) total += items[i].count;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count == 0) continue;
-        memcpy(buf + off, items[i].data, items[i].count);
-        off += items[i].count;
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
 bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -77,7 +62,7 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     String_View key = nob_sv_from_cstr("");
     if (eval_sv_eq_ci_lit(mode, "GLOBAL")) {
         String_View parts[2] = {nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_GLOBAL::"), current_file};
-        key = sv_join_no_sep_temp(ctx, parts, 2);
+        key = svu_join_no_sep_temp(ctx, parts, 2);
     } else {
         String_View parts[4] = {
             nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_DIR::"),
@@ -85,7 +70,7 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
             nob_sv_from_cstr("::"),
             current_file
         };
-        key = sv_join_no_sep_temp(ctx, parts, 4);
+        key = svu_join_no_sep_temp(ctx, parts, 4);
     }
     if (ctx->oom) return !eval_should_stop(ctx);
 

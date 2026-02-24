@@ -2,6 +2,7 @@
 #include "evaluator_internal.h"
 #include "eval_expr.h"
 #include "eval_opt_parser.h"
+#include "sv_utils.h"
 #include "arena_dyn.h"
 #include "tinydir.h"
 
@@ -19,7 +20,6 @@
 #include <glob.h>
 #endif
 
-static bool ch_is_sep(char c) { return c == '/' || c == '\\'; }
 static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
 
 static String_View current_src_dir(Evaluator_Context *ctx) {
@@ -55,8 +55,8 @@ static bool parse_size_sv(String_View sv, size_t *out) {
 static bool is_path_safe(String_View path) {
     if (eval_sv_eq_ci_lit(path, "..")) return false;
     for (size_t i = 0; i + 2 < path.count; i++) {
-        if (path.data[i] == '.' && path.data[i + 1] == '.' && ch_is_sep(path.data[i + 2])) return false;
-        if (ch_is_sep(path.data[i]) && path.data[i + 1] == '.' && path.data[i + 2] == '.') return false;
+        if (path.data[i] == '.' && path.data[i + 1] == '.' && svu_is_path_sep(path.data[i + 2])) return false;
+        if (svu_is_path_sep(path.data[i]) && path.data[i + 1] == '.' && path.data[i + 2] == '.') return false;
     }
     return true;
 }
@@ -81,7 +81,7 @@ static bool scope_is_root_like(String_View p) {
 }
 
 static String_View scope_trim_trailing_seps(String_View p) {
-    while (p.count > 0 && ch_is_sep(p.data[p.count - 1]) && !scope_is_root_like(p)) {
+    while (p.count > 0 && svu_is_path_sep(p.data[p.count - 1]) && !scope_is_root_like(p)) {
         p.count--;
     }
     return p;
@@ -99,7 +99,7 @@ static bool scope_path_has_prefix(String_View path, String_View prefix, bool ci)
 
     if (path.count == prefix.count) return true;
     if (prefix.data[prefix.count - 1] == '/' || prefix.data[prefix.count - 1] == '\\') return true;
-    return ch_is_sep(path.data[prefix.count]);
+    return svu_is_path_sep(path.data[prefix.count]);
 }
 
 static void scope_normalize_slashes_in_place(char *s) {
@@ -292,7 +292,7 @@ static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View i
     if (!ctx) return nob_sv_from_cstr("");
     if (input.count == 0) return nob_sv_from_cstr("");
 
-    bool is_unc = input.count >= 2 && ch_is_sep(input.data[0]) && ch_is_sep(input.data[1]);
+    bool is_unc = input.count >= 2 && svu_is_path_sep(input.data[0]) && svu_is_path_sep(input.data[1]);
     bool has_drive = input.count >= 2 &&
                      isalpha((unsigned char)input.data[0]) &&
                      input.data[1] == ':';
@@ -303,13 +303,13 @@ static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View i
         pos = 2;
     } else if (has_drive) {
         pos = 2;
-        if (pos < input.count && ch_is_sep(input.data[pos])) {
+        if (pos < input.count && svu_is_path_sep(input.data[pos])) {
             absolute = true;
-            while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+            while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
         }
-    } else if (ch_is_sep(input.data[0])) {
+    } else if (svu_is_path_sep(input.data[0])) {
         absolute = true;
-        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
     }
 
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 3);
@@ -319,7 +319,7 @@ static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View i
     if (is_unc) {
         buf[off++] = '/';
         buf[off++] = '/';
-        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
     } else if (has_drive) {
         buf[off++] = input.data[0];
         buf[off++] = ':';
@@ -331,7 +331,7 @@ static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View i
     bool prev_sep = (off > 0 && buf[off - 1] == '/');
     for (; pos < input.count; pos++) {
         char c = input.data[pos];
-        if (ch_is_sep(c)) {
+        if (svu_is_path_sep(c)) {
             if (!prev_sep) {
                 buf[off++] = '/';
                 prev_sep = true;
@@ -439,7 +439,7 @@ static bool glob_match_sv(String_View pat, String_View str, bool ci) {
             }
 
             if (pc == '?') {
-                if (!ch_is_sep(sc)) {
+                if (!svu_is_path_sep(sc)) {
                     pi++;
                     si++;
                     continue;
@@ -447,7 +447,7 @@ static bool glob_match_sv(String_View pat, String_View str, bool ci) {
             }
 
             if (pc == '[') {
-                if (!ch_is_sep(sc)) {
+                if (!svu_is_path_sep(sc)) {
                     size_t j = pi + 1;
                     while (j < pat.count && pat.data[j] != ']') j++;
 
@@ -500,7 +500,7 @@ static bool glob_match_sv(String_View pat, String_View str, bool ci) {
         }
 
         if (star_pi != (size_t)-1) {
-            if (star_si < str.count && ch_is_sep(str.data[star_si])) {
+            if (star_si < str.count && svu_is_path_sep(str.data[star_si])) {
                 star_pi = (size_t)-1;
             } else {
                 pi = star_pi + 1;
@@ -571,16 +571,6 @@ static bool posix_glob_collect(Evaluator_Context *ctx,
 }
 #endif
 
-static String_View sv_dirname(String_View path) {
-    for (size_t i = path.count; i-- > 0;) {
-        if (ch_is_sep(path.data[i])) {
-            if (i == 0) return nob_sv_from_parts(path.data, 1); // "/" root
-            return nob_sv_from_parts(path.data, i);
-        }
-    }
-    return nob_sv_from_cstr(".");
-}
-
 static String_View glob_base_dir(String_View pattern_abs) {
     size_t first_meta = pattern_abs.count;
     for (size_t i = 0; i < pattern_abs.count; i++) {
@@ -590,9 +580,9 @@ static String_View glob_base_dir(String_View pattern_abs) {
             break;
         }
     }
-    if (first_meta == pattern_abs.count) return sv_dirname(pattern_abs);
+    if (first_meta == pattern_abs.count) return svu_dirname(pattern_abs);
     if (first_meta == 0) return nob_sv_from_cstr(".");
-    return sv_dirname(nob_sv_from_parts(pattern_abs.data, first_meta));
+    return svu_dirname(nob_sv_from_parts(pattern_abs.data, first_meta));
 }
 
 static bool sv_path_prefix_eq(String_View path, String_View prefix, bool ci) {
@@ -600,7 +590,7 @@ static bool sv_path_prefix_eq(String_View path, String_View prefix, bool ci) {
     for (size_t i = 0; i < prefix.count; i++) {
         char a = path.data[i];
         char b = prefix.data[i];
-        if (ch_is_sep(a) && ch_is_sep(b)) continue;
+        if (svu_is_path_sep(a) && svu_is_path_sep(b)) continue;
         if (ci) {
             a = (char)tolower((unsigned char)a);
             b = (char)tolower((unsigned char)b);
@@ -614,7 +604,7 @@ static String_View sv_make_relative(String_View path, String_View base, bool ci)
     if (base.count == 0) return path;
     if (!sv_path_prefix_eq(path, base, ci)) return path;
     size_t off = base.count;
-    if (off < path.count && ch_is_sep(path.data[off])) off++;
+    if (off < path.count && svu_is_path_sep(path.data[off])) off++;
     return nob_sv_from_parts(path.data + off, path.count - off);
 }
 

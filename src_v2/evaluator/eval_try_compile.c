@@ -1,6 +1,7 @@
 #include "eval_try_compile.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "eval_opt_parser.h"
 #include "arena_dyn.h"
 
@@ -17,66 +18,10 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
-static String_View sv_dirname(String_View path) {
-    for (size_t i = path.count; i-- > 0;) {
-        char c = path.data[i];
-        if (c == '/' || c == '\\') {
-            if (i == 0) return nob_sv_from_parts(path.data, 1);
-            return nob_sv_from_parts(path.data, i);
-        }
-    }
-    return nob_sv_from_cstr(".");
-}
-
 static bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
     return nob_file_exists(path_c) != 0;
-}
-
-static String_View sv_concat_suffix_temp(Evaluator_Context *ctx, String_View base, const char *suffix) {
-    if (!ctx || !suffix) return nob_sv_from_cstr("");
-    size_t suffix_len = strlen(suffix);
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), base.count + suffix_len + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    if (base.count) memcpy(buf, base.data, base.count);
-    if (suffix_len) memcpy(buf + base.count, suffix, suffix_len);
-    buf[base.count + suffix_len] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
-static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
-    return true;
-}
-
-static String_View sv_join_space_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
-    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) {
-        total += items[i].count;
-        if (i + 1 < count) total += 1;
-    }
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count > 0) {
-            memcpy(buf + off, items[i].data, items[i].count);
-            off += items[i].count;
-        }
-        if (i + 1 < count) {
-            buf[off++] = ' ';
-        }
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
 }
 
 static bool mkdir_p_local(const char *path) {
@@ -223,7 +168,7 @@ static bool try_compile_emit_cache_result_if_needed(Evaluator_Context *ctx,
 
 static bool try_compile_add_source(Evaluator_Context *ctx, Try_Compile_Option_State *st, String_View source) {
     if (!ctx || !st) return false;
-    return sv_list_push_temp(ctx, &st->sources, source);
+    return svu_list_push_temp(ctx, &st->sources, source);
 }
 
 static bool try_compile_write_generated_source(Evaluator_Context *ctx,
@@ -266,7 +211,7 @@ static bool try_compile_on_option(Evaluator_Context *ctx,
             st,
             values.items[0],
             values.count > 1
-                ? sv_join_space_temp(ctx, &values.items[1], values.count - 1)
+                ? svu_join_space_temp(ctx, &values.items[1], values.count - 1)
                 : nob_sv_from_cstr(""));
     case TRY_COMPILE_OPT_SOURCE_FROM_VAR:
         if (values.count < 2) return true;
@@ -416,7 +361,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         if (output_var.count > 0) {
             String_View out_msg = compile_ok
                 ? (log_description.count > 0 ? log_description : nob_sv_from_cstr("try_compile(PROJECT) simulated success"))
-                : sv_concat_suffix_temp(ctx, nob_sv_from_cstr("try_compile project source directory missing CMakeLists.txt: "),
+                : svu_concat_suffix_temp(ctx, nob_sv_from_cstr("try_compile project source directory missing CMakeLists.txt: "),
                                         eval_sv_to_cstr_temp(ctx, source_dir_raw));
             (void)eval_var_set(ctx, output_var, out_msg);
         }
@@ -529,7 +474,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         if (!eval_sv_is_abs_path(dst)) {
             dst = eval_sv_path_join(eval_temp_arena(ctx), current_bin, dst);
         }
-        String_View dst_parent = sv_dirname(dst);
+        String_View dst_parent = svu_dirname(dst);
         char *dst_parent_c = eval_sv_to_cstr_temp(ctx, dst_parent);
         EVAL_OOM_RETURN_IF_NULL(ctx, dst_parent_c, !eval_should_stop(ctx));
         (void)mkdir_p_local(dst_parent_c);
@@ -550,7 +495,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         String_View out_msg = compile_ok
             ? (opt.log_description.count > 0 ? opt.log_description : nob_sv_from_cstr("try_compile simulated success"))
             : (missing_hint.count > 0
-                ? sv_concat_suffix_temp(ctx, nob_sv_from_cstr("try_compile source file not found: "),
+                ? svu_concat_suffix_temp(ctx, nob_sv_from_cstr("try_compile source file not found: "),
                                         eval_sv_to_cstr_temp(ctx, missing_hint))
                 : nob_sv_from_cstr("try_compile requires at least one source"));
         (void)eval_var_set(ctx, opt.output_var, out_msg);

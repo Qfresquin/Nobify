@@ -1,6 +1,7 @@
-﻿#include "eval_package.h"
+#include "eval_package.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "eval_expr.h"
 #include "eval_opt_parser.h"
 #include "arena_dyn.h"
@@ -17,32 +18,10 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
-static String_View sv_dirname(String_View path) {
-    for (size_t i = path.count; i-- > 0;) {
-        char c = path.data[i];
-        if (c == '/' || c == '\\') {
-            if (i == 0) return nob_sv_from_parts(path.data, 1);
-            return nob_sv_from_parts(path.data, i);
-        }
-    }
-    return nob_sv_from_cstr(".");
-}
-
 static bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
     return nob_file_exists(path_c) != 0;
-}
-
-static String_View sv_concat_suffix_temp(Evaluator_Context *ctx, String_View base, const char *suffix) {
-    if (!ctx || !suffix) return nob_sv_from_cstr("");
-    size_t suffix_len = strlen(suffix);
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), base.count + suffix_len + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    if (base.count) memcpy(buf, base.data, base.count);
-    if (suffix_len) memcpy(buf + base.count, suffix, suffix_len);
-    buf[base.count + suffix_len] = '\0';
-    return nob_sv_from_cstr(buf);
 }
 
 static String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
@@ -54,15 +33,6 @@ static String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
     }
     buf[in.count] = '\0';
     return nob_sv_from_cstr(buf);
-}
-
-static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
-    return true;
 }
 
 static bool find_package_try_module(Evaluator_Context *ctx,
@@ -84,7 +54,7 @@ static bool find_package_try_module(Evaluator_Context *ctx,
 
     String_View module_name = nob_sv_from_cstr("");
     {
-        String_View tmp = sv_concat_suffix_temp(ctx, pkg, ".cmake");
+        String_View tmp = svu_concat_suffix_temp(ctx, pkg, ".cmake");
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), tmp.count + 5);
         EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
         memcpy(buf, "Find", 4);
@@ -206,14 +176,14 @@ static bool find_package_try_config(Evaluator_Context *ctx,
 
     String_View config_names[3] = {0};
     size_t config_name_count = 0;
-    config_names[config_name_count++] = sv_concat_suffix_temp(ctx, pkg, "Config.cmake");
-    config_names[config_name_count++] = sv_concat_suffix_temp(ctx, pkg, "-config.cmake");
+    config_names[config_name_count++] = svu_concat_suffix_temp(ctx, pkg, "Config.cmake");
+    config_names[config_name_count++] = svu_concat_suffix_temp(ctx, pkg, "-config.cmake");
     String_View lower_pkg = sv_to_lower_temp(ctx, pkg);
     if (lower_pkg.count > 0) {
-        config_names[config_name_count++] = sv_concat_suffix_temp(ctx, lower_pkg, "-config.cmake");
+        config_names[config_name_count++] = svu_concat_suffix_temp(ctx, lower_pkg, "-config.cmake");
     }
 
-    String_View dir_var = sv_concat_suffix_temp(ctx, pkg, "_DIR");
+    String_View dir_var = svu_concat_suffix_temp(ctx, pkg, "_DIR");
     String_View pkg_dir = eval_var_get(ctx, dir_var);
     if (pkg_dir.count > 0) {
         String_View dir = pkg_dir;
@@ -405,18 +375,18 @@ static bool find_package_parse_on_option(Evaluator_Context *ctx,
         return true;
     case FIND_PKG_OPT_COMPONENTS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->components, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->components, values.items[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_OPTIONAL_COMPONENTS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->optional_components, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->optional_components, values.items[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_HINTS:
     case FIND_PKG_OPT_PATHS:
         for (size_t i = 0; i < values.count; i++) {
-            if (!sv_list_push_temp(ctx, &st->prefixes, values.items[i])) return false;
+            if (!svu_list_push_temp(ctx, &st->prefixes, values.items[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_NO_DEFAULT_PATH:
@@ -507,7 +477,7 @@ static bool find_package_resolve(Evaluator_Context *ctx,
 static String_View find_package_guess_version_path(Evaluator_Context *ctx,
                                                    String_View config_path) {
     if (!ctx || config_path.count == 0) return nob_sv_from_cstr("");
-    String_View dir = sv_dirname(config_path);
+    String_View dir = svu_dirname(config_path);
     size_t name_off = 0;
     for (size_t i = config_path.count; i-- > 0;) {
         char c = config_path.data[i];
@@ -521,12 +491,12 @@ static String_View find_package_guess_version_path(Evaluator_Context *ctx,
     String_View base = nob_sv_from_parts(config_path.data + name_off, name_len);
     if (base.count >= 12 && eval_sv_eq_ci_lit(nob_sv_from_parts(base.data + base.count - 12, 12), "Config.cmake")) {
         String_View stem = nob_sv_from_parts(base.data, base.count - 12);
-        String_View version_name = sv_concat_suffix_temp(ctx, stem, "ConfigVersion.cmake");
+        String_View version_name = svu_concat_suffix_temp(ctx, stem, "ConfigVersion.cmake");
         return eval_sv_path_join(eval_temp_arena(ctx), dir, version_name);
     }
     if (base.count >= 13 && eval_sv_eq_ci_lit(nob_sv_from_parts(base.data + base.count - 13, 13), "-config.cmake")) {
         String_View stem = nob_sv_from_parts(base.data, base.count - 13);
-        String_View version_name = sv_concat_suffix_temp(ctx, stem, "-config-version.cmake");
+        String_View version_name = svu_concat_suffix_temp(ctx, stem, "-config-version.cmake");
         return eval_sv_path_join(eval_temp_arena(ctx), dir, version_name);
     }
     return nob_sv_from_cstr("");
@@ -543,13 +513,13 @@ static bool find_package_requested_version_matches(const Find_Package_Options *o
 
 static void find_package_seed_find_context_vars(Evaluator_Context *ctx, const Find_Package_Options *opt) {
     if (!ctx || !opt) return;
-    String_View key_required = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED");
-    String_View key_quiet = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_QUIETLY");
-    String_View key_ver = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_VERSION");
-    String_View key_exact = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_VERSION_EXACT");
-    String_View key_comps = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_COMPONENTS");
-    String_View key_req_comps = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED_COMPONENTS");
-    String_View key_opt_comps = sv_concat_suffix_temp(ctx, opt->pkg, "_FIND_OPTIONAL_COMPONENTS");
+    String_View key_required = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED");
+    String_View key_quiet = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_QUIETLY");
+    String_View key_ver = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_VERSION");
+    String_View key_exact = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_VERSION_EXACT");
+    String_View key_comps = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_COMPONENTS");
+    String_View key_req_comps = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED_COMPONENTS");
+    String_View key_opt_comps = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_OPTIONAL_COMPONENTS");
 
     (void)eval_var_set(ctx, key_required, opt->required ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
     (void)eval_var_set(ctx, key_quiet, opt->quiet ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
@@ -568,12 +538,12 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
                                       const Find_Package_Options *opt,
                                       bool *io_found,
                                       String_View found_path) {
-    String_View found_key = sv_concat_suffix_temp(ctx, opt->pkg, "_FOUND");
-    String_View dir_key = sv_concat_suffix_temp(ctx, opt->pkg, "_DIR");
-    String_View cfg_key = sv_concat_suffix_temp(ctx, opt->pkg, "_CONFIG");
+    String_View found_key = svu_concat_suffix_temp(ctx, opt->pkg, "_FOUND");
+    String_View dir_key = svu_concat_suffix_temp(ctx, opt->pkg, "_DIR");
+    String_View cfg_key = svu_concat_suffix_temp(ctx, opt->pkg, "_CONFIG");
 
     if (*io_found) {
-        String_View dir = sv_dirname(found_path);
+        String_View dir = svu_dirname(found_path);
         (void)eval_var_set(ctx, dir_key, dir);
         (void)eval_var_set(ctx, cfg_key, found_path);
 
@@ -611,7 +581,7 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
         }
 
         if (*io_found && opt->requested_version.count > 0) {
-            String_View pkg_ver_key = sv_concat_suffix_temp(ctx, opt->pkg, "_VERSION");
+            String_View pkg_ver_key = svu_concat_suffix_temp(ctx, opt->pkg, "_VERSION");
             String_View actual = eval_var_get(ctx, pkg_ver_key);
             if (actual.count == 0) actual = eval_var_get(ctx, nob_sv_from_cstr("PACKAGE_VERSION"));
             if (!find_package_requested_version_matches(opt, actual)) {

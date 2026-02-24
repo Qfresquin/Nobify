@@ -1,6 +1,6 @@
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
-
+#include "sv_utils.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,8 +98,6 @@ bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_Lis
     return true;
 }
 
-static bool ch_is_sep(char c) { return c == '/' || c == '\\'; }
-
 bool eval_sv_is_abs_path(String_View p) {
     if (p.count == 0) return false;
     if ((p.count >= 2) &&
@@ -117,7 +115,7 @@ String_View eval_sv_path_join(Arena *arena, String_View a, String_View b) {
     if (a.count == 0) return sv_copy_to_arena(arena, b);
     if (b.count == 0) return sv_copy_to_arena(arena, a);
 
-    bool need_slash = !ch_is_sep(a.data[a.count - 1]);
+    bool need_slash = !svu_is_path_sep(a.data[a.count - 1]);
     size_t total = a.count + (need_slash ? 1 : 0) + b.count;
 
     char *buf = (char*)arena_alloc(arena, total + 1);

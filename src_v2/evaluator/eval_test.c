@@ -1,6 +1,7 @@
 #include "eval_test.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "eval_opt_parser.h"
 
 #include <string.h>
@@ -13,30 +14,6 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
-static String_View sv_join_space_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
-    if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) {
-        total += items[i].count;
-        if (i + 1 < count) total += 1;
-    }
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (items[i].count > 0) {
-            memcpy(buf + off, items[i].data, items[i].count);
-            off += items[i].count;
-        }
-        if (i + 1 < count) {
-            buf[off++] = ' ';
-        }
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
 bool eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -174,7 +151,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        command = sv_join_space_temp(ctx, &a.items[cmd_start], cmd_end - cmd_start);
+        command = svu_join_space_temp(ctx, &a.items[cmd_start], cmd_end - cmd_start);
 
         Add_Test_Option_State st = {
             .origin = o,
@@ -204,7 +181,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         command_expand_lists = st.command_expand_lists;
     } else {
         name = a.items[0];
-        command = sv_join_space_temp(ctx, &a.items[1], a.count - 1);
+        command = svu_join_space_temp(ctx, &a.items[1], a.count - 1);
     }
 
     Cmake_Event ev = {0};

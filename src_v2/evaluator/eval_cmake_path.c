@@ -1,49 +1,16 @@
 #include "eval_cmake_path.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 #include "arena_dyn.h"
 
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 
-static bool sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
-    return true;
-}
-
-static bool sv_has_prefix_ci_lit(String_View sv, const char *lit) {
-    if (!lit || sv.count == 0) return false;
-    size_t n = strlen(lit);
-    if (sv.count < n) return false;
-    for (size_t i = 0; i < n; i++) {
-        char a = (char)tolower((unsigned char)sv.data[i]);
-        char b = (char)tolower((unsigned char)lit[i]);
-        if (a != b) return false;
-    }
-    return true;
-}
-static bool sv_eq_ci_sv(String_View a, String_View b) {
-    if (a.count != b.count) return false;
-    for (size_t i = 0; i < a.count; i++) {
-        char ca = (char)tolower((unsigned char)a.data[i]);
-        char cb = (char)tolower((unsigned char)b.data[i]);
-        if (ca != cb) return false;
-    }
-    return true;
-}
-
-static bool ch_is_sep(char c) {
-    return c == '/' || c == '\\';
-}
-
 static size_t path_last_separator_index(String_View path) {
     for (size_t i = path.count; i > 0; i--) {
-        if (ch_is_sep(path.data[i - 1])) return i - 1;
+        if (svu_is_path_sep(path.data[i - 1])) return i - 1;
     }
     return SIZE_MAX;
 }
@@ -57,11 +24,11 @@ static String_View cmk_path_root_name_sv(String_View path) {
 
 static String_View cmk_path_root_directory_sv(String_View path) {
     if (path.count == 0) return nob_sv_from_cstr("");
-    if (ch_is_sep(path.data[0])) return nob_sv_from_cstr("/");
+    if (svu_is_path_sep(path.data[0])) return nob_sv_from_cstr("/");
     if (path.count >= 3 &&
         isalpha((unsigned char)path.data[0]) &&
         path.data[1] == ':' &&
-        ch_is_sep(path.data[2])) {
+        svu_is_path_sep(path.data[2])) {
         return nob_sv_from_cstr("/");
     }
     return nob_sv_from_cstr("");
@@ -110,7 +77,7 @@ static String_View cmk_path_relative_part_temp(Evaluator_Context *ctx, String_Vi
     if (root.count == 0) return path;
     if (path.count <= root.count) return nob_sv_from_cstr("");
     String_View rel = nob_sv_from_parts(path.data + root.count, path.count - root.count);
-    while (rel.count > 0 && ch_is_sep(rel.data[0])) {
+    while (rel.count > 0 && svu_is_path_sep(rel.data[0])) {
         rel = nob_sv_from_parts(rel.data + 1, rel.count - 1);
     }
     return rel;
@@ -137,32 +104,32 @@ static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View i
     size_t pos = 0;
     if (has_drive) {
         pos = 2;
-        if (pos < input.count && ch_is_sep(input.data[pos])) {
+        if (pos < input.count && svu_is_path_sep(input.data[pos])) {
             absolute = true;
-            while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+            while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
         }
-    } else if (ch_is_sep(input.data[0])) {
+    } else if (svu_is_path_sep(input.data[0])) {
         absolute = true;
-        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
     }
 
     SV_List segments = {0};
     while (pos < input.count) {
         size_t start = pos;
-        while (pos < input.count && !ch_is_sep(input.data[pos])) pos++;
+        while (pos < input.count && !svu_is_path_sep(input.data[pos])) pos++;
         String_View seg = nob_sv_from_parts(input.data + start, pos - start);
-        while (pos < input.count && ch_is_sep(input.data[pos])) pos++;
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
 
         if (seg.count == 0 || nob_sv_eq(seg, nob_sv_from_cstr("."))) continue;
         if (nob_sv_eq(seg, nob_sv_from_cstr(".."))) {
             if (segments.count > 0 && !nob_sv_eq(segments.items[segments.count - 1], nob_sv_from_cstr(".."))) {
                 segments.count--;
             } else if (!absolute) {
-                if (!sv_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
+                if (!svu_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
             }
             continue;
         }
-        if (!sv_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
+        if (!svu_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
     }
 
     size_t total = 0;
@@ -214,12 +181,12 @@ static void cmk_path_collect_segments_after_root(Evaluator_Context *ctx,
                                                  SV_List *out) {
     if (!ctx || !out) return;
     size_t pos = root.count;
-    while (pos < path.count && ch_is_sep(path.data[pos])) pos++;
+    while (pos < path.count && svu_is_path_sep(path.data[pos])) pos++;
     while (pos < path.count) {
         size_t start = pos;
-        while (pos < path.count && !ch_is_sep(path.data[pos])) pos++;
-        if (pos > start) (void)sv_list_push_temp(ctx, out, nob_sv_from_parts(path.data + start, pos - start));
-        while (pos < path.count && ch_is_sep(path.data[pos])) pos++;
+        while (pos < path.count && !svu_is_path_sep(path.data[pos])) pos++;
+        if (pos > start) (void)svu_list_push_temp(ctx, out, nob_sv_from_parts(path.data + start, pos - start));
+        while (pos < path.count && svu_is_path_sep(path.data[pos])) pos++;
     }
 }
 
@@ -230,7 +197,7 @@ static String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View 
 
     String_View root_a = cmk_path_root_path_temp(ctx, a);
     String_View root_b = cmk_path_root_path_temp(ctx, b);
-    if (!sv_eq_ci_sv(root_a, root_b)) return a;
+    if (!svu_eq_ci_sv(root_a, root_b)) return a;
 
     SV_List seg_a = {0};
     SV_List seg_b = {0};
@@ -239,7 +206,7 @@ static String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View 
     if (ctx->oom) return nob_sv_from_cstr("");
 
     size_t common = 0;
-    while (common < seg_a.count && common < seg_b.count && sv_eq_ci_sv(seg_a.items[common], seg_b.items[common])) {
+    while (common < seg_a.count && common < seg_b.count && svu_eq_ci_sv(seg_a.items[common], seg_b.items[common])) {
         common++;
     }
 
@@ -420,7 +387,7 @@ bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (sv_has_prefix_ci_lit(mode, "HAS_") && a.count >= 3) {
+    if (svu_has_prefix_ci_lit(mode, "HAS_") && a.count >= 3) {
         String_View path_var = a.items[1];
         String_View value = eval_var_get(ctx, path_var);
         if (value.count == 0) value = path_var;
@@ -434,7 +401,7 @@ bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (sv_has_prefix_ci_lit(mode, "IS_") && a.count >= 3) {
+    if (svu_has_prefix_ci_lit(mode, "IS_") && a.count >= 3) {
         String_View path_var = a.items[1];
         String_View value = eval_var_get(ctx, path_var);
         if (value.count == 0) value = path_var;
