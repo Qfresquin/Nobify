@@ -733,10 +733,6 @@ static bool h_add_library(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
-// add_custom_*() foi movido para eval_custom.c (eval_handle_add_custom_target/eval_handle_add_custom_command).
-
-// try_compile() foi movido para eval_try_compile.c (eval_handle_try_compile).
-
 static bool h_include_guard(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -950,14 +946,6 @@ static bool h_cmake_path(Evaluator_Context *ctx, const Node *node) {
                    nob_sv_from_cstr("Implemented: SET, GET, APPEND, NORMAL_PATH, RELATIVE_PATH, COMPARE, HAS_*, IS_*"));
     return !eval_should_stop(ctx);
 }
-
-// target_*()/set_target_properties()/set_property() foi movido para eval_target.c.
-
-// add_*_options()/add_definitions()/link_libraries()/include_directories()/link_directories() foi movido para eval_directory.c.
-
-// enable_testing()/add_test() foi movido para eval_test.c (eval_handle_enable_testing/eval_handle_add_test).
-
-// install() foi movido para eval_install.c (eval_handle_install).
 
 static bool h_include(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
