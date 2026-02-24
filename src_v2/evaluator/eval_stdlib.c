@@ -5,6 +5,8 @@
 #include "sv_utils.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -51,6 +53,71 @@ static bool math_emit_error(Math_Parser *p, const char *cause) {
     return false;
 }
 
+static bool math_checked_neg(Math_Parser *p, long long value, long long *out) {
+    if (value == LLONG_MIN) return math_emit_error(p, "Integer overflow in unary minus");
+    *out = -value;
+    return true;
+}
+
+static bool math_checked_add(Math_Parser *p, long long lhs, long long rhs, long long *out) {
+    if ((rhs > 0 && lhs > LLONG_MAX - rhs) ||
+        (rhs < 0 && lhs < LLONG_MIN - rhs)) {
+        return math_emit_error(p, "Integer overflow in addition");
+    }
+    *out = lhs + rhs;
+    return true;
+}
+
+static bool math_checked_sub(Math_Parser *p, long long lhs, long long rhs, long long *out) {
+    if ((rhs > 0 && lhs < LLONG_MIN + rhs) ||
+        (rhs < 0 && lhs > LLONG_MAX + rhs)) {
+        return math_emit_error(p, "Integer overflow in subtraction");
+    }
+    *out = lhs - rhs;
+    return true;
+}
+
+static bool math_checked_mul(Math_Parser *p, long long lhs, long long rhs, long long *out) {
+    if (lhs == 0 || rhs == 0) {
+        *out = 0;
+        return true;
+    }
+    if ((lhs == -1 && rhs == LLONG_MIN) || (rhs == -1 && lhs == LLONG_MIN)) {
+        return math_emit_error(p, "Integer overflow in multiplication");
+    }
+
+    if (lhs > 0) {
+        if (rhs > 0) {
+            if (lhs > LLONG_MAX / rhs) return math_emit_error(p, "Integer overflow in multiplication");
+        } else {
+            if (rhs < LLONG_MIN / lhs) return math_emit_error(p, "Integer overflow in multiplication");
+        }
+    } else {
+        if (rhs > 0) {
+            if (lhs < LLONG_MIN / rhs) return math_emit_error(p, "Integer overflow in multiplication");
+        } else {
+            if (lhs < LLONG_MAX / rhs) return math_emit_error(p, "Integer overflow in multiplication");
+        }
+    }
+
+    *out = lhs * rhs;
+    return true;
+}
+
+static bool math_checked_div(Math_Parser *p, long long lhs, long long rhs, long long *out) {
+    if (rhs == 0) return math_emit_error(p, "Division by zero");
+    if (lhs == LLONG_MIN && rhs == -1) return math_emit_error(p, "Integer overflow in division");
+    *out = lhs / rhs;
+    return true;
+}
+
+static bool math_checked_mod(Math_Parser *p, long long lhs, long long rhs, long long *out) {
+    if (rhs == 0) return math_emit_error(p, "Division by zero");
+    if (lhs == LLONG_MIN && rhs == -1) return math_emit_error(p, "Integer overflow in modulo");
+    *out = lhs % rhs;
+    return true;
+}
+
 static bool math_parse_expr(Math_Parser *p, long long *out);
 static bool math_parse_bitor(Math_Parser *p, long long *out);
 static bool math_parse_bitxor(Math_Parser *p, long long *out);
@@ -62,8 +129,10 @@ static bool math_parse_number(Math_Parser *p, long long *out) {
     math_skip_ws(p);
     const char *start = p->s + p->pos;
     char *end = NULL;
+    errno = 0;
     long long v = strtoll(start, &end, 0);
     if (end == start) return false;
+    if (errno == ERANGE) return math_emit_error(p, "Integer literal out of range in expression");
     p->pos += (size_t)(end - start);
     *out = v;
     return true;
@@ -90,8 +159,7 @@ static bool math_parse_factor(Math_Parser *p, long long *out) {
     if (c == '-') {
         p->pos++;
         if (!math_parse_factor(p, out)) return false;
-        *out = -*out;
-        return true;
+        return math_checked_neg(p, *out, out);
     }
     if (c == '~') {
         p->pos++;
@@ -115,10 +183,13 @@ static bool math_parse_term(Math_Parser *p, long long *out) {
         long long rhs = 0;
         if (!math_parse_factor(p, &rhs)) return false;
 
-        if ((op == '/' || op == '%') && rhs == 0) return math_emit_error(p, "Division by zero");
-        if (op == '*') *out = *out * rhs;
-        else if (op == '/') *out = *out / rhs;
-        else *out = *out % rhs;
+        if (op == '*') {
+            if (!math_checked_mul(p, *out, rhs, out)) return false;
+        } else if (op == '/') {
+            if (!math_checked_div(p, *out, rhs, out)) return false;
+        } else {
+            if (!math_checked_mod(p, *out, rhs, out)) return false;
+        }
     }
     return true;
 }
@@ -139,9 +210,18 @@ static bool math_parse_shift(Math_Parser *p, long long *out) {
         long long rhs = 0;
         if (!math_parse_addsub(p, &rhs)) return false;
         if (rhs < 0) return math_emit_error(p, "Negative shift count");
+        if (rhs >= (long long)(sizeof(long long) * CHAR_BIT)) {
+            return math_emit_error(p, "Shift count is out of range for 64-bit integer");
+        }
 
-        if (is_shl) *out = *out << rhs;
-        else *out = *out >> rhs;
+        if (is_shl) {
+            if (rhs > 0 && *out >= 0 && *out > (LLONG_MAX >> rhs)) {
+                return math_emit_error(p, "Integer overflow in left shift");
+            }
+            *out = (long long)(((unsigned long long)*out) << rhs);
+        } else {
+            *out = *out >> rhs;
+        }
     }
     return true;
 }
@@ -185,8 +265,11 @@ static bool math_parse_addsub(Math_Parser *p, long long *out) {
 
         long long rhs = 0;
         if (!math_parse_term(p, &rhs)) return false;
-        if (op == '+') *out = *out + rhs;
-        else *out = *out - rhs;
+        if (op == '+') {
+            if (!math_checked_add(p, *out, rhs, out)) return false;
+        } else {
+            if (!math_checked_sub(p, *out, rhs, out)) return false;
+        }
     }
     return true;
 }

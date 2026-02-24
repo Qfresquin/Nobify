@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 46
+CASES 49
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -241,6 +241,24 @@ EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 tar
 EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_UNARY=-2' vis=PRIVATE
 EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_DIV=2' vis=PRIVATE
 EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_MOD=3' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_math_overflow_add_reports_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Integer overflow in addition' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
+=== END CASE ===
+
+=== CASE stdlib_math_overflow_mul_reports_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Integer overflow in multiplication' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
+=== END CASE ===
+
+=== CASE stdlib_math_overflow_shift_reports_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Shift count is out of range for 64-bit integer' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
 === END CASE ===
 
 === CASE dispatcher_custom_command_multiple_commands ===

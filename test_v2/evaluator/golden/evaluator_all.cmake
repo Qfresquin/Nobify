@@ -259,6 +259,18 @@ add_executable(math_ext main.c)
 target_compile_definitions(math_ext PRIVATE M_SHL=${M_SHL} M_SHR=${M_SHR} M_AND=${M_AND} M_XOR=${M_XOR} M_OR=${M_OR} M_PAREN=${M_PAREN} M_PREC=${M_PREC} M_UNARY=${M_UNARY} M_DIV=${M_DIV} M_MOD=${M_MOD})
 #@@ENDCASE
 
+#@@CASE stdlib_math_overflow_add_reports_error
+math(EXPR OV_ADD "9223372036854775807 + 1")
+#@@ENDCASE
+
+#@@CASE stdlib_math_overflow_mul_reports_error
+math(EXPR OV_MUL "3037000500 * 3037000500")
+#@@ENDCASE
+
+#@@CASE stdlib_math_overflow_shift_reports_error
+math(EXPR OV_SHL "1 << 64")
+#@@ENDCASE
+
 #@@CASE dispatcher_custom_command_multiple_commands
 add_custom_command(OUTPUT multi.c
   COMMAND echo first
