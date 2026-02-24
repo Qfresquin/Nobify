@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 45
+CASES 46
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -379,6 +379,11 @@ EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component=
 === END CASE ===
 
 === CASE file_security_read_relative_inside_project_scope_still_works ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===
+
+=== CASE file_strings_newline_consume_and_encoding_utf8_supported ===
 DIAG errors=0 warnings=0
 EVENTS count=0
 === END CASE ===

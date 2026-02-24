@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <errno.h>
 #include <sys/stat.h>
 #include "pcre/pcre2posix.h"
@@ -50,6 +51,197 @@ static bool parse_size_sv(String_View sv, size_t *out) {
     unsigned long long v = strtoull(tmp, &end, 10);
     if (!end || *end != '\0') return false;
     *out = (size_t)v;
+    return true;
+}
+
+typedef enum {
+    FILE_STRINGS_ENCODING_AUTO = 0,
+    FILE_STRINGS_ENCODING_UTF8,
+    FILE_STRINGS_ENCODING_UTF16,
+    FILE_STRINGS_ENCODING_UTF16LE,
+    FILE_STRINGS_ENCODING_UTF16BE,
+    FILE_STRINGS_ENCODING_UTF32,
+    FILE_STRINGS_ENCODING_UTF32LE,
+    FILE_STRINGS_ENCODING_UTF32BE,
+    FILE_STRINGS_ENCODING_INVALID,
+} File_Strings_Encoding;
+
+static File_Strings_Encoding file_strings_parse_encoding_sv(String_View sv) {
+    if (eval_sv_eq_ci_lit(sv, "UTF-8") || eval_sv_eq_ci_lit(sv, "UTF8")) return FILE_STRINGS_ENCODING_UTF8;
+
+    if (eval_sv_eq_ci_lit(sv, "UTF-16") || eval_sv_eq_ci_lit(sv, "UTF16")) return FILE_STRINGS_ENCODING_UTF16;
+    if (eval_sv_eq_ci_lit(sv, "UTF-16LE") || eval_sv_eq_ci_lit(sv, "UTF16LE")) return FILE_STRINGS_ENCODING_UTF16LE;
+    if (eval_sv_eq_ci_lit(sv, "UTF-16BE") || eval_sv_eq_ci_lit(sv, "UTF16BE")) return FILE_STRINGS_ENCODING_UTF16BE;
+
+    if (eval_sv_eq_ci_lit(sv, "UTF-32") || eval_sv_eq_ci_lit(sv, "UTF32")) return FILE_STRINGS_ENCODING_UTF32;
+    if (eval_sv_eq_ci_lit(sv, "UTF-32LE") || eval_sv_eq_ci_lit(sv, "UTF32LE")) return FILE_STRINGS_ENCODING_UTF32LE;
+    if (eval_sv_eq_ci_lit(sv, "UTF-32BE") || eval_sv_eq_ci_lit(sv, "UTF32BE")) return FILE_STRINGS_ENCODING_UTF32BE;
+
+    return FILE_STRINGS_ENCODING_INVALID;
+}
+
+static File_Strings_Encoding file_strings_detect_bom(const unsigned char *bytes, size_t n, size_t *out_skip) {
+    if (out_skip) *out_skip = 0;
+    if (!bytes || n == 0) return FILE_STRINGS_ENCODING_AUTO;
+
+    if (n >= 4 && bytes[0] == 0xFF && bytes[1] == 0xFE && bytes[2] == 0x00 && bytes[3] == 0x00) {
+        if (out_skip) *out_skip = 4;
+        return FILE_STRINGS_ENCODING_UTF32LE;
+    }
+    if (n >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xFE && bytes[3] == 0xFF) {
+        if (out_skip) *out_skip = 4;
+        return FILE_STRINGS_ENCODING_UTF32BE;
+    }
+    if (n >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+        if (out_skip) *out_skip = 3;
+        return FILE_STRINGS_ENCODING_UTF8;
+    }
+    if (n >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+        if (out_skip) *out_skip = 2;
+        return FILE_STRINGS_ENCODING_UTF16LE;
+    }
+    if (n >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) {
+        if (out_skip) *out_skip = 2;
+        return FILE_STRINGS_ENCODING_UTF16BE;
+    }
+    return FILE_STRINGS_ENCODING_AUTO;
+}
+
+static void file_strings_append_utf8_codepoint(Nob_String_Builder *sb, uint32_t cp) {
+    if (!sb) return;
+    if (cp == 0) return;
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+
+    if (cp <= 0x7F) {
+        nob_sb_append(sb, (char)cp);
+        return;
+    }
+    if (cp <= 0x7FF) {
+        nob_sb_append(sb, (char)(0xC0 | ((cp >> 6) & 0x1F)));
+        nob_sb_append(sb, (char)(0x80 | (cp & 0x3F)));
+        return;
+    }
+    if (cp <= 0xFFFF) {
+        nob_sb_append(sb, (char)(0xE0 | ((cp >> 12) & 0x0F)));
+        nob_sb_append(sb, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        nob_sb_append(sb, (char)(0x80 | (cp & 0x3F)));
+        return;
+    }
+
+    nob_sb_append(sb, (char)(0xF0 | ((cp >> 18) & 0x07)));
+    nob_sb_append(sb, (char)(0x80 | ((cp >> 12) & 0x3F)));
+    nob_sb_append(sb, (char)(0x80 | ((cp >> 6) & 0x3F)));
+    nob_sb_append(sb, (char)(0x80 | (cp & 0x3F)));
+}
+
+static bool file_strings_decode_to_utf8_temp(Evaluator_Context *ctx,
+                                             const char *raw,
+                                             size_t raw_n,
+                                             File_Strings_Encoding requested,
+                                             String_View *out_decoded) {
+    if (!ctx || !out_decoded) return false;
+    *out_decoded = nob_sv_from_cstr("");
+    if (!raw || raw_n == 0) return true;
+
+    const unsigned char *bytes = (const unsigned char*)raw;
+    size_t bom_skip = 0;
+    File_Strings_Encoding bom_enc = file_strings_detect_bom(bytes, raw_n, &bom_skip);
+    File_Strings_Encoding effective = requested;
+    size_t start = 0;
+
+    if (requested == FILE_STRINGS_ENCODING_AUTO) {
+        if (bom_enc != FILE_STRINGS_ENCODING_AUTO) {
+            effective = bom_enc;
+            start = bom_skip;
+        } else {
+            effective = FILE_STRINGS_ENCODING_UTF8;
+        }
+    } else if (requested == FILE_STRINGS_ENCODING_UTF16) {
+        if (bom_enc == FILE_STRINGS_ENCODING_UTF16LE || bom_enc == FILE_STRINGS_ENCODING_UTF16BE) {
+            effective = bom_enc;
+            start = bom_skip;
+        } else {
+            effective = FILE_STRINGS_ENCODING_UTF16LE;
+        }
+    } else if (requested == FILE_STRINGS_ENCODING_UTF32) {
+        if (bom_enc == FILE_STRINGS_ENCODING_UTF32LE || bom_enc == FILE_STRINGS_ENCODING_UTF32BE) {
+            effective = bom_enc;
+            start = bom_skip;
+        } else {
+            effective = FILE_STRINGS_ENCODING_UTF32LE;
+        }
+    } else {
+        effective = requested;
+        if ((requested == FILE_STRINGS_ENCODING_UTF8 && bom_enc == FILE_STRINGS_ENCODING_UTF8) ||
+            (requested == FILE_STRINGS_ENCODING_UTF16LE && bom_enc == FILE_STRINGS_ENCODING_UTF16LE) ||
+            (requested == FILE_STRINGS_ENCODING_UTF16BE && bom_enc == FILE_STRINGS_ENCODING_UTF16BE) ||
+            (requested == FILE_STRINGS_ENCODING_UTF32LE && bom_enc == FILE_STRINGS_ENCODING_UTF32LE) ||
+            (requested == FILE_STRINGS_ENCODING_UTF32BE && bom_enc == FILE_STRINGS_ENCODING_UTF32BE)) {
+            start = bom_skip;
+        }
+    }
+
+    if (effective == FILE_STRINGS_ENCODING_UTF8) {
+        *out_decoded = nob_sv_from_parts(raw + start, raw_n - start);
+        return true;
+    }
+
+    Nob_String_Builder decoded = {0};
+    size_t i = start;
+
+    if (effective == FILE_STRINGS_ENCODING_UTF16LE || effective == FILE_STRINGS_ENCODING_UTF16BE) {
+        bool little = effective == FILE_STRINGS_ENCODING_UTF16LE;
+        while (i + 1 < raw_n) {
+            uint16_t w1 = little
+                ? (uint16_t)((uint16_t)bytes[i] | ((uint16_t)bytes[i + 1] << 8))
+                : (uint16_t)(((uint16_t)bytes[i] << 8) | (uint16_t)bytes[i + 1]);
+            i += 2;
+
+            uint32_t cp = w1;
+            if (w1 >= 0xD800 && w1 <= 0xDBFF) {
+                cp = 0xFFFD;
+                if (i + 1 < raw_n) {
+                    uint16_t w2 = little
+                        ? (uint16_t)((uint16_t)bytes[i] | ((uint16_t)bytes[i + 1] << 8))
+                        : (uint16_t)(((uint16_t)bytes[i] << 8) | (uint16_t)bytes[i + 1]);
+                    if (w2 >= 0xDC00 && w2 <= 0xDFFF) {
+                        cp = 0x10000u + (((uint32_t)(w1 - 0xD800u) << 10) | (uint32_t)(w2 - 0xDC00u));
+                        i += 2;
+                    }
+                }
+            } else if (w1 >= 0xDC00 && w1 <= 0xDFFF) {
+                cp = 0xFFFD;
+            }
+            file_strings_append_utf8_codepoint(&decoded, cp);
+        }
+    } else if (effective == FILE_STRINGS_ENCODING_UTF32LE || effective == FILE_STRINGS_ENCODING_UTF32BE) {
+        bool little = effective == FILE_STRINGS_ENCODING_UTF32LE;
+        while (i + 3 < raw_n) {
+            uint32_t cp = little
+                ? ((uint32_t)bytes[i]) |
+                  ((uint32_t)bytes[i + 1] << 8) |
+                  ((uint32_t)bytes[i + 2] << 16) |
+                  ((uint32_t)bytes[i + 3] << 24)
+                : ((uint32_t)bytes[i] << 24) |
+                  ((uint32_t)bytes[i + 1] << 16) |
+                  ((uint32_t)bytes[i + 2] << 8) |
+                  (uint32_t)bytes[i + 3];
+            i += 4;
+            file_strings_append_utf8_codepoint(&decoded, cp);
+        }
+    } else {
+        return false;
+    }
+
+    nob_sb_append_null(&decoded);
+    char *decoded_c = (char*)arena_alloc(eval_temp_arena(ctx), decoded.count);
+    if (!decoded_c) {
+        nob_sb_free(decoded);
+        EVAL_OOM_RETURN_IF_NULL(ctx, decoded_c, false);
+    }
+    memcpy(decoded_c, decoded.items, decoded.count);
+    *out_decoded = nob_sv_from_parts(decoded_c, decoded.count - 1);
+    nob_sb_free(decoded);
     return true;
 }
 
@@ -979,7 +1171,10 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         size_t limit_output;
         bool has_regex;
         String_View regex;
+        bool newline_consume;
         bool no_hex_conversion;
+        bool has_encoding;
+        File_Strings_Encoding encoding;
         String_View unsupported;
     } File_Strings_Options;
 
@@ -1059,16 +1254,30 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
             continue;
         }
         if (eval_sv_eq_ci_lit(t, "NEWLINE_CONSUME")) {
-            if (unsupported_count < 64) unsupported_items[unsupported_count++] = t;
+            opt.newline_consume = true;
             continue;
         }
         if (eval_sv_eq_ci_lit(t, "NO_HEX_CONVERSION")) {
             opt.no_hex_conversion = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "ENCODING") && i + 1 < args.count) {
-            if (unsupported_count < 64) unsupported_items[unsupported_count++] = t;
-            if (unsupported_count < 64) unsupported_items[unsupported_count++] = args.items[++i];
+        if (eval_sv_eq_ci_lit(t, "ENCODING")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(STRINGS) ENCODING requires a value"),
+                               t);
+                return;
+            }
+            String_View encoding_sv = args.items[++i];
+            File_Strings_Encoding enc = file_strings_parse_encoding_sv(encoding_sv);
+            if (enc == FILE_STRINGS_ENCODING_INVALID) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(STRINGS) invalid ENCODING value"),
+                               encoding_sv);
+                return;
+            }
+            opt.has_encoding = true;
+            opt.encoding = enc;
             continue;
         }
 
@@ -1104,6 +1313,17 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
 
     size_t input_n = sb.count;
     if (opt.has_limit_input && opt.limit_input < input_n) input_n = opt.limit_input;
+    String_View decoded_input = nob_sv_from_parts(sb.items, input_n);
+    File_Strings_Encoding requested_encoding = opt.has_encoding ? opt.encoding : FILE_STRINGS_ENCODING_AUTO;
+    if (!file_strings_decode_to_utf8_temp(ctx, sb.items, input_n, requested_encoding, &decoded_input)) {
+        nob_sb_free(sb);
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                       nob_sv_from_cstr("file(STRINGS) failed to decode input with requested ENCODING"),
+                       path);
+        return;
+    }
+    const char *input_data = decoded_input.data ? decoded_input.data : "";
+    input_n = decoded_input.count;
 
     regex_t re = {0};
     bool re_compiled = false;
@@ -1124,12 +1344,40 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     size_t emitted_count = 0;
     size_t out_bytes = 0;
     size_t line_start = 0;
-    while (line_start <= input_n) {
+    while (line_start < input_n) {
         size_t line_end = line_start;
-        while (line_end < input_n && sb.items[line_end] != '\n') line_end++;
+        if (opt.newline_consume) {
+            while (line_end < input_n && input_data[line_end] != '\0') line_end++;
+        } else {
+            while (line_end < input_n && input_data[line_end] != '\n') line_end++;
+        }
 
+        const char *line_ptr = input_data + line_start;
         size_t len = line_end - line_start;
-        if (len > 0 && sb.items[line_start + len - 1] == '\r') len--;
+        bool has_cr = false;
+        for (size_t k = 0; k < len; k++) {
+            if (line_ptr[k] == '\r') {
+                has_cr = true;
+                break;
+            }
+        }
+
+        if (has_cr) {
+            char *filtered = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
+            if (!filtered) {
+                if (re_compiled) regfree(&re);
+                nob_sb_free(out);
+                nob_sb_free(sb);
+                EVAL_OOM_RETURN_VOID_IF_NULL(ctx, filtered);
+            }
+            size_t filtered_n = 0;
+            for (size_t k = 0; k < len; k++) {
+                if (line_ptr[k] != '\r') filtered[filtered_n++] = line_ptr[k];
+            }
+            filtered[filtered_n] = '\0';
+            line_ptr = filtered;
+            len = filtered_n;
+        }
 
         bool keep = len > 0;
         if (keep && opt.has_len_min && len < opt.len_min) keep = false;
@@ -1137,8 +1385,13 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
 
         if (keep && re_compiled) {
             char *line_c = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
-            EVAL_OOM_RETURN_VOID_IF_NULL(ctx, line_c);
-            memcpy(line_c, sb.items + line_start, len);
+            if (!line_c) {
+                if (re_compiled) regfree(&re);
+                nob_sb_free(out);
+                nob_sb_free(sb);
+                EVAL_OOM_RETURN_VOID_IF_NULL(ctx, line_c);
+            }
+            memcpy(line_c, line_ptr, len);
             line_c[len] = '\0';
             keep = regexec(&re, line_c, 0, NULL, 0) == 0;
         }
@@ -1147,7 +1400,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
             size_t add = len + ((emitted_count > 0) ? 1 : 0);
             if (opt.has_limit_output && (out_bytes + add > opt.limit_output)) break;
             if (emitted_count > 0) nob_sb_append(&out, ';');
-            if (len > 0) nob_sb_append_buf(&out, sb.items + line_start, len);
+            if (len > 0) nob_sb_append_buf(&out, line_ptr, len);
             emitted_count++;
             out_bytes += add;
             if (opt.has_limit_count && emitted_count >= opt.limit_count) break;
@@ -1158,14 +1411,10 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     }
 
     nob_sb_append_null(&out);
-    char *out_c = eval_sv_to_cstr_temp(ctx, nob_sv_from_cstr(out.items ? out.items : ""));
+    String_View out_sv = out.items ? nob_sv_from_parts(out.items, out.count - 1) : nob_sv_from_cstr("");
     if (re_compiled) regfree(&re);
     nob_sb_free(out);
-    if (!out_c) {
-        nob_sb_free(sb);
-        return;
-    }
-    (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_c));
+    (void)eval_var_set(ctx, out_var, out_sv);
     nob_sb_free(sb);
 }
 

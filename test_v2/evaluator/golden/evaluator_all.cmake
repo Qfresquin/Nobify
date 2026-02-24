@@ -404,6 +404,11 @@ file(MAKE_DIRECTORY temp_read_win_nested\\a\\b\\c)
 file(READ temp_read_ok.txt OUT)
 #@@ENDCASE
 
+#@@CASE file_strings_newline_consume_and_encoding_utf8_supported
+file(WRITE temp_strings_enc_utf8.txt "line1\nline2\n")
+file(STRINGS temp_strings_enc_utf8.txt OUT NEWLINE_CONSUME ENCODING UTF-8)
+#@@ENDCASE
+
 #@@CASE file_security_copy_with_permissions_executes_without_legacy_no_effect_warning
 file(WRITE temp_copy_perm_src.txt "x")
 file(COPY temp_copy_perm_src.txt DESTINATION temp_copy_perm_dst PERMISSIONS OWNER_READ OWNER_WRITE)
