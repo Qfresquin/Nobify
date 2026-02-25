@@ -184,6 +184,23 @@ add_executable(loop_nested main.c)
 target_compile_definitions(loop_nested PRIVATE NESTED_ACC=${ACC})
 #@@ENDCASE
 
+#@@CASE flow_block_scope_and_propagate
+set(BLK_OUTER outer)
+cmake_policy(GET CMP0077 POL_BEFORE)
+block(SCOPE_FOR VARIABLES POLICIES PROPAGATE BLK_PROP)
+  set(BLK_OUTER inner)
+  set(BLK_LOCAL local)
+  set(BLK_PROP propagated)
+  cmake_policy(SET CMP0077 NEW)
+  cmake_policy(GET CMP0077 POL_INNER)
+  add_executable(block_inner main.c)
+  target_compile_definitions(block_inner PRIVATE POL_INNER=${POL_INNER})
+endblock()
+cmake_policy(GET CMP0077 POL_AFTER)
+add_executable(block_outer main.c)
+target_compile_definitions(block_outer PRIVATE BLK_OUTER=${BLK_OUTER} BLK_PROP=${BLK_PROP} BLK_LOCAL=${BLK_LOCAL} POL_BEFORE=${POL_BEFORE} POL_AFTER=${POL_AFTER})
+#@@ENDCASE
+
 #@@CASE usercmd_function_scope_and_parent_scope
 set(FN_GLOBAL 10)
 function(fn_apply value)

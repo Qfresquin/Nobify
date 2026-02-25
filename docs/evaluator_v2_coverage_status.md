@@ -27,9 +27,8 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
   - `if / elseif / else / endif`
   - `foreach / endforeach`
   - `while / endwhile`
+  - `block / endblock` (supports `SCOPE_FOR` and `PROPAGATE`)
   - `break`, `continue`, `return`
-- Missing:
-  - `block / endblock`
 
 ### Block definitions
 
@@ -217,4 +216,3 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
 ## 8) Important architecture note
 
 Generator expressions (`$<...>`) and target metadata queries are handled by `src_v2/genex`, but this does not replace missing evaluator command handlers (for example `get_target_property`, `target_sources`, `target_compile_features`).
-

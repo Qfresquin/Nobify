@@ -66,6 +66,19 @@ typedef struct {
     size_t capacity;
 } Macro_Frame_Stack;
 
+typedef struct {
+    bool variable_scope_pushed;
+    bool policy_scope_pushed;
+    String_View *propagate_vars;
+    size_t propagate_count;
+} Block_Frame;
+
+typedef struct {
+    Block_Frame *items;
+    size_t count;
+    size_t capacity;
+} Block_Frame_Stack;
+
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
@@ -85,6 +98,7 @@ struct Evaluator_Context {
     SV_List known_targets; 
     User_Command_List user_commands;
     Macro_Frame_Stack macro_frames;
+    Block_Frame_Stack block_frames;
 
     size_t loop_depth;
     bool break_requested;

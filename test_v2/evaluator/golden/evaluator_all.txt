@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 49
+CASES 50
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -167,6 +167,21 @@ EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=17 col=1 name='loop_nested' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=17 col=1 target='loop_nested' path='main.c'
 EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='loop_nested' item='NESTED_ACC=4' vis=PRIVATE
+=== END CASE ===
+
+=== CASE flow_block_scope_and_propagate ===
+DIAG errors=0 warnings=0
+EVENTS count=10
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=3 name='block_inner' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=3 target='block_inner' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=3 target='block_inner' item='POL_INNER=NEW' vis=PRIVATE
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='block_outer' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='block_outer' path='main.c'
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_OUTER=outer' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_PROP=propagated' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_LOCAL=' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_BEFORE=' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_AFTER=' vis=PRIVATE
 === END CASE ===
 
 === CASE usercmd_function_scope_and_parent_scope ===
