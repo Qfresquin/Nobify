@@ -48,35 +48,39 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
 ### `list()`
 
 - Implemented:
-  - `APPEND`, `REMOVE_ITEM`, `LENGTH`, `GET`, `FIND`
-- Missing:
-  - `JOIN`, `SUBLIST`
-  - `FILTER`
-  - `INSERT`, `POP_BACK`, `POP_FRONT`, `PREPEND`, `REMOVE_AT`, `REMOVE_DUPLICATES`
-  - `TRANSFORM`
-  - `REVERSE`, `SORT`
+  - `APPEND`, `PREPEND`, `INSERT`
+  - `REMOVE_ITEM`, `REMOVE_AT`, `REMOVE_DUPLICATES`
+  - `POP_BACK`, `POP_FRONT`
+  - `LENGTH`, `GET`, `FIND`, `JOIN`, `SUBLIST`
+  - `FILTER` (`INCLUDE|EXCLUDE REGEX`)
+  - `REVERSE`, `SORT` (`COMPARE STRING|FILE_BASENAME|NATURAL`, `CASE`, `ORDER`)
+- Partial:
+  - `TRANSFORM`:
+    - actions: `APPEND`, `PREPEND`, `TOLOWER`, `TOUPPER`, `STRIP`, `REPLACE`
+    - selectors: all items, `AT`, `FOR`, `REGEX`
 
 ### `string()`
 
 - Implemented:
-  - `REPLACE`
-  - `TOUPPER`, `TOLOWER`
-  - `SUBSTRING`
-  - `REGEX MATCH`, `REGEX REPLACE`
-- Missing:
   - `APPEND`, `PREPEND`, `CONCAT`, `JOIN`
-  - `LENGTH`, `STRIP`, `FIND`
-  - `REGEX MATCHALL`
-  - `COMPARE`
-  - `HASH`
+  - `LENGTH`, `STRIP`, `FIND`, `COMPARE`
   - `ASCII`, `HEX`
   - `CONFIGURE`
   - `MAKE_C_IDENTIFIER`
   - `GENEX_STRIP`
-  - `JSON`
   - `RANDOM`
   - `TIMESTAMP`
-  - `UUID`
+  - `UUID` (name-based with `TYPE MD5|SHA1`)
+  - `REPLACE`
+  - `TOUPPER`, `TOLOWER`
+  - `SUBSTRING`
+  - `REGEX MATCH`, `REGEX REPLACE`, `REGEX MATCHALL`
+- Partial:
+  - `HASH`: implemented via direct `string(MD5|SHA1|SHA256 ...)` modes
+  - `JSON`: `GET`, `TYPE`, `LENGTH`
+- Missing:
+  - `JSON`: `MEMBER`, `REMOVE`, `SET`, `EQUAL`
+  - hash modes not covered in this pass: `SHA224`, `SHA384`, `SHA512`
 
 ### `math()`
 

@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 50
+CASES 73
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -222,6 +222,71 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 targ
 EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_ZZ=-1' vis=PRIVATE
 === END CASE ===
 
+=== CASE stdlib_list_mutation_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=6
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='list_mut' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='list_mut' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='L=y' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PF0=a' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PF1=b' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PB0=c' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_list_join_sublist_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_join_sub' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_join_sub' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='CSV=aa,bb,cc,dd' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='MID=bb;cc' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='TAIL=cc;dd' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_list_filter_regex_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_filter' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_filter' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_filter' item='LF=a1;c3' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_filter' item='LF2=a1;c3;dd' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_list_transform_actions_selectors_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='list_transform' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='list_transform' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_transform' item='LT=p_aa;p_bb_z;cc_;dd__z' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_list_sort_advanced_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_sort' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_sort' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_sort' item='LS=src/A02.c;src/a1.c;src/z10.c;src/Z2.c' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_sort' item='NS=v10;v2;v01;v1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_list_remove_at_invalid_index_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' cause='list(REMOVE_AT) index out of range' hint='5'
+=== END CASE ===
+
+=== CASE stdlib_list_filter_invalid_regex_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' cause='Invalid regex pattern' hint='['
+=== END CASE ===
+
+=== CASE stdlib_list_transform_invalid_action_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' cause='Unsupported list(TRANSFORM) action' hint='BAD_ACTION'
+=== END CASE ===
+
 === CASE stdlib_string_tolower_substring_extended ===
 DIAG errors=0 warnings=0
 EVENTS count=5
@@ -239,6 +304,141 @@ EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_reg
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_regex_ext' path='main.c'
 EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX=vN-vN-vN' vis=PRIVATE
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX_BREF=x\\1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_append_prepend_concat_join_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='string_append_prepend' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='string_append_prepend' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='string_append_prepend' item='SV=P_mid_A_B' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='string_append_prepend' item='SCON=x-y' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='string_append_prepend' item='SJOIN=aa:bb:cc' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_length_strip_find_compare_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=9
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='string_core_ops' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='string_core_ops' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SLEN=4' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SSTRIP=a b' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_FWD=0' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_REV=4' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_NONE=-1' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SCMP_LESS=1' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SCMP_EQ=1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_regex_matchall_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_matchall' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_matchall' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='SM_ALL=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='22' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='333' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_hash_md5_sha1_sha256_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='string_hashes' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='string_hashes' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_hashes' item='H_MD5=900150983cd24fb0d6963f7d28e17f72' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_hashes' item='H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_hashes' item='H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_ascii_hex_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_ascii_hex' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_ascii_hex' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' item='S_ASCII=ABC' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' item='S_HEX=4162' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_configure_atonly_escape_quotes_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='string_configure' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='string_configure' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG1=a=x\\"y b=x\\"y' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG2=a=x\\"y b=x\\"y' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG3=a=x\\\\"y b=x\\"y' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_make_c_identifier_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_identifier' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_identifier' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_identifier' item='S_ID=_9a_b_c' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_genex_strip_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_genex_strip' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_genex_strip' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_genex_strip' item='S_GX=AB' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_random_seeded_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_random' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_random' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_random' item='SR1=iEkfsJ69' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_random' item='SR2=iEkfsJ69' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_timestamp_source_date_epoch_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_timestamp' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_timestamp' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_timestamp' item='STS=1970-01-01 00:00:00' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_uuid_name_based_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_uuid' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_uuid' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_uuid' item='SUUID=6cb8e707-0fc5-5f55-88d4-d4fed43e64a8' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_uuid' item='SUUID_UP=6CB8E707-0FC5-5F55-88D4-D4FED43E64A8' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_json_get_type_length_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=7
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='string_json' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='string_json' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_TYPE=ARRAY' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_LEN=3' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_GET_NUM=2' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_GET_STR=x' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_GET_NULL=' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_string_ascii_invalid_code_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='string' command='string' cause='string(ASCII) code must be an integer in range [0,255]' hint='300'
+=== END CASE ===
+
+=== CASE stdlib_string_json_length_non_container_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='string' command='string' cause='string(JSON LENGTH) requires ARRAY or OBJECT' hint=''
+=== END CASE ===
+
+=== CASE stdlib_string_uuid_malformed_namespace_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='string' command='string' cause='string(UUID) malformed NAMESPACE UUID' hint='DNS'
 === END CASE ===
 
 === CASE stdlib_math_bitwise_and_precedence ===

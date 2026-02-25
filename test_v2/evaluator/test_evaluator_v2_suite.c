@@ -33,6 +33,18 @@ typedef struct {
     size_t capacity;
 } Evaluator_Case_List;
 
+static void evaluator_set_source_date_epoch_value(const char *value) {
+#if defined(_WIN32)
+    _putenv_s("SOURCE_DATE_EPOCH", value ? value : "");
+#else
+    if (value) {
+        setenv("SOURCE_DATE_EPOCH", value, 1);
+    } else {
+        unsetenv("SOURCE_DATE_EPOCH");
+    }
+#endif
+}
+
 static bool evaluator_remove_link_like_path(const char *path) {
     if (!path) return false;
 #if defined(_WIN32)
@@ -763,6 +775,17 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
     String_View expected = {0};
     String_View actual = {0};
     bool ok = true;
+    const char *prev_sde = getenv("SOURCE_DATE_EPOCH");
+    bool had_prev_sde = prev_sde != NULL;
+    char *prev_sde_copy = NULL;
+    if (had_prev_sde) {
+        size_t n = strlen(prev_sde);
+        prev_sde_copy = arena_strndup(arena, prev_sde, n);
+        if (!prev_sde_copy) {
+            ok = false;
+            goto done;
+        }
+    }
 
     if (!evaluator_prepare_symlink_escape_fixture()) {
         ok = false;
@@ -781,11 +804,13 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 50) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=50", cases.count);
+    if (cases.count != 73) {
+        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=73", cases.count);
         ok = false;
         goto done;
     }
+
+    evaluator_set_source_date_epoch_value("0");
 
     if (!render_evaluator_casepack_snapshot_to_arena(arena, cases, &actual)) {
         nob_log(NOB_ERROR, "golden: failed to render snapshot");
@@ -819,6 +844,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
     }
 
 done:
+    if (had_prev_sde) evaluator_set_source_date_epoch_value(prev_sde_copy ? prev_sde_copy : "");
+    else evaluator_set_source_date_epoch_value(NULL);
     arena_destroy(arena);
     return ok;
 }

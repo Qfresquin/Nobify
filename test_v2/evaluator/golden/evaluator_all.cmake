@@ -246,6 +246,72 @@ add_executable(list_ext main.c)
 target_compile_definitions(list_ext PRIVATE "PICKS=${PICKS}" IDX_CC=${IDX_CC} IDX_ZZ=${IDX_ZZ})
 #@@ENDCASE
 
+#@@CASE stdlib_list_mutation_extended
+set(L "b;c;c;d")
+list(PREPEND L a)
+list(INSERT L 2 x y)
+list(REMOVE_AT L -1 2)
+list(REMOVE_DUPLICATES L)
+list(POP_FRONT L PF0 PF1)
+list(POP_BACK L PB0)
+add_executable(list_mut main.c)
+target_compile_definitions(list_mut PRIVATE "L=${L}" PF0=${PF0} PF1=${PF1} PB0=${PB0})
+#@@ENDCASE
+
+#@@CASE stdlib_list_join_sublist_extended
+set(LJS "aa;bb;cc;dd")
+list(JOIN LJS , CSV)
+list(SUBLIST LJS 1 2 MID)
+list(SUBLIST LJS 2 -1 TAIL)
+add_executable(list_join_sub main.c)
+target_compile_definitions(list_join_sub PRIVATE "CSV=${CSV}" "MID=${MID}" "TAIL=${TAIL}")
+#@@ENDCASE
+
+#@@CASE stdlib_list_filter_regex_extended
+set(LF "a1;B2;c3;dd")
+list(FILTER LF INCLUDE REGEX "^[a-z][0-9]$")
+set(LF2 "a1;B2;c3;dd")
+list(FILTER LF2 EXCLUDE REGEX "^[A-Z]")
+add_executable(list_filter main.c)
+target_compile_definitions(list_filter PRIVATE "LF=${LF}" "LF2=${LF2}")
+#@@ENDCASE
+
+#@@CASE stdlib_list_transform_actions_selectors_extended
+set(LT "  aa ;bb;cc3;dd4")
+list(TRANSFORM LT STRIP)
+list(TRANSFORM LT TOUPPER AT 0 1)
+list(TRANSFORM LT REPLACE "[0-9]" "_" REGEX "[0-9]")
+list(TRANSFORM LT APPEND "_Z" FOR 1 3 2)
+list(TRANSFORM LT PREPEND "P_" REGEX "^[A-Z]")
+list(TRANSFORM LT TOLOWER)
+add_executable(list_transform main.c)
+target_compile_definitions(list_transform PRIVATE "LT=${LT}")
+#@@ENDCASE
+
+#@@CASE stdlib_list_sort_advanced_extended
+set(LS "src/z10.c;src/Z2.c;src/a1.c;src/A02.c")
+list(SORT LS COMPARE FILE_BASENAME CASE INSENSITIVE ORDER ASCENDING)
+set(NS "v2;v10;v01;v1")
+list(SORT NS COMPARE NATURAL CASE SENSITIVE ORDER DESCENDING)
+add_executable(list_sort main.c)
+target_compile_definitions(list_sort PRIVATE "LS=${LS}" "NS=${NS}")
+#@@ENDCASE
+
+#@@CASE stdlib_list_remove_at_invalid_index_error
+set(LE "a;b")
+list(REMOVE_AT LE 5)
+#@@ENDCASE
+
+#@@CASE stdlib_list_filter_invalid_regex_error
+set(LE "a;b")
+list(FILTER LE INCLUDE REGEX "[")
+#@@ENDCASE
+
+#@@CASE stdlib_list_transform_invalid_action_error
+set(LE "a;b")
+list(TRANSFORM LE BAD_ACTION)
+#@@ENDCASE
+
 #@@CASE stdlib_string_tolower_substring_extended
 string(TOLOWER "AbC-XyZ" STR_LOW)
 string(SUBSTRING "${STR_LOW}" 2 3 STR_SUB)
@@ -259,6 +325,114 @@ string(REGEX REPLACE "[0-9]+" "N" STR_RX "v1-v22-v333")
 string(REGEX REPLACE "v([0-9]+)" "x\\1" STR_RX_BREF "v7")
 add_executable(string_regex_ext main.c)
 target_compile_definitions(string_regex_ext PRIVATE STR_RX=${STR_RX} STR_RX_BREF=${STR_RX_BREF})
+#@@ENDCASE
+
+#@@CASE stdlib_string_append_prepend_concat_join_extended
+set(SV "mid")
+string(APPEND SV "_A" "_B")
+string(PREPEND SV "P_")
+string(CONCAT SCON "x" "-" "y")
+string(JOIN ":" SJOIN "aa" "bb" "cc")
+add_executable(string_append_prepend main.c)
+target_compile_definitions(string_append_prepend PRIVATE SV=${SV} SCON=${SCON} SJOIN=${SJOIN})
+#@@ENDCASE
+
+#@@CASE stdlib_string_length_strip_find_compare_extended
+string(LENGTH "a b " SLEN)
+string(STRIP "  a b  " SSTRIP)
+string(FIND "a-b-a" "a" SFIND_FWD)
+string(FIND "a-b-a" "a" SFIND_REV REVERSE)
+string(FIND "a-b-a" "x" SFIND_NONE)
+string(COMPARE LESS "abc" "abd" SCMP_LESS)
+string(COMPARE EQUAL "aa" "aa" SCMP_EQ)
+add_executable(string_core_ops main.c)
+target_compile_definitions(string_core_ops PRIVATE SLEN=${SLEN} SSTRIP=${SSTRIP} SFIND_FWD=${SFIND_FWD} SFIND_REV=${SFIND_REV} SFIND_NONE=${SFIND_NONE} SCMP_LESS=${SCMP_LESS} SCMP_EQ=${SCMP_EQ})
+#@@ENDCASE
+
+#@@CASE stdlib_string_regex_matchall_extended
+string(REGEX MATCHALL "[0-9]+" SM_ALL "v1-v22-v333")
+add_executable(string_matchall main.c)
+target_compile_definitions(string_matchall PRIVATE SM_ALL=${SM_ALL})
+#@@ENDCASE
+
+#@@CASE stdlib_string_hash_md5_sha1_sha256_extended
+string(MD5 H_MD5 "abc")
+string(SHA1 H_SHA1 "abc")
+string(SHA256 H_SHA256 "abc")
+add_executable(string_hashes main.c)
+target_compile_definitions(string_hashes PRIVATE H_MD5=${H_MD5} H_SHA1=${H_SHA1} H_SHA256=${H_SHA256})
+#@@ENDCASE
+
+#@@CASE stdlib_string_ascii_hex_extended
+string(ASCII 65 66 67 S_ASCII)
+string(HEX "Ab" S_HEX)
+add_executable(string_ascii_hex main.c)
+target_compile_definitions(string_ascii_hex PRIVATE S_ASCII=${S_ASCII} S_HEX=${S_HEX})
+#@@ENDCASE
+
+#@@CASE stdlib_string_configure_atonly_escape_quotes_extended
+set(VAR "x\"y")
+string(CONFIGURE "a=@VAR@ b=\\${VAR}" S_CFG1)
+string(CONFIGURE "a=@VAR@ b=\\${VAR}" S_CFG2 @ONLY)
+string(CONFIGURE "a=@VAR@ b=\\${VAR}" S_CFG3 ESCAPE_QUOTES)
+add_executable(string_configure main.c)
+target_compile_definitions(string_configure PRIVATE S_CFG1=${S_CFG1} S_CFG2=${S_CFG2} S_CFG3=${S_CFG3})
+#@@ENDCASE
+
+#@@CASE stdlib_string_make_c_identifier_extended
+string(MAKE_C_IDENTIFIER "9a-b.c" S_ID)
+add_executable(string_identifier main.c)
+target_compile_definitions(string_identifier PRIVATE S_ID=${S_ID})
+#@@ENDCASE
+
+#@@CASE stdlib_string_genex_strip_extended
+string(GENEX_STRIP "A$<$<CONFIG:Debug>:_d>B$<1:X>" S_GX)
+add_executable(string_genex_strip main.c)
+target_compile_definitions(string_genex_strip PRIVATE S_GX=${S_GX})
+#@@ENDCASE
+
+#@@CASE stdlib_string_random_seeded_extended
+string(RANDOM LENGTH 8 RANDOM_SEED 42 SR1)
+string(RANDOM LENGTH 8 RANDOM_SEED 42 SR2)
+add_executable(string_random main.c)
+target_compile_definitions(string_random PRIVATE SR1=${SR1} SR2=${SR2})
+#@@ENDCASE
+
+#@@CASE stdlib_string_timestamp_source_date_epoch_extended
+string(TIMESTAMP STS "%Y-%m-%d %H:%M:%S" UTC)
+add_executable(string_timestamp main.c)
+target_compile_definitions(string_timestamp PRIVATE STS=${STS})
+#@@ENDCASE
+
+#@@CASE stdlib_string_uuid_name_based_extended
+string(UUID SUUID NAMESPACE "6ba7b810-9dad-11d1-80b4-00c04fd430c8" NAME "abc" TYPE SHA1)
+string(UUID SUUID_UP NAMESPACE "6ba7b810-9dad-11d1-80b4-00c04fd430c8" NAME "abc" TYPE SHA1 UPPER)
+add_executable(string_uuid main.c)
+target_compile_definitions(string_uuid PRIVATE SUUID=${SUUID} SUUID_UP=${SUUID_UP})
+#@@ENDCASE
+
+#@@CASE stdlib_string_json_get_type_length_extended
+set(SJSON [=[{"k":[1,2,3],"s":"x","n":null}]=])
+string(JSON SJ_TYPE TYPE "${SJSON}" k)
+string(JSON SJ_LEN LENGTH "${SJSON}" k)
+string(JSON SJ_GET_NUM GET "${SJSON}" k 1)
+string(JSON SJ_GET_STR GET "${SJSON}" s)
+string(JSON SJ_GET_NULL GET "${SJSON}" n)
+add_executable(string_json main.c)
+target_compile_definitions(string_json PRIVATE SJ_TYPE=${SJ_TYPE} SJ_LEN=${SJ_LEN} SJ_GET_NUM=${SJ_GET_NUM} SJ_GET_STR=${SJ_GET_STR} SJ_GET_NULL=${SJ_GET_NULL})
+#@@ENDCASE
+
+#@@CASE stdlib_string_ascii_invalid_code_error
+string(ASCII 300 OUT_BAD)
+#@@ENDCASE
+
+#@@CASE stdlib_string_json_length_non_container_error
+set(SJSON_BAD [=[{"s":"abc"}]=])
+string(JSON BADLEN LENGTH "${SJSON_BAD}" s)
+#@@ENDCASE
+
+#@@CASE stdlib_string_uuid_malformed_namespace_error
+string(UUID BADUUID NAMESPACE DNS NAME abc TYPE SHA1)
 #@@ENDCASE
 
 #@@CASE stdlib_math_bitwise_and_precedence
