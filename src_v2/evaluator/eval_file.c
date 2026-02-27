@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include "pcre/pcre2posix.h"
+#include <pcre2posix.h>
 #if defined(_WIN32)
 #include <windows.h>
 #endif

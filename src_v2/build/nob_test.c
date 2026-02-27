@@ -58,10 +58,16 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "-Wall", "-Wextra", "-std=c11",
         "-DHAVE_CONFIG_H",
-        "-DPCRE2_CODE_UNIT_WIDTH=8",
+        "-DPCRE2_CODE_UNIT_WIDTH=8");
+
+#ifdef _WIN32
+    nob_cmd_append(cmd,
         "-DPCRE2_STATIC",
         "-Ivendor",
-        "-Ivendor/pcre",
+        "-Ivendor/pcre");
+#endif
+
+    nob_cmd_append(cmd,
         "-Isrc_v2/arena",
         "-Isrc_v2/lexer",
         "-Isrc_v2/parser",
@@ -167,6 +173,7 @@ static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
 }
 
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
+#ifdef _WIN32
     nob_cmd_append(cmd,
         "vendor/pcre/pcre2_auto_possess.c",
         "vendor/pcre/pcre2_chkdint.c",
@@ -199,10 +206,17 @@ static void append_v2_pcre_sources(Nob_Cmd *cmd) {
         "vendor/pcre/pcre2_valid_utf.c",
         "vendor/pcre/pcre2_xclass.c",
         "vendor/pcre/pcre2posix.c");
+#else
+    (void)cmd;
+#endif
 }
 
 static void append_platform_link_flags(Nob_Cmd *cmd) {
+#ifndef _WIN32
+    nob_cmd_append(cmd, "-lpcre2-8");
+#else
     (void)cmd;
+#endif
 }
 
 static bool tiny_is_dot_or_dotdot(const char *name) {

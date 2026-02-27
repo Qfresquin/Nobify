@@ -3,17 +3,21 @@
 
 #include <string.h>
 
+// Caminhos relativos à raiz do projeto
 static const char *APP_SRC = "src_v2/app/nobify.c";
 static const char *APP_BIN = "build/nobify";
 
-static void append_v2_common_flags(Nob_Cmd *cmd) {
+static void append_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
-        "-Wall", "-Wextra", "-std=c11",
+        "-D_GNU_SOURCE",                // Necessário para algumas funções POSIX
+        "-Wall", "-Wextra", "-std=c11", // Flags de aviso e padrão C
+        "-ggdb",                        // Importante para o Valgrind mostrar linhas de código
         "-DHAVE_CONFIG_H",
-        "-DPCRE2_CODE_UNIT_WIDTH=8",
-        "-DPCRE2_STATIC",
-        "-Ivendor",
-        "-Ivendor/pcre",
+        "-DPCRE2_CODE_UNIT_WIDTH=8",   // Configuração do PCRE2
+        "-Ivendor");
+
+    // Includes do projeto
+    nob_cmd_append(cmd,
         "-Isrc_v2/arena",
         "-Isrc_v2/lexer",
         "-Isrc_v2/parser",
@@ -21,12 +25,10 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/transpiler",
         "-Isrc_v2/evaluator",
         "-Isrc_v2/genex",
-        "-Isrc_v2/build_model",
-        "-I", "src obsoleto so use de referencia/logic_model",
-        "-I", "src obsoleto so use de referencia/ds_adapter");
+        "-Isrc_v2/build_model");
 }
 
-static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
+static void append_evaluator_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "src_v2/arena/arena.c",
         "src_v2/lexer/lexer.c",
@@ -57,64 +59,21 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_vars.c");
 }
 
-static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
+static void append_build_model_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "src_v2/build_model/build_model.c",
         "src_v2/build_model/build_model_builder.c",
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_freeze.c",
         "src_v2/build_model/build_model_query.c",
-        "src obsoleto so use de referencia/logic_model/logic_model.c",
-        "src obsoleto so use de referencia/ds_adapter/ds_adapter.c");
+        "src_v2/build_model/logic_model.c",
+        "src_v2/build_model/ds_adapter.c");
 }
 
-static void append_v2_pcre_sources(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "vendor/pcre/pcre2_auto_possess.c",
-        "vendor/pcre/pcre2_chkdint.c",
-        "vendor/pcre/pcre2_chartables.c",
-        "vendor/pcre/pcre2_compile.c",
-        "vendor/pcre/pcre2_compile_cgroup.c",
-        "vendor/pcre/pcre2_compile_class.c",
-        "vendor/pcre/pcre2_config.c",
-        "vendor/pcre/pcre2_context.c",
-        "vendor/pcre/pcre2_convert.c",
-        "vendor/pcre/pcre2_dfa_match.c",
-        "vendor/pcre/pcre2_error.c",
-        "vendor/pcre/pcre2_extuni.c",
-        "vendor/pcre/pcre2_find_bracket.c",
-        "vendor/pcre/pcre2_maketables.c",
-        "vendor/pcre/pcre2_match.c",
-        "vendor/pcre/pcre2_match_data.c",
-        "vendor/pcre/pcre2_match_next.c",
-        "vendor/pcre/pcre2_newline.c",
-        "vendor/pcre/pcre2_ord2utf.c",
-        "vendor/pcre/pcre2_pattern_info.c",
-        "vendor/pcre/pcre2_script_run.c",
-        "vendor/pcre/pcre2_serialize.c",
-        "vendor/pcre/pcre2_string_utils.c",
-        "vendor/pcre/pcre2_study.c",
-        "vendor/pcre/pcre2_substitute.c",
-        "vendor/pcre/pcre2_substring.c",
-        "vendor/pcre/pcre2_tables.c",
-        "vendor/pcre/pcre2_ucd.c",
-        "vendor/pcre/pcre2_valid_utf.c",
-        "vendor/pcre/pcre2_xclass.c",
-        "vendor/pcre/pcre2posix.c");
-}
-
-static void append_platform_link_flags(Nob_Cmd *cmd) {
-    (void)cmd;
-}
-
-static bool delete_binary_artifact(const char *base_path) {
-    bool ok = true;
-    if (nob_file_exists(base_path) && !nob_delete_file(base_path)) ok = false;
-
-    const char *exe_path = nob_temp_sprintf("%s.exe", base_path);
-    if (nob_file_exists(exe_path) && !nob_delete_file(exe_path)) ok = false;
-
-    return ok;
+// No Linux, não compilamos PCRE manualmente, apenas linkamos a lib do sistema.
+static void append_linker_flags(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd, "-lpcre2-8"); // Linka com a libpcre2 instalada via apt
+    nob_cmd_append(cmd, "-lm");       // Linka math lib (geralmente útil)
 }
 
 static bool build_app(void) {
@@ -123,25 +82,56 @@ static bool build_app(void) {
 
     Nob_Cmd cmd = {0};
     nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", APP_BIN,
-        APP_SRC);
-    append_v2_evaluator_runtime_sources(&cmd);
-    append_v2_build_model_runtime_sources(&cmd);
-    append_v2_pcre_sources(&cmd);
-    append_platform_link_flags(&cmd);
+    
+    // 1. Flags de compilação
+    append_common_flags(&cmd);
+    
+    // 2. Output e Main
+    nob_cmd_append(&cmd, "-o", APP_BIN, APP_SRC);
+    
+    // 3. Fontes do projeto
+    append_evaluator_sources(&cmd);
+    append_build_model_sources(&cmd);
+    
+    // 4. Libs externas (Linker)
+    append_linker_flags(&cmd);
+    
+    return nob_cmd_run_sync(cmd);
+}
+
+static bool run_valgrind(void) {
+    // Primeiro garante que o app está compilado e atualizado
+    if (!build_app()) return false;
+
+    Nob_Cmd cmd = {0};
+    nob_cmd_append(&cmd, "valgrind");
+    
+    // Flags essenciais para detectar memory leaks
+    nob_cmd_append(&cmd, "--leak-check=full");
+    nob_cmd_append(&cmd, "--show-leak-kinds=all");
+    nob_cmd_append(&cmd, "--track-origins=yes");
+    // nob_cmd_append(&cmd, "-s"); // Descomente para ver estatísticas resumidas de erro
+    
+    // O executável a ser testado
+    nob_cmd_append(&cmd, APP_BIN);
+
     return nob_cmd_run_sync(cmd);
 }
 
 static bool clean_all(void) {
-    return delete_binary_artifact(APP_BIN);
+    if (nob_file_exists(APP_BIN)) {
+        return nob_delete_file(APP_BIN);
+    }
+    return true;
 }
 
 int main(int argc, char **argv) {
     const char *cmd = (argc > 1) ? argv[1] : "build";
+
     if (strcmp(cmd, "build") == 0) return build_app() ? 0 : 1;
     if (strcmp(cmd, "clean") == 0) return clean_all() ? 0 : 1;
+    if (strcmp(cmd, "valgrind") == 0) return run_valgrind() ? 0 : 1;
 
-    nob_log(NOB_INFO, "Usage: %s [build|clean]", argv[0]);
+    nob_log(NOB_INFO, "Usage: %s [build|clean|valgrind]", argv[0]);
     return 1;
 }

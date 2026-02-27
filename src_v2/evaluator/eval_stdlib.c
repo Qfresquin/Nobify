@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
-#include "pcre/pcre2posix.h"
+#include <pcre2posix.h>
 
 static size_t list_count_items(String_View list_sv) {
     if (list_sv.count == 0) return 0;

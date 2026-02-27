@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
-#include "pcre/pcre2posix.h"
+#include <pcre2posix.h>
 #include <sys/stat.h>
 #if defined(_WIN32)
 #include <windows.h>

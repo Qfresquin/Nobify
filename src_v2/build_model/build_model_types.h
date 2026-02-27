@@ -3,7 +3,6 @@
 
 #include "arena.h"
 #include "nob.h"
-#include "logic_model.h"
 
 // ============================================================================
 // TIPOS BASICOS E ESTRUTURAS DO BUILD MODEL
