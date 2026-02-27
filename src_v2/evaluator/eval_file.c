@@ -1657,7 +1657,6 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
                                       bool *io_applied_any_permissions) {
     if (!ctx || !node) return false;
     String_View current = src;
-    SV_List link_names = {0};
 
     for (size_t depth = 0; depth < 64; depth++) {
         char *current_c = eval_sv_to_cstr_temp(ctx, current);

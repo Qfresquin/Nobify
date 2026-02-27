@@ -66,12 +66,13 @@ static void append_build_model_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_freeze.c",
         "src_v2/build_model/build_model_query.c",
-        "src_v2/build_model/logic_model.c",
-        "src_v2/build_model/ds_adapter.c");
+        "src_v2/build_model/ds_adapter.c",
+        "src_v2/build_model/build_logic.c");
 }
 
 // No Linux, não compilamos PCRE manualmente, apenas linkamos a lib do sistema.
 static void append_linker_flags(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd, "-lpcre2-posix");
     nob_cmd_append(cmd, "-lpcre2-8"); // Linka com a libpcre2 instalada via apt
     nob_cmd_append(cmd, "-lm");       // Linka math lib (geralmente útil)
 }
@@ -99,21 +100,27 @@ static bool build_app(void) {
     return nob_cmd_run_sync(cmd);
 }
 
-static bool run_valgrind(void) {
-    // Primeiro garante que o app está compilado e atualizado
+static bool run_valgrind(int argc, char **argv) {
     if (!build_app()) return false;
 
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "valgrind");
     
-    // Flags essenciais para detectar memory leaks
+    // Flags do Valgrind
     nob_cmd_append(&cmd, "--leak-check=full");
     nob_cmd_append(&cmd, "--show-leak-kinds=all");
     nob_cmd_append(&cmd, "--track-origins=yes");
-    // nob_cmd_append(&cmd, "-s"); // Descomente para ver estatísticas resumidas de erro
+    // nob_cmd_append(&cmd, "-s"); // Estatísticas resumidas
     
-    // O executável a ser testado
+    // O seu programa
     nob_cmd_append(&cmd, APP_BIN);
+
+    // REPASSA OS ARGUMENTOS EXTRAS (começando do índice 2)
+    // Exemplo: ./nob valgrind arg1 arg2
+    // argv[0]="./nob", argv[1]="valgrind", argv[2]="arg1"...
+    for (int i = 2; i < argc; ++i) {
+        nob_cmd_append(&cmd, argv[i]);
+    }
 
     return nob_cmd_run_sync(cmd);
 }
@@ -130,7 +137,9 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "build") == 0) return build_app() ? 0 : 1;
     if (strcmp(cmd, "clean") == 0) return clean_all() ? 0 : 1;
-    if (strcmp(cmd, "valgrind") == 0) return run_valgrind() ? 0 : 1;
+    
+    // Passa argc e argv para a função
+    if (strcmp(cmd, "valgrind") == 0) return run_valgrind(argc, argv) ? 0 : 1;
 
     nob_log(NOB_INFO, "Usage: %s [build|clean|valgrind]", argv[0]);
     return 1;
