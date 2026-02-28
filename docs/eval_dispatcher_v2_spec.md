@@ -89,9 +89,10 @@ If a command is not found in the table:
 *   `cmake_minimum_required(VERSION ...)`:
     *   Parsed by evaluator and stored in variables (`CMAKE_MINIMUM_REQUIRED_VERSION`, `CMAKE_POLICY_VERSION`).
 *   `cmake_policy(...)`:
-    *   V2 supports basic `VERSION`, `SET`, and `GET` state handling.
-    *   `PUSH`/`POP` are accepted with warning and currently no-op.
-    *   Policy-dependent behavioral changes (for example, subtle `if()` argument semantics changes tied to specific CMP policies) are not fully modeled in evaluator v2.
+    *   V2 supports `VERSION`, `SET`, `GET`, `PUSH`, and `POP` with real policy-stack effects.
+    *   Defaults are resolved by policy-table + `CMAKE_POLICY_VERSION` for supported flow/block policies (currently including `CMP0124`).
+    *   Policies outside the flow/block compatibility matrix are accepted syntactically, emit classified diagnostics, and continue in permissive profile.
+    *   Policy-dependent behaviors outside flow/block scope (for example, broader `if()` CMP interactions) are not fully modeled in evaluator v2.
 
 ## 4. Helper Functions
 

@@ -599,6 +599,85 @@ cmake_policy(SET CMP0077 NEW)
 cmake_policy(GET CMP0077 OUT_VAR)
 #@@ENDCASE
 
+#@@CASE policy_version_cmp0124_default_new
+set(I "outer")
+cmake_policy(VERSION 3.28)
+foreach(I IN ITEMS x y)
+endforeach()
+add_executable(policy_cmp0124_default_new main.c)
+target_compile_definitions(policy_cmp0124_default_new PRIVATE I_FINAL=${I})
+#@@ENDCASE
+
+#@@CASE policy_version_cmp0124_default_old
+set(I "outer")
+cmake_policy(VERSION 3.10)
+foreach(I IN ITEMS x y)
+endforeach()
+add_executable(policy_cmp0124_default_old main.c)
+target_compile_definitions(policy_cmp0124_default_old PRIVATE I_FINAL=${I})
+#@@ENDCASE
+
+#@@CASE policy_get_cmp0124_from_version_default
+cmake_policy(VERSION 3.28)
+cmake_policy(GET CMP0124 OUT_CMP0124)
+add_executable(policy_cmp0124_get_default main.c)
+target_compile_definitions(policy_cmp0124_get_default PRIVATE OUT_CMP0124=${OUT_CMP0124})
+#@@ENDCASE
+
+#@@CASE policy_unmapped_get_warn_continue
+cmake_policy(GET CMP0077 OUT_UNMAPPED)
+add_executable(policy_unmapped_continue main.c)
+target_compile_definitions(policy_unmapped_continue PRIVATE OUT_UNMAPPED=${OUT_UNMAPPED})
+#@@ENDCASE
+
+#@@CASE policy_include_scope_no_policy_scope_vs_scoped
+file(WRITE inc_policy_scope.cmake [=[cmake_policy(SET CMP0124 OLD)
+]=])
+cmake_policy(VERSION 3.28)
+include(inc_policy_scope.cmake NO_POLICY_SCOPE)
+cmake_policy(GET CMP0124 AFTER_NO_SCOPE)
+cmake_policy(SET CMP0124 NEW)
+include(inc_policy_scope.cmake)
+cmake_policy(GET CMP0124 AFTER_SCOPED)
+add_executable(policy_include_scope main.c)
+target_compile_definitions(policy_include_scope PRIVATE AFTER_NO_SCOPE=${AFTER_NO_SCOPE} AFTER_SCOPED=${AFTER_SCOPED})
+#@@ENDCASE
+
+#@@CASE policy_pop_underflow_recovers_permissive
+cmake_policy(POP)
+add_executable(policy_pop_underflow_after main.c)
+#@@ENDCASE
+
+#@@CASE compat_strict_promotes_policy_warning
+set(CMAKE_NOBIFY_COMPAT_PROFILE STRICT)
+cmake_policy(GET CMP0077 STRICT_OUT)
+#@@ENDCASE
+
+#@@CASE compat_error_budget_stops_after_limit
+set(CMAKE_NOBIFY_UNSUPPORTED_POLICY ERROR)
+set(CMAKE_NOBIFY_ERROR_BUDGET 1)
+unknown_budget_cmd()
+add_executable(policy_budget_after main.c)
+#@@ENDCASE
+
+#@@CASE compat_unsupported_policy_warn
+set(CMAKE_NOBIFY_UNSUPPORTED_POLICY WARN)
+unknown_warn_cmd()
+add_executable(policy_warn_after main.c)
+#@@ENDCASE
+
+#@@CASE compat_unsupported_policy_error
+set(CMAKE_NOBIFY_UNSUPPORTED_POLICY ERROR)
+unknown_error_cmd()
+add_executable(policy_error_after main.c)
+#@@ENDCASE
+
+#@@CASE compat_unsupported_policy_noop_warn
+set(CMAKE_NOBIFY_UNSUPPORTED_POLICY NOOP_WARN)
+unknown_noop_cmd()
+add_executable(policy_noop_after main.c)
+#@@ENDCASE
+
 #@@CASE dispatcher_find_package_handler_module_mode
 file(MAKE_DIRECTORY temp_pkg/CMake)
 file(WRITE temp_pkg/CMake/FindDemoPkg.cmake [=[set(DemoPkg_FOUND 1)

@@ -235,6 +235,13 @@ Initial required policies for flow/block governance:
 - `CMP0124` (foreach loop variable behavior).
 - Additional flow/block-relevant policies to be tracked in compatibility matrix.
 
+### 11.1 Policy Compliance (Flow/Block)
+
+| Policy | Status | Default by Version | Delta vs CMake 3.28 | Fallback / Diag |
+|---|---|---|---|---|
+| `CMP0124` | `FULL` | `<3.21 => OLD`, `>=3.21 => NEW` | Implemented for foreach loop-variable restore behavior only (flow/block scope) | Uses normal policy resolution path; syntax errors are `EVAL_ERR_SEMANTIC` |
+| Other `CMP*` (outside flow/block matrix) | `PARTIAL` | `UNSET` unless explicitly `SET`/override var | Not modeled semantically beyond storage/query | Warning in permissive (`unsupported policy ...`), promoted in strict profiles |
+
 ## 12. Layered Execution Architecture
 
 Layer A: Parser/AST recovery
@@ -291,6 +298,9 @@ For PARTIAL entries, at least one explicit delta example is required.
 6. Regression
 - existing evaluator suite remains green with profile defaults.
 
+7. Test workspace isolation
+- v2 test suites run inside per-execution temporary workspaces and must not leave command-generated artifacts in the repository root.
+
 ## 15. Rollout Plan
 
 Phase 1: Documentation and type contracts
@@ -321,3 +331,4 @@ Phase 6: Coverage and telemetry maturation
 5. Run report is available programmatically.
 6. Capability query API returns deterministic command compatibility metadata.
 7. Block definitions behavior and fallback rules are explicitly documented and testable.
+8. Test harness side-effects are confined to temporary workspaces with mandatory cleanup on pass/fail.

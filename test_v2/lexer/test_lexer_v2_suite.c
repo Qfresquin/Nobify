@@ -1,5 +1,6 @@
 #include "test_v2_assert.h"
 #include "test_v2_suite.h"
+#include "test_workspace.h"
 
 #include "arena.h"
 #include "arena_dyn.h"
@@ -312,5 +313,32 @@ TEST(lexer_golden_all_cases) {
 }
 
 void run_lexer_v2_tests(int *passed, int *failed) {
+    Test_Workspace ws = {0};
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    bool prepared = test_ws_prepare(&ws, "lexer");
+    bool entered = false;
+
+    if (!prepared) {
+        nob_log(NOB_ERROR, "lexer suite: failed to prepare isolated workspace");
+        if (failed) (*failed)++;
+        return;
+    }
+
+    entered = test_ws_enter(&ws, prev_cwd, sizeof(prev_cwd));
+    if (!entered) {
+        nob_log(NOB_ERROR, "lexer suite: failed to enter isolated workspace");
+        if (failed) (*failed)++;
+        (void)test_ws_cleanup(&ws);
+        return;
+    }
+
     test_lexer_golden_all_cases(passed, failed);
+
+    if (!test_ws_leave(prev_cwd)) {
+        if (failed) (*failed)++;
+    }
+    if (!test_ws_cleanup(&ws)) {
+        nob_log(NOB_ERROR, "lexer suite: failed to cleanup isolated workspace");
+        if (failed) (*failed)++;
+    }
 }

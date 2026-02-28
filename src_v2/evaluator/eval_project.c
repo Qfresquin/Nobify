@@ -92,6 +92,19 @@ static size_t policy_depth_or_one(String_View depth_sv) {
     return acc;
 }
 
+static void policy_emit_unmapped_warning(Evaluator_Context *ctx,
+                                         const Node *node,
+                                         Cmake_Event_Origin o,
+                                         String_View policy_id) {
+    (void)eval_emit_diag(ctx,
+                         EV_DIAG_WARNING,
+                         nob_sv_from_cstr("dispatcher"),
+                         node->as.cmd.name,
+                         o,
+                         nob_sv_from_cstr("unsupported policy is outside evaluator flow/block compatibility matrix"),
+                         policy_id);
+}
+
 bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -202,6 +215,10 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            value);
             return !eval_should_stop(ctx);
         }
+        if (!eval_policy_is_supported_flow_block(a.items[1])) {
+            policy_emit_unmapped_warning(ctx, node, o, a.items[1]);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        }
         if (!eval_policy_set(ctx, a.items[1], value)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
@@ -216,6 +233,10 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("cmake_policy(GET ...) expects CMP<NNNN> and output variable"),
                            nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
             return !eval_should_stop(ctx);
+        }
+        if (!eval_policy_is_supported_flow_block(a.items[1])) {
+            policy_emit_unmapped_warning(ctx, node, o, a.items[1]);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         }
         String_View val = eval_policy_get_effective(ctx, a.items[1]);
         (void)eval_var_set(ctx, a.items[2], val);

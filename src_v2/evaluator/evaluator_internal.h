@@ -9,6 +9,7 @@
 #include "arena.h"
 #include "parser.h"
 #include "evaluator.h"
+#include "eval_policy_engine.h"
 
 #ifdef __cplusplus
 extern "C" {

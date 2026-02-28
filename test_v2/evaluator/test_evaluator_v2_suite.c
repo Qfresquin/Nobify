@@ -1,5 +1,6 @@
 #include "test_v2_assert.h"
 #include "test_v2_suite.h"
+#include "test_workspace.h"
 
 #include "arena.h"
 #include "arena_dyn.h"
@@ -808,8 +809,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 96) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=96", cases.count);
+    if (cases.count != 107) {
+        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=107", cases.count);
         ok = false;
         goto done;
     }
@@ -863,6 +864,88 @@ TEST(evaluator_golden_all_cases) {
     TEST_PASS();
 }
 
+TEST(evaluator_public_api_profile_and_report_snapshot) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+    ASSERT(evaluator_set_compat_profile(ctx, EVAL_PROFILE_STRICT));
+
+    Ast_Root root = parse_cmake(temp_arena, "unknown_public_api_command()\n");
+    (void)evaluator_run(ctx, root);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *snapshot = evaluator_get_run_report_snapshot(ctx);
+    ASSERT(report != NULL);
+    ASSERT(snapshot != NULL);
+    ASSERT(report->error_count >= 1);
+    ASSERT(snapshot->error_count == report->error_count);
+
+    bool found_diag_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].kind != EV_DIAGNOSTIC) continue;
+        if (stream->items[i].as.diag.severity == EV_DIAG_ERROR) {
+            found_diag_error = true;
+            break;
+        }
+    }
+    ASSERT(found_diag_error);
+
+    Command_Capability cap = {0};
+    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("file"), &cap));
+    ASSERT(cap.implemented_level == EVAL_CMD_IMPL_PARTIAL);
+
+    Command_Capability missing = {0};
+    ASSERT(!evaluator_get_command_capability(nob_sv_from_cstr("unknown_public_api_command"), &missing));
+    ASSERT(missing.implemented_level == EVAL_CMD_IMPL_MISSING);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
+    Test_Workspace ws = {0};
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    bool prepared = test_ws_prepare(&ws, "evaluator");
+    bool entered = false;
+
+    if (!prepared) {
+        nob_log(NOB_ERROR, "evaluator suite: failed to prepare isolated workspace");
+        if (failed) (*failed)++;
+        return;
+    }
+
+    entered = test_ws_enter(&ws, prev_cwd, sizeof(prev_cwd));
+    if (!entered) {
+        nob_log(NOB_ERROR, "evaluator suite: failed to enter isolated workspace");
+        if (failed) (*failed)++;
+        (void)test_ws_cleanup(&ws);
+        return;
+    }
+
     test_evaluator_golden_all_cases(passed, failed);
+    test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+
+    if (!test_ws_leave(prev_cwd)) {
+        if (failed) (*failed)++;
+    }
+    if (!test_ws_cleanup(&ws)) {
+        nob_log(NOB_ERROR, "evaluator suite: failed to cleanup isolated workspace");
+        if (failed) (*failed)++;
+    }
 }

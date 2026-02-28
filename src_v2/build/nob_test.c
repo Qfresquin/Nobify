@@ -157,30 +157,35 @@ static void append_v2_arena_runtime_sources(Nob_Cmd *cmd) {
 
 static void append_v2_arena_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_workspace.c",
         "test_v2/arena/test_arena_v2_main.c",
         "test_v2/arena/test_arena_v2_suite.c");
 }
 
 static void append_v2_lexer_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_workspace.c",
         "test_v2/lexer/test_lexer_v2_main.c",
         "test_v2/lexer/test_lexer_v2_suite.c");
 }
 
 static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_workspace.c",
         "test_v2/parser/test_parser_v2_main.c",
         "test_v2/parser/test_parser_v2_suite.c");
 }
 
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_workspace.c",
         "test_v2/evaluator/test_evaluator_v2_main.c",
         "test_v2/evaluator/test_evaluator_v2_suite.c");
 }
 
 static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_workspace.c",
         "test_v2/pipeline/test_pipeline_v2_main.c",
         "test_v2/pipeline/test_pipeline_v2_suite.c");
 }
@@ -425,6 +430,15 @@ static bool save_current_dir(char out[_TINYDIR_PATH_MAX]) {
     return true;
 }
 
+static void set_env_or_unset(const char *name, const char *value) {
+#if defined(_WIN32)
+    _putenv_s(name, value ? value : "");
+#else
+    if (value) setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
+
 static bool prepare_temp_tests_workspace(void) {
     if (!tiny_remove_tree(TEMP_TESTS_ROOT)) return false;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_ROOT)) return false;
@@ -442,10 +456,12 @@ static bool run_binary_in_workspace(const char *bin_rel_path) {
     char cwd[_TINYDIR_PATH_MAX] = {0};
     if (!save_current_dir(cwd)) return false;
     if (!nob_set_current_dir(TEMP_TESTS_WORK)) return false;
+    set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", "1");
 
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, bin_rel_path);
     bool ok = nob_cmd_run_sync(cmd);
+    set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", NULL);
 
     if (!nob_set_current_dir(cwd)) {
         nob_log(NOB_ERROR, "failed to restore current directory to %s", cwd);

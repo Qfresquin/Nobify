@@ -61,9 +61,9 @@ EVENTS count=2
 === END CASE ===
 
 === CASE pipeline_negative_install_missing_destination ===
-EVAL_OK 0
+EVAL_OK 1
 BUILDER_OK 0
 FREEZE_OK 0
-DIAG errors=1 warnings=0
+DIAG errors=2 warnings=0
 EVENTS count=2
 === END CASE ===

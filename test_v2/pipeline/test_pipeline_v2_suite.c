@@ -1,5 +1,6 @@
 #include "test_v2_assert.h"
 #include "test_v2_suite.h"
+#include "test_workspace.h"
 
 #include "arena.h"
 #include "arena_dyn.h"
@@ -609,8 +610,35 @@ TEST(pipeline_builder_custom_command_events) {
 }
 
 void run_pipeline_v2_tests(int *passed, int *failed) {
+    Test_Workspace ws = {0};
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    bool prepared = test_ws_prepare(&ws, "pipeline");
+    bool entered = false;
+
+    if (!prepared) {
+        nob_log(NOB_ERROR, "pipeline suite: failed to prepare isolated workspace");
+        if (failed) (*failed)++;
+        return;
+    }
+
+    entered = test_ws_enter(&ws, prev_cwd, sizeof(prev_cwd));
+    if (!entered) {
+        nob_log(NOB_ERROR, "pipeline suite: failed to enter isolated workspace");
+        if (failed) (*failed)++;
+        (void)test_ws_cleanup(&ws);
+        return;
+    }
+
     test_pipeline_golden_all_cases(passed, failed);
     test_pipeline_builder_directory_scope_events(passed, failed);
     test_pipeline_validate_does_not_infer_link_library_targets(passed, failed);
     test_pipeline_builder_custom_command_events(passed, failed);
+
+    if (!test_ws_leave(prev_cwd)) {
+        if (failed) (*failed)++;
+    }
+    if (!test_ws_cleanup(&ws)) {
+        nob_log(NOB_ERROR, "pipeline suite: failed to cleanup isolated workspace");
+        if (failed) (*failed)++;
+    }
 }

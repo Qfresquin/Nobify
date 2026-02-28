@@ -42,7 +42,14 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
   - `break`, `continue`, `return`, `return(PROPAGATE ...)`
 - Partial:
   - `return()` in `macro()` remains accepted for legacy compatibility (with warning)
-  - `CMP0124`: `NEW` behavior restores foreach loop variable after loop; default remains legacy-compatible unless policy is set
+  - policy coverage is currently scoped to flow/block matrix (see table below)
+
+#### Policy Compliance (Flow/Block)
+
+| Policy | Status | Default by Version | Delta vs CMake | Fallback / Diag |
+|---|---|---|---|---|
+| `CMP0124` | FULL | `<3.21 => OLD`, `>=3.21 => NEW` (via `CMAKE_POLICY_VERSION`) | Focused on foreach loop-variable restore semantics | Standard policy resolution path |
+| Other `CMP*` outside flow/block | PARTIAL | `UNSET` default unless explicitly set/overridden | No semantic modeling outside flow/block | `unsupported policy` diagnostic (permissive-first) |
 
 ### Block definitions
 
