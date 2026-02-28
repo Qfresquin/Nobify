@@ -53,16 +53,6 @@ Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 
 ---
 
-## Project Structure & Roadmap
-
-If you are interested in the architecture of the rewrite, check the documentation indices:
-
-*   **[Build Model v2 Contract](build_model_v2_contract.md):** The normative source of truth for the new engine.
-*   **[Readiness Checklist](build_model_v2_readiness_checklist.md):** The objective gates for v2.
-*   **[Transpiler v2 Spec](transpiler_v2_spec.md):** How we turn the model into code.
-*   **[Build Model v2 Architecture Notes](build_model_architecture_v2.md):** Practical coupling and boundary decisions used by the current pipeline.
-*   **[Build Model v2 Benchmark Notes](build_model_v2_benchmark_notes.md):** Repeatable baseline procedure for validation/builder performance checks.
-
 ## Disclaimer
 
 Nobify is not a 1:1 clone of CMake. It does not promise to support every legacy policy or historical quirk of the last 20 years.
