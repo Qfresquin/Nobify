@@ -2,6 +2,7 @@
 #include "evaluator_internal.h"
 #include "eval_expr.h"
 #include "eval_dispatcher.h"
+#include "eval_flow.h"
 #include "eval_file_internal.h"
 #include "lexer.h"
 #include "arena_dyn.h"
@@ -272,6 +273,19 @@ static bool sv_list_push(Arena *arena, SV_List *list, String_View sv) {
     return true;
 }
 
+static bool sv_parse_long(String_View sv, long *out) {
+    if (!out || sv.count == 0) return false;
+    char buf[128];
+    if (sv.count >= sizeof(buf)) return false;
+    memcpy(buf, sv.data, sv.count);
+    buf[sv.count] = '\0';
+    char *end = NULL;
+    long v = strtol(buf, &end, 10);
+    if (!end || *end != '\0') return false;
+    *out = v;
+    return true;
+}
+
 static bool sv_strip_cmake_bracket_arg(String_View in, String_View *out) {
     if (!out) return false;
     *out = in;
@@ -416,15 +430,100 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
 
     String_View var = a.items[0];
     size_t idx = 1;
+    SV_List items = {0};
+    bool cmp0124_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0124")), "NEW");
 
-    if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "IN")) {
+    if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "RANGE")) {
         idx++;
-        if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "ITEMS")) idx++;
+        if (a.count - idx < 1 || a.count - idx > 3) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 nob_sv_from_cstr("foreach"),
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("foreach(RANGE ...) expects 1..3 numeric arguments"),
+                                 nob_sv_from_cstr("Usage: foreach(v RANGE stop) or RANGE start stop [step]"));
+            return !eval_should_stop(ctx);
+        }
+        long start = 0, stop = 0, step = 1;
+        if (a.count - idx == 1) {
+            if (!sv_parse_long(a.items[idx], &stop)) return false;
+        } else {
+            if (!sv_parse_long(a.items[idx], &start)) return false;
+            if (!sv_parse_long(a.items[idx + 1], &stop)) return false;
+            if (a.count - idx == 3 && !sv_parse_long(a.items[idx + 2], &step)) return false;
+        }
+        if (step == 0) {
+            (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"),
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("foreach(RANGE ...) step must be non-zero"),
+                                 nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        if (a.count - idx == 1) start = 0;
+        if ((step > 0 && start > stop) || (step < 0 && start < stop)) return true;
+        for (long v = start;; v += step) {
+            char buf[64];
+            int n = snprintf(buf, sizeof(buf), "%ld", v);
+            if (n < 0 || (size_t)n >= sizeof(buf)) return ctx_oom(ctx);
+            if (!sv_list_push(ctx->arena, &items, nob_sv_from_cstr(buf))) return ctx_oom(ctx);
+            if ((step > 0 && v + step > stop) || (step < 0 && v + step < stop)) break;
+        }
+    } else if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "IN")) {
+        idx++;
+        if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "ITEMS")) {
+            idx++;
+            items.items = &a.items[idx];
+            items.count = a.count - idx;
+        } else if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "LISTS")) {
+            idx++;
+            for (; idx < a.count; idx++) {
+                String_View list_txt = eval_var_get(ctx, a.items[idx]);
+                if (list_txt.count == 0) continue;
+                if (!eval_sv_split_semicolon_genex_aware(ctx->arena, list_txt, &items)) return ctx_oom(ctx);
+            }
+        } else if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "ZIP_LISTS")) {
+            idx++;
+            size_t list_count = a.count - idx;
+            String_View **zip_items = arena_alloc_array(eval_temp_arena(ctx), String_View*, list_count);
+            size_t *zip_counts = arena_alloc_array(eval_temp_arena(ctx), size_t, list_count);
+            EVAL_OOM_RETURN_IF_NULL(ctx, zip_items, false);
+            EVAL_OOM_RETURN_IF_NULL(ctx, zip_counts, false);
+            size_t max_len = 0;
+            for (size_t li = 0; li < list_count; li++, idx++) {
+                String_View list_txt = eval_var_get(ctx, a.items[idx]);
+                SV_List one = {0};
+                if (list_txt.count > 0 && !eval_sv_split_semicolon_genex_aware(ctx->arena, list_txt, &one)) return ctx_oom(ctx);
+                if (one.count > max_len) max_len = one.count;
+                zip_items[li] = one.items;
+                zip_counts[li] = one.count;
+            }
+            for (size_t row = 0; row < max_len; row++) {
+                Nob_String_Builder sb = {0};
+                for (size_t li = 0; li < list_count; li++) {
+                    String_View cur = (row < zip_counts[li]) ? zip_items[li][row] : nob_sv_from_cstr("");
+                    if (li > 0) nob_sb_append(&sb, ';');
+                    if (cur.count > 0) nob_sb_append_buf(&sb, cur.data, cur.count);
+                }
+                String_View zipped = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+                nob_sb_free(sb);
+                if (!sv_list_push(ctx->arena, &items, zipped)) return ctx_oom(ctx);
+            }
+        } else {
+            items.items = &a.items[idx];
+            items.count = a.count - idx;
+        }
+    } else {
+        items.items = &a.items[idx];
+        items.count = a.count - idx;
     }
 
+    String_View loop_old = eval_var_get(ctx, var);
+    bool loop_old_defined = eval_var_defined(ctx, var);
+
     ctx->loop_depth++;
-    for (; idx < a.count; idx++) {
-        if (!eval_var_set(ctx, var, a.items[idx])) {
+    for (size_t ii = 0; ii < items.count; ii++) {
+        if (!eval_var_set(ctx, var, items.items[ii])) {
             ctx->loop_depth--;
             return false;
         }
@@ -446,6 +545,10 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
         }
     }
     ctx->loop_depth--;
+    if (cmp0124_new) {
+        if (loop_old_defined) (void)eval_var_set(ctx, var, loop_old);
+        else (void)eval_var_unset(ctx, var);
+    }
     return true;
 }
 
@@ -544,7 +647,11 @@ static bool eval_node_list(Evaluator_Context *ctx, const Node_List *list) {
     if (!ctx || !list) return false;
     for (size_t i = 0; i < list->count; i++) {
         if (!eval_node(ctx, &list->items[i])) return false;
-        if (ctx->break_requested || ctx->continue_requested || ctx->return_requested) return true;
+        if (ctx->return_requested) {
+            if (!eval_unwind_blocks_for_return(ctx)) return false;
+            return true;
+        }
+        if (ctx->break_requested || ctx->continue_requested) return true;
     }
     return true;
 }
@@ -712,13 +819,16 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     // function() creates scope; macro() executes in caller scope.
     bool is_function = (cmd->kind == USER_CMD_FUNCTION);
     bool is_macro = (cmd->kind == USER_CMD_MACRO);
+    Eval_Return_Context saved_return_ctx = ctx->return_context;
     bool scope_pushed = false;
     bool macro_pushed = false;
     if (is_function) {
         if (!eval_scope_push(ctx)) return false;
+        ctx->return_context = EVAL_RETURN_CTX_FUNCTION;
         scope_pushed = true;
     } else if (is_macro) {
         if (!eval_macro_frame_push(ctx)) return false;
+        ctx->return_context = EVAL_RETURN_CTX_MACRO;
         macro_pushed = true;
     }
 
@@ -782,9 +892,24 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
 
     ok = eval_node_list(ctx, &cmd->body);
 cleanup:
+    if (ctx->return_requested && ctx->return_propagate_count > 0 && is_function && ctx->scope_depth > 1) {
+        for (size_t i = 0; i < ctx->return_propagate_count; i++) {
+            String_View key = ctx->return_propagate_vars[i];
+            if (!eval_var_defined_in_current_scope(ctx, key)) continue;
+            String_View value = eval_var_get(ctx, key);
+            size_t saved_depth = ctx->scope_depth;
+            ctx->scope_depth = saved_depth - 1;
+            bool ok_set = eval_var_set(ctx, key, value);
+            ctx->scope_depth = saved_depth;
+            if (!ok_set) ok = false;
+        }
+    }
     if (ctx->return_requested) {
         ctx->return_requested = false;
     }
+    ctx->return_propagate_vars = NULL;
+    ctx->return_propagate_count = 0;
+    ctx->return_context = saved_return_ctx;
     if (scope_pushed) {
         eval_scope_pop(ctx);
     } else if (macro_pushed) {
@@ -1188,6 +1313,8 @@ bool eval_execute_file(Evaluator_Context *ctx,
                        bool is_add_subdirectory,
                        String_View explicit_bin_dir) {
     if (eval_should_stop(ctx)) return false;
+    Eval_Return_Context saved_return_ctx = ctx->return_context;
+    ctx->return_context = EVAL_RETURN_CTX_INCLUDE;
     Arena_Mark temp_mark = arena_mark(ctx->arena);
     bool ok = false;
     char *path_c = NULL;
@@ -1206,9 +1333,12 @@ bool eval_execute_file(Evaluator_Context *ctx,
 
     ok = eval_node_list(ctx, &new_ast);
     if (ctx->return_requested) ctx->return_requested = false;
+    ctx->return_propagate_vars = NULL;
+    ctx->return_propagate_count = 0;
     eval_pop_external_context(ctx, &state);
 
 cleanup:
+    ctx->return_context = saved_return_ctx;
     arena_rewind(ctx->arena, temp_mark);
     return ok;
 }
@@ -1268,6 +1398,9 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->stream = init->stream;
     ctx->source_dir = init->source_dir;
     ctx->binary_dir = init->binary_dir;
+    ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    ctx->return_propagate_vars = NULL;
+    ctx->return_propagate_count = 0;
 
     ctx->known_targets_arena = arena_create(4096);
     if (!ctx->known_targets_arena) return NULL;
@@ -1378,5 +1511,7 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     if (ctx->return_requested) {
         ctx->return_requested = false;
     }
+    ctx->return_propagate_vars = NULL;
+    ctx->return_propagate_count = 0;
     return ok && !eval_should_stop(ctx);
 }

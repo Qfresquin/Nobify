@@ -43,6 +43,8 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
         case EV_DIAGNOSTIC:
             if (!ev_copy_sv_inplace(arena, &ev->as.diag.component)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.diag.command)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.diag.code)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.diag.error_class)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.diag.cause)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.diag.hint)) return false;
             break;
@@ -320,6 +322,8 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
             case EV_DIAGNOSTIC:
                 ev_print_sv("component", ev->as.diag.component);
                 ev_print_sv("command", ev->as.diag.command);
+                ev_print_sv("code", ev->as.diag.code);
+                ev_print_sv("class", ev->as.diag.error_class);
                 ev_print_sv("cause", ev->as.diag.cause);
                 ev_print_sv("hint", ev->as.diag.hint);
                 break;

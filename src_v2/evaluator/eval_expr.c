@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <pcre2posix.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -68,6 +69,32 @@ static bool sv_is_number(String_View sv, long *out) {
     if (!end || *end != 0) return false;
     if (out) *out = v;
     return true;
+}
+
+static bool sv_is_numeric_nonzero(String_View sv, bool *ok) {
+    if (ok) *ok = false;
+    if (sv.count == 0) return false;
+    char buf[128];
+    if (sv.count >= sizeof(buf)) return false;
+    memcpy(buf, sv.data, sv.count);
+    buf[sv.count] = '\0';
+    char *end = NULL;
+    double v = strtod(buf, &end);
+    if (!end || *end != '\0') return false;
+    if (ok) *ok = true;
+    return v != 0.0;
+}
+
+static bool path_is_readable_cstr(const char *path) { return path && path[0] != '\0' && access(path, R_OK) == 0; }
+static bool path_is_writable_cstr(const char *path) { return path && path[0] != '\0' && access(path, W_OK) == 0; }
+static bool path_is_executable_cstr(const char *path) { return path && path[0] != '\0' && access(path, X_OK) == 0; }
+
+static bool path_is_newer_than_cstr(const char *lhs, const char *rhs) {
+    if (!lhs || !rhs || lhs[0] == '\0' || rhs[0] == '\0') return false;
+    struct stat ls = {0};
+    struct stat rs = {0};
+    if (stat(lhs, &ls) != 0 || stat(rhs, &rs) != 0) return false;
+    return ls.st_mtime > rs.st_mtime;
 }
 
 static int sv_lex_cmp(String_View a, String_View b) {
@@ -312,8 +339,9 @@ static bool eval_truthy_constant_only(String_View v, bool *known) {
 
     if (sv_ends_with_ci_lit(v, "-NOTFOUND")) return false;
 
-    long num = 0;
-    if (sv_is_number(v, &num)) return num != 0;
+    bool numeric = false;
+    bool nz = sv_is_numeric_nonzero(v, &numeric);
+    if (numeric) return nz;
 
     if (known) *known = false;
     return false;
@@ -583,6 +611,43 @@ static bool parse_unary(Expr *e) {
         return eval_sv_is_abs_path(expr_next(e));
     }
 
+    if (eval_sv_eq_ci_lit(tok, "IS_READABLE")) {
+        expr_next(e);
+        if (!expr_has(e)) return false;
+        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
+        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
+        return path_is_readable_cstr(path);
+    }
+
+    if (eval_sv_eq_ci_lit(tok, "IS_WRITABLE")) {
+        expr_next(e);
+        if (!expr_has(e)) return false;
+        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
+        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
+        return path_is_writable_cstr(path);
+    }
+
+    if (eval_sv_eq_ci_lit(tok, "IS_EXECUTABLE")) {
+        expr_next(e);
+        if (!expr_has(e)) return false;
+        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
+        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
+        return path_is_executable_cstr(path);
+    }
+
+    if (eval_sv_eq_ci_lit(tok, "TEST")) {
+        expr_next(e);
+        if (!expr_has(e)) return false;
+        String_View name = expr_next(e);
+        size_t total = strlen("NOBIFY_TEST::") + name.count;
+        char *buf = (char*)arena_alloc(eval_temp_arena(e->ctx), total + 1);
+        EVAL_OOM_RETURN_IF_NULL(e->ctx, buf, false);
+        memcpy(buf, "NOBIFY_TEST::", strlen("NOBIFY_TEST::"));
+        memcpy(buf + strlen("NOBIFY_TEST::"), name.data, name.count);
+        buf[total] = '\0';
+        return eval_var_defined(e->ctx, nob_sv_from_cstr(buf));
+    }
+
     return parse_primary(e);
 }
 
@@ -599,7 +664,11 @@ static bool parse_cmp(Expr *e) {
         eval_sv_eq_ci_lit(first, "EXISTS") ||
         eval_sv_eq_ci_lit(first, "IS_DIRECTORY") ||
         eval_sv_eq_ci_lit(first, "IS_SYMLINK") ||
-        eval_sv_eq_ci_lit(first, "IS_ABSOLUTE")) {
+        eval_sv_eq_ci_lit(first, "IS_ABSOLUTE") ||
+        eval_sv_eq_ci_lit(first, "IS_READABLE") ||
+        eval_sv_eq_ci_lit(first, "IS_WRITABLE") ||
+        eval_sv_eq_ci_lit(first, "IS_EXECUTABLE") ||
+        eval_sv_eq_ci_lit(first, "TEST")) {
         return parse_unary(e);
     }
 
@@ -717,6 +786,16 @@ static bool parse_cmp(Expr *e) {
         rhs_path = sv_path_normalize_temp(e->ctx, rhs_path);
         if (eval_should_stop(e->ctx)) return false;
         return sv_eq(lhs_path, rhs_path);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "IS_NEWER_THAN")) {
+        expr_next(e);
+        if (!expr_has(e)) return false;
+        char *lhs_path = eval_sv_to_cstr_temp(e->ctx, sv_lookup_if_var(e->ctx, lhs));
+        char *rhs_path = eval_sv_to_cstr_temp(e->ctx, sv_lookup_if_var(e->ctx, expr_next(e)));
+        EVAL_OOM_RETURN_IF_NULL(e->ctx, lhs_path, false);
+        EVAL_OOM_RETURN_IF_NULL(e->ctx, rhs_path, false);
+        return path_is_newer_than_cstr(lhs_path, rhs_path);
     }
 
     return eval_truthy(e->ctx, lhs);

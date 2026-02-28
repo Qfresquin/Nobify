@@ -68,6 +68,13 @@ If a command is not found in the table:
 *   `message([STATUS|WARNING|FATAL_ERROR] "msg")`:
     *   **Action:** Prints to stdout/stderr immediately during transpilation.
     *   **Event:** Emits `EV_DIAGNOSTIC` for `WARNING` and `FATAL_ERROR` levels to ensure the build model captures the intent.
+*   `return([PROPAGATE <vars...>])`:
+    *   **Action:** requests early exit from current execution context (`function`, `macro`, `include`, or top-level file).
+    *   **Propagation:** when `PROPAGATE` is provided, evaluator propagates listed variables to parent scope during unwind.
+    *   **Compatibility:** `return()` inside `macro()` remains allowed in evaluator v2 for legacy scripts, with warning.
+*   `foreach(...)`:
+    *   **Action:** supports simple form plus `RANGE`, `IN ITEMS`, `IN LISTS`, `IN ZIP_LISTS`.
+    *   **Policy hook:** loop-variable restoration behavior follows `CMP0124` effective policy (`NEW` restores previous value).
 
 ### 3.4. File System & Globbing
 *   `file(GLOB var patterns...)`:

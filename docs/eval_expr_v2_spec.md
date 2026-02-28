@@ -35,8 +35,8 @@ CMake's `if()` command supports a complex expression language. The Evaluator mus
 
 ### 3.1. Operator Precedence (Standard CMake)
 1.  `Parentheses ()`
-2.  `Unary Ops` (NOT, EXISTS, COMMAND, DEFINED, TARGET, POLICY)
-3.  `Binary Ops` (STREQUAL, EQUAL, STRLESS, VERSION_LESS, MATCHES)
+2.  `Unary Ops` (NOT, EXISTS, COMMAND, DEFINED, TARGET, POLICY, TEST, IS_DIRECTORY, IS_SYMLINK, IS_ABSOLUTE, IS_READABLE, IS_WRITABLE, IS_EXECUTABLE)
+3.  `Binary Ops` (STREQUAL, EQUAL, STRLESS, VERSION_LESS, MATCHES, IN_LIST, PATH_EQUAL, IS_NEWER_THAN)
 4.  `Logical AND`
 5.  `Logical OR`
 
@@ -48,6 +48,7 @@ The function `is_true(String_View val)` implements CMake's specific boolean logi
 | `1`, `ON`, `YES`, `TRUE`, `Y` | **True** |
 | `0`, `OFF`, `NO`, `FALSE`, `N`, `IGNORE`, `""`, `NOTFOUND` | **False** |
 | `*-NOTFOUND` | **False** |
+| numeric strings (integer/float, e.g. `2`, `-3`, `0.5`) | **True** if non-zero |
 | *Any other string* | **False** (treated as string literal or variable name depending on context) |
 
 ### 3.3. Special Predicates
@@ -57,6 +58,9 @@ The function `is_true(String_View val)` implements CMake's specific boolean logi
     *   **Constraint:** Since the transpiler runs on the *host* machine but builds for a potentially different *target* environment, filesystem checks like `EXISTS` are tricky.
     *   **Policy:** `if(EXISTS)` checks the file on the **host machine** at transpilation time. This assumes the source tree is present.
 *   `if(TARGET target_name)`: Checks if `target_name` has been declared *so far* in the execution flow.
+*   `if(TEST test_name)`: Checks if `add_test()` registered the given test during evaluator execution.
+*   `if(IS_READABLE|IS_WRITABLE|IS_EXECUTABLE path)`: Host-filesystem permission predicates.
+*   `if(path1 IS_NEWER_THAN path2)`: Host-filesystem mtime comparison.
 
 ## 4. Interfaces
 

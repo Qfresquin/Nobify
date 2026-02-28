@@ -158,6 +158,26 @@ static bool sv_eq_ci_lit(String_View value, const char *lit) {
     return true;
 }
 
+static bool sv_eq_ci_sv(String_View a, String_View b) {
+    if (a.count != b.count) return false;
+    for (size_t i = 0; i < a.count; i++) {
+        if (ascii_upper((unsigned char)a.data[i]) != ascii_upper((unsigned char)b.data[i])) return false;
+    }
+    return true;
+}
+
+static String_View parser_first_arg_text(const Args *args) {
+    if (!args || args->count == 0) return nob_sv_from_cstr("");
+    if (args->items[0].count == 0) return nob_sv_from_cstr("");
+    return args->items[0].items[0].text;
+}
+
+static void parser_warn_end_mismatch(size_t line, size_t col, const char *kw, String_View expected, String_View got) {
+    diag_log(DIAG_SEV_WARNING, "parser", "<input>", line, col, kw,
+             nob_temp_sprintf("%s() assinatura de fechamento divergente", kw),
+             nob_temp_sprintf("esperado: "SV_Fmt" ; recebido: "SV_Fmt, SV_Arg(expected), SV_Arg(got)));
+}
+
 static bool is_cmake_bracket_literal(String_View sv) {
     if (sv.count < 4 || !sv.data) return false;
     if (sv.data[0] != '[') return false;
@@ -381,18 +401,26 @@ static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, si
             return parser_make_empty_statement(line, col);
         } else if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
             bool end_args_ok = true;
-            Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
-            (void)ignore;
+            Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
             PARSER_OOM_RETURN(ctx, (Node){0});
             if (!end_args_ok) return parser_make_empty_statement(line, col);
+            String_View expected = parser_first_arg_text(&node.as.if_stmt.condition);
+            String_View got = parser_first_arg_text(&end_args);
+            if (expected.count > 0 && got.count > 0 && !sv_eq_ci_sv(expected, got)) {
+                parser_warn_end_mismatch(line, col, "endif", expected, got);
+            }
         }
     } else if (sv_eq_ci_lit(found_term, "endif")) {
         if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
             bool end_args_ok = true;
-            Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
-            (void)ignore;
+            Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
             PARSER_OOM_RETURN(ctx, (Node){0});
             if (!end_args_ok) return parser_make_empty_statement(line, col);
+            String_View expected = parser_first_arg_text(&node.as.if_stmt.condition);
+            String_View got = parser_first_arg_text(&end_args);
+            if (expected.count > 0 && got.count > 0 && !sv_eq_ci_sv(expected, got)) {
+                parser_warn_end_mismatch(line, col, "endif", expected, got);
+            }
         }
     } else {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "if",
@@ -426,9 +454,14 @@ static Node parse_foreach(Parser_Context *ctx, Token_List *tokens, size_t *curso
 
     if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
         bool end_args_ok = true;
-        Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok); (void)ignore;
+        Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
         PARSER_OOM_RETURN(ctx, (Node){0});
         if (!end_args_ok) return parser_make_empty_statement(line, col);
+        String_View var_name = parser_first_arg_text(&node.as.foreach_stmt.args);
+        String_View got = parser_first_arg_text(&end_args);
+        if (var_name.count > 0 && got.count > 0 && !sv_eq_ci_sv(var_name, got)) {
+            parser_warn_end_mismatch(line, col, "endforeach", var_name, got);
+        }
     }
     return node;
 }
@@ -457,9 +490,14 @@ static Node parse_while(Parser_Context *ctx, Token_List *tokens, size_t *cursor,
 
     if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
         bool end_args_ok = true;
-        Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok); (void)ignore;
+        Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
         PARSER_OOM_RETURN(ctx, (Node){0});
         if (!end_args_ok) return parser_make_empty_statement(line, col);
+        String_View expected = parser_first_arg_text(&node.as.while_stmt.condition);
+        String_View got = parser_first_arg_text(&end_args);
+        if (expected.count > 0 && got.count > 0 && !sv_eq_ci_sv(expected, got)) {
+            parser_warn_end_mismatch(line, col, "endwhile", expected, got);
+        }
     }
     return node;
 }
@@ -497,9 +535,13 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
 
     if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
         bool end_args_ok = true;
-        Args ignore = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok); (void)ignore;
+        Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
         PARSER_OOM_RETURN(ctx, (Node){0});
         if (!end_args_ok) return parser_make_empty_statement(line, col);
+        String_View got = parser_first_arg_text(&end_args);
+        if (node.as.func_def.name.count > 0 && got.count > 0 && !sv_eq_ci_sv(node.as.func_def.name, got)) {
+            parser_warn_end_mismatch(line, col, is_macro ? "endmacro" : "endfunction", node.as.func_def.name, got);
+        }
     }
     return node;
 }

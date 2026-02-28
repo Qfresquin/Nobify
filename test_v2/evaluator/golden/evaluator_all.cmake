@@ -257,6 +257,69 @@ add_executable(nested_usercmd main.c)
 target_compile_definitions(nested_usercmd PRIVATE NESTED_VAL=${NESTED_VAL})
 #@@ENDCASE
 
+#@@CASE flow_return_propagate_and_block_unwind
+set(RET_OUTER "root")
+function(ret_fn)
+  block(PROPAGATE BLK_A)
+    set(BLK_A "from_block")
+    set(RET_OUTER "from_return")
+    return(PROPAGATE RET_OUTER)
+  endblock()
+endfunction()
+ret_fn()
+add_executable(ret_flow main.c)
+target_compile_definitions(ret_flow PRIVATE RET_OUTER=${RET_OUTER} BLK_A=${BLK_A})
+#@@ENDCASE
+
+#@@CASE flow_foreach_range_lists_zip
+set(ACC "")
+foreach(I RANGE 1 5 2)
+  if("${ACC}" STREQUAL "")
+    set(ACC "${I}")
+  else()
+    set(ACC "${ACC}_${I}")
+  endif()
+endforeach()
+set(L1 "a;b")
+set(L2 "1;2;3")
+set(ZIP_ACC "")
+foreach(P IN ZIP_LISTS L1 L2)
+  if("${ZIP_ACC}" STREQUAL "")
+    set(ZIP_ACC "${P}")
+  else()
+    set(ZIP_ACC "${ZIP_ACC}|${P}")
+  endif()
+endforeach()
+add_executable(foreach_modes main.c)
+target_compile_definitions(foreach_modes PRIVATE ACC=${ACC} ZIP_ACC=${ZIP_ACC})
+#@@ENDCASE
+
+#@@CASE flow_cmp0124_new_restore
+set(I "outer")
+cmake_policy(SET CMP0124 NEW)
+foreach(I IN ITEMS x y)
+endforeach()
+add_executable(cmp0124_new main.c)
+target_compile_definitions(cmp0124_new PRIVATE I_FINAL=${I})
+#@@ENDCASE
+
+#@@CASE expr_test_and_path_predicates
+file(WRITE expr_pred_a.txt "a")
+file(WRITE expr_pred_b.txt "b")
+add_test(NAME smoke_expr COMMAND expr_tool)
+if(TEST smoke_expr)
+  set(HAS_TEST 1)
+endif()
+if(IS_READABLE expr_pred_a.txt AND IS_WRITABLE expr_pred_a.txt)
+  set(RW_OK 1)
+endif()
+if(expr_pred_b.txt IS_NEWER_THAN expr_pred_a.txt)
+  set(NEWER_OK 1)
+endif()
+add_executable(expr_preds main.c)
+target_compile_definitions(expr_preds PRIVATE HAS_TEST=${HAS_TEST} RW_OK=${RW_OK} NEWER_OK=${NEWER_OK})
+#@@ENDCASE
+
 #@@CASE stdlib_list_get_find_extended
 set(LST "aa;bb;cc;dd")
 list(GET LST 1 -1 PICKS)

@@ -108,6 +108,8 @@ typedef struct {
             Cmake_Diag_Severity severity;
             String_View component;
             String_View command;
+            String_View code;
+            String_View error_class;
             String_View cause;
             String_View hint;
         } diag;

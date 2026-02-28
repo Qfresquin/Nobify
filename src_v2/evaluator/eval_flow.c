@@ -20,6 +20,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
         .policy_scope_pushed = true,
         .propagate_vars = NULL,
         .propagate_count = 0,
+        .propagate_on_return = false,
     };
 
     size_t i = 0;
@@ -127,6 +128,46 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
     return true;
 }
 
+static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return) {
+    if (!ctx || ctx->block_frames.count == 0) return true;
+
+    Block_Frame frame = ctx->block_frames.items[ctx->block_frames.count - 1];
+    ctx->block_frames.count--;
+
+    bool should_propagate = !for_return || frame.propagate_on_return;
+    if (should_propagate) {
+        if (for_return && ctx->return_propagate_count > 0) {
+            Block_Frame ret_frame = frame;
+            ret_frame.propagate_vars = ctx->return_propagate_vars;
+            ret_frame.propagate_count = ctx->return_propagate_count;
+            if (!block_propagate_to_parent_scope(ctx, &ret_frame)) return false;
+        } else if (!block_propagate_to_parent_scope(ctx, &frame)) {
+            return false;
+        }
+    }
+
+    if (frame.policy_scope_pushed && !eval_policy_pop(ctx)) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node ? node->as.cmd.name : nob_sv_from_cstr("return"),
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("Failed to restore policy scope"),
+                             nob_sv_from_cstr("Ensure policy stack is balanced inside block()"));
+        return false;
+    }
+    if (frame.variable_scope_pushed) eval_scope_pop(ctx);
+    return true;
+}
+
+bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    while (ctx->block_frames.count > 0) {
+        if (!block_pop_frame(ctx, NULL, true)) return false;
+    }
+    return true;
+}
+
 bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (ctx->loop_depth == 0) {
@@ -160,8 +201,55 @@ bool eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
 }
 
 bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
-    (void)node;
     if (!ctx || eval_should_stop(ctx)) return false;
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    ctx->return_propagate_vars = NULL;
+    ctx->return_propagate_count = 0;
+    if (args.count > 0) {
+        if (!eval_sv_eq_ci_lit(args.items[0], "PROPAGATE")) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("return() received unsupported arguments"),
+                                 nob_sv_from_cstr("Usage: return() or return(PROPAGATE <var...>)"));
+            return !eval_should_stop(ctx);
+        }
+        if (args.count < 2) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("return(PROPAGATE ...) requires at least one variable"),
+                                 nob_sv_from_cstr("Usage: return(PROPAGATE <var1> <var2> ...)"));
+            return !eval_should_stop(ctx);
+        }
+        ctx->return_propagate_count = args.count - 1;
+        ctx->return_propagate_vars = arena_alloc_array(ctx->event_arena, String_View, ctx->return_propagate_count);
+        EVAL_OOM_RETURN_IF_NULL(ctx, ctx->return_propagate_vars, false);
+        for (size_t i = 0; i < ctx->return_propagate_count; i++) {
+            ctx->return_propagate_vars[i] = sv_copy_to_event_arena(ctx, args.items[i + 1]);
+            if (eval_should_stop(ctx)) return false;
+        }
+    }
+
+    if (ctx->return_context == EVAL_RETURN_CTX_MACRO) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_WARNING,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("return() inside macro() is legacy-compatible in evaluator v2"),
+                             nob_sv_from_cstr("CMake docs discourage using return() in macro()"));
+    }
+
+    if (ctx->return_propagate_count > 0) {
+        for (size_t bi = ctx->block_frames.count; bi-- > 0;) ctx->block_frames.items[bi].propagate_on_return = true;
+    }
     ctx->return_requested = true;
     return true;
 }
@@ -215,22 +303,7 @@ bool eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    Block_Frame frame = ctx->block_frames.items[ctx->block_frames.count - 1];
-    ctx->block_frames.count--;
-
-    if (!block_propagate_to_parent_scope(ctx, &frame)) return !eval_should_stop(ctx);
-
-    if (frame.policy_scope_pushed && !eval_policy_pop(ctx)) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("flow"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("endblock() failed to restore policy scope"),
-                             nob_sv_from_cstr("Ensure policy stack is balanced inside block()"));
-        return !eval_should_stop(ctx);
-    }
-    if (frame.variable_scope_pushed) eval_scope_pop(ctx);
+    if (!block_pop_frame(ctx, node, false)) return !eval_should_stop(ctx);
 
     return !eval_should_stop(ctx);
 }

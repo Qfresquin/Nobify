@@ -191,6 +191,15 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
     ev.as.test_add.command = sv_copy_to_event_arena(ctx, command);
     ev.as.test_add.working_dir = sv_copy_to_event_arena(ctx, working_dir);
     ev.as.test_add.command_expand_lists = command_expand_lists;
+    {
+        size_t total = strlen("NOBIFY_TEST::") + name.count;
+        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        memcpy(buf, "NOBIFY_TEST::", strlen("NOBIFY_TEST::"));
+        memcpy(buf + strlen("NOBIFY_TEST::"), name.data, name.count);
+        buf[total] = '\0';
+        (void)eval_var_set(ctx, nob_sv_from_cstr(buf), nob_sv_from_cstr("1"));
+    }
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }

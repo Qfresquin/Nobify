@@ -25,10 +25,13 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
 
 - Implemented:
   - `if / elseif / else / endif`
-  - `foreach / endforeach`
+  - `foreach / endforeach` including `RANGE`, `IN ITEMS`, `IN LISTS`, `IN ZIP_LISTS`
   - `while / endwhile`
   - `block / endblock` (supports `SCOPE_FOR` and `PROPAGATE`)
-  - `break`, `continue`, `return`
+  - `break`, `continue`, `return`, `return(PROPAGATE ...)`
+- Partial:
+  - `return()` in `macro()` remains accepted for legacy compatibility (with warning)
+  - `CMP0124`: `NEW` behavior restores foreach loop variable after loop; default remains legacy-compatible unless policy is set
 
 ### Block definitions
 

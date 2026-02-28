@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 92
+CASES 96
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -229,6 +229,46 @@ EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='nested_usercmd' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='nested_usercmd' path='main.c'
 EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='nested_usercmd' item='NESTED_VAL=F_zed' vis=PRIVATE
+=== END CASE ===
+
+=== CASE flow_return_propagate_and_block_unwind ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=10 col=1 name='ret_flow' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=10 col=1 target='ret_flow' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='ret_flow' item='RET_OUTER=from_return' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='ret_flow' item='BLK_A=' vis=PRIVATE
+=== END CASE ===
+
+=== CASE flow_foreach_range_lists_zip ===
+DIAG errors=0 warnings=0
+EVENTS count=7
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=19 col=1 name='foreach_modes' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=19 col=1 target='foreach_modes' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ACC=5_5_5' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ZIP_ACC=a' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='1|b' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='2|' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='3' vis=PRIVATE
+=== END CASE ===
+
+=== CASE flow_cmp0124_new_restore ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='cmp0124_new' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='cmp0124_new' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='cmp0124_new' item='I_FINAL=outer' vis=PRIVATE
+=== END CASE ===
+
+=== CASE expr_test_and_path_predicates ===
+DIAG errors=0 warnings=0
+EVENTS count=6
+EV[0] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke_expr' command='expr_tool' working_dir='' command_expand_lists=0
+EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='expr_preds' type=EXECUTABLE
+EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='expr_preds' path='main.c'
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='HAS_TEST=1' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='RW_OK=1' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='NEWER_OK=' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_get_find_extended ===

@@ -74,6 +74,7 @@ typedef struct {
     bool policy_scope_pushed;
     String_View *propagate_vars;
     size_t propagate_count;
+    bool propagate_on_return;
 } Block_Frame;
 
 typedef struct {
@@ -96,6 +97,13 @@ typedef struct {
     size_t count;
     size_t capacity;
 } Eval_File_Lock_List;
+
+typedef enum {
+    EVAL_RETURN_CTX_TOPLEVEL = 0,
+    EVAL_RETURN_CTX_INCLUDE,
+    EVAL_RETURN_CTX_FUNCTION,
+    EVAL_RETURN_CTX_MACRO,
+} Eval_Return_Context;
 
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
@@ -123,6 +131,13 @@ struct Evaluator_Context {
     bool break_requested;
     bool continue_requested;
     bool return_requested;
+    Eval_Return_Context return_context;
+    String_View *return_propagate_vars;
+    size_t return_propagate_count;
+    Eval_Compat_Profile compat_profile;
+    Eval_Unsupported_Policy unsupported_policy;
+    size_t error_budget;
+    Eval_Run_Report run_report;
 
     bool oom;
     bool stop_requested;
