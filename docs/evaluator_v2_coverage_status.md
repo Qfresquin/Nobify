@@ -8,6 +8,17 @@ Status snapshot based on current source in `src_v2/evaluator` and parser integra
 - Partial: exists but with reduced semantics and/or ignored options.
 - Missing: not implemented in evaluator runtime.
 
+## 0) Compatibility Runtime Controls
+
+- Implemented:
+  - runtime compatibility profile: `CMAKE_NOBIFY_COMPAT_PROFILE` (`PERMISSIVE|STRICT|CI_STRICT`)
+  - unsupported command policy: `CMAKE_NOBIFY_UNSUPPORTED_POLICY` (`WARN|ERROR|NOOP_WARN`)
+  - permissive error budget control: `CMAKE_NOBIFY_ERROR_BUDGET`
+  - diagnostic metadata classification in event payload (`code`, `error_class`)
+  - public run report APIs (`evaluator_get_run_report`, `evaluator_get_run_report_snapshot`)
+  - programmatic profile override API (`evaluator_set_compat_profile`)
+  - command capability query API (`evaluator_get_command_capability`) backed by central capability table
+
 ## 1) Utility Mode (`cmake -E`)
 
 - Missing:

@@ -92,3 +92,5 @@ Errors in expressions (e.g., `if(NOT)` with missing operand) are **fatal** for t
 1.  Emit `EV_DIAGNOSTIC` (Error: "Invalid boolean expression").
 2.  Return `false` (default safe fallback).
 3.  The Evaluator may choose to skip the block or abort depending on strictness policy.
+
+All emitted diagnostics are classified with compatibility metadata (`code`, `error_class`) by the centralized evaluator diagnostic path.

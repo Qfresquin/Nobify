@@ -114,6 +114,8 @@ int eval_parse_visibility(const Args *args, int start_index, Visibility *out_vis
 *   **Argument Count Mismatch:** Emit `EV_DIAGNOSTIC` (Error: "Function called with incorrect number of arguments").
 *   **Invalid Argument Type:** Emit `EV_DIAGNOSTIC` (Error: "Invalid argument for command").
 *   **Missing Required Argument:** Emit `EV_DIAGNOSTIC` (Error: "Missing required argument").
+*   **Unknown Command Policy:** Fallback severity/behavior is controlled by `CMAKE_NOBIFY_UNSUPPORTED_POLICY` (`WARN|ERROR|NOOP_WARN`).
+*   **Diagnostic Classification:** Dispatcher diagnostics carry classifier metadata (`code`, `error_class`) via centralized evaluator diagnostic emission.
 
 ## 6. Generator Expressions Note
 

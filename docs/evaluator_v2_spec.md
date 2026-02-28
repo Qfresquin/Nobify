@@ -4,6 +4,9 @@
 
 The **Evaluator** acts as the "CPU" of the transpilation process. It is responsible for executing the logic within `CMakeLists.txt`, resolving variables, flattening control flow, and emitting a linear stream of atomic events.
 
+Compatibility architecture reference:
+- `docs/evaluator_v2_compat_architecture.md` defines the permissive-first runtime profile model, diagnostic classification, command capability/fallback contracts, and distributed robustness behavior.
+
 **Strict Boundary:**
 *   **Input:** `Ast_Root` (Read-only).
 *   **Output:** `Cmake_Event_Stream` (Append-only).

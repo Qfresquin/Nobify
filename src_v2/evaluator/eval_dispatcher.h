@@ -13,5 +13,6 @@ bool eval_dispatch_command(struct Evaluator_Context *ctx, const Node *node);
 
 // Usado pelo eval_expr.c para o predicado: if(COMMAND nome)
 bool eval_dispatcher_is_known_command(String_View name);
+bool eval_dispatcher_get_command_capability(String_View name, Command_Capability *out_capability);
 
 #endif // EVAL_DISPATCHER_H_

@@ -17,6 +17,7 @@
 #include "eval_test.h"
 #include "eval_try_compile.h"
 #include "eval_vars.h"
+#include "eval_command_caps.h"
 
 typedef bool (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node);
 
@@ -74,6 +75,10 @@ static const Command_Entry DISPATCH[] = {
 };
 static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
 
+bool eval_dispatcher_get_command_capability(String_View name, Command_Capability *out_capability) {
+    return eval_command_caps_lookup(name, out_capability);
+}
+
 bool eval_dispatcher_is_known_command(String_View name) {
     for (size_t i = 0; i < DISPATCH_COUNT; i++) {
         if (eval_sv_eq_ci_lit(name, DISPATCH[i].name)) return true;
@@ -92,6 +97,7 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
     }
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    eval_refresh_runtime_compat(ctx);
     User_Command *user = eval_user_cmd_find(ctx, node->as.cmd.name);
     if (user) {
         SV_List args = (user->kind == USER_CMD_MACRO)
@@ -104,12 +110,16 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
+    Cmake_Diag_Severity sev = EV_DIAG_WARNING;
+    if (ctx->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
     eval_emit_diag(ctx,
-                   EV_DIAG_WARNING,
+                   sev,
                    nob_sv_from_cstr("dispatcher"),
                    node->as.cmd.name,
                    o,
                    nob_sv_from_cstr("Unknown command"),
-                   nob_sv_from_cstr("Ignored during evaluation"));
+                   ctx->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
+                       ? nob_sv_from_cstr("No-op with warning by policy")
+                       : nob_sv_from_cstr("Ignored during evaluation"));
     return true;
 }

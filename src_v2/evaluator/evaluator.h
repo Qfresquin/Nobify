@@ -101,5 +101,8 @@ void evaluator_destroy(Evaluator_Context *ctx);
 
 bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
 const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx);
+const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx);
+bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);
+bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability);
 
 #endif // EVALUATOR_H_

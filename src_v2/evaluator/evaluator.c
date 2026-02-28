@@ -4,6 +4,9 @@
 #include "eval_dispatcher.h"
 #include "eval_flow.h"
 #include "eval_file_internal.h"
+#include "eval_compat.h"
+#include "eval_diag_classify.h"
+#include "eval_report.h"
 #include "lexer.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
@@ -12,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 static void destroy_sub_arena_cb(void *userdata) {
     Arena *arena = (Arena*)userdata;
@@ -88,8 +92,15 @@ bool eval_emit_diag(Evaluator_Context *ctx,
                     String_View cause,
                     String_View hint) {
     if (!ctx || eval_should_stop(ctx)) return false;
+    eval_refresh_runtime_compat(ctx);
 
-    diag_log(sev == EV_DIAG_ERROR ? DIAG_SEV_ERROR : DIAG_SEV_WARNING,
+    Eval_Diag_Code code = EVAL_ERR_NONE;
+    Eval_Error_Class cls = EVAL_ERR_CLASS_NONE;
+    eval_diag_classify(component, cause, sev, &code, &cls);
+
+    Cmake_Diag_Severity effective_sev = eval_compat_effective_severity(ctx, sev);
+
+    diag_log(effective_sev == EV_DIAG_ERROR ? DIAG_SEV_ERROR : DIAG_SEV_WARNING,
              "evaluator",
              ctx->current_file ? ctx->current_file : "<input>",
              origin.line,
@@ -101,17 +112,18 @@ bool eval_emit_diag(Evaluator_Context *ctx,
     Cmake_Event ev = {0};
     ev.kind = EV_DIAGNOSTIC;
     ev.origin = origin;
-    ev.as.diag.severity = sev;
+    ev.as.diag.severity = effective_sev;
     ev.as.diag.component = sv_copy_to_event_arena(ctx, component);
     ev.as.diag.command = sv_copy_to_event_arena(ctx, command);
+    ev.as.diag.code = sv_copy_to_event_arena(ctx, eval_diag_code_to_sv(code));
+    ev.as.diag.error_class = sv_copy_to_event_arena(ctx, eval_error_class_to_sv(cls));
     ev.as.diag.cause = sv_copy_to_event_arena(ctx, cause);
     ev.as.diag.hint = sv_copy_to_event_arena(ctx, hint);
     if (!event_stream_push(ctx->event_arena, ctx->stream, ev)) {
         return ctx_oom(ctx);
     }
-    if (sev == EV_DIAG_ERROR) {
-        eval_request_stop_on_error(ctx);
-    }
+    eval_report_record_diag(ctx, effective_sev, code, cls);
+    (void)eval_compat_decide_on_diag(ctx, effective_sev);
     return true;
 }
 
@@ -964,193 +976,6 @@ void eval_scope_pop(Evaluator_Context *ctx) {
 }
 
 // -----------------------------------------------------------------------------
-// CMake policy stack/state
-// -----------------------------------------------------------------------------
-
-static bool policy_parse_depth(String_View sv, size_t *out_depth) {
-    if (!out_depth || sv.count == 0) return false;
-    size_t acc = 0;
-    for (size_t i = 0; i < sv.count; i++) {
-        char c = sv.data[i];
-        if (c < '0' || c > '9') return false;
-        size_t digit = (size_t)(c - '0');
-        if (acc > (SIZE_MAX / 10)) return false;
-        acc = (acc * 10) + digit;
-    }
-    if (acc == 0) return false;
-    *out_depth = acc;
-    return true;
-}
-
-static size_t policy_current_depth(Evaluator_Context *ctx) {
-    if (!ctx) return 1;
-    String_View depth_sv = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"));
-    size_t depth = 1;
-    if (!policy_parse_depth(depth_sv, &depth)) depth = 1;
-    return depth;
-}
-
-static bool policy_set_depth(Evaluator_Context *ctx, size_t depth) {
-    if (!ctx || depth == 0) return false;
-    char depth_buf[32];
-    int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", depth);
-    if (n < 0 || (size_t)n >= sizeof(depth_buf)) return ctx_oom(ctx);
-    return eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr(depth_buf));
-}
-
-static String_View policy_canonical_id_temp(Evaluator_Context *ctx, String_View policy_id) {
-    if (!ctx || !eval_policy_is_id(policy_id)) return nob_sv_from_cstr("");
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), 8);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    for (size_t i = 0; i < 7; i++) {
-        buf[i] = (char)toupper((unsigned char)policy_id.data[i]);
-    }
-    buf[7] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
-static String_View policy_slot_key_temp(Evaluator_Context *ctx, size_t depth, String_View canonical_id) {
-    if (!ctx || canonical_id.count == 0) return nob_sv_from_cstr("");
-    static const char *prefix = "NOBIFY_POLICY_D";
-
-    char depth_buf[32];
-    int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", depth);
-    if (n < 0 || (size_t)n >= sizeof(depth_buf)) return nob_sv_from_cstr("");
-    size_t depth_len = (size_t)n;
-
-    size_t prefix_len = strlen(prefix);
-    size_t total = prefix_len + depth_len + 1 + canonical_id.count;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    memcpy(buf + off, prefix, prefix_len);
-    off += prefix_len;
-    memcpy(buf + off, depth_buf, depth_len);
-    off += depth_len;
-    buf[off++] = '_';
-    memcpy(buf + off, canonical_id.data, canonical_id.count);
-    off += canonical_id.count;
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
-static String_View policy_default_key_temp(Evaluator_Context *ctx, String_View canonical_id) {
-    if (!ctx || canonical_id.count == 0) return nob_sv_from_cstr("");
-    static const char *prefix = "CMAKE_POLICY_DEFAULT_";
-    size_t prefix_len = strlen(prefix);
-    size_t total = prefix_len + canonical_id.count;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    memcpy(buf, prefix, prefix_len);
-    memcpy(buf + prefix_len, canonical_id.data, canonical_id.count);
-    buf[total] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
-static String_View policy_legacy_key_temp(Evaluator_Context *ctx, String_View canonical_id) {
-    if (!ctx || canonical_id.count == 0) return nob_sv_from_cstr("");
-    static const char *prefix = "CMAKE_POLICY_";
-    size_t prefix_len = strlen(prefix);
-    size_t total = prefix_len + canonical_id.count;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    memcpy(buf, prefix, prefix_len);
-    memcpy(buf + prefix_len, canonical_id.data, canonical_id.count);
-    buf[total] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
-static String_View policy_normalize_status(String_View v) {
-    if (eval_sv_eq_ci_lit(v, "NEW")) return nob_sv_from_cstr("NEW");
-    if (eval_sv_eq_ci_lit(v, "OLD")) return nob_sv_from_cstr("OLD");
-    return nob_sv_from_cstr("");
-}
-
-bool eval_policy_is_id(String_View policy_id) {
-    if (policy_id.count != 7) return false;
-    if (!(policy_id.data[0] == 'C' || policy_id.data[0] == 'c')) return false;
-    if (!(policy_id.data[1] == 'M' || policy_id.data[1] == 'm')) return false;
-    if (!(policy_id.data[2] == 'P' || policy_id.data[2] == 'p')) return false;
-    for (size_t i = 3; i < 7; i++) {
-        if (!isdigit((unsigned char)policy_id.data[i])) return false;
-    }
-    return true;
-}
-
-bool eval_policy_push(Evaluator_Context *ctx) {
-    if (!ctx) return false;
-    size_t depth = policy_current_depth(ctx);
-    return policy_set_depth(ctx, depth + 1);
-}
-
-bool eval_policy_pop(Evaluator_Context *ctx) {
-    if (!ctx) return false;
-    size_t depth = policy_current_depth(ctx);
-    if (depth <= 1) return false;
-    return policy_set_depth(ctx, depth - 1);
-}
-
-bool eval_policy_set(Evaluator_Context *ctx, String_View policy_id, String_View value) {
-    if (!ctx || eval_should_stop(ctx)) return false;
-    String_View canonical_id = policy_canonical_id_temp(ctx, policy_id);
-    if (eval_should_stop(ctx) || canonical_id.count == 0) return false;
-
-    String_View normalized = policy_normalize_status(value);
-    if (normalized.count == 0) return false;
-
-    size_t depth = policy_current_depth(ctx);
-    if (depth == 0) depth = 1;
-
-    String_View slot_key = policy_slot_key_temp(ctx, depth, canonical_id);
-    if (eval_should_stop(ctx) || slot_key.count == 0) return false;
-    if (!eval_var_set(ctx, slot_key, normalized)) return false;
-
-    // Keep compatibility mirror for scripts reading CMAKE_POLICY_CMP<NNNN>.
-    String_View legacy_key = policy_legacy_key_temp(ctx, canonical_id);
-    if (eval_should_stop(ctx) || legacy_key.count == 0) return false;
-    return eval_var_set(ctx, legacy_key, normalized);
-}
-
-String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id) {
-    if (!ctx || eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    String_View canonical_id = policy_canonical_id_temp(ctx, policy_id);
-    if (eval_should_stop(ctx) || canonical_id.count == 0) return nob_sv_from_cstr("");
-
-    size_t depth = policy_current_depth(ctx);
-    for (size_t d = depth; d > 0; d--) {
-        String_View slot_key = policy_slot_key_temp(ctx, d, canonical_id);
-        if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-        if (!eval_var_defined(ctx, slot_key)) continue;
-        String_View v = policy_normalize_status(eval_var_get(ctx, slot_key));
-        if (v.count > 0) return v;
-    }
-
-    // Backward compatibility with legacy variable path.
-    String_View legacy_key = policy_legacy_key_temp(ctx, canonical_id);
-    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    if (eval_var_defined(ctx, legacy_key)) {
-        String_View v = policy_normalize_status(eval_var_get(ctx, legacy_key));
-        if (v.count > 0) return v;
-    }
-
-    // Honor documented default override variable.
-    String_View default_key = policy_default_key_temp(ctx, canonical_id);
-    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    if (eval_var_defined(ctx, default_key)) {
-        String_View v = policy_normalize_status(eval_var_get(ctx, default_key));
-        if (v.count > 0) return v;
-    }
-
-    // Heuristic fallback: if policy-version is set, prefer NEW defaults.
-    // This mirrors cmake_policy(VERSION) intent in evaluator contexts.
-    String_View policy_version = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"));
-    if (policy_version.count > 0) return nob_sv_from_cstr("NEW");
-
-    return nob_sv_from_cstr("");
-}
-
-// -----------------------------------------------------------------------------
 // External execution: include() / add_subdirectory()
 // -----------------------------------------------------------------------------
 
@@ -1401,6 +1226,13 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
     ctx->return_propagate_vars = NULL;
     ctx->return_propagate_count = 0;
+    ctx->compat_profile = EVAL_PROFILE_PERMISSIVE;
+    if (init->compat_profile == EVAL_PROFILE_STRICT || init->compat_profile == EVAL_PROFILE_CI_STRICT) {
+        ctx->compat_profile = init->compat_profile;
+    }
+    ctx->unsupported_policy = EVAL_UNSUPPORTED_WARN;
+    ctx->error_budget = 0; // 0 == unlimited in permissive profile
+    eval_report_reset(ctx);
 
     ctx->known_targets_arena = arena_create(4096);
     if (!ctx->known_targets_arena) return NULL;
@@ -1483,7 +1315,11 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     // Project built-ins default to empty and are updated by project().
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"),
+                      ctx->compat_profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"), eval_compat_profile_to_sv(ctx->compat_profile))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_ERROR_BUDGET"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"), nob_sv_from_cstr("WARN"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_FILE_GLOB_STRICT"), nob_sv_from_cstr("0"))) return NULL;
 
     // Compiler ID can be fixed for compatibility scripts.
@@ -1507,11 +1343,30 @@ void evaluator_destroy(Evaluator_Context *ctx) {
 
 bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     if (!ctx || eval_should_stop(ctx)) return false;
+    eval_report_reset(ctx);
     bool ok = eval_node_list(ctx, &ast);
     if (ctx->return_requested) {
         ctx->return_requested = false;
     }
     ctx->return_propagate_vars = NULL;
     ctx->return_propagate_count = 0;
+    eval_report_finalize(ctx);
     return ok && !eval_should_stop(ctx);
+}
+
+const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx) {
+    if (!ctx) return NULL;
+    return &ctx->run_report;
+}
+
+const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx) {
+    return evaluator_get_run_report(ctx);
+}
+
+bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile) {
+    return eval_compat_set_profile(ctx, profile);
+}
+
+bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability) {
+    return eval_dispatcher_get_command_capability(command_name, out_capability);
 }

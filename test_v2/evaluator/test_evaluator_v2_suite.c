@@ -380,6 +380,10 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.diag.component);
             nob_sb_append_cstr(sb, " command=");
             snapshot_append_escaped_sv(sb, ev->as.diag.command);
+            nob_sb_append_cstr(sb, " code=");
+            snapshot_append_escaped_sv(sb, ev->as.diag.code);
+            nob_sb_append_cstr(sb, " class=");
+            snapshot_append_escaped_sv(sb, ev->as.diag.error_class);
             nob_sb_append_cstr(sb, " cause=");
             snapshot_append_escaped_sv(sb, ev->as.diag.cause);
             nob_sb_append_cstr(sb, " hint=");

@@ -331,19 +331,19 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 targ
 === CASE stdlib_list_remove_at_invalid_index_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' cause='list(REMOVE_AT) index out of range' hint='5'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='list(REMOVE_AT) index out of range' hint='5'
 === END CASE ===
 
 === CASE stdlib_list_filter_invalid_regex_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' cause='Invalid regex pattern' hint='['
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='Invalid regex pattern' hint='['
 === END CASE ===
 
 === CASE stdlib_list_transform_invalid_action_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' cause='Unsupported list(TRANSFORM) action' hint='BAD_ACTION'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='list' command='list' code='EVAL_ERR_UNSUPPORTED' class='ENGINE_LIMITATION' cause='Unsupported list(TRANSFORM) action' hint='BAD_ACTION'
 === END CASE ===
 
 === CASE stdlib_string_tolower_substring_extended ===
@@ -485,19 +485,19 @@ EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 targ
 === CASE stdlib_string_ascii_invalid_code_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='string' command='string' cause='string(ASCII) code must be an integer in range [0,255]' hint='300'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='string' command='string' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='string(ASCII) code must be an integer in range [0,255]' hint='300'
 === END CASE ===
 
 === CASE stdlib_string_json_length_non_container_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='string' command='string' cause='string(JSON LENGTH) requires ARRAY or OBJECT' hint=''
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='string' command='string' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='string(JSON LENGTH) requires ARRAY or OBJECT' hint=''
 === END CASE ===
 
 === CASE stdlib_string_uuid_malformed_namespace_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='string' command='string' cause='string(UUID) malformed NAMESPACE UUID' hint='DNS'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='string' command='string' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='string(UUID) malformed NAMESPACE UUID' hint='DNS'
 === END CASE ===
 
 === CASE stdlib_math_bitwise_and_precedence ===
@@ -520,19 +520,19 @@ EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 ta
 === CASE stdlib_math_overflow_add_reports_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Integer overflow in addition' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='Integer overflow in addition' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
 === END CASE ===
 
 === CASE stdlib_math_overflow_mul_reports_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Integer overflow in multiplication' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='Integer overflow in multiplication' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
 === END CASE ===
 
 === CASE stdlib_math_overflow_shift_reports_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Shift count is out of range for 64-bit integer' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='Shift count is out of range for 64-bit integer' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
 === END CASE ===
 
 === CASE stdlib_math_output_format_extended ===
@@ -557,13 +557,13 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 targ
 === CASE stdlib_math_invalid_output_format_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='math(EXPR) invalid OUTPUT_FORMAT value' hint='BINARY'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' code='EVAL_ERR_SEMANTIC' class='INPUT_ERROR' cause='math(EXPR) invalid OUTPUT_FORMAT value' hint='BINARY'
 === END CASE ===
 
 === CASE stdlib_math_invalid_subcommand_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Unsupported math() subcommand' hint='Implemented: EXPR'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' code='EVAL_ERR_UNSUPPORTED' class='ENGINE_LIMITATION' cause='Unsupported math() subcommand' hint='Implemented: EXPR'
 === END CASE ===
 
 === CASE dispatcher_custom_command_multiple_commands ===
@@ -680,25 +680,25 @@ EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 tar
 === CASE file_security_read_rejects_absolute_outside_project_scope ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_SEMANTIC' class='IO_ENV_ERROR' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
 === END CASE ===
 
 === CASE file_security_strings_rejects_absolute_outside_project_scope ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_SEMANTIC' class='IO_ENV_ERROR' cause='Security Violation: Absolute path outside project scope' hint='/tmp/nobify_forbidden'
 === END CASE ===
 
 === CASE file_security_read_rejects_symlink_escape_outside_project_scope ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='temp_symlink_escape_link/outside.txt'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_SEMANTIC' class='IO_ENV_ERROR' cause='Security Violation: Absolute path outside project scope' hint='temp_symlink_escape_link/outside.txt'
 === END CASE ===
 
 === CASE file_security_strings_rejects_symlink_escape_outside_project_scope ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='Security Violation: Absolute path outside project scope' hint='temp_symlink_escape_link/outside.txt'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_SEMANTIC' class='IO_ENV_ERROR' cause='Security Violation: Absolute path outside project scope' hint='temp_symlink_escape_link/outside.txt'
 === END CASE ===
 
 === CASE file_security_read_relative_inside_project_scope_still_works ===
@@ -800,7 +800,7 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 targ
 === CASE file_download_remote_url_reports_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='file(DOWNLOAD) remote URL is not supported without external backend' hint='https://example.com/demo.txt'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_SEMANTIC' class='IO_ENV_ERROR' cause='file(DOWNLOAD) remote URL is not supported without external backend' hint='https://example.com/demo.txt'
 === END CASE ===
 
 === CASE file_generate_content_input_and_condition ===
@@ -834,7 +834,7 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 targ
 === CASE file_archive_create_unsupported_compression_error ===
 DIAG errors=1 warnings=0
 EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=ERROR component='eval_file' command='file' cause='file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend' hint='GZIP'
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_UNSUPPORTED' class='IO_ENV_ERROR' cause='file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend' hint='GZIP'
 === END CASE ===
 
 === CASE dispatcher_custom_command_and_target ===

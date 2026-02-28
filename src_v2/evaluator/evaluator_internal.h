@@ -148,6 +148,11 @@ bool eval_should_stop(Evaluator_Context *ctx);
 void eval_request_stop(Evaluator_Context *ctx);
 void eval_request_stop_on_error(Evaluator_Context *ctx);
 bool eval_continue_on_error(Evaluator_Context *ctx);
+void eval_refresh_runtime_compat(Evaluator_Context *ctx);
+bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);
+Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx, Cmake_Diag_Severity sev);
+bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effective_sev);
+String_View eval_compat_profile_to_sv(Eval_Compat_Profile profile);
 bool ctx_oom(Evaluator_Context *ctx);
 
 static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr) {
@@ -187,6 +192,20 @@ bool eval_emit_diag(Evaluator_Context *ctx,
                     Cmake_Event_Origin origin,
                     String_View cause,
                     String_View hint);
+void eval_diag_classify(String_View component,
+                        String_View cause,
+                        Cmake_Diag_Severity sev,
+                        Eval_Diag_Code *out_code,
+                        Eval_Error_Class *out_class);
+String_View eval_diag_code_to_sv(Eval_Diag_Code code);
+String_View eval_error_class_to_sv(Eval_Error_Class cls);
+void eval_report_reset(Evaluator_Context *ctx);
+void eval_report_record_diag(Evaluator_Context *ctx,
+                             Cmake_Diag_Severity sev,
+                             Eval_Diag_Code code,
+                             Eval_Error_Class cls);
+void eval_report_finalize(Evaluator_Context *ctx);
+bool eval_command_caps_lookup(String_View name, Command_Capability *out_capability);
 
 // ---- vars ----
 String_View eval_var_get(Evaluator_Context *ctx, String_View key);
