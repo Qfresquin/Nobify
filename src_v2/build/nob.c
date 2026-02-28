@@ -5,7 +5,7 @@
 
 // Caminhos relativos à raiz do projeto
 static const char *APP_SRC = "src_v2/app/nobify.c";
-static const char *APP_BIN = "buid/nobify";
+static const char *APP_BIN = "build/nobify";
 
 static void append_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
@@ -81,8 +81,8 @@ static void append_linker_flags(Nob_Cmd *cmd) {
 }
 
 static bool build_app(void) {
-    if (!nob_mkdir_if_not_exists("buid")) return false;
-    if (!nob_mkdir_if_not_exists("buid/v2")) return false;
+    if (!nob_mkdir_if_not_exists("build")) return false;
+    if (!nob_mkdir_if_not_exists("build/v2")) return false;
 
     Nob_Cmd cmd = {0};
     nob_cc(&cmd);
