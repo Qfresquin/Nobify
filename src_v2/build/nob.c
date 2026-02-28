@@ -5,13 +5,14 @@
 
 // Caminhos relativos à raiz do projeto
 static const char *APP_SRC = "src_v2/app/nobify.c";
-static const char *APP_BIN = "build/nobify";
+static const char *APP_BIN = "buid/nobify";
 
 static void append_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "-D_GNU_SOURCE",                // Necessário para algumas funções POSIX
         "-Wall", "-Wextra", "-std=c11", // Flags de aviso e padrão C
-        "-ggdb",                        // Importante para o Valgrind mostrar linhas de código
+        "-O3",                          // Build otimizado
+        "-ggdb",                        // Símbolos para depuração/valgrind+gdb
         "-DHAVE_CONFIG_H",
         "-DPCRE2_CODE_UNIT_WIDTH=8",   // Configuração do PCRE2
         "-Ivendor");
@@ -51,7 +52,9 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_opt_parser.c",
         "src_v2/evaluator/eval_package.c",
         "src_v2/evaluator/eval_project.c",
-        "src_v2/evaluator/eval_stdlib.c",
+        "src_v2/evaluator/eval_list.c",
+        "src_v2/evaluator/eval_math.c",
+        "src_v2/evaluator/eval_string.c",
         "src_v2/evaluator/eval_target.c",
         "src_v2/evaluator/eval_test.c",
         "src_v2/evaluator/eval_try_compile.c",
@@ -78,8 +81,8 @@ static void append_linker_flags(Nob_Cmd *cmd) {
 }
 
 static bool build_app(void) {
-    if (!nob_mkdir_if_not_exists("build")) return false;
-    if (!nob_mkdir_if_not_exists("build/v2")) return false;
+    if (!nob_mkdir_if_not_exists("buid")) return false;
+    if (!nob_mkdir_if_not_exists("buid/v2")) return false;
 
     Nob_Cmd cmd = {0};
     nob_cc(&cmd);
@@ -110,6 +113,8 @@ static bool run_valgrind(int argc, char **argv) {
     nob_cmd_append(&cmd, "--leak-check=full");
     nob_cmd_append(&cmd, "--show-leak-kinds=all");
     nob_cmd_append(&cmd, "--track-origins=yes");
+    nob_cmd_append(&cmd, "--vgdb=yes");
+    nob_cmd_append(&cmd, "--vgdb-error=0");
     // nob_cmd_append(&cmd, "-s"); // Estatísticas resumidas
     
     // O seu programa

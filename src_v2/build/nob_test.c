@@ -56,14 +56,17 @@ static Test_Module TEST_MODULES[] = {
 
 static void append_v2_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "-D_GNU_SOURCE",
         "-Wall", "-Wextra", "-std=c11",
+        "-O3",
+        "-ggdb",
         "-DHAVE_CONFIG_H",
-        "-DPCRE2_CODE_UNIT_WIDTH=8");
+        "-DPCRE2_CODE_UNIT_WIDTH=8",
+        "-Ivendor");
 
 #ifdef _WIN32
     nob_cmd_append(cmd,
         "-DPCRE2_STATIC",
-        "-Ivendor",
         "-Ivendor/pcre");
 #endif
 
@@ -104,7 +107,9 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_opt_parser.c",
         "src_v2/evaluator/eval_package.c",
         "src_v2/evaluator/eval_project.c",
-        "src_v2/evaluator/eval_stdlib.c",
+        "src_v2/evaluator/eval_list.c",
+        "src_v2/evaluator/eval_math.c",
+        "src_v2/evaluator/eval_string.c",
         "src_v2/evaluator/eval_target.c",
         "src_v2/evaluator/eval_test.c",
         "src_v2/evaluator/eval_try_compile.c",
@@ -213,6 +218,7 @@ static void append_v2_pcre_sources(Nob_Cmd *cmd) {
 
 static void append_platform_link_flags(Nob_Cmd *cmd) {
 #ifndef _WIN32
+    nob_cmd_append(cmd, "-lpcre2-posix");
     nob_cmd_append(cmd, "-lpcre2-8");
 #else
     (void)cmd;
