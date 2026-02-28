@@ -133,8 +133,7 @@ static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_freeze.c",
         "src_v2/build_model/build_model_query.c",
-        "src obsoleto so use de referencia/logic_model/logic_model.c",
-        "src obsoleto so use de referencia/ds_adapter/ds_adapter.c");
+        "src_v2/build_model/build_logic.c");
 }
 
 static void append_v2_lexer_runtime_sources(Nob_Cmd *cmd) {
