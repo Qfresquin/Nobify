@@ -86,10 +86,13 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
 
 - Implemented:
   - `math(EXPR ...)`
+  - `math(EXPR ... OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>)`
+  - legacy output format suffix in `EXPR`: `... <DECIMAL|HEXADECIMAL>`
   - operators currently exercised in evaluator: unary `+ - ~`, `* / %`, `+ -`, `<< >>`, `& ^ |`, parentheses
   - overflow/invalid checks added for literals and arithmetic edge cases
+  - invalid `math()` subcommand handling as error (consistent with other stdlib handlers)
 - Missing:
-  - other `math()` subcommands (if any outside `EXPR`)
+  - none identified in current target coverage (only `EXPR` is supported/expected)
 
 ## 3) `file()` commands
 

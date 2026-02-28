@@ -804,8 +804,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 73) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=73", cases.count);
+    if (cases.count != 77) {
+        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=77", cases.count);
         ok = false;
         goto done;
     }

@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 73
+CASES 77
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -474,6 +474,37 @@ EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component=
 DIAG errors=1 warnings=0
 EVENTS count=1
 EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Shift count is out of range for 64-bit integer' hint='Use integer expression with + - * / % << >> & ^ | ~ and parentheses'
+=== END CASE ===
+
+=== CASE stdlib_math_output_format_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='math_format' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='math_format' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_DEC=15' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_HEX=0xf' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_NEG_HEX=0xffffffffffffffff' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_math_legacy_output_format_extended ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='math_format_legacy' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='math_format_legacy' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' item='M_LEG_HEX=0x1a' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' item='M_LEG_DEC=26' vis=PRIVATE
+=== END CASE ===
+
+=== CASE stdlib_math_invalid_output_format_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='math(EXPR) invalid OUTPUT_FORMAT value' hint='BINARY'
+=== END CASE ===
+
+=== CASE stdlib_math_invalid_subcommand_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='math' command='math' cause='Unsupported math() subcommand' hint='Implemented: EXPR'
 === END CASE ===
 
 === CASE dispatcher_custom_command_multiple_commands ===

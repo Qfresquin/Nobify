@@ -20,6 +20,11 @@ typedef struct {
     bool ok;
 } Math_Parser;
 
+typedef enum {
+    MATH_OUTPUT_DECIMAL = 0,
+    MATH_OUTPUT_HEXADECIMAL,
+} Math_Output_Format;
+
 static void math_skip_ws(Math_Parser *p) {
     while (p->s[p->pos] != '\0' && isspace((unsigned char)p->s[p->pos])) p->pos++;
 }
@@ -107,6 +112,19 @@ static bool math_parse_bitxor(Math_Parser *p, long long *out);
 static bool math_parse_bitand(Math_Parser *p, long long *out);
 static bool math_parse_shift(Math_Parser *p, long long *out);
 static bool math_parse_addsub(Math_Parser *p, long long *out);
+
+static bool math_parse_output_format_sv(String_View sv, Math_Output_Format *out_fmt) {
+    if (!out_fmt) return false;
+    if (eval_sv_eq_ci_lit(sv, "DECIMAL")) {
+        *out_fmt = MATH_OUTPUT_DECIMAL;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(sv, "HEXADECIMAL")) {
+        *out_fmt = MATH_OUTPUT_HEXADECIMAL;
+        return true;
+    }
+    return false;
+}
 
 static bool math_parse_number(Math_Parser *p, long long *out) {
     math_skip_ws(p);
@@ -278,21 +296,69 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
 
     if (!eval_sv_eq_ci_lit(a.items[0], "EXPR")) {
-        eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("math"), node->as.cmd.name, o,
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                        nob_sv_from_cstr("Unsupported math() subcommand"),
                        nob_sv_from_cstr("Implemented: EXPR"));
+        eval_request_stop_on_error(ctx);
         return !eval_should_stop(ctx);
     }
 
     if (a.count < 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                        nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
-                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression>)"));
+                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return !eval_should_stop(ctx);
     }
 
     String_View out_var = a.items[1];
-    String_View expr_sv = (a.count == 3) ? a.items[2] : svu_join_no_sep_temp(ctx, &a.items[2], a.count - 2);
+    size_t expr_begin = 2;
+    size_t expr_end = a.count;
+    Math_Output_Format out_fmt = MATH_OUTPUT_DECIMAL;
+    size_t output_format_idx = a.count;
+    for (size_t i = expr_begin; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_FORMAT")) {
+            output_format_idx = i;
+            break;
+        }
+    }
+
+    if (output_format_idx < a.count) {
+        if (output_format_idx + 1 >= a.count) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"),
+                           nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+            return !eval_should_stop(ctx);
+        }
+        if (!math_parse_output_format_sv(a.items[output_format_idx + 1], &out_fmt)) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"),
+                           a.items[output_format_idx + 1]);
+            return !eval_should_stop(ctx);
+        }
+        if (output_format_idx + 2 != a.count) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"),
+                           nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+            return !eval_should_stop(ctx);
+        }
+        expr_end = output_format_idx;
+    } else if (a.count >= 4) {
+        Math_Output_Format legacy_out_fmt = MATH_OUTPUT_DECIMAL;
+        if (math_parse_output_format_sv(a.items[a.count - 1], &legacy_out_fmt)) {
+            out_fmt = legacy_out_fmt;
+            expr_end = a.count - 1;
+        }
+    }
+
+    if (expr_end <= expr_begin) {
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
+                       nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
+                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+        return !eval_should_stop(ctx);
+    }
+
+    size_t expr_count = expr_end - expr_begin;
+    String_View expr_sv = (expr_count == 1) ? a.items[expr_begin] : svu_join_no_sep_temp(ctx, &a.items[expr_begin], expr_count);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     char *expr_buf = (char*)arena_alloc(eval_temp_arena(ctx), expr_sv.count + 1);
@@ -318,8 +384,12 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     }
 
     char out_buf[64];
-    snprintf(out_buf, sizeof(out_buf), "%lld", value);
+    if (out_fmt == MATH_OUTPUT_HEXADECIMAL) {
+        unsigned long long uvalue = (unsigned long long)value;
+        snprintf(out_buf, sizeof(out_buf), "0x%llx", uvalue);
+    } else {
+        snprintf(out_buf, sizeof(out_buf), "%lld", value);
+    }
     (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_buf));
     return !eval_should_stop(ctx);
 }
-

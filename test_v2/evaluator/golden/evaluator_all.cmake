@@ -462,6 +462,29 @@ math(EXPR OV_MUL "3037000500 * 3037000500")
 math(EXPR OV_SHL "1 << 64")
 #@@ENDCASE
 
+#@@CASE stdlib_math_output_format_extended
+math(EXPR M_DEC "15" OUTPUT_FORMAT DECIMAL)
+math(EXPR M_HEX "15" OUTPUT_FORMAT HEXADECIMAL)
+math(EXPR M_NEG_HEX "-1" OUTPUT_FORMAT HEXADECIMAL)
+add_executable(math_format main.c)
+target_compile_definitions(math_format PRIVATE M_DEC=${M_DEC} M_HEX=${M_HEX} M_NEG_HEX=${M_NEG_HEX})
+#@@ENDCASE
+
+#@@CASE stdlib_math_legacy_output_format_extended
+math(EXPR M_LEG_HEX "26" HEXADECIMAL)
+math(EXPR M_LEG_DEC "26" DECIMAL)
+add_executable(math_format_legacy main.c)
+target_compile_definitions(math_format_legacy PRIVATE M_LEG_HEX=${M_LEG_HEX} M_LEG_DEC=${M_LEG_DEC})
+#@@ENDCASE
+
+#@@CASE stdlib_math_invalid_output_format_error
+math(EXPR BAD_FMT "1+2" OUTPUT_FORMAT BINARY)
+#@@ENDCASE
+
+#@@CASE stdlib_math_invalid_subcommand_error
+math(FOO OUT "1+2")
+#@@ENDCASE
+
 #@@CASE dispatcher_custom_command_multiple_commands
 add_custom_command(OUTPUT multi.c
   COMMAND echo first
