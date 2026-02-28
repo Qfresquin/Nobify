@@ -37,6 +37,7 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/diagnostics/diagnostics.c",
         "src_v2/transpiler/event_ir.c",
         "src_v2/genex/genex.c",
+        "src_v2/evaluator/stb_ds_impl.c",
         "src_v2/evaluator/evaluator.c",
         "src_v2/evaluator/eval_cpack.c",
         "src_v2/evaluator/eval_cmake_path.c",
@@ -69,7 +70,6 @@ static void append_build_model_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_freeze.c",
         "src_v2/build_model/build_model_query.c",
-        "src_v2/build_model/ds_adapter.c",
         "src_v2/build_model/build_logic.c");
 }
 

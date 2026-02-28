@@ -1,7 +1,7 @@
 #include "build_model_query.h"
 
 #include "arena_dyn.h"
-#include "ds_adapter.h"
+#include "stb_ds.h"
 
 #include <string.h>
 
@@ -26,8 +26,8 @@ static const String_View g_empty_sv = {0};
 static bool bm_query_append_unique_lib(Bm_Query_Lib_Collect_Ctx *ctx, String_View lib) {
     if (!ctx || !ctx->arena || lib.count == 0 || !lib.data) return true;
 
-    if (ds_shgetp_null(ctx->seen_libs, nob_temp_sv_to_cstr(lib))) return true;
-    ds_shput(ctx->seen_libs, nob_temp_sv_to_cstr(lib), 1);
+    if (stbds_shgetp_null(ctx->seen_libs, nob_temp_sv_to_cstr(lib))) return true;
+    stbds_shput(ctx->seen_libs, nob_temp_sv_to_cstr(lib), 1);
 
     if (!arena_da_reserve(ctx->arena,
                           (void**)&ctx->items,
@@ -70,8 +70,8 @@ static bool bm_query_collect_list_items(Bm_Query_Lib_Collect_Ctx *ctx, const Str
 static bool bm_query_collect_target_libs(Bm_Query_Lib_Collect_Ctx *ctx, const Build_Target *target) {
     if (!ctx || !target || target->name.count == 0) return true;
 
-    if (ds_shgetp_null(ctx->seen_targets, nob_temp_sv_to_cstr(target->name))) return true;
-    ds_shput(ctx->seen_targets, nob_temp_sv_to_cstr(target->name), 1);
+    if (stbds_shgetp_null(ctx->seen_targets, nob_temp_sv_to_cstr(target->name))) return true;
+    stbds_shput(ctx->seen_targets, nob_temp_sv_to_cstr(target->name), 1);
 
     if (!bm_query_collect_list_items(ctx, &target->link_libraries, true)) return false;
     if (!bm_query_collect_list_items(ctx, &target->interface_libs, true)) return false;
@@ -98,7 +98,7 @@ const Build_Target *bm_query_target_by_name(const Build_Model *model, String_Vie
 
     if (model->target_index_by_name) {
         Build_Target_Index_Entry *index_map = model->target_index_by_name;
-        Build_Target_Index_Entry *entry = ds_shgetp_null(index_map, nob_temp_sv_to_cstr(name));
+        Build_Target_Index_Entry *entry = stbds_shgetp_null(index_map, nob_temp_sv_to_cstr(name));
         if (entry && entry->value >= 0 && (size_t)entry->value < model->target_count) {
             Build_Target *candidate = model->targets[entry->value];
             if (candidate && nob_sv_eq(candidate->name, name)) return candidate;
@@ -226,13 +226,13 @@ String_View *bm_query_transitive_libs(const Build_Model *model,
     ctx.arena = scratch_arena;
 
     if (!bm_query_collect_target_libs(&ctx, target)) {
-        ds_shfree(ctx.seen_targets);
-        ds_shfree(ctx.seen_libs);
+        stbds_shfree(ctx.seen_targets);
+        stbds_shfree(ctx.seen_libs);
         return NULL;
     }
 
-    ds_shfree(ctx.seen_targets);
-    ds_shfree(ctx.seen_libs);
+    stbds_shfree(ctx.seen_targets);
+    stbds_shfree(ctx.seen_libs);
     if (out_count) *out_count = ctx.count;
     return ctx.items;
 }

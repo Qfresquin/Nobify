@@ -1,6 +1,6 @@
 #include "build_model.h"
 #include "arena_dyn.h"
-#include "ds_adapter.h"
+#include "stb_ds.h"
 #include "genex.h"
 #include <ctype.h>
 #include <stdlib.h>
@@ -18,10 +18,10 @@ struct Bm_Genex_Warn_Entry {
 
 void build_model_clear_genex_warn_cache(Build_Model *model) {
     if (!model || !model->genex_warn_cache) return;
-    for (size_t i = 0; i < (size_t)ds_shlen(model->genex_warn_cache); i++) {
+    for (size_t i = 0; i < (size_t)stbds_shlenu(model->genex_warn_cache); i++) {
         free(model->genex_warn_cache[i].key);
     }
-    ds_shfree(model->genex_warn_cache);
+    stbds_shfree(model->genex_warn_cache);
     model->genex_warn_cache = NULL;
 }
 
@@ -30,32 +30,32 @@ static void build_model_heap_cleanup(void *userdata) {
     if (!model) return;
     for (size_t i = 0; i < model->target_count; i++) {
         if (model->targets[i]) {
-            ds_shfree(model->targets[i]->custom_property_index);
+            stbds_shfree(model->targets[i]->custom_property_index);
         }
     }
-    ds_shfree(model->target_index_by_name);
-    ds_shfree(model->cache_variable_index);
-    ds_shfree(model->environment_variable_index);
+    stbds_shfree(model->target_index_by_name);
+    stbds_shfree(model->cache_variable_index);
+    stbds_shfree(model->environment_variable_index);
     build_model_clear_genex_warn_cache(model);
 }
 
 static int build_model_lookup_target_index(const Build_Model *model, String_View name) {
     if (!model || !model->target_index_by_name) return -1;
     Build_Target_Index_Entry *index_map = model->target_index_by_name;
-    Build_Target_Index_Entry *entry = ds_shgetp_null(index_map, nob_temp_sv_to_cstr(name));
+    Build_Target_Index_Entry *entry = stbds_shgetp_null(index_map, nob_temp_sv_to_cstr(name));
     if (!entry) return -1;
     return entry->value;
 }
 
 static bool build_model_put_target_index(Build_Model *model, char *key, int index) {
     if (!model || !key || key[0] == '\0') return false;
-    ds_shput(model->target_index_by_name, key, index);
+    stbds_shput(model->target_index_by_name, key, index);
     return true;
 }
 
 static int build_model_lookup_property_index(const Property_List *list, Build_Property_Index_Entry *index_map, String_View key) {
     if (!list || !index_map) return -1;
-    Build_Property_Index_Entry *entry = ds_shgetp_null(index_map, nob_temp_sv_to_cstr(key));
+    Build_Property_Index_Entry *entry = stbds_shgetp_null(index_map, nob_temp_sv_to_cstr(key));
     if (!entry) return -1;
     if (entry->value < 0 || (size_t)entry->value >= list->count) return -1;
     if (!nob_sv_eq(list->items[entry->value].name, key)) return -1;
@@ -73,7 +73,7 @@ static int build_model_lookup_property_index_linear(const Property_List *list, S
 static bool build_model_put_property_index(Build_Property_Index_Entry **index_map, char *key, int value) {
     if (!index_map || !key || key[0] == '\0' || value < 0) return false;
     Build_Property_Index_Entry *map = *index_map;
-    ds_shput(map, key, value);
+    stbds_shput(map, key, value);
     *index_map = map;
     return true;
 }
@@ -85,7 +85,7 @@ static char *build_model_copy_sv_cstr(Arena *arena, String_View sv) {
 
 static void build_model_rebuild_property_index(Arena *arena, Property_List *list, Build_Property_Index_Entry **index_map) {
     if (!arena || !list || !index_map) return;
-    ds_shfree(*index_map);
+    stbds_shfree(*index_map);
     *index_map = NULL;
     for (size_t i = 0; i < list->count; i++) {
         char *stable_key = build_model_copy_sv_cstr(arena, list->items[i].name);
@@ -1440,12 +1440,12 @@ static bool bm_genex_warn_should_emit(Build_Model *model,
         return true;
     }
 
-    Bm_Genex_Warn_Entry *entry = ds_shgetp_null(model->genex_warn_cache, probe);
+    Bm_Genex_Warn_Entry *entry = stbds_shgetp_null(model->genex_warn_cache, probe);
     if (entry) {
         free(probe);
         return false;
     }
-    ds_shput(model->genex_warn_cache, probe, 1);
+    stbds_shput(model->genex_warn_cache, probe, 1);
     return true;
 }
 

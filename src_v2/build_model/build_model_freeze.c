@@ -2,7 +2,7 @@
 
 #include "build_model_validate.h"
 
-#include "ds_adapter.h"
+#include "stb_ds.h"
 
 #include <string.h>
 
@@ -19,13 +19,13 @@ typedef struct {
 static String_View bm_freeze_intern(Build_Model_Freeze_Ctx *ctx, String_View sv) {
     if (!ctx || !ctx->arena || !sv.data || sv.count == 0) return sv_from_cstr("");
 
-    Build_Model_Freeze_Intern_Entry *entry = ds_shgetp_null(ctx->intern_map, nob_temp_sv_to_cstr(sv));
+    Build_Model_Freeze_Intern_Entry *entry = stbds_shgetp_null(ctx->intern_map, nob_temp_sv_to_cstr(sv));
     if (entry) return sv_from_cstr(entry->value);
 
     char *owned = arena_strndup(ctx->arena, sv.data, sv.count);
     if (!owned) return sv_from_cstr("");
 
-    ds_shput(ctx->intern_map, owned, owned);
+    stbds_shput(ctx->intern_map, owned, owned);
     return sv_from_cstr(owned);
 }
 
@@ -109,7 +109,7 @@ static void bm_freeze_build_property_index(const Property_List *list, Build_Prop
 
     for (size_t i = 0; i < list->count; i++) {
         if (list->items[i].name.count == 0 || !list->items[i].name.data) continue;
-        ds_shput(*out_index, (char*)list->items[i].name.data, (int)i);
+        stbds_shput(*out_index, (char*)list->items[i].name.data, (int)i);
     }
 }
 
@@ -314,7 +314,7 @@ static bool bm_freeze_copy_targets(Build_Model_Freeze_Ctx *ctx,
 
         dst_model->targets[i] = dst_target;
         if (dst_target->name.count > 0) {
-            ds_shput(dst_model->target_index_by_name, (char*)dst_target->name.data, (int)i);
+            stbds_shput(dst_model->target_index_by_name, (char*)dst_target->name.data, (int)i);
         }
     }
 
@@ -519,10 +519,10 @@ const Build_Model *build_model_freeze(Build_Model_Builder *builder, Arena *out_a
     if (!bm_freeze_copy_tests(&ctx, src_model, dst_model)) goto fail;
     if (!bm_freeze_copy_cpack(&ctx, src_model, dst_model)) goto fail;
 
-    ds_shfree(ctx.intern_map);
+    stbds_shfree(ctx.intern_map);
     return dst_model;
 
 fail:
-    ds_shfree(ctx.intern_map);
+    stbds_shfree(ctx.intern_map);
     return NULL;
 }

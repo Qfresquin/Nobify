@@ -9,7 +9,6 @@
 #include "arena.h"
 #include "parser.h"
 #include "evaluator.h"
-#include "uthash.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,11 +23,15 @@ typedef struct {
 typedef struct {
     String_View key;
     String_View value;
-    UT_hash_handle hh;
 } Var_Binding;
 
+typedef struct Eval_Var_Entry {
+    char *key;
+    String_View value;
+} Eval_Var_Entry;
+
 typedef struct Var_Scope {
-    Var_Binding *vars;
+    Eval_Var_Entry *vars;
 } Var_Scope;
 
 typedef enum {

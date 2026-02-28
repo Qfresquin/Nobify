@@ -5,6 +5,7 @@
 #include "lexer.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
+#include "stb_ds.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -115,12 +116,25 @@ bool eval_emit_diag(Evaluator_Context *ctx,
 // -----------------------------------------------------------------------------
 // Variable scopes
 // -----------------------------------------------------------------------------
+static Eval_Var_Entry *eval_scope_var_find(Eval_Var_Entry *vars, String_View key) {
+    if (!vars || !key.data) return NULL;
+    return stbds_shgetp_null(vars, nob_temp_sv_to_cstr(key));
+}
+
+static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
+    if (!ctx) return NULL;
+    char *buf = (char*)arena_alloc(ctx->event_arena, key.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
+    if (key.count > 0 && key.data) memcpy(buf, key.data, key.count);
+    buf[key.count] = '\0';
+    return buf;
+}
+
 String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
     if (!ctx || ctx->scope_depth == 0) return nob_sv_from_cstr("");
     for (size_t d = ctx->scope_depth; d-- > 0;) {
         Var_Scope *s = &ctx->scopes[d];
-        Var_Binding *b = NULL;
-        HASH_FIND(hh, s->vars, key.data, (unsigned)key.count, b);
+        Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return b->value;
     }
     return nob_sv_from_cstr("");
@@ -129,29 +143,29 @@ String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
 bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
     if (!ctx || ctx->scope_depth == 0 || eval_should_stop(ctx)) return false;
     Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
-    Var_Binding *b = NULL;
-    HASH_FIND(hh, s->vars, key.data, (unsigned)key.count, b);
+    Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     if (b) {
         b->value = sv_copy_to_event_arena(ctx, value);
         return !eval_should_stop(ctx);
     }
 
-    b = arena_alloc_zero(ctx->event_arena, sizeof(*b));
-    EVAL_OOM_RETURN_IF_NULL(ctx, b, false);
-    b->key = sv_copy_to_event_arena(ctx, key);
-    b->value = sv_copy_to_event_arena(ctx, value);
+    char *stable_key = eval_copy_key_cstr_event(ctx, key);
+    if (!stable_key) return false;
+    String_View stable_value = sv_copy_to_event_arena(ctx, value);
     if (eval_should_stop(ctx)) return false;
 
-    HASH_ADD_KEYPTR(hh, s->vars, b->key.data, (unsigned)b->key.count, b);
+    Eval_Var_Entry *vars = s->vars;
+    stbds_shput(vars, stable_key, stable_value);
+    s->vars = vars;
     return true;
 }
 
 bool eval_var_unset(Evaluator_Context *ctx, String_View key) {
     if (!ctx || ctx->scope_depth == 0 || eval_should_stop(ctx)) return false;
     Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
-    Var_Binding *b = NULL;
-    HASH_FIND(hh, s->vars, key.data, (unsigned)key.count, b);
-    if (b) HASH_DEL(s->vars, b);
+    if (s->vars) {
+        (void)stbds_shdel(s->vars, nob_temp_sv_to_cstr(key));
+    }
     return true;
 }
 
@@ -160,8 +174,7 @@ bool eval_var_defined(Evaluator_Context *ctx, String_View key) {
     if (!ctx || ctx->scope_depth == 0) return false;
     for (size_t d = ctx->scope_depth; d-- > 0;) {
         Var_Scope *s = &ctx->scopes[d];
-        Var_Binding *b = NULL;
-        HASH_FIND(hh, s->vars, key.data, (unsigned)key.count, b);
+        Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return true;
     }
     return false;
@@ -171,8 +184,7 @@ bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key) 
     // Used by commands that need local-scope semantics only.
     if (!ctx || ctx->scope_depth == 0) return false;
     Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
-    Var_Binding *b = NULL;
-    HASH_FIND(hh, s->vars, key.data, (unsigned)key.count, b);
+    Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     return b != NULL;
 }
 
@@ -816,6 +828,11 @@ bool eval_scope_push(Evaluator_Context *ctx) {
 
 void eval_scope_pop(Evaluator_Context *ctx) {
     if (ctx && ctx->scope_depth > 1) {
+        Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+        if (s->vars) {
+            stbds_shfree(s->vars);
+            s->vars = NULL;
+        }
         ctx->scope_depth--;
     }
 }
@@ -1344,8 +1361,13 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 }
 
 void evaluator_destroy(Evaluator_Context *ctx) {
-    // Context lives in external event_arena lifecycle.
-    (void)ctx;
+    if (!ctx) return;
+    for (size_t i = 0; i < ctx->scope_depth; i++) {
+        if (ctx->scopes[i].vars) {
+            stbds_shfree(ctx->scopes[i].vars);
+            ctx->scopes[i].vars = NULL;
+        }
+    }
 }
 
 bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
