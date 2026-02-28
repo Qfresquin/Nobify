@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 90
+CASES 92
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -143,6 +143,25 @@ EVENTS count=0
 === CASE expr_parenthesized_if_condition ===
 DIAG errors=0 warnings=0
 EVENTS count=0
+=== END CASE ===
+
+=== CASE vars_unset_local_and_cache_modes ===
+DIAG errors=0 warnings=0
+EVENTS count=6
+EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=2 col=1 key='U_CACHE' value='cached'
+EV[1] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=4 col=1 key='U_CACHE' value=''
+EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='unset_local_cache' type=EXECUTABLE
+EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='unset_local_cache' path='main.c'
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_LOCAL=' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_CACHE=cached' vis=PRIVATE
+=== END CASE ===
+
+=== CASE vars_unset_parent_scope_mode ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='unset_parent_scope' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='unset_parent_scope' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='unset_parent_scope' item='UP_OUTER=' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_while_simple_counter ===

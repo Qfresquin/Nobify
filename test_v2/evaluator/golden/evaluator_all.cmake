@@ -132,6 +132,26 @@ if((A AND B) OR C)
 endif()
 #@@ENDCASE
 
+#@@CASE vars_unset_local_and_cache_modes
+set(U_LOCAL "present")
+set(U_CACHE "cached" CACHE STRING "doc")
+unset(U_LOCAL)
+unset(U_CACHE CACHE)
+add_executable(unset_local_cache main.c)
+target_compile_definitions(unset_local_cache PRIVATE U_LOCAL=${U_LOCAL} U_CACHE=${U_CACHE})
+#@@ENDCASE
+
+#@@CASE vars_unset_parent_scope_mode
+set(UP_OUTER "outer")
+function(unset_parent_fn)
+  set(UP_OUTER "inner" PARENT_SCOPE)
+  unset(UP_OUTER PARENT_SCOPE)
+endfunction()
+unset_parent_fn()
+add_executable(unset_parent_scope main.c)
+target_compile_definitions(unset_parent_scope PRIVATE UP_OUTER=${UP_OUTER})
+#@@ENDCASE
+
 #@@CASE flow_while_simple_counter
 set(C 0)
 while(${C} LESS 3)

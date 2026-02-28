@@ -40,10 +40,10 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
 
 - Implemented:
   - `set(...)` including cache and `PARENT_SCOPE` handling
+  - `unset(<var> [CACHE|PARENT_SCOPE])`
 - Partial:
-  - `set(<var>)` unsets variable (works as unset behavior for this form)
-- Missing:
-  - `unset(...)` command entrypoint
+  - `set(<var>)` still behaves as unset shorthand for compatibility
+  - `unset(<var> CACHE)` maps to cache-entry clear event semantics in current runtime model
 
 ### `list()`
 

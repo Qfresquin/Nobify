@@ -70,6 +70,7 @@ static const Command_Entry DISPATCH[] = {
     {"target_link_libraries", eval_handle_target_link_libraries},
     {"target_link_options", eval_handle_target_link_options},
     {"try_compile", eval_handle_try_compile},
+    {"unset", eval_handle_unset},
 };
 static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
 
