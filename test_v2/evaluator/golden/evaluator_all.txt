@@ -1,5 +1,5 @@
 MODULE evaluator
-CASES 77
+CASES 90
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
@@ -663,6 +663,119 @@ EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='copy_chain_file' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='copy_chain_file' path='main.c'
 EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='copy_chain_file' item='COPY_CHAIN_TXT=ok' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_append_preserves_existing_content ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_append_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_append_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_append_case' item='APP_TXT=AB' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_rename_no_replace_and_result ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='file_rename_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='file_rename_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_SRC_TXT=SRC' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_DST_TXT=DST' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_DST2_TXT=SRC' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_remove_and_remove_recurse_non_existing_ok ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=14 col=1 name='file_remove_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=14 col=1 target='file_remove_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=15 col=1 target='file_remove_case' item='FILE_REMOVE_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=15 col=1 target='file_remove_case' item='FILE_REMOVE_RECURSE_OK=1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_size_and_timestamp_available ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='file_size_ts_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='file_size_ts_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' item='FILE_SIZE_VAL=4' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' item='FILE_TS_OK=1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_read_symlink_and_create_link ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=10 col=1 name='file_link_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=10 col=1 target='file_link_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='file_link_case' item='FILE_LINK_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='file_link_case' item='FILE_LINK_TARGET=./temp_file_link_src.txt' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='file_link_case' item='FILE_LINK_HARD_TXT=LINKDATA' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_chmod_and_chmod_recurse_runs ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_chmod_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_chmod_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_chmod_case' item='FILE_CHMOD_OK=1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_real_relative_and_path_conversion ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_path_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_path_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_REL_OUT=../temp_file_path/a/f.txt' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_CMAKE_PATH=a//b//c' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_NATIVE_PATH=x/y/z' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_download_upload_local_backend ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='file_transfer_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='file_transfer_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_DL_TXT=2345' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_UL_TXT=2345' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_download_remote_url_reports_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' cause='file(DOWNLOAD) remote URL is not supported without external backend' hint='https://example.com/demo.txt'
+=== END CASE ===
+
+=== CASE file_generate_content_input_and_condition ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='file_generate_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='file_generate_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='file_generate_case' item='FILE_GEN_CONTENT=OUT_LINE' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='file_generate_case' item='FILE_GEN_INPUT=IN_LINE' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='file_generate_case' item='FILE_GEN_SKIP_OK=1' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_lock_acquire_release_reacquire ===
+DIAG errors=0 warnings=0
+EVENTS count=5
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_lock_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_lock_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_A=0' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_B=0' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_C=0' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_archive_create_extract_tar_subset ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_archive_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_archive_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_archive_case' item='FILE_ARCHIVE_TXT=ARCHIVE_OK' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_archive_create_unsupported_compression_error ===
+DIAG errors=1 warnings=0
+EVENTS count=1
+EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=ERROR component='eval_file' command='file' cause='file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend' hint='GZIP'
 === END CASE ===
 
 === CASE dispatcher_custom_command_and_target ===

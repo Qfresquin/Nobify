@@ -649,6 +649,146 @@ add_executable(copy_chain_file main.c)
 target_compile_definitions(copy_chain_file PRIVATE COPY_CHAIN_TXT=${COPY_CHAIN_TXT})
 #@@ENDCASE
 
+#@@CASE file_append_preserves_existing_content
+file(WRITE temp_file_append.txt "A")
+file(APPEND temp_file_append.txt "B")
+file(READ temp_file_append.txt APP_TXT)
+add_executable(file_append_case main.c)
+target_compile_definitions(file_append_case PRIVATE APP_TXT=${APP_TXT})
+#@@ENDCASE
+
+#@@CASE file_rename_no_replace_and_result
+file(WRITE temp_file_rename_src.txt "SRC")
+file(WRITE temp_file_rename_dst.txt "DST")
+file(RENAME temp_file_rename_src.txt temp_file_rename_dst.txt NO_REPLACE RESULT RN_NO_REPLACE)
+file(READ temp_file_rename_src.txt RN_SRC_TXT)
+file(READ temp_file_rename_dst.txt RN_DST_TXT)
+file(RENAME temp_file_rename_src.txt temp_file_rename_dst2.txt RESULT RN_OK)
+file(READ temp_file_rename_dst2.txt RN_DST2_TXT)
+add_executable(file_rename_case main.c)
+target_compile_definitions(file_rename_case PRIVATE RN_SRC_TXT=${RN_SRC_TXT} RN_DST_TXT=${RN_DST_TXT} RN_DST2_TXT=${RN_DST2_TXT})
+#@@ENDCASE
+
+#@@CASE file_remove_and_remove_recurse_non_existing_ok
+file(WRITE temp_file_remove_one.txt "X")
+file(REMOVE temp_file_remove_one.txt temp_file_remove_missing.txt)
+set(FILE_REMOVE_OK 0)
+if(NOT EXISTS temp_file_remove_one.txt)
+  set(FILE_REMOVE_OK 1)
+endif()
+file(MAKE_DIRECTORY temp_file_remove_tree/sub)
+file(WRITE temp_file_remove_tree/sub/leaf.txt "Y")
+file(REMOVE_RECURSE temp_file_remove_tree temp_file_remove_missing_dir)
+set(FILE_REMOVE_RECURSE_OK 0)
+if(NOT EXISTS temp_file_remove_tree)
+  set(FILE_REMOVE_RECURSE_OK 1)
+endif()
+add_executable(file_remove_case main.c)
+target_compile_definitions(file_remove_case PRIVATE FILE_REMOVE_OK=${FILE_REMOVE_OK} FILE_REMOVE_RECURSE_OK=${FILE_REMOVE_RECURSE_OK})
+#@@ENDCASE
+
+#@@CASE file_size_and_timestamp_available
+file(WRITE temp_file_size.txt "ABCD")
+file(SIZE temp_file_size.txt FILE_SIZE_VAL)
+file(TIMESTAMP temp_file_size.txt FILE_TS_VAL "%Y" UTC)
+set(FILE_TS_OK 0)
+if(FILE_TS_VAL)
+  set(FILE_TS_OK 1)
+endif()
+add_executable(file_size_ts_case main.c)
+target_compile_definitions(file_size_ts_case PRIVATE FILE_SIZE_VAL=${FILE_SIZE_VAL} FILE_TS_OK=${FILE_TS_OK})
+#@@ENDCASE
+
+#@@CASE file_read_symlink_and_create_link
+file(WRITE temp_file_link_src.txt "LINKDATA")
+file(CREATE_LINK temp_file_link_src.txt temp_file_link_sym.txt SYMBOLIC RESULT FILE_LINK_SYM_RES)
+file(READ_SYMLINK temp_file_link_sym.txt FILE_LINK_TARGET)
+file(CREATE_LINK temp_file_link_src.txt temp_file_link_hard.txt RESULT FILE_LINK_HARD_RES)
+file(READ temp_file_link_hard.txt FILE_LINK_HARD_TXT)
+set(FILE_LINK_OK 0)
+if(EXISTS temp_file_link_sym.txt AND EXISTS temp_file_link_hard.txt)
+  set(FILE_LINK_OK 1)
+endif()
+add_executable(file_link_case main.c)
+target_compile_definitions(file_link_case PRIVATE FILE_LINK_OK=${FILE_LINK_OK} FILE_LINK_TARGET=${FILE_LINK_TARGET} FILE_LINK_HARD_TXT=${FILE_LINK_HARD_TXT})
+#@@ENDCASE
+
+#@@CASE file_chmod_and_chmod_recurse_runs
+file(WRITE temp_file_chmod.txt "z")
+file(CHMOD temp_file_chmod.txt PERMISSIONS OWNER_READ OWNER_WRITE)
+file(MAKE_DIRECTORY temp_file_chmod_dir/sub)
+file(WRITE temp_file_chmod_dir/sub/a.txt "a")
+file(CHMOD_RECURSE temp_file_chmod_dir PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+set(FILE_CHMOD_OK 1)
+add_executable(file_chmod_case main.c)
+target_compile_definitions(file_chmod_case PRIVATE FILE_CHMOD_OK=${FILE_CHMOD_OK})
+#@@ENDCASE
+
+#@@CASE file_real_relative_and_path_conversion
+file(MAKE_DIRECTORY temp_file_path/a)
+file(WRITE temp_file_path/a/f.txt "p")
+file(REAL_PATH temp_file_path/a/f.txt FILE_REAL_OUT)
+file(RELATIVE_PATH FILE_REL_OUT temp_file_path temp_file_path/a/f.txt)
+file(TO_CMAKE_PATH "a\\b\\c" FILE_CMAKE_PATH)
+file(TO_NATIVE_PATH "x/y/z" FILE_NATIVE_PATH)
+add_executable(file_path_case main.c)
+target_compile_definitions(file_path_case PRIVATE FILE_REL_OUT=${FILE_REL_OUT} FILE_CMAKE_PATH=${FILE_CMAKE_PATH} FILE_NATIVE_PATH=${FILE_NATIVE_PATH})
+#@@ENDCASE
+
+#@@CASE file_download_upload_local_backend
+file(WRITE temp_file_download_src.txt "0123456789")
+file(DOWNLOAD temp_file_download_src.txt temp_file_download_dst.txt RANGE_START 2 RANGE_END 5 STATUS FILE_DL_STATUS LOG FILE_DL_LOG)
+file(READ temp_file_download_dst.txt FILE_DL_TXT)
+file(UPLOAD temp_file_download_dst.txt temp_file_upload_dst.txt STATUS FILE_UL_STATUS LOG FILE_UL_LOG)
+file(READ temp_file_upload_dst.txt FILE_UL_TXT)
+add_executable(file_transfer_case main.c)
+target_compile_definitions(file_transfer_case PRIVATE FILE_DL_TXT=${FILE_DL_TXT} FILE_UL_TXT=${FILE_UL_TXT})
+#@@ENDCASE
+
+#@@CASE file_download_remote_url_reports_error
+file(DOWNLOAD "https://example.com/demo.txt" temp_file_remote_out.txt STATUS FILE_REMOTE_STATUS LOG FILE_REMOTE_LOG)
+#@@ENDCASE
+
+#@@CASE file_generate_content_input_and_condition
+file(WRITE temp_file_generate_input.in "IN_LINE")
+file(GENERATE OUTPUT temp_file_generate_content.txt CONTENT "OUT_LINE")
+file(GENERATE OUTPUT temp_file_generate_from_input.txt INPUT temp_file_generate_input.in)
+file(GENERATE OUTPUT temp_file_generate_skip.txt CONTENT "SKIP" CONDITION 0)
+file(READ temp_file_generate_content.txt FILE_GEN_CONTENT)
+file(READ temp_file_generate_from_input.txt FILE_GEN_INPUT)
+set(FILE_GEN_SKIP_OK 1)
+if(EXISTS temp_file_generate_skip.txt)
+  set(FILE_GEN_SKIP_OK 0)
+endif()
+add_executable(file_generate_case main.c)
+target_compile_definitions(file_generate_case PRIVATE FILE_GEN_CONTENT=${FILE_GEN_CONTENT} FILE_GEN_INPUT=${FILE_GEN_INPUT} FILE_GEN_SKIP_OK=${FILE_GEN_SKIP_OK})
+#@@ENDCASE
+
+#@@CASE file_lock_acquire_release_reacquire
+file(LOCK temp_file_lock_guard.lck RESULT_VARIABLE FILE_LOCK_A TIMEOUT 1)
+file(LOCK temp_file_lock_guard.lck RELEASE RESULT_VARIABLE FILE_LOCK_B)
+file(LOCK temp_file_lock_guard.lck RESULT_VARIABLE FILE_LOCK_C)
+add_executable(file_lock_case main.c)
+target_compile_definitions(file_lock_case PRIVATE FILE_LOCK_A=${FILE_LOCK_A} FILE_LOCK_B=${FILE_LOCK_B} FILE_LOCK_C=${FILE_LOCK_C})
+#@@ENDCASE
+
+#@@CASE file_archive_create_extract_tar_subset
+file(MAKE_DIRECTORY temp_file_archive_src)
+file(WRITE temp_file_archive_src/item.txt "ARCHIVE_OK")
+file(ARCHIVE_CREATE OUTPUT temp_file_archive.tar PATHS temp_file_archive_src FORMAT TAR COMPRESSION NONE)
+file(MAKE_DIRECTORY temp_file_archive_out)
+file(ARCHIVE_EXTRACT INPUT temp_file_archive.tar DESTINATION temp_file_archive_out)
+file(READ temp_file_archive_out/temp_file_archive_src/item.txt FILE_ARCHIVE_TXT)
+add_executable(file_archive_case main.c)
+target_compile_definitions(file_archive_case PRIVATE FILE_ARCHIVE_TXT=${FILE_ARCHIVE_TXT})
+#@@ENDCASE
+
+#@@CASE file_archive_create_unsupported_compression_error
+file(MAKE_DIRECTORY temp_file_archive_bad_src)
+file(WRITE temp_file_archive_bad_src/item.txt "X")
+file(ARCHIVE_CREATE OUTPUT temp_file_archive_bad.tar PATHS temp_file_archive_bad_src FORMAT TAR COMPRESSION GZIP)
+#@@ENDCASE
+
 #@@CASE dispatcher_custom_command_and_target
 add_custom_target(gen ALL
   COMMAND echo gen

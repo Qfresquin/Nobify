@@ -100,27 +100,40 @@ Note: evaluator v2 currently executes CMake language commands, not `cmake -E` ut
   - `file(READ ...)`
   - `file(STRINGS ...)` (with several options, including `REGEX`, limits, `NEWLINE_CONSUME`, `ENCODING`)
   - `file(WRITE ...)`
+  - `file(APPEND ...)`
   - `file(MAKE_DIRECTORY ...)`
   - `file(COPY ... DESTINATION ...)`
+  - `file(INSTALL ... DESTINATION ...)` (pragmatic mapping to COPY-style flow)
   - `file(GLOB ...)`
   - `file(GLOB_RECURSE ...)`
+  - `file(RENAME ...)`
+  - `file(REMOVE ...)`
+  - `file(REMOVE_RECURSE ...)`
+  - `file(SIZE ...)`
+  - `file(READ_SYMLINK ...)`
+  - `file(CREATE_LINK ...)`
+  - `file(CHMOD ...)`
+  - `file(CHMOD_RECURSE ...)`
+  - `file(REAL_PATH ...)`
+  - `file(RELATIVE_PATH ...)`
+  - `file(TO_CMAKE_PATH ...)`
+  - `file(TO_NATIVE_PATH ...)`
+  - `file(DOWNLOAD ...)`
+  - `file(UPLOAD ...)`
+  - `file(TIMESTAMP ...)`
+  - `file(GENERATE ...)`
+  - `file(LOCK ...)`
+  - `file(ARCHIVE_CREATE ...)`
+  - `file(ARCHIVE_EXTRACT ...)`
 - Partial:
   - `file(COPY ...)`: some options still warned/ignored (for example source-permission mode toggles)
   - `file(STRINGS ...)`: unsupported options still produce warning when encountered
+  - `file(INSTALL ...)`: simplified behavior (not full CMake parity)
+  - `file(DOWNLOAD|UPLOAD ...)`: local backend only (`file://`/local paths); remote URLs fail explicitly
+  - `file(LOCK ...)`: advisory local lock semantics; `GUARD` modes approximated; Windows backend not implemented
+  - `file(ARCHIVE_CREATE|ARCHIVE_EXTRACT ...)`: pragmatic tar subset; unsupported format/compression fails explicitly
 - Missing:
-  - `APPEND`, `RENAME`, `REMOVE`, `REMOVE_RECURSE`
-  - `INSTALL`
-  - `SIZE`
-  - `READ_SYMLINK`
-  - `CREATE_LINK`
-  - `CHMOD`, `CHMOD_RECURSE`
-  - `REAL_PATH`, `RELATIVE_PATH`
-  - `TO_CMAKE_PATH`, `TO_NATIVE_PATH`
-  - `DOWNLOAD`, `UPLOAD`
-  - `TIMESTAMP`
-  - `GENERATE`
-  - `LOCK`
-  - `ARCHIVE_CREATE`, `ARCHIVE_EXTRACT`
+  - none from the currently targeted `file()` command set in this coverage pass
 
 ## 4) Project/Target commands
 

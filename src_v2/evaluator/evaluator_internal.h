@@ -82,6 +82,21 @@ typedef struct {
     size_t capacity;
 } Block_Frame_Stack;
 
+typedef struct {
+    String_View path;
+#if defined(_WIN32)
+    void *handle;
+#else
+    int fd;
+#endif
+} Eval_File_Lock;
+
+typedef struct {
+    Eval_File_Lock *items;
+    size_t count;
+    size_t capacity;
+} Eval_File_Lock_List;
+
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
@@ -102,6 +117,7 @@ struct Evaluator_Context {
     User_Command_List user_commands;
     Macro_Frame_Stack macro_frames;
     Block_Frame_Stack block_frames;
+    Eval_File_Lock_List file_locks;
 
     size_t loop_depth;
     bool break_requested;

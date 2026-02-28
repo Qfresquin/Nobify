@@ -2,6 +2,7 @@
 #include "evaluator_internal.h"
 #include "eval_expr.h"
 #include "eval_dispatcher.h"
+#include "eval_file_internal.h"
 #include "lexer.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
@@ -1362,6 +1363,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 
 void evaluator_destroy(Evaluator_Context *ctx) {
     if (!ctx) return;
+    eval_file_lock_cleanup(ctx);
     for (size_t i = 0; i < ctx->scope_depth; i++) {
         if (ctx->scopes[i].vars) {
             stbds_shfree(ctx->scopes[i].vars);

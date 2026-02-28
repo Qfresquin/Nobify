@@ -1,4 +1,5 @@
 #include "eval_file.h"
+#include "eval_file_internal.h"
 #include "evaluator_internal.h"
 #include "eval_expr.h"
 #include "eval_opt_parser.h"
@@ -22,14 +23,14 @@
 #include <unistd.h>
 #endif
 
-static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
+String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
 
-static String_View current_src_dir(Evaluator_Context *ctx) {
+String_View eval_file_current_src_dir(Evaluator_Context *ctx) {
     String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     return v.count > 0 ? v : ctx->source_dir;
 }
 
-static String_View current_bin_dir(Evaluator_Context *ctx) {
+String_View eval_file_current_bin_dir(Evaluator_Context *ctx) {
     String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     return v.count > 0 ? v : ctx->binary_dir;
 }
@@ -41,7 +42,7 @@ static bool eval_var_truthy_or_default(Evaluator_Context *ctx, const char *key, 
     return eval_truthy(ctx, v);
 }
 
-static bool parse_size_sv(String_View sv, size_t *out) {
+bool eval_file_parse_size_sv(String_View sv, size_t *out) {
     if (!out || sv.count == 0) return false;
     char tmp[64];
     if (sv.count >= sizeof(tmp)) return false;
@@ -406,7 +407,7 @@ static bool scope_canonicalize_existing_or_parent_temp(Evaluator_Context *ctx,
     return false;
 }
 
-static bool resolve_project_scoped_path(Evaluator_Context *ctx,
+bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
                                         const Node *node,
                                         Cmake_Event_Origin origin,
                                         String_View input_path,
@@ -429,7 +430,7 @@ static bool resolve_project_scoped_path(Evaluator_Context *ctx,
     if (!eval_sv_is_abs_path(path)) {
         path = eval_sv_path_join(eval_temp_arena(ctx), relative_base, path);
     }
-    path = cmk_path_normalize_temp(ctx, path);
+    path = eval_file_cmk_path_normalize_temp(ctx, path);
     if (eval_should_stop(ctx) || path.count == 0) return false;
 
     bool ci = false;
@@ -481,7 +482,7 @@ static bool resolve_project_scoped_path(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
     if (!ctx) return nob_sv_from_cstr("");
     if (input.count == 0) return nob_sv_from_cstr("");
 
@@ -569,10 +570,10 @@ static size_t mkdir_root_prefix_len(const char *path) {
     return 0;
 }
 
-static bool mkdir_p(Evaluator_Context *ctx, String_View path) {
+bool eval_file_mkdir_p(Evaluator_Context *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
 
-    String_View normalized = cmk_path_normalize_temp(ctx, path);
+    String_View normalized = eval_file_cmk_path_normalize_temp(ctx, path);
     if (eval_should_stop(ctx) || normalized.count == 0) return false;
 
     char *path_c = eval_sv_to_cstr_temp(ctx, normalized);
@@ -999,7 +1000,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
     }
 
     String_View path = nob_sv_from_cstr("");
-    if (!resolve_project_scoped_path(ctx, node, o, args.items[1], ctx->binary_dir, &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], ctx->binary_dir, &path)) return;
 
     char *path_c = (char*)arena_alloc(eval_temp_arena(ctx), path.count + 1);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
@@ -1014,7 +1015,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
     if (last_slash) {
         *last_slash = '\0';
         String_View dir = nob_sv_from_cstr(dir_c);
-        if (dir.count > 0 && !mkdir_p(ctx, dir)) {
+        if (dir.count > 0 && !eval_file_mkdir_p(ctx, dir)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_file"),
@@ -1059,9 +1060,9 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
 
     for (size_t i = 1; i < args.count; i++) {
         String_View path = nob_sv_from_cstr("");
-        if (!resolve_project_scoped_path(ctx, node, o, args.items[i], current_bin_dir(ctx), &path)) return;
+        if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[i], eval_file_current_bin_dir(ctx), &path)) return;
 
-        if (!mkdir_p(ctx, path)) {
+        if (!eval_file_mkdir_p(ctx, path)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_file"),
@@ -1092,11 +1093,11 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
 
     for (size_t i = 3; i < args.count; i++) {
         if (eval_sv_eq_ci_lit(args.items[i], "OFFSET") && i + 1 < args.count) {
-            (void)parse_size_sv(args.items[++i], &offset);
+            (void)eval_file_parse_size_sv(args.items[++i], &offset);
             continue;
         }
         if (eval_sv_eq_ci_lit(args.items[i], "LIMIT") && i + 1 < args.count) {
-            has_limit = parse_size_sv(args.items[++i], &limit);
+            has_limit = eval_file_parse_size_sv(args.items[++i], &limit);
             continue;
         }
         if (eval_sv_eq_ci_lit(args.items[i], "HEX")) {
@@ -1104,7 +1105,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
         }
     }
 
-    if (!resolve_project_scoped_path(ctx, node, o, args.items[1], current_src_dir(ctx), &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_src_dir(ctx), &path)) return;
 
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
@@ -1186,7 +1187,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
 
         if (eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM") && i + 1 < args.count) {
             size_t v = 0;
-            if (!parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MINIMUM value"),
                                args.items[i]);
@@ -1198,7 +1199,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         }
         if (eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM") && i + 1 < args.count) {
             size_t v = 0;
-            if (!parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MAXIMUM value"),
                                args.items[i]);
@@ -1210,7 +1211,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         }
         if (eval_sv_eq_ci_lit(t, "LIMIT_COUNT") && i + 1 < args.count) {
             size_t v = 0;
-            if (!parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LIMIT_COUNT value"),
                                args.items[i]);
@@ -1222,7 +1223,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         }
         if (eval_sv_eq_ci_lit(t, "LIMIT_INPUT") && i + 1 < args.count) {
             size_t v = 0;
-            if (!parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LIMIT_INPUT value"),
                                args.items[i]);
@@ -1234,7 +1235,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         }
         if (eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT") && i + 1 < args.count) {
             size_t v = 0;
-            if (!parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LIMIT_OUTPUT value"),
                                args.items[i]);
@@ -1295,7 +1296,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_should_stop(ctx)) return;
     }
 
-    if (!resolve_project_scoped_path(ctx, node, o, args.items[1], current_src_dir(ctx), &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_src_dir(ctx), &path)) return;
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
 
@@ -1736,10 +1737,10 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
 #endif
 
         if (eval_sv_is_abs_path(target)) {
-            current = cmk_path_normalize_temp(ctx, target);
+            current = eval_file_cmk_path_normalize_temp(ctx, target);
         } else {
             String_View parent = svu_dirname(current);
-            current = cmk_path_normalize_temp(ctx, eval_sv_path_join(eval_temp_arena(ctx), parent, target));
+            current = eval_file_cmk_path_normalize_temp(ctx, eval_sv_path_join(eval_temp_arena(ctx), parent, target));
         }
         if (eval_should_stop(ctx) || current.count == 0) return false;
     }
@@ -1892,7 +1893,7 @@ static bool copy_parse_on_positional(Evaluator_Context *ctx,
     return true;
 }
 
-static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List args) {
+void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (args.count < 4) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
@@ -1917,7 +1918,7 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
 
     String_View dest = args.items[dest_idx + 1];
     if (!eval_sv_is_abs_path(dest)) {
-        dest = eval_sv_path_join(eval_temp_arena(ctx), current_bin_dir(ctx), dest);
+        dest = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_bin_dir(ctx), dest);
     }
 
     static const Eval_Opt_Spec k_copy_specs[] = {
@@ -1984,7 +1985,7 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
         filters[i].regex_ready = true;
     }
 
-    if (!mkdir_p(ctx, dest)) {
+    if (!eval_file_mkdir_p(ctx, dest)) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(COPY) failed to create destination"),
                        dest);
@@ -1995,7 +1996,7 @@ static void handle_file_copy(Evaluator_Context *ctx, const Node *node, SV_List a
     for (size_t i = 1; i < dest_idx; i++) {
         String_View src = args.items[i];
         if (!eval_sv_is_abs_path(src)) {
-            src = eval_sv_path_join(eval_temp_arena(ctx), current_src_dir(ctx), src);
+            src = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_src_dir(ctx), src);
         }
 
         char *src_c = eval_sv_to_cstr_temp(ctx, src);
@@ -2074,11 +2075,17 @@ bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
     } else if (eval_sv_eq_ci_lit(subcmd, "STRINGS")) {
         handle_file_strings(ctx, node, args);
     } else if (eval_sv_eq_ci_lit(subcmd, "COPY")) {
-        handle_file_copy(ctx, node, args);
+        eval_file_handle_copy(ctx, node, args);
     } else if (eval_sv_eq_ci_lit(subcmd, "WRITE")) {
         handle_file_write(ctx, node, args);
     } else if (eval_sv_eq_ci_lit(subcmd, "MAKE_DIRECTORY")) {
         handle_file_make_directory(ctx, node, args);
+    } else if (eval_file_handle_fsops(ctx, node, args)) {
+        // handled in eval_file_fsops.c
+    } else if (eval_file_handle_transfer(ctx, node, args)) {
+        // handled in eval_file_transfer.c
+    } else if (eval_file_handle_generate_lock_archive(ctx, node, args)) {
+        // handled in eval_file_generate_lock_archive.c
     } else {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         eval_emit_diag(ctx,
