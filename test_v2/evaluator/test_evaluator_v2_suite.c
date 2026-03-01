@@ -1079,6 +1079,120 @@ TEST(evaluator_enable_testing_rejects_extra_arguments) {
     TEST_PASS();
 }
 
+TEST(evaluator_add_test_name_signature_parses_supported_options) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "enable_testing()\n"
+        "add_test(NAME smoke COMMAND app --flag value CONFIGURATIONS Debug RelWithDebInfo WORKING_DIRECTORY tests COMMAND_EXPAND_LISTS)\n"
+        "add_test(legacy app WORKING_DIRECTORY tools)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_smoke = false;
+    bool saw_legacy = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TEST_ADD) continue;
+        if (nob_sv_eq(ev->as.test_add.name, nob_sv_from_cstr("smoke")) &&
+            nob_sv_eq(ev->as.test_add.command, nob_sv_from_cstr("app --flag value")) &&
+            nob_sv_eq(ev->as.test_add.working_dir, nob_sv_from_cstr("tests")) &&
+            ev->as.test_add.command_expand_lists) {
+            saw_smoke = true;
+        }
+        if (nob_sv_eq(ev->as.test_add.name, nob_sv_from_cstr("legacy")) &&
+            nob_sv_eq(ev->as.test_add.command, nob_sv_from_cstr("app WORKING_DIRECTORY tools")) &&
+            nob_sv_eq(ev->as.test_add.working_dir, nob_sv_from_cstr("")) &&
+            !ev->as.test_add.command_expand_lists) {
+            saw_legacy = true;
+        }
+    }
+    ASSERT(saw_smoke);
+    ASSERT(saw_legacy);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_test_name_signature_rejects_unexpected_arguments) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "enable_testing()\n"
+        "add_test(NAME bad COMMAND app WORKING_DIRECTORY bad_dir EXTRA_TOKEN value)\n"
+        "add_test(legacy_ok app ok)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_unexpected_diag = false;
+    bool emitted_bad_test = false;
+    bool emitted_legacy_ok = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_test(NAME ...) received unexpected argument")) &&
+            nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("EXTRA_TOKEN"))) {
+            saw_unexpected_diag = true;
+        }
+        if (ev->kind != EV_TEST_ADD) continue;
+        if (nob_sv_eq(ev->as.test_add.name, nob_sv_from_cstr("bad"))) emitted_bad_test = true;
+        if (nob_sv_eq(ev->as.test_add.name, nob_sv_from_cstr("legacy_ok"))) emitted_legacy_ok = true;
+    }
+
+    ASSERT(saw_unexpected_diag);
+    ASSERT(!emitted_bad_test);
+    ASSERT(emitted_legacy_ok);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3250,6 +3364,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
     test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed);
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
+    test_evaluator_add_test_name_signature_parses_supported_options(passed, failed);
+    test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);

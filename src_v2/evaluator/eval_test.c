@@ -40,6 +40,7 @@ bool eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
 enum {
     ADD_TEST_OPT_WORKING_DIRECTORY = 1,
     ADD_TEST_OPT_COMMAND_EXPAND_LISTS,
+    ADD_TEST_OPT_CONFIGURATIONS,
 };
 
 typedef struct {
@@ -47,7 +48,6 @@ typedef struct {
     String_View command_name;
     String_View working_dir;
     bool command_expand_lists;
-    bool warned_extra_args;
 } Add_Test_Option_State;
 
 static bool add_test_on_option(Evaluator_Context *ctx,
@@ -56,8 +56,7 @@ static bool add_test_on_option(Evaluator_Context *ctx,
                                SV_List values,
                                size_t token_index) {
     (void)token_index;
-    (void)ctx;
-    if (!userdata) return false;
+    if (!ctx || !userdata) return false;
     Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
     if (id == ADD_TEST_OPT_WORKING_DIRECTORY) {
         if (values.count > 0) st->working_dir = values.items[0];
@@ -65,6 +64,19 @@ static bool add_test_on_option(Evaluator_Context *ctx,
     }
     if (id == ADD_TEST_OPT_COMMAND_EXPAND_LISTS) {
         st->command_expand_lists = true;
+        return true;
+    }
+    if (id == ADD_TEST_OPT_CONFIGURATIONS) {
+        if (values.count == 0) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_test"),
+                           st->command_name,
+                           st->origin,
+                           nob_sv_from_cstr("add_test(NAME ...) CONFIGURATIONS requires at least one value"),
+                           nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...> [CONFIGURATIONS <cfg>...])"));
+            return false;
+        }
         return true;
     }
     return true;
@@ -77,16 +89,14 @@ static bool add_test_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
-    if (st->warned_extra_args) return true;
-    st->warned_extra_args = true;
     eval_emit_diag(ctx,
-                   EV_DIAG_WARNING,
-                   nob_sv_from_cstr("dispatcher"),
+                   EV_DIAG_ERROR,
+                   nob_sv_from_cstr("eval_test"),
                    st->command_name,
                    st->origin,
-                   nob_sv_from_cstr("add_test() has unsupported extra arguments; remaining tokens are ignored"),
+                   nob_sv_from_cstr("add_test(NAME ...) received unexpected argument"),
                    value);
-    return !eval_should_stop(ctx);
+    return false;
 }
 
 bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
@@ -138,6 +148,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         const Eval_Opt_Spec add_test_specs[] = {
             {ADD_TEST_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE},
             {ADD_TEST_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
+            {ADD_TEST_OPT_CONFIGURATIONS, "CONFIGURATIONS", EVAL_OPT_MULTI},
         };
         size_t cmd_end = cmd_i;
         while (cmd_end < a.count &&
@@ -164,7 +175,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         };
         Eval_Opt_Parse_Config cfg = {
             .origin = o,
-            .component = nob_sv_from_cstr("dispatcher"),
+            .component = nob_sv_from_cstr("eval_test"),
             .command = node->as.cmd.name,
             .unknown_as_positional = true,
             .warn_unknown = false,

@@ -32,12 +32,12 @@ Status snapshot sources:
 | `add_library` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`normal`, `OBJECT`, `INTERFACE`, `IMPORTED [GLOBAL]`, `ALIAS`) and default-type behavior (`BUILD_SHARED_LIBS`) in covered surface. | - |
 | `add_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:`/`LINKER:` expansion + de-duplication). | - |
 | `add_subdirectory` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature subset (`source_dir [binary_dir] [EXCLUDE_FROM_ALL] [SYSTEM]`). | - |
-| `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args/options are warning+ignore fallback rather than full CMake option-surface parity. | `Low` |
+| `add_test` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`add_test(NAME ... COMMAND ... [CONFIGURATIONS ...] [WORKING_DIRECTORY ...] [COMMAND_EXPAND_LISTS])` and legacy `add_test(<name> <command> [<arg>...])`) with strict unexpected-argument validation in NAME form. | - |
 | `block` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set (`SCOPE_FOR`, `PROPAGATE`). | - |
 | `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
 | `cmake_minimum_required` | `FULL` | `NOOP_WARN` | Signature/validation parity implemented for `VERSION <min>[...<max>] [FATAL_ERROR]`; implicit policy-version application matches evaluator CMake 3.28 baseline model. | - |
 | `cmake_path` | `PARTIAL` | `ERROR_CONTINUE` | Subset of modes implemented (see subcommand matrix). | `Medium` |
-| `cmake_policy` | `FULL` | `NOOP_WARN` | `VERSION|SET|GET|PUSH|POP` parity implemented with strict arity/known-policy validation and full CMake 3.28 policy registry (`CMP0000..CMP0155`). | - |
+| `cmake_policy` | `FULL` | `NOOP_WARN` | `VERSION SET GET PUSH POP` parity implemented with strict arity/known-policy validation and full CMake 3.28 policy registry (`CMP0000..CMP0155`). | - |
 | `continue` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`continue()`). | - |
 | `cpack_add_component` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including `ARCHIVE_FILE` and `PLIST`, with availability gated by `include(CPackComponent)`. | - |
 | `cpack_add_component_group` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, with availability gated by `include(CPackComponent)`. | - |
@@ -45,12 +45,12 @@ Status snapshot sources:
 | `enable_testing` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`enable_testing()`). | - |
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
 | `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (see matrix). | `Medium` |
-| `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO|MODULE|CONFIG|NO_MODULE`, `REQUIRED|QUIET`, version/`EXACT`, components, `NAMES|CONFIGS|HINTS|PATHS|PATH_SUFFIXES`, `NO_*` path toggles, and `CMAKE_FIND_PACKAGE_PREFER_CONFIG`). | - |
+| `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, and `CMAKE_FIND_PACKAGE_PREFER_CONFIG`). | - |
 | `include` | `PARTIAL` | `ERROR_CONTINUE` | `OPTIONAL` and `NO_POLICY_SCOPE` implemented; not full option parity. | `Medium` |
-| `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE|AFTER`, relative canonicalization). | - |
+| `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
 | `include_guard` | `PARTIAL` | `NOOP_WARN` | Default no-arg scope in CMake matches variable scope, while evaluator defaults to directory-style guarding; unsupported modes are downgraded to warning+fallback. | `Medium` |
 | `install` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator event-model install surface (core + advanced signatures emitted as install rules). | - |
-| `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE|AFTER`, relative canonicalization). | - |
+| `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE AFTER`, relative canonicalization). | - |
 | `link_libraries` | `PARTIAL` | `NOOP_WARN` | CMake item qualifiers (`debug`, `optimized`, `general`) and broader semantic handling are not implemented. | `Medium` |
 | `list` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented subcommand surface, including `FILTER` and `TRANSFORM` actions/selectors (`GENEX_STRIP`, `OUTPUT_VARIABLE`). | - |
 | `math` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])`). | - |
@@ -58,17 +58,17 @@ Status snapshot sources:
 | `project` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature surface (`VERSION`, `DESCRIPTION`, `HOMEPAGE_URL`, short/long language forms including `LANGUAGES NONE`) and documented project-variable surface (`PROJECT_*`, `<PROJECT-NAME>_*`, top-level `CMAKE_PROJECT_*`, including `CMP0048`-driven no-`VERSION` behavior). | - |
 | `return` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented behavior (`return()`, `return(PROPAGATE ...)`, `CMP0140` argument handling, and macro-context rejection). | - |
 | `set` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`set(<var> <value>... [PARENT_SCOPE])`, `set(<var> <value>... CACHE <type> <doc> [FORCE])`, `set(ENV{<var>} [<value>])`). | - |
-| `set_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope/signature surface (`GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE`, `APPEND|APPEND_STRING`, `PROPERTY ...`), including zero-object scope handling and target/cache/test validations in covered flow. | - |
+| `set_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope/signature surface (`GLOBAL DIRECTORY TARGET SOURCE INSTALL TEST CACHE`, `APPEND APPEND_STRING`, `PROPERTY ...`), including zero-object scope handling and target/cache/test validations in covered flow. | - |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
 | `target_compile_definitions` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented normalization behavior (leading `-D` removal and empty-item ignore). | - |
 | `target_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
 | `target_include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
 | `target_link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
-| `target_link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented item qualifiers (`debug|optimized|general`). | - |
+| `target_link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented item qualifiers (`debug optimized general`). | - |
 | `target_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
 | `try_compile` | `PARTIAL` | `NOOP_WARN` | Evaluator uses simulated compile success/failure logic instead of native compile pipeline semantics. | `Critical` |
-| `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE|PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
+| `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
 
 ## 2. Subcommand Matrix: `file()`
 
@@ -114,7 +114,7 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 | Regex (`MATCH/MATCHALL/REPLACE`) | Supported | Supported | None for these forms |
 | Hash family | Generic `<HASH>` family (`MD5`, `SHA1`, `SHA224`, `SHA256`, `SHA384`, `SHA512`, etc.) | `MD5`, `SHA1`, `SHA256` only | `Medium` |
 | `REPEAT` | Supported | Missing | `Low` |
-| `UUID` | Supported | Supported (`MD5|SHA1`) | None in supported mode |
+| `UUID` | Supported | Supported (`MD5 SHA1`) | None in supported mode |
 | `JSON` | `GET/TYPE/MEMBER/LENGTH/REMOVE/SET/EQUAL` (+ `ERROR_VARIABLE`) | `GET/TYPE/LENGTH` subset, no `ERROR_VARIABLE` handling | `Medium` |
 
 ## 4. Coverage details: `list()`
@@ -123,7 +123,7 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 |---|---|---|---|
 | Core list mutation/query (`APPEND/PREPEND/INSERT/REMOVE_*/LENGTH/GET/FIND/JOIN/SUBLIST/POP_*/REVERSE/SORT`) | Supported | Supported | None for covered forms |
 | `FILTER` | `INCLUDE|EXCLUDE REGEX` | Supported | None |
-| `TRANSFORM` | Actions/selectors + `OUTPUT_VARIABLE` | Supported (`APPEND`, `PREPEND`, `TOLOWER`, `TOUPPER`, `STRIP`, `GENEX_STRIP`, `REPLACE`; selectors `AT|FOR|REGEX`; optional `OUTPUT_VARIABLE`) | None |
+| `TRANSFORM` | Actions/selectors + `OUTPUT_VARIABLE` | Supported (`APPEND`, `PREPEND`, `TOLOWER`, `TOUPPER`, `STRIP`, `GENEX_STRIP`, `REPLACE`; selectors `AT FOR REGEX`; optional `OUTPUT_VARIABLE`) | None |
 
 ## 4.1 Coverage details: `find_package()`
 
@@ -166,7 +166,7 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 | Signature family | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
-| `install(TARGETS|FILES|PROGRAMS|DIRECTORY ... DESTINATION|TYPE ...)` | Supported | Supported | None in covered event-model contract |
+| `install(TARGETS FILES PROGRAMS DIRECTORY ... DESTINATION TYPE ...)` | Supported | Supported | None in covered event-model contract |
 | Advanced signatures (`SCRIPT`, `CODE`, `EXPORT`, `EXPORT_ANDROID_MK`, `RUNTIME_DEPENDENCY_SET`, `IMPORTED_RUNTIME_ARTIFACTS`) | Supported | Supported | None in covered event-model contract |
 | Option-rich forms (artifact groups, destination clauses, component/config/perms families) | Supported | Parsed and represented through install-rule emission in evaluator event model | None in covered event-model contract |
 
@@ -176,7 +176,7 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 | Signature area | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
-| Scope/signature surface (`GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE`, `APPEND|APPEND_STRING`, `PROPERTY`) | Supported | Supported | None for covered signature surface |
+| Scope/signature surface (`GLOBAL DIRECTORY TARGET SOURCE INSTALL TEST CACHE`, `APPEND APPEND_STRING`, `PROPERTY`) | Supported | Supported | None for covered signature surface |
 | Zero-object semantics | Supported for applicable scopes | Supported (no-op behavior) | None |
 | Target/test/cache validation in covered flow | Existing target/test/cache entry requirements apply by scope | Enforced with error diagnostics before property application | None |
 
@@ -195,7 +195,7 @@ Evaluator `install()` handler covers core and advanced signature families in the
 | `target_compile_options` | Supports `[BEFORE]` and scope grouping | No known result-affecting gap in covered signature surface | - |
 | `target_include_directories` | Scope, `SYSTEM`, order, path semantics | No known result-affecting gap in covered signature surface | - |
 | `target_link_directories` | Scope, order, path semantics | No known result-affecting gap in covered signature surface | - |
-| `target_link_libraries` | Rich item classification (`debug/optimized/general`, etc.) | No known result-affecting gap for qualifier handling | - |
+| `target_link_libraries` | Rich item classification (`debug /optimized/general`, etc.) | No known result-affecting gap for qualifier handling | - |
 | `target_link_options` | Supports `[BEFORE]` and scope grouping | No known result-affecting gap in covered signature surface | - |
 
 ## 9. Coverage details: `project()`
@@ -216,7 +216,7 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `install`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `install`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

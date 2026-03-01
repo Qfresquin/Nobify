@@ -22,7 +22,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"add_library", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_link_options", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_subdirectory", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
-    {"add_test", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE},
+    {"add_test", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"block", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"break", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"cmake_minimum_required", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
