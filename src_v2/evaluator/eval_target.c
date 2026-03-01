@@ -61,6 +61,13 @@ static String_View current_source_dir_for_paths(Evaluator_Context *ctx) {
     return cur_src;
 }
 
+static String_View normalize_compile_definition_item(String_View item) {
+    if (item.count >= 2 && item.data && item.data[0] == '-' && (item.data[1] == 'D' || item.data[1] == 'd')) {
+        return nob_sv_from_parts(item.data + 2, item.count - 2);
+    }
+    return item;
+}
+
 static String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -518,12 +525,15 @@ bool eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *
             continue;
         }
 
+        String_View item = normalize_compile_definition_item(a.items[i]);
+        if (item.count == 0) continue;
+
         Cmake_Event ev = {0};
         ev.kind = EV_TARGET_COMPILE_DEFINITIONS;
         ev.origin = o;
         ev.as.target_compile_definitions.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_compile_definitions.visibility = vis;
-        ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);

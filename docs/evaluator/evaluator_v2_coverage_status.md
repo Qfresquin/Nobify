@@ -27,7 +27,7 @@ Status snapshot sources:
 | `add_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:` expansion + de-duplication). | - |
 | `add_custom_command` | `PARTIAL` | `ERROR_CONTINUE` | Supports `TARGET`/`OUTPUT` signatures; not full CMake permutation parity. | `Medium` |
 | `add_custom_target` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including scheduler options (`JOB_POOL`, `JOB_SERVER_AWARE`). | - |
-| `add_definitions` | `PARTIAL` | `NOOP_WARN` | Treated as raw compile options only; CMake's compile-definition-oriented behavior and legacy conversion nuances are not fully mirrored. | `Low` |
+| `add_definitions` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented legacy behavior: `-D`/`/D` items are routed as compile definitions and non-definition flags remain compile options. | - |
 | `add_executable` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`normal`, `IMPORTED [GLOBAL]`, `ALIAS`) and option handling (`WIN32`, `MACOSX_BUNDLE`, `EXCLUDE_FROM_ALL`). | - |
 | `add_library` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`normal`, `OBJECT`, `INTERFACE`, `IMPORTED [GLOBAL]`, `ALIAS`) and default-type behavior (`BUILD_SHARED_LIBS`) in covered surface. | - |
 | `add_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:`/`LINKER:` expansion + de-duplication). | - |
@@ -61,7 +61,7 @@ Status snapshot sources:
 | `set_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope/signature surface (`GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE`, `APPEND|APPEND_STRING`, `PROPERTY ...`), including zero-object scope handling and target/cache/test validations in covered flow. | - |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
-| `target_compile_definitions` | `PARTIAL` | `NOOP_WARN` | CMake normalization rules (e.g. `-D` handling nuances and related semantics) are not fully mirrored. | `Low` |
+| `target_compile_definitions` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented normalization behavior (leading `-D` removal and empty-item ignore). | - |
 | `target_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
 | `target_include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
 | `target_link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
@@ -191,7 +191,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 | Command | Key CMake 3.28 semantic | Evaluator gap | Impact |
 |---|---|---|---|
-| `target_compile_definitions` | Scope-based items with normalization behavior | Normalization nuances not fully mirrored | `Low` |
+| `target_compile_definitions` | Scope-based items with normalization behavior | No known result-affecting gap in covered normalization behavior | - |
 | `target_compile_options` | Supports `[BEFORE]` and scope grouping | No known result-affecting gap in covered signature surface | - |
 | `target_include_directories` | Scope, `SYSTEM`, order, path semantics | No known result-affecting gap in covered signature surface | - |
 | `target_link_directories` | Scope, order, path semantics | No known result-affecting gap in covered signature surface | - |
@@ -216,7 +216,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_target`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

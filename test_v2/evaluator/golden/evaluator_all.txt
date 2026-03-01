@@ -577,7 +577,7 @@ EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='custo
 === CASE dispatcher_command_handlers ===
 DIAG errors=0 warnings=0
 EVENTS count=16
-EV[0] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-DLEGACY=1'
+EV[0] kind=EV_GLOBAL_COMPILE_DEFINITIONS file='CMakeLists.txt' line=1 col=1 item='LEGACY=1'
 EV[1] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-fPIC'
 EV[2] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=2 col=1 item='-Wall'
 EV[3] kind=EV_GLOBAL_LINK_OPTIONS file='CMakeLists.txt' line=3 col=1 item='-Wl,--gc-sections'
@@ -587,7 +587,7 @@ EV[6] kind=EV_DIRECTORY_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=5 col=1 p
 EV[7] kind=EV_DIRECTORY_LINK_DIRECTORIES file='CMakeLists.txt' line=6 col=1 path='lib' is_before=1
 EV[8] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='app' type=EXECUTABLE
 EV[9] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='app' path='main.c'
-EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-DLEGACY=1' vis=UNSPECIFIED is_before=0
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='app' item='LEGACY=1' vis=UNSPECIFIED
 EV[11] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=UNSPECIFIED is_before=0
 EV[12] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=UNSPECIFIED is_before=0
 EV[13] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0

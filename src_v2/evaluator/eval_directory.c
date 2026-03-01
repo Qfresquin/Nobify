@@ -7,6 +7,7 @@
 #include <string.h>
 
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
+static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_link_opts_var = "NOBIFY_GLOBAL_LINK_OPTIONS";
 
 static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
@@ -68,6 +69,17 @@ static bool append_list_var_unique(Evaluator_Context *ctx, String_View var, Stri
     buf[total] = '\0';
     if (!eval_var_set(ctx, var, nob_sv_from_cstr(buf))) return false;
     if (out_added) *out_added = true;
+    return true;
+}
+
+static bool split_definition_flag(String_View item, String_View *out_definition) {
+    if (!out_definition) return false;
+    *out_definition = nob_sv_from_cstr("");
+    if (item.count < 2 || !item.data) return false;
+    bool is_dash_d = item.data[0] == '-' && (item.data[1] == 'D' || item.data[1] == 'd');
+    bool is_slash_d = item.data[0] == '/' && (item.data[1] == 'D' || item.data[1] == 'd');
+    if (!is_dash_d && !is_slash_d) return false;
+    *out_definition = nob_sv_from_parts(item.data + 2, item.count - 2);
     return true;
 }
 
@@ -241,7 +253,20 @@ bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
         String_View item = a.items[i];
         if (item.count == 0) continue;
 
-        // Keep add_definitions() semantics close to CMake: treat arguments as raw flags.
+        String_View definition = nob_sv_from_cstr("");
+        bool looks_like_definition = split_definition_flag(item, &definition);
+        if (looks_like_definition && definition.count > 0) {
+            bool added = false;
+            if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return false;
+            if (!added) continue;
+            Cmake_Event ev = {0};
+            ev.kind = EV_GLOBAL_COMPILE_DEFINITIONS;
+            ev.origin = o;
+            ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, definition);
+            if (!emit_event(ctx, ev)) return false;
+            continue;
+        }
+
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return false;
         if (!added) continue;
