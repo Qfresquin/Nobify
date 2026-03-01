@@ -57,7 +57,7 @@ Status snapshot sources:
 | `message` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented modes (`NOTICE/STATUS/VERBOSE/DEBUG/TRACE/WARNING/AUTHOR_WARNING/DEPRECATION/SEND_ERROR/FATAL_ERROR/CHECK_*/CONFIGURE_LOG`). | - |
 | `project` | `PARTIAL` | `NOOP_WARN` | Reduced signature support (e.g. missing `HOMEPAGE_URL`, reduced language-signature handling and variable surface). | `Medium` |
 | `return` | `PARTIAL` | `NOOP_WARN` | CMake states `macro()` cannot handle `return()`; evaluator allows it (warning only), changing control-flow outcome in macro contexts. | `Medium` |
-| `set` | `PARTIAL` | `NOOP_WARN` | Reduced support for valid signatures (`CACHE` detail semantics and `ENV{}` form). | `Medium` |
+| `set` | `PARTIAL` | `NOOP_WARN` | Reduced support for `CACHE` detail semantics (`type/doc/force` modeling remains partial). | `Medium` |
 | `set_property` | `PARTIAL` | `ERROR_CONTINUE` | Scope coverage exists; parity for all CMake property semantics is not complete. | `Medium` |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
@@ -68,7 +68,7 @@ Status snapshot sources:
 | `target_link_libraries` | `PARTIAL` | `NOOP_WARN` | Valid item-class semantics (`debug|optimized|general` and related forms) are not fully implemented. | `Medium` |
 | `target_link_options` | `PARTIAL` | `NOOP_WARN` | Valid `BEFORE` option is not implemented. | `Medium` |
 | `try_compile` | `PARTIAL` | `NOOP_WARN` | Evaluator uses simulated compile success/failure logic instead of native compile pipeline semantics. | `Critical` |
-| `unset` | `PARTIAL` | `NOOP_WARN` | Valid `unset(ENV{<var>})` form is not implemented. | `Medium` |
+| `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE|PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
 
 ## 2. Subcommand Matrix: `file()`
 
@@ -141,14 +141,14 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 |---|---|---|---|
 | `set(<var> <value>... [PARENT_SCOPE])` | Supported | Supported | None for this signature |
 | `set(<var> <value>... CACHE <type> <doc> [FORCE])` | Supported | Reduced cache parsing; type/doc/force semantics not fully modeled | `Medium` |
-| `set(ENV{<var>} [<value>])` | Supported | Missing | `Medium` |
+| `set(ENV{<var>} [<value>])` | Supported | Supported | None for this signature |
 
 ### `unset()`
 
 | Signature | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
 | `unset(<var> [CACHE|PARENT_SCOPE])` | Supported | Supported | None for this signature |
-| `unset(ENV{<var>})` | Supported | Missing | `Medium` |
+| `unset(ENV{<var>})` | Supported | Supported | None for this signature |
 
 ## 7. Coverage details: `install()`
 
@@ -196,7 +196,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`block`, `break`, `continue`, `endblock`, `math`, `message`, `set_target_properties`.
+`block`, `break`, `continue`, `endblock`, `math`, `message`, `set_target_properties`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

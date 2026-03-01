@@ -1287,6 +1287,115 @@ TEST(evaluator_message_configure_log_persists_yaml_file) {
     TEST_PASS();
 }
 
+TEST(evaluator_set_and_unset_env_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(ENV{NOBIFY_ENV_A} valueA)\n"
+        "set(ENV{NOBIFY_ENV_A})\n"
+        "set(ENV{NOBIFY_ENV_B} valueB ignored)\n"
+        "add_executable(env_forms main.c)\n"
+        "target_compile_definitions(env_forms PRIVATE A=$ENV{NOBIFY_ENV_A} B=$ENV{NOBIFY_ENV_B})\n"
+        "unset(ENV{NOBIFY_ENV_B})\n"
+        "target_compile_definitions(env_forms PRIVATE B2=$ENV{NOBIFY_ENV_B})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 1);
+    ASSERT(report->error_count == 0);
+
+    bool saw_extra_args_warn = false;
+    bool saw_a_empty = false;
+    bool saw_b_value = false;
+    bool saw_b2_empty = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_WARNING &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set(ENV{...}) ignores extra arguments after value"))) {
+            saw_extra_args_warn = true;
+        }
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("A="))) saw_a_empty = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("B=valueB"))) saw_b_value = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("B2="))) saw_b2_empty = true;
+    }
+    ASSERT(saw_extra_args_warn);
+    ASSERT(saw_a_empty);
+    ASSERT(saw_b_value);
+    ASSERT(saw_b2_empty);
+
+    const char *env_b = getenv("NOBIFY_ENV_B");
+    ASSERT(env_b == NULL);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_unset_env_rejects_options) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "unset(ENV{NOBIFY_ENV_OPT} CACHE)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("unset(ENV{...}) does not accept options"))) {
+            saw_error = true;
+            break;
+        }
+    }
+    ASSERT(saw_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1316,6 +1425,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);
     test_evaluator_message_configure_log_persists_yaml_file(passed, failed);
+    test_evaluator_set_and_unset_env_forms(passed, failed);
+    test_evaluator_unset_env_rejects_options(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;
