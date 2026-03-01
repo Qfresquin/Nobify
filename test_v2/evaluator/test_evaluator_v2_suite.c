@@ -1079,6 +1079,118 @@ TEST(evaluator_enable_testing_rejects_extra_arguments) {
     TEST_PASS();
 }
 
+TEST(evaluator_include_supports_result_variable_optional_and_module_search) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY cmkmods)\n"
+        "file(WRITE cmkmods/MyInc.cmake [=[set(MYINC_FLAG 1)\n]=])\n"
+        "set(CMAKE_MODULE_PATH cmkmods)\n"
+        "include(MyInc RESULT_VARIABLE INC_MOD_RES)\n"
+        "include(missing_optional OPTIONAL RESULT_VARIABLE INC_MISS_RES)\n"
+        "add_executable(include_probe main.c)\n"
+        "target_compile_definitions(include_probe PRIVATE MYINC_FLAG=${MYINC_FLAG} INC_MOD_RES=${INC_MOD_RES} INC_MISS_RES=${INC_MISS_RES})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_myinc_flag = false;
+    bool saw_mod_res_nonempty = false;
+    bool saw_miss_notfound = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("include_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MYINC_FLAG=1"))) saw_myinc_flag = true;
+        if (sv_starts_with_cstr(ev->as.target_compile_definitions.item, "INC_MOD_RES=") &&
+            !nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INC_MOD_RES=")) &&
+            !nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INC_MOD_RES=NOTFOUND"))) {
+            saw_mod_res_nonempty = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INC_MISS_RES=NOTFOUND"))) saw_miss_notfound = true;
+    }
+    ASSERT(saw_myinc_flag);
+    ASSERT(saw_mod_res_nonempty);
+    ASSERT(saw_miss_notfound);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_include_validates_options_strictly) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE inc_ok.cmake [=[set(X 1)\n]=])\n"
+        "include(inc_ok.cmake BAD_OPT)\n"
+        "include(inc_ok.cmake RESULT_VARIABLE)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_bad_opt = false;
+    bool saw_missing_result_var = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("include() received unexpected argument")) &&
+            nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("BAD_OPT"))) {
+            saw_bad_opt = true;
+        }
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("include(RESULT_VARIABLE) requires an output variable name"))) {
+            saw_missing_result_var = true;
+        }
+    }
+    ASSERT(saw_bad_opt);
+    ASSERT(saw_missing_result_var);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_add_test_name_signature_parses_supported_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3364,6 +3476,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
     test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed);
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
+    test_evaluator_include_supports_result_variable_optional_and_module_search(passed, failed);
+    test_evaluator_include_validates_options_strictly(passed, failed);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed);
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);

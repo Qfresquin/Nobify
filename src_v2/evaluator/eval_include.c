@@ -40,6 +40,135 @@ static bool include_enables_cpack_component_commands(String_View arg) {
            eval_sv_eq_ci_lit(arg, "CPack.cmake");
 }
 
+static bool include_file_exists_sv(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return false;
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    return nob_file_exists(path_c) != 0;
+}
+
+static bool include_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+    if (!ctx || !out) return false;
+    *out = (SV_List){0};
+    if (input.count == 0) return true;
+
+    const char *p = input.data;
+    const char *end = input.data + input.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != ';') q++;
+        if (!svu_list_push_temp(ctx, out, nob_sv_from_parts(p, (size_t)(q - p)))) return false;
+        if (q >= end) break;
+        p = q + 1;
+    }
+    return true;
+}
+
+static bool include_has_path_separator(String_View value) {
+    for (size_t i = 0; i < value.count; i++) {
+        if (value.data[i] == '/' || value.data[i] == '\\') return true;
+    }
+    return false;
+}
+
+static bool include_has_cmake_extension(String_View value) {
+    static const char *k_suffix = ".cmake";
+    size_t n = strlen(k_suffix);
+    if (value.count < n) return false;
+    String_View tail = nob_sv_from_parts(value.data + value.count - n, n);
+    return eval_sv_eq_ci_lit(tail, k_suffix);
+}
+
+static bool include_try_module_search(Evaluator_Context *ctx,
+                                      String_View module_name,
+                                      String_View current_source_dir,
+                                      String_View *out_path) {
+    if (!ctx || !out_path || module_name.count == 0) return false;
+    *out_path = nob_sv_from_cstr("");
+
+    String_View candidates[2] = {0};
+    size_t candidate_count = 0;
+    if (include_has_cmake_extension(module_name)) {
+        candidates[candidate_count++] = module_name;
+    } else {
+        candidates[candidate_count++] = svu_concat_suffix_temp(ctx, module_name, ".cmake");
+    }
+    if (eval_should_stop(ctx)) return false;
+
+    SV_List module_dirs = {0};
+    if (!include_split_semicolon_temp(ctx, eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH")), &module_dirs)) {
+        return false;
+    }
+
+    for (size_t di = 0; di < module_dirs.count; di++) {
+        String_View dir = module_dirs.items[di];
+        if (dir.count == 0) continue;
+        if (!eval_sv_is_abs_path(dir)) {
+            dir = eval_path_resolve_for_cmake_arg(ctx, dir, current_source_dir, false);
+            if (eval_should_stop(ctx)) return false;
+        } else {
+            dir = eval_sv_path_normalize_temp(ctx, dir);
+        }
+        for (size_t ci = 0; ci < candidate_count; ci++) {
+            String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, candidates[ci]);
+            candidate = eval_sv_path_normalize_temp(ctx, candidate);
+            if (include_file_exists_sv(ctx, candidate)) {
+                *out_path = candidate;
+                return true;
+            }
+        }
+    }
+
+    String_View cmake_root = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_ROOT"));
+    if (cmake_root.count > 0) {
+        String_View modules_dir = eval_sv_path_join(eval_temp_arena(ctx), cmake_root, nob_sv_from_cstr("Modules"));
+        modules_dir = eval_sv_path_normalize_temp(ctx, modules_dir);
+        for (size_t ci = 0; ci < candidate_count; ci++) {
+            String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), modules_dir, candidates[ci]);
+            candidate = eval_sv_path_normalize_temp(ctx, candidate);
+            if (include_file_exists_sv(ctx, candidate)) {
+                *out_path = candidate;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static bool include_resolve_target(Evaluator_Context *ctx,
+                                   String_View file_or_module,
+                                   String_View *out_resolved) {
+    if (!ctx || !out_resolved) return false;
+    *out_resolved = nob_sv_from_cstr("");
+    if (file_or_module.count == 0) return false;
+
+    String_View current_list_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
+    if (current_list_dir.count == 0) current_list_dir = ctx->source_dir;
+    String_View current_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (current_src_dir.count == 0) current_src_dir = ctx->source_dir;
+
+    if (eval_sv_is_abs_path(file_or_module)) {
+        String_View path = eval_sv_path_normalize_temp(ctx, file_or_module);
+        if (include_file_exists_sv(ctx, path)) {
+            *out_resolved = path;
+            return true;
+        }
+        return false;
+    }
+
+    bool has_sep = include_has_path_separator(file_or_module);
+    String_View rel = eval_path_resolve_for_cmake_arg(ctx, file_or_module, current_list_dir, false);
+    if (eval_should_stop(ctx)) return false;
+    if (include_file_exists_sv(ctx, rel)) {
+        *out_resolved = rel;
+        return true;
+    }
+
+    if (has_sep) return false;
+    return include_try_module_search(ctx, file_or_module, current_src_dir, out_resolved);
+}
+
 bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -92,11 +221,22 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
 bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_include"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("include() missing file or module argument"),
+                       nob_sv_from_cstr("Usage: include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])"));
+        return !eval_should_stop(ctx);
+    }
 
-    String_View file_path = a.items[0];
+    String_View file_or_module = a.items[0];
     bool optional = false;
     bool no_policy_scope = false;
+    String_View result_variable = nob_sv_from_cstr("");
 
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "OPTIONAL")) {
@@ -105,19 +245,63 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         }
         if (eval_sv_eq_ci_lit(a.items[i], "NO_POLICY_SCOPE")) {
             no_policy_scope = true;
+            continue;
         }
-    }
-
-    // CPack component commands are provided by CPackComponent (and by CPack, which includes it).
-    if (include_enables_cpack_component_commands(file_path)) {
-        ctx->cpack_component_module_loaded = true;
+        if (eval_sv_eq_ci_lit(a.items[i], "RESULT_VARIABLE")) {
+            if (i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("eval_include"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("include(RESULT_VARIABLE) requires an output variable name"),
+                               nob_sv_from_cstr("Usage: include(<file|module> ... RESULT_VARIABLE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            result_variable = a.items[++i];
+            continue;
+        }
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_include"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("include() received unexpected argument"),
+                       a.items[i]);
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_sv_is_abs_path(file_path)) {
-        String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
-        if (current_dir.count == 0) current_dir = ctx->source_dir;
-        file_path = eval_sv_path_join(eval_temp_arena(ctx), current_dir, file_path);
+    // CPack component commands are provided by CPackComponent (and by CPack, which includes it).
+    if (include_enables_cpack_component_commands(file_or_module)) {
+        ctx->cpack_component_module_loaded = true;
+        if (result_variable.count > 0) {
+            (void)eval_var_set(ctx, result_variable, file_or_module);
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    String_View file_path = nob_sv_from_cstr("");
+    bool found = include_resolve_target(ctx, file_or_module, &file_path);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (!found) {
+        if (result_variable.count > 0) {
+            (void)eval_var_set(ctx, result_variable, nob_sv_from_cstr("NOTFOUND"));
+        }
+        if (!optional) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_include"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("include() could not find requested file or module"),
+                           file_or_module);
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    if (result_variable.count > 0) {
+        (void)eval_var_set(ctx, result_variable, file_path);
     }
 
     String_View scope_source = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
@@ -148,7 +332,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     if (!success && !optional && !eval_should_stop(ctx)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
+                       nob_sv_from_cstr("eval_include"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("include() failed to read or evaluate file"),
