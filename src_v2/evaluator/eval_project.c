@@ -95,6 +95,78 @@ static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
     return true;
 }
 
+static bool emit_bool_target_prop_true(Evaluator_Context *ctx,
+                                       Cmake_Event_Origin o,
+                                       String_View target_name,
+                                       const char *key) {
+    return emit_target_prop_set(ctx,
+                                o,
+                                target_name,
+                                nob_sv_from_cstr(key),
+                                nob_sv_from_cstr("1"),
+                                EV_PROP_SET);
+}
+
+static bool add_target_name_must_be_new(Evaluator_Context *ctx,
+                                        String_View cmd_name,
+                                        Cmake_Event_Origin o,
+                                        String_View target_name) {
+    if (!eval_target_known(ctx, target_name)) return true;
+    eval_emit_diag(ctx,
+                   EV_DIAG_ERROR,
+                   nob_sv_from_cstr("dispatcher"),
+                   cmd_name,
+                   o,
+                   nob_sv_from_cstr("Target name already exists"),
+                   target_name);
+    return false;
+}
+
+static bool add_alias_target_validate(Evaluator_Context *ctx,
+                                      String_View cmd_name,
+                                      Cmake_Event_Origin o,
+                                      String_View alias_name,
+                                      String_View real_target) {
+    if (!eval_target_known(ctx, real_target)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       cmd_name,
+                       o,
+                       nob_sv_from_cstr("ALIAS target does not exist"),
+                       real_target);
+        return false;
+    }
+    if (eval_target_alias_known(ctx, real_target)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       cmd_name,
+                       o,
+                       nob_sv_from_cstr("ALIAS target cannot reference another ALIAS target"),
+                       real_target);
+        return false;
+    }
+    if (!eval_target_register(ctx, alias_name)) return false;
+    if (!eval_target_alias_register(ctx, alias_name)) return false;
+    return true;
+}
+
+static bool add_library_default_shared(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr("BUILD_SHARED_LIBS"));
+    if (v.count == 0) return false;
+    if (eval_sv_eq_ci_lit(v, "0") ||
+        eval_sv_eq_ci_lit(v, "OFF") ||
+        eval_sv_eq_ci_lit(v, "NO") ||
+        eval_sv_eq_ci_lit(v, "FALSE") ||
+        eval_sv_eq_ci_lit(v, "N") ||
+        eval_sv_eq_ci_lit(v, "IGNORE") ||
+        eval_sv_eq_ci_lit(v, "NOTFOUND")) {
+        return false;
+    }
+    return true;
+}
+
 typedef struct {
     int major;
     int minor;
@@ -564,15 +636,82 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
 bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_executable() missing target name"),
+                       nob_sv_from_cstr("Usage: add_executable(<name> [WIN32] [MACOSX_BUNDLE] [EXCLUDE_FROM_ALL] <sources...>)"));
+        return !eval_should_stop(ctx);
+    }
 
     String_View name = a.items[0];
+    if (!add_target_name_must_be_new(ctx, node->as.cmd.name, o, name)) return !eval_should_stop(ctx);
 
-    // Minimal ALIAS-signature support used by flow/property validation.
-    if (a.count == 3 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
-        (void)eval_target_register(ctx, name);
-        (void)eval_target_alias_register(ctx, name);
+    if (a.count >= 2 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
+        if (a.count != 3) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_executable(ALIAS ...) expects exactly alias name and real target"),
+                           nob_sv_from_cstr("Usage: add_executable(<name> ALIAS <target>)"));
+            return !eval_should_stop(ctx);
+        }
+        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a.items[2]);
         return !eval_should_stop(ctx);
+    }
+
+    bool is_imported = false;
+    bool is_global = false;
+    bool is_win32 = false;
+    bool is_macos_bundle = false;
+    bool is_exclude_from_all = false;
+    size_t source_start = 1;
+
+    if (a.count >= 2 && eval_sv_eq_ci_lit(a.items[1], "IMPORTED")) {
+        is_imported = true;
+        source_start = 2;
+        if (source_start < a.count && eval_sv_eq_ci_lit(a.items[source_start], "GLOBAL")) {
+            is_global = true;
+            source_start++;
+        }
+        if (source_start < a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_executable(IMPORTED ...) does not accept source files"),
+                           nob_sv_from_cstr("Usage: add_executable(<name> IMPORTED [GLOBAL])"));
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    if (!is_imported) {
+        for (size_t i = 1; i < a.count; i++) {
+            if (eval_sv_eq_ci_lit(a.items[i], "WIN32")) {
+                is_win32 = true;
+                source_start = i + 1;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "MACOSX_BUNDLE")) {
+                is_macos_bundle = true;
+                source_start = i + 1;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "EXCLUDE_FROM_ALL")) {
+                is_exclude_from_all = true;
+                source_start = i + 1;
+                continue;
+            }
+            source_start = i;
+            break;
+        }
     }
 
     (void)eval_target_register(ctx, name);
@@ -583,15 +722,25 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     ev.as.target_declare.type = EV_TARGET_EXECUTABLE;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
-    if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
-
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "WIN32") ||
-            eval_sv_eq_ci_lit(a.items[i], "MACOSX_BUNDLE") ||
-            eval_sv_eq_ci_lit(a.items[i], "EXCLUDE_FROM_ALL")) {
-            continue;
+    if (is_imported) {
+        if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return !eval_should_stop(ctx);
+        if (is_global) {
+            if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED_GLOBAL")) return !eval_should_stop(ctx);
         }
+    } else {
+        if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
+        if (is_win32) {
+            if (!emit_bool_target_prop_true(ctx, o, name, "WIN32_EXECUTABLE")) return !eval_should_stop(ctx);
+        }
+        if (is_macos_bundle) {
+            if (!emit_bool_target_prop_true(ctx, o, name, "MACOSX_BUNDLE")) return !eval_should_stop(ctx);
+        }
+        if (is_exclude_from_all) {
+            if (!emit_bool_target_prop_true(ctx, o, name, "EXCLUDE_FROM_ALL")) return !eval_should_stop(ctx);
+        }
+    }
 
+    for (size_t i = source_start; !is_imported && i < a.count; i++) {
         Cmake_Event src_ev = {0};
         src_ev.kind = EV_TARGET_ADD_SOURCE;
         src_ev.origin = o;
@@ -600,21 +749,42 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
         if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
     }
 
-    (void)apply_global_compile_state_to_target(ctx, o, name);
+    if (!is_imported) {
+        (void)apply_global_compile_state_to_target(ctx, o, name);
+    }
     return !eval_should_stop(ctx);
 }
 
 bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_library() missing target name"),
+                       nob_sv_from_cstr("Usage: add_library(<name> [STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN] [EXCLUDE_FROM_ALL] <sources...>)"));
+        return !eval_should_stop(ctx);
+    }
 
     String_View name = a.items[0];
+    if (!add_target_name_must_be_new(ctx, node->as.cmd.name, o, name)) return !eval_should_stop(ctx);
 
-    // Minimal ALIAS-signature support used by flow/property validation.
-    if (a.count == 3 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
-        (void)eval_target_register(ctx, name);
-        (void)eval_target_alias_register(ctx, name);
+    if (a.count >= 2 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
+        if (a.count != 3) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_library(ALIAS ...) expects exactly alias name and real target"),
+                           nob_sv_from_cstr("Usage: add_library(<name> ALIAS <target>)"));
+            return !eval_should_stop(ctx);
+        }
+        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a.items[2]);
         return !eval_should_stop(ctx);
     }
 
@@ -622,21 +792,73 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
 
     Cmake_Target_Type ty = EV_TARGET_LIBRARY_UNKNOWN;
     size_t i = 1;
+    bool has_explicit_type = false;
+    bool is_imported = false;
+    bool is_global = false;
+    bool is_exclude_from_all = false;
     if (i < a.count) {
         if (eval_sv_eq_ci_lit(a.items[i], "STATIC")) {
             ty = EV_TARGET_LIBRARY_STATIC;
+            has_explicit_type = true;
             i++;
         } else if (eval_sv_eq_ci_lit(a.items[i], "SHARED")) {
             ty = EV_TARGET_LIBRARY_SHARED;
+            has_explicit_type = true;
             i++;
         } else if (eval_sv_eq_ci_lit(a.items[i], "MODULE")) {
             ty = EV_TARGET_LIBRARY_MODULE;
+            has_explicit_type = true;
             i++;
         } else if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
             ty = EV_TARGET_LIBRARY_INTERFACE;
+            has_explicit_type = true;
             i++;
         } else if (eval_sv_eq_ci_lit(a.items[i], "OBJECT")) {
             ty = EV_TARGET_LIBRARY_OBJECT;
+            has_explicit_type = true;
+            i++;
+        } else if (eval_sv_eq_ci_lit(a.items[i], "UNKNOWN")) {
+            ty = EV_TARGET_LIBRARY_UNKNOWN;
+            has_explicit_type = true;
+            i++;
+        }
+    }
+
+    if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "IMPORTED")) {
+        is_imported = true;
+        i++;
+        if (!has_explicit_type) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_library(IMPORTED ...) requires an explicit library type"),
+                           nob_sv_from_cstr("Usage: add_library(<name> <STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN> IMPORTED [GLOBAL])"));
+            return !eval_should_stop(ctx);
+        }
+        if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "GLOBAL")) {
+            is_global = true;
+            i++;
+        }
+        if (i < a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_library(IMPORTED ...) does not accept source files"),
+                           nob_sv_from_cstr("Usage: add_library(<name> <type> IMPORTED [GLOBAL])"));
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    if (!is_imported) {
+        if (!has_explicit_type) {
+            ty = add_library_default_shared(ctx) ? EV_TARGET_LIBRARY_SHARED : EV_TARGET_LIBRARY_STATIC;
+        }
+        if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "EXCLUDE_FROM_ALL")) {
+            is_exclude_from_all = true;
             i++;
         }
     }
@@ -647,9 +869,19 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     ev.as.target_declare.type = ty;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
-    if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
+    if (is_imported) {
+        if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return !eval_should_stop(ctx);
+        if (is_global) {
+            if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED_GLOBAL")) return !eval_should_stop(ctx);
+        }
+    } else {
+        if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
+        if (is_exclude_from_all) {
+            if (!emit_bool_target_prop_true(ctx, o, name, "EXCLUDE_FROM_ALL")) return !eval_should_stop(ctx);
+        }
+    }
 
-    for (; i < a.count; i++) {
+    for (; !is_imported && i < a.count; i++) {
         Cmake_Event src_ev = {0};
         src_ev.kind = EV_TARGET_ADD_SOURCE;
         src_ev.origin = o;
@@ -658,7 +890,9 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
     }
 
-    (void)apply_global_compile_state_to_target(ctx, o, name);
+    if (!is_imported) {
+        (void)apply_global_compile_state_to_target(ctx, o, name);
+    }
     return !eval_should_stop(ctx);
 }
 

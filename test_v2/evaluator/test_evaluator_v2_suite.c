@@ -1081,6 +1081,189 @@ TEST(evaluator_set_target_properties_rejects_alias_target) {
     TEST_PASS();
 }
 
+TEST(evaluator_add_executable_imported_and_alias_signatures) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_executable(tool IMPORTED GLOBAL)\n"
+        "add_executable(tool_alias ALIAS tool)\n"
+        "if(TARGET tool_alias)\n"
+        "  set(HAS_TOOL_ALIAS 1)\n"
+        "endif()\n"
+        "add_executable(alias_probe main.c)\n"
+        "target_compile_definitions(alias_probe PRIVATE HAS_TOOL_ALIAS=${HAS_TOOL_ALIAS})\n"
+        "add_executable(tool_alias_bad ALIAS missing_tool)\n"
+        "add_executable(tool_alias2 ALIAS tool_alias)\n"
+        "add_executable(tool_bad IMPORTED source.c)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 3);
+
+    bool saw_imported = false;
+    bool saw_imported_global = false;
+    bool saw_has_alias = false;
+    bool saw_alias_missing_err = false;
+    bool saw_alias_of_alias_err = false;
+    bool saw_imported_sources_err = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_TARGET_PROP_SET) {
+            if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("tool")) &&
+                nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("IMPORTED")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("1"))) {
+                saw_imported = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("tool")) &&
+                nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("IMPORTED_GLOBAL")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("1"))) {
+                saw_imported_global = true;
+            }
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("alias_probe")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("HAS_TOOL_ALIAS=1"))) {
+            saw_has_alias = true;
+        }
+        if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("ALIAS target does not exist"))) {
+                saw_alias_missing_err = true;
+            } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("ALIAS target cannot reference another ALIAS target"))) {
+                saw_alias_of_alias_err = true;
+            } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_executable(IMPORTED ...) does not accept source files"))) {
+                saw_imported_sources_err = true;
+            }
+        }
+    }
+
+    ASSERT(saw_imported);
+    ASSERT(saw_imported_global);
+    ASSERT(saw_has_alias);
+    ASSERT(saw_alias_missing_err);
+    ASSERT(saw_alias_of_alias_err);
+    ASSERT(saw_imported_sources_err);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_library_imported_alias_and_default_type) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(BUILD_SHARED_LIBS ON)\n"
+        "add_library(auto_lib auto.c)\n"
+        "add_library(imp_lib UNKNOWN IMPORTED GLOBAL)\n"
+        "add_library(base_lib STATIC base.c)\n"
+        "add_library(base_alias ALIAS base_lib)\n"
+        "add_library(bad_alias ALIAS base_alias)\n"
+        "add_library(bad_import IMPORTED)\n"
+        "add_library(iface INTERFACE EXCLUDE_FROM_ALL)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_auto_shared = false;
+    bool saw_imported = false;
+    bool saw_imported_global = false;
+    bool saw_iface_exclude = false;
+    bool saw_iface_bad_source = false;
+    bool saw_bad_alias_err = false;
+    bool saw_bad_import_err = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_TARGET_DECLARE) {
+            if (nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("auto_lib")) &&
+                ev->as.target_declare.type == EV_TARGET_LIBRARY_SHARED) {
+                saw_auto_shared = true;
+            }
+        }
+        if (ev->kind == EV_TARGET_PROP_SET) {
+            if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("imp_lib")) &&
+                nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("IMPORTED")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("1"))) {
+                saw_imported = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("imp_lib")) &&
+                nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("IMPORTED_GLOBAL")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("1"))) {
+                saw_imported_global = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("iface")) &&
+                nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("EXCLUDE_FROM_ALL")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("1"))) {
+                saw_iface_exclude = true;
+            }
+        }
+        if (ev->kind == EV_TARGET_ADD_SOURCE &&
+            nob_sv_eq(ev->as.target_add_source.target_name, nob_sv_from_cstr("iface")) &&
+            nob_sv_eq(ev->as.target_add_source.path, nob_sv_from_cstr("EXCLUDE_FROM_ALL"))) {
+            saw_iface_bad_source = true;
+        }
+        if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("ALIAS target cannot reference another ALIAS target"))) {
+                saw_bad_alias_err = true;
+            } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_library(IMPORTED ...) requires an explicit library type"))) {
+                saw_bad_import_err = true;
+            }
+        }
+    }
+
+    ASSERT(saw_auto_shared);
+    ASSERT(saw_imported);
+    ASSERT(saw_imported_global);
+    ASSERT(saw_iface_exclude);
+    ASSERT(!saw_iface_bad_source);
+    ASSERT(saw_bad_alias_err);
+    ASSERT(saw_bad_import_err);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_message_mode_severity_mapping) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1764,6 +1947,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);
     test_evaluator_set_target_properties_rejects_alias_target(passed, failed);
+    test_evaluator_add_executable_imported_and_alias_signatures(passed, failed);
+    test_evaluator_add_library_imported_alias_and_default_type(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);

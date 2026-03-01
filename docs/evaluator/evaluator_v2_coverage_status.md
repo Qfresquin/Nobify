@@ -28,8 +28,8 @@ Status snapshot sources:
 | `add_custom_command` | `PARTIAL` | `ERROR_CONTINUE` | Supports `TARGET`/`OUTPUT` signatures; not full CMake permutation parity. | `Medium` |
 | `add_custom_target` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including scheduler options (`JOB_POOL`, `JOB_SERVER_AWARE`). | - |
 | `add_definitions` | `PARTIAL` | `NOOP_WARN` | Treated as raw compile options only; CMake's compile-definition-oriented behavior and legacy conversion nuances are not fully mirrored. | `Low` |
-| `add_executable` | `PARTIAL` | `NOOP_WARN` | Valid signatures `IMPORTED` and `ALIAS` are not implemented; option/property semantics are reduced. | `Critical` |
-| `add_library` | `PARTIAL` | `NOOP_WARN` | Valid signatures/behaviors (`IMPORTED`, `ALIAS`, and broader type/property surface) are not fully implemented. | `Critical` |
+| `add_executable` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`normal`, `IMPORTED [GLOBAL]`, `ALIAS`) and option handling (`WIN32`, `MACOSX_BUNDLE`, `EXCLUDE_FROM_ALL`). | - |
+| `add_library` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`normal`, `OBJECT`, `INTERFACE`, `IMPORTED [GLOBAL]`, `ALIAS`) and default-type behavior (`BUILD_SHARED_LIBS`) in covered surface. | - |
 | `add_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:`/`LINKER:` expansion + de-duplication). | - |
 | `add_subdirectory` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature subset (`source_dir [binary_dir] [EXCLUDE_FROM_ALL] [SYSTEM]`). | - |
 | `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args/options are warning+ignore fallback rather than full CMake option-surface parity. | `Low` |
@@ -196,7 +196,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_target`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `include_directories`, `link_directories`, `math`, `message`, `set`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_target`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `include_directories`, `link_directories`, `math`, `message`, `set`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 
