@@ -1,259 +1,171 @@
 # Evaluator v2 Coverage Status
 
-Status snapshot based on current source in `src_v2/evaluator` and parser integration in `src_v2/parser`.
+Status snapshot source:
+- `src_v2/evaluator/eval_command_caps.c`
+- command-family handlers under `src_v2/evaluator/*.c`
 
-## Legend
+Legend:
+- `FULL`: implemented in evaluator runtime for declared command surface.
+- `PARTIAL`: implemented with documented deltas/approximations.
+- `MISSING`: not registered as evaluator built-in command.
 
-- Implemented: available in evaluator runtime.
-- Partial: exists but with reduced semantics and/or ignored options.
-- Missing: not implemented in evaluator runtime.
+## 1. Command-Level Matrix (Authoritative)
 
-## 0) Compatibility Runtime Controls
+| Command | Level | Fallback | Notes |
+|---|---|---|---|
+| `add_compile_options` | `FULL` | `NOOP_WARN` | Global compile options events emitted. |
+| `add_custom_command` | `PARTIAL` | `ERROR_CONTINUE` | Supports `TARGET`/`OUTPUT` signatures; not full CMake permutation parity. |
+| `add_custom_target` | `FULL` | `NOOP_WARN` | Implemented with custom-command/target events. |
+| `add_definitions` | `FULL` | `NOOP_WARN` | Treated as raw compile option flags. |
+| `add_executable` | `FULL` | `NOOP_WARN` | Declaration + source events. |
+| `add_library` | `FULL` | `NOOP_WARN` | Declaration + source events with type parsing. |
+| `add_link_options` | `FULL` | `NOOP_WARN` | Global link options events emitted. |
+| `add_subdirectory` | `FULL` | `NOOP_WARN` | Evaluates nested `CMakeLists.txt` with directory push/pop events. |
+| `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args warned. |
+| `block` | `FULL` | `NOOP_WARN` | Variable/policy scopes and `PROPAGATE` supported. |
+| `break` | `FULL` | `NOOP_WARN` | Loop control implemented. |
+| `cmake_minimum_required` | `FULL` | `NOOP_WARN` | Version parsing and policy-version update implemented. |
+| `cmake_path` | `PARTIAL` | `ERROR_CONTINUE` | Subset of modes implemented (see subcommand matrix). |
+| `cmake_policy` | `FULL` | `NOOP_WARN` | `VERSION/SET/GET/PUSH/POP` implemented. |
+| `continue` | `FULL` | `NOOP_WARN` | Loop control implemented. |
+| `cpack_add_component` | `FULL` | `NOOP_WARN` | CPack subset event supported. |
+| `cpack_add_component_group` | `FULL` | `NOOP_WARN` | CPack subset event supported. |
+| `cpack_add_install_type` | `FULL` | `NOOP_WARN` | CPack subset event supported. |
+| `enable_testing` | `FULL` | `NOOP_WARN` | Testing enable event emitted. |
+| `endblock` | `FULL` | `NOOP_WARN` | Block close and restore semantics implemented. |
+| `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (see matrix). |
+| `find_package` | `PARTIAL` | `ERROR_CONTINUE` | Core resolver flow implemented; option/discovery parity not complete. |
+| `include` | `PARTIAL` | `ERROR_CONTINUE` | `OPTIONAL` and `NO_POLICY_SCOPE` implemented; not full option parity. |
+| `include_directories` | `FULL` | `NOOP_WARN` | Directory include events emitted with `SYSTEM/BEFORE/AFTER`. |
+| `include_guard` | `FULL` | `NOOP_WARN` | `DIRECTORY` and `GLOBAL` modes implemented. |
+| `install` | `FULL` | `NOOP_WARN` | `TARGETS/FILES/PROGRAMS/DIRECTORY` rule event emission. |
+| `link_directories` | `FULL` | `NOOP_WARN` | Directory link directory events emitted. |
+| `link_libraries` | `FULL` | `NOOP_WARN` | Global link library events emitted. |
+| `list` | `FULL` | `NOOP_WARN` | Implemented subcommand set listed below. |
+| `math` | `FULL` | `NOOP_WARN` | `EXPR` implemented, with overflow/invalid checks and output format support. |
+| `message` | `FULL` | `NOOP_WARN` | Runtime stdout/stderr plus warning/error diagnostics. |
+| `project` | `FULL` | `NOOP_WARN` | Project vars and declaration event implemented. |
+| `return` | `FULL` | `NOOP_WARN` | Includes `PROPAGATE` behavior. |
+| `set` | `FULL` | `NOOP_WARN` | Variable assignment with `CACHE` and `PARENT_SCOPE`. |
+| `set_property` | `PARTIAL` | `ERROR_CONTINUE` | Scope coverage exists; parity for all CMake property semantics is not complete. |
+| `set_target_properties` | `FULL` | `NOOP_WARN` | Property key/value pair emission implemented. |
+| `string` | `FULL` | `NOOP_WARN` | Large subcommand surface implemented (see matrix). |
+| `target_compile_definitions` | `FULL` | `NOOP_WARN` | Event emission by visibility. |
+| `target_compile_options` | `FULL` | `NOOP_WARN` | Event emission by visibility. |
+| `target_include_directories` | `FULL` | `NOOP_WARN` | Event emission with visibility and `SYSTEM/BEFORE`. |
+| `target_link_directories` | `FULL` | `NOOP_WARN` | Event emission by visibility. |
+| `target_link_libraries` | `FULL` | `NOOP_WARN` | Event emission by visibility. |
+| `target_link_options` | `FULL` | `NOOP_WARN` | Event emission by visibility. |
+| `try_compile` | `FULL` | `NOOP_WARN` | Implemented with simulated compile success/failure model. |
+| `unset` | `FULL` | `NOOP_WARN` | Variable unsetting with `CACHE` and `PARENT_SCOPE`. |
 
-- Implemented:
-  - runtime compatibility profile: `CMAKE_NOBIFY_COMPAT_PROFILE` (`PERMISSIVE|STRICT|CI_STRICT`)
-  - unsupported command policy: `CMAKE_NOBIFY_UNSUPPORTED_POLICY` (`WARN|ERROR|NOOP_WARN`)
-  - permissive error budget control: `CMAKE_NOBIFY_ERROR_BUDGET`
-  - diagnostic metadata classification in event payload (`code`, `error_class`)
-  - public run report APIs (`evaluator_get_run_report`, `evaluator_get_run_report_snapshot`)
-  - programmatic profile override API (`evaluator_set_compat_profile`)
-  - command capability query API (`evaluator_get_command_capability`) backed by central capability table
+## 2. Subcommand Matrix: `file()`
 
-## 1) Utility Mode (`cmake -E`)
+| Subcommand | Status | Delta / Notes | Typical fallback/diag |
+|---|---|---|---|
+| `GLOB` | `FULL` | Host filesystem globbing with project-scoped safety handling. | Error/Warning diagnostic, continue by profile. |
+| `GLOB_RECURSE` | `FULL` | Recursive glob implemented. | Error/Warning diagnostic, continue by profile. |
+| `READ` | `FULL` | Offset/limit/hex handling implemented. | Error diagnostic on read failures. |
+| `STRINGS` | `PARTIAL` | Core behavior implemented; some options are warned as unsupported. | Warning + continue. |
+| `COPY` | `PARTIAL` | Implemented with filters/permissions subset; some permission modes not implemented. | Warning/error + continue. |
+| `WRITE` | `FULL` | Writes content to host filesystem immediately. | Error on IO failure. |
+| `APPEND` | `FULL` | Append semantics implemented. | Error on IO failure. |
+| `MAKE_DIRECTORY` | `FULL` | Multi-directory creation implemented. | Error on failure. |
+| `INSTALL` | `PARTIAL` | Pragmatic mapping to copy-like flow; not full CMake install parity. | Warning/error + continue. |
+| `SIZE` | `FULL` | File size query implemented. | Error on stat failure. |
+| `RENAME` | `FULL` | Rename with basic options implemented. | Error on failure. |
+| `REMOVE` | `FULL` | Remove paths implemented. | Error on failure. |
+| `REMOVE_RECURSE` | `FULL` | Recursive remove implemented. | Error on failure. |
+| `READ_SYMLINK` | `PARTIAL` | Not implemented on Windows backend. | Warning/error + continue. |
+| `CREATE_LINK` | `PARTIAL` | Platform-specific behavior; `COPY_ON_ERROR` path approximated. | Warning/error + continue. |
+| `CHMOD` | `PARTIAL` | Permission-token handling implemented; platform caveats remain. | Warning/error + continue. |
+| `CHMOD_RECURSE` | `PARTIAL` | Recursive chmod with same caveats as `CHMOD`. | Warning/error + continue. |
+| `REAL_PATH` | `FULL` | Real-path resolution with options implemented. | Error on failure. |
+| `RELATIVE_PATH` | `FULL` | Relative path computation implemented. | Error on invalid usage. |
+| `TO_CMAKE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
+| `TO_NATIVE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
+| `DOWNLOAD` | `PARTIAL` | Local backend only; remote URL unsupported without external backend. | Error diagnostic + continue. |
+| `UPLOAD` | `PARTIAL` | Local backend only; remote URL unsupported without external backend. | Error diagnostic + continue. |
+| `TIMESTAMP` | `FULL` | Timestamp read/format behavior implemented. | Error on stat failure. |
+| `GENERATE` | `PARTIAL` | Core generation implemented with option constraints. | Warning/error + continue. |
+| `LOCK` | `PARTIAL` | Advisory/local lock semantics; backend/platform approximations. | Warning/error + continue. |
+| `ARCHIVE_CREATE` | `PARTIAL` | Pragmatic tar backend subset; format/compression limits. | Error diagnostic + continue. |
+| `ARCHIVE_EXTRACT` | `PARTIAL` | Pragmatic tar backend subset. | Error diagnostic + continue. |
+| Other `file()` subcommands | `MISSING` | Not currently routed by evaluator `file()` handler chain. | Unsupported subcommand warning. |
 
-- Missing:
-  - `chdir`, `copy`, `copy_directory`, `copy_if_different`, `make_directory`, `remove`, `remove_directory`, `rename`, `touch`, `touch_nocreate`
-  - `create_symlink`, `delete_regv`, `write_regv`
-  - `cat`, `compare_files`, `md5sum`, `sha256sum`, `sha512sum`
-  - `echo`, `echo_append`, `env`, `environment`, `sleep`, `time`
-  - `tar`, `tar cfz`, `tar xfz`
+## 3. Subcommand Matrix: `string()`
 
-Note: evaluator v2 currently executes CMake language commands, not `cmake -E` utility subcommands.
+| Subcommand / Family | Status | Delta / Notes |
+|---|---|---|
+| `APPEND`, `PREPEND` | `FULL` | Implemented. |
+| `CONCAT`, `JOIN` | `FULL` | Implemented. |
+| `LENGTH`, `STRIP`, `FIND`, `COMPARE` | `FULL` | Implemented. |
+| `ASCII`, `HEX` | `FULL` | Implemented. |
+| `CONFIGURE` | `FULL` | Supports `@ONLY` and `ESCAPE_QUOTES`. |
+| `MAKE_C_IDENTIFIER` | `FULL` | Implemented. |
+| `GENEX_STRIP` | `FULL` | Implemented. |
+| `RANDOM` | `FULL` | Supports `LENGTH`, `ALPHABET`, `RANDOM_SEED`. |
+| `TIMESTAMP` | `FULL` | Implemented with format/UTC handling. |
+| `UUID` | `FULL` | Name-based `TYPE MD5|SHA1` support. |
+| `MD5`, `SHA1`, `SHA256` | `FULL` | Direct hash modes implemented. |
+| `JSON GET|TYPE|LENGTH` | `PARTIAL` | Implemented subset only. |
+| `REPLACE` | `FULL` | Implemented. |
+| `TOUPPER`, `TOLOWER`, `SUBSTRING` | `FULL` | Implemented. |
+| `REGEX MATCH|REPLACE|MATCHALL` | `FULL` | Implemented. |
+| `JSON MEMBER|REMOVE|SET|EQUAL` | `MISSING` | Not implemented in current handler. |
+| `SHA224`, `SHA384`, `SHA512`, generic `HASH` mode | `MISSING` | Not implemented in current handler surface. |
 
-## 2) CMake Script Language
+## 4. Subcommand Matrix: `list()`
 
-### Flow control
+| Subcommand / Family | Status | Delta / Notes |
+|---|---|---|
+| `APPEND`, `PREPEND`, `INSERT` | `FULL` | Implemented. |
+| `REMOVE_ITEM`, `REMOVE_AT`, `REMOVE_DUPLICATES` | `FULL` | Implemented. |
+| `LENGTH`, `GET`, `FIND`, `JOIN`, `SUBLIST` | `FULL` | Implemented. |
+| `POP_BACK`, `POP_FRONT` | `FULL` | Implemented. |
+| `FILTER` | `PARTIAL` | Supports `INCLUDE|EXCLUDE REGEX` mode only. |
+| `REVERSE` | `FULL` | Implemented. |
+| `SORT` | `FULL` | Supports compare/case/order options. |
+| `TRANSFORM` | `PARTIAL` | Implemented action/selector subset; not complete CMake transform universe. |
 
-- Implemented:
-  - `if / elseif / else / endif`
-  - `foreach / endforeach` including `RANGE`, `IN ITEMS`, `IN LISTS`, `IN ZIP_LISTS`
-  - `while / endwhile`
-  - `block / endblock` (supports `SCOPE_FOR` and `PROPAGATE`)
-  - `break`, `continue`, `return`, `return(PROPAGATE ...)`
-- Partial:
-  - `return()` in `macro()` remains accepted for legacy compatibility (with warning)
-  - policy coverage is currently scoped to flow/block matrix (see table below)
+## 5. Subcommand Matrix: `cmake_path()`
 
-#### Policy Compliance (Flow/Block)
+| Mode | Status | Delta / Notes |
+|---|---|---|
+| `SET` | `FULL` | Includes optional normalization behavior. |
+| `GET` | `PARTIAL` | Component subset implemented (`ROOT_*`, `FILENAME`, `STEM`, `EXTENSION`, `RELATIVE_PART`, `PARENT_PATH`). |
+| `APPEND` | `FULL` | Includes `OUTPUT_VARIABLE` and `NORMALIZE` handling. |
+| `NORMAL_PATH` | `FULL` | Implemented. |
+| `RELATIVE_PATH` | `FULL` | Implemented with base/output options. |
+| `COMPARE` | `FULL` | `EQUAL/NOT_EQUAL/LESS/LESS_EQUAL/GREATER/GREATER_EQUAL` implemented. |
+| `HAS_*` | `PARTIAL` | Relies on current `GET` component support. |
+| `IS_*` | `PARTIAL` | `IS_ABSOLUTE` and `IS_RELATIVE` implemented subset. |
+| Other `cmake_path()` modes | `MISSING` | Emit not-implemented warning. |
 
-| Policy | Status | Default by Version | Delta vs CMake | Fallback / Diag |
-|---|---|---|---|---|
-| `CMP0124` | FULL | `<3.21 => OLD`, `>=3.21 => NEW` (via `CMAKE_POLICY_VERSION`) | Focused on foreach loop-variable restore semantics | Standard policy resolution path |
-| Other `CMP*` outside flow/block | PARTIAL | `UNSET` default unless explicitly set/overridden | No semantic modeling outside flow/block | `unsupported policy` diagnostic (permissive-first) |
+## 6. Coverage Notes: `try_compile()`
 
-### Block definitions
+`try_compile` is marked `FULL` in capability registry for evaluator-targeted behavior, with these explicit semantics:
+- Supports project-signature parsing (`PROJECT`, `SOURCE_DIR`, `BINARY_DIR`, `TARGET`, `OUTPUT_VARIABLE`, `LOG_DESCRIPTION`, `NO_CACHE`, `CMAKE_FLAGS`).
+- Supports classic signature with source inputs and source generation options.
+- Compile result is evaluator-simulated based on source/CMakeLists presence checks, not an external compiler invocation pipeline.
 
-- Implemented:
-  - `function / endfunction`
-  - `macro / endmacro`
+This is an intentional evaluator compatibility model, not a direct full CMake backend execution.
 
-### Variables
+## 7. Known Missing Built-ins (High-Impact)
 
-- Implemented:
-  - `set(...)` including cache and `PARENT_SCOPE` handling
-  - `unset(<var> [CACHE|PARENT_SCOPE])`
-- Partial:
-  - `set(<var>)` still behaves as unset shorthand for compatibility
-  - `unset(<var> CACHE)` maps to cache-entry clear event semantics in current runtime model
+Not registered in `eval_command_caps.c` (examples):
+- `target_sources`
+- `target_compile_features`
+- `target_precompile_headers`
+- `get_target_property`
+- `get_property`
+- `find_library`, `find_path`, `find_file`, `find_program`
+- `configure_file`
 
-### `list()`
+These are outside current built-in command set.
 
-- Implemented:
-  - `APPEND`, `PREPEND`, `INSERT`
-  - `REMOVE_ITEM`, `REMOVE_AT`, `REMOVE_DUPLICATES`
-  - `POP_BACK`, `POP_FRONT`
-  - `LENGTH`, `GET`, `FIND`, `JOIN`, `SUBLIST`
-  - `FILTER` (`INCLUDE|EXCLUDE REGEX`)
-  - `REVERSE`, `SORT` (`COMPARE STRING|FILE_BASENAME|NATURAL`, `CASE`, `ORDER`)
-- Partial:
-  - `TRANSFORM`:
-    - actions: `APPEND`, `PREPEND`, `TOLOWER`, `TOUPPER`, `STRIP`, `REPLACE`
-    - selectors: all items, `AT`, `FOR`, `REGEX`
+## 8. Consistency Rules for This File
 
-### `string()`
-
-- Implemented:
-  - `APPEND`, `PREPEND`, `CONCAT`, `JOIN`
-  - `LENGTH`, `STRIP`, `FIND`, `COMPARE`
-  - `ASCII`, `HEX`
-  - `CONFIGURE`
-  - `MAKE_C_IDENTIFIER`
-  - `GENEX_STRIP`
-  - `RANDOM`
-  - `TIMESTAMP`
-  - `UUID` (name-based with `TYPE MD5|SHA1`)
-  - `REPLACE`
-  - `TOUPPER`, `TOLOWER`
-  - `SUBSTRING`
-  - `REGEX MATCH`, `REGEX REPLACE`, `REGEX MATCHALL`
-- Partial:
-  - `HASH`: implemented via direct `string(MD5|SHA1|SHA256 ...)` modes
-  - `JSON`: `GET`, `TYPE`, `LENGTH`
-- Missing:
-  - `JSON`: `MEMBER`, `REMOVE`, `SET`, `EQUAL`
-  - hash modes not covered in this pass: `SHA224`, `SHA384`, `SHA512`
-
-### `math()`
-
-- Implemented:
-  - `math(EXPR ...)`
-  - `math(EXPR ... OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>)`
-  - legacy output format suffix in `EXPR`: `... <DECIMAL|HEXADECIMAL>`
-  - operators currently exercised in evaluator: unary `+ - ~`, `* / %`, `+ -`, `<< >>`, `& ^ |`, parentheses
-  - overflow/invalid checks added for literals and arithmetic edge cases
-  - invalid `math()` subcommand handling as error (consistent with other stdlib handlers)
-- Missing:
-  - none identified in current target coverage (only `EXPR` is supported/expected)
-
-## 3) `file()` commands
-
-- Implemented:
-  - `file(READ ...)`
-  - `file(STRINGS ...)` (with several options, including `REGEX`, limits, `NEWLINE_CONSUME`, `ENCODING`)
-  - `file(WRITE ...)`
-  - `file(APPEND ...)`
-  - `file(MAKE_DIRECTORY ...)`
-  - `file(COPY ... DESTINATION ...)`
-  - `file(INSTALL ... DESTINATION ...)` (pragmatic mapping to COPY-style flow)
-  - `file(GLOB ...)`
-  - `file(GLOB_RECURSE ...)`
-  - `file(RENAME ...)`
-  - `file(REMOVE ...)`
-  - `file(REMOVE_RECURSE ...)`
-  - `file(SIZE ...)`
-  - `file(READ_SYMLINK ...)`
-  - `file(CREATE_LINK ...)`
-  - `file(CHMOD ...)`
-  - `file(CHMOD_RECURSE ...)`
-  - `file(REAL_PATH ...)`
-  - `file(RELATIVE_PATH ...)`
-  - `file(TO_CMAKE_PATH ...)`
-  - `file(TO_NATIVE_PATH ...)`
-  - `file(DOWNLOAD ...)`
-  - `file(UPLOAD ...)`
-  - `file(TIMESTAMP ...)`
-  - `file(GENERATE ...)`
-  - `file(LOCK ...)`
-  - `file(ARCHIVE_CREATE ...)`
-  - `file(ARCHIVE_EXTRACT ...)`
-- Partial:
-  - `file(COPY ...)`: some options still warned/ignored (for example source-permission mode toggles)
-  - `file(STRINGS ...)`: unsupported options still produce warning when encountered
-  - `file(INSTALL ...)`: simplified behavior (not full CMake parity)
-  - `file(DOWNLOAD|UPLOAD ...)`: local backend only (`file://`/local paths); remote URLs fail explicitly
-  - `file(LOCK ...)`: advisory local lock semantics; `GUARD` modes approximated; Windows backend not implemented
-  - `file(ARCHIVE_CREATE|ARCHIVE_EXTRACT ...)`: pragmatic tar subset; unsupported format/compression fails explicitly
-- Missing:
-  - none from the currently targeted `file()` command set in this coverage pass
-
-## 4) Project/Target commands
-
-### Project and targets
-
-- Implemented:
-  - `project(...)`
-  - `add_executable(...)`
-  - `add_library(...)`
-  - `add_custom_target(...)`
-  - `add_custom_command(...)`
-- Partial:
-  - `add_custom_command(...)`: supported signatures exist, but not all CMake permutations are covered
-
-### Target properties and relationships
-
-- Implemented:
-  - `target_include_directories(...)`
-  - `target_compile_definitions(...)`
-  - `target_compile_options(...)`
-  - `target_link_libraries(...)`
-  - `target_link_directories(...)`
-  - `target_link_options(...)`
-  - `set_target_properties(...)`
-  - `set_property(...)` with target and non-target scopes (partial behavior by design)
-- Missing:
-  - `target_compile_features(...)`
-  - `target_sources(...)`
-  - `target_precompile_headers(...)`
-  - `get_target_property(...)`
-  - `get_property(...)`
-
-### Directories/includes
-
-- Implemented:
-  - `add_subdirectory(...)`
-  - `include_directories(...)`
-  - `link_directories(...)`
-- Missing:
-  - `source_group(...)`
-
-### Package/search
-
-- Implemented:
-  - `find_package(...)`
-- Partial:
-  - `find_package(...)` options and discovery behavior are not 100% complete (`REGISTRY_VIEW` etc.)
-- Missing:
-  - `find_library(...)`
-  - `find_path(...)`
-  - `find_file(...)`
-  - `find_program(...)`
-
-## 5) Install and tests
-
-- Implemented:
-  - `install(TARGETS|FILES|PROGRAMS|DIRECTORY ... DESTINATION ...)`
-  - `add_test(...)`
-  - `enable_testing()`
-- Partial:
-  - `add_test(NAME ... COMMAND ...)`: extra args can be warned/ignored
-- Missing:
-  - `set_tests_properties(...)`
-  - `install(SCRIPT ...)`
-  - `install(CODE ...)`
-  - `install(EXPORT ...)`
-  - `install(RUNTIME_DEPENDENCY_SET ...)`
-
-## 6) Configuration and include helpers
-
-- Implemented:
-  - `include(<file|module> [OPTIONAL] [NO_POLICY_SCOPE])`
-  - `include_guard([DIRECTORY|GLOBAL])`
-  - `cmake_minimum_required(...)`
-  - `cmake_policy(...)`
-  - `cmake_path(...)`
-- Partial:
-  - `include(...)`: `RESULT_VAR` is not implemented
-  - `include_guard(...)`: unsupported modes are warned
-  - `cmake_minimum_required(...)`: unknown extra args warned/ignored
-  - `cmake_path(...)`: many subcommands/components are still missing
-- Missing:
-  - `configure_file(...)`
-  - `aux_source_directory(...)`
-
-## 7) CTest, CPack, legacy, platform-specific
-
-- CTest:
-  - Missing: `ctest_build`, `ctest_configure`, `ctest_coverage`, `ctest_empty_binary_directory`, `ctest_memcheck`, `ctest_read_custom_files`, `ctest_run_script`, `ctest_sleep`, `ctest_start`, `ctest_submit`, `ctest_test`, `ctest_upload`
-- CPack:
-  - Implemented: `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`
-  - Missing: `cpack_configure_downloads`
-- Legacy commands:
-  - Mostly missing in evaluator command dispatch
-  - `link_libraries(...)` is implemented
-- Platform-specific list from request:
-  - Implemented: `cmake_policy(...)`
-  - Missing (from that list): `build_name`, `define_property`, `doxygen_add_docs`, `enable_language`, `export`, `fltk_wrap_ui`, `get_cmake_property`, `get_directory_property`, `get_filename_component`, `get_source_file_property`, `include_external_msproject`, `include_regular_expression`, `load_cache`, `load_command`, `mark_as_advanced`, `qt_wrap_cpp`, `qt_wrap_ui`, `separate_arguments`, `site_name`
-
-## 8) Important architecture note
-
-Generator expressions (`$<...>`) and target metadata queries are handled by `src_v2/genex`, but this does not replace missing evaluator command handlers (for example `get_target_property`, `target_sources`, `target_compile_features`).
+- Command-level rows must stay synchronized with `eval_command_caps.c`.
+- Every `PARTIAL` command row must include at least one explicit delta.
+- Subcommand coverage must match currently routed handler branches.

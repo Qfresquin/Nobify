@@ -1,96 +1,114 @@
-# Evaluator Expression Logic v2 (Normative)
+# Evaluator Expression Logic v2 (Annex)
 
-## 1. Overview
+Status: Normative annex for `src_v2/evaluator/eval_expr.c`.
 
-The `eval_expr.c` module implements the boolean logic engine and variable expansion mechanism for the Evaluator. It is the "ALU" (Arithmetic Logic Unit) of the transpiler.
+## 1. Scope
 
-**Responsibilities:**
-1.  **Variable Expansion:** `${VAR}`, `$ENV{VAR}`, and escaping logic.
-2.  **Condition Evaluation:** `if()`, `while()` predicates (AND, OR, NOT, STREQUAL, VERSION_LESS, etc.).
-3.  **Policy Compliance:** Handling CMake's "truthiness" quirks (e.g., "ON", "YES", "Y", "TRUE" vs "OFF", "NO", "N", "FALSE", "IGNORE").
+This module provides:
+- Variable expansion for evaluator argument resolution.
+- Truthiness evaluation.
+- Condition parsing/evaluation for `if()` and `while()`.
 
-## 2. Variable Expansion (`expand_vars`)
+## 2. Variable Expansion
 
-The Evaluator must flatten all variable references into string literals before they reach the Build Model.
+Entry point:
+- `String_View eval_expand_vars(Evaluator_Context *ctx, String_View input)`
 
-### 2.1. Syntax Handling
-*   **Simple:** `${VAR}` -> Looks up `VAR` in the current scope stack.
-*   **Nested:** `${${VAR}}` -> Inner `${VAR}` is expanded first, then the result is used as the key.
-*   **Environment:** `$ENV{VAR}` -> Reads from the host environment variable `VAR`.
-*   **Escaped:** `\${VAR}` -> Preserved as literal string `${VAR}` (rare, but supported).
+Supported expansion forms:
+- `${VAR}`
+- nested `${${VAR}}`
+- `$ENV{VAR}`
+- escaped `\${VAR}` (preserved literal)
 
-### 2.2. Expansion Rules
-1.  **Undefined Variables:** Expand to empty string `""`.
-2.  **Lists:** CMake lists are semicolon-separated strings (`"a;b;c"`). Expansion preserves semicolons unless inside a quoted argument where they are literal.
-3.  **Recursion Limit:** The expander must track recursion depth to prevent stack overflow from circular references (limit: 100).
+Undefined variable behavior:
+- expands to empty string.
 
-### 2.3. Memory Strategy
-*   **Input:** `String_View` (raw argument from AST).
-*   **Output:** `String_View` (allocated in `ctx->arena`).
-*   **Lifetime:** The result is temporary (valid only for the current command execution). If needed for an event, it must be copied to `ctx->event_arena`.
+Recursion control:
+- default recursion limit: `100`
+- hard cap: `10000`
+- script/runtime override: `CMAKE_NOBIFY_EXPAND_MAX_RECURSION`
+- process env override: `NOBIFY_EVAL_EXPAND_MAX_RECURSION`
 
-## 3. Boolean Expression Evaluation (`eval_condition`)
+Memory:
+- expansion output is allocated in temp arena.
+- persistent use must copy to event arena.
 
-CMake's `if()` command supports a complex expression language. The Evaluator must parse and evaluate this *at transpilation time* to determine which branch to take.
+## 3. Truthiness
 
-### 3.1. Operator Precedence (Standard CMake)
-1.  `Parentheses ()`
-2.  `Unary Ops` (NOT, EXISTS, COMMAND, DEFINED, TARGET, POLICY, TEST, IS_DIRECTORY, IS_SYMLINK, IS_ABSOLUTE, IS_READABLE, IS_WRITABLE, IS_EXECUTABLE)
-3.  `Binary Ops` (STREQUAL, EQUAL, STRLESS, VERSION_LESS, MATCHES, IN_LIST, PATH_EQUAL, IS_NEWER_THAN)
-4.  `Logical AND`
-5.  `Logical OR`
+Core evaluator truthiness includes:
+- True constants: `1`, `ON`, `YES`, `TRUE`, `Y`.
+- False constants: `0`, `OFF`, `NO`, `FALSE`, `N`, `IGNORE`, empty string, `NOTFOUND`, and `*-NOTFOUND` suffix.
+- Numeric strings: parsed as floating-point; non-zero is true.
 
-### 3.2. Truthiness Table
-The function `is_true(String_View val)` implements CMake's specific boolean logic:
+Unknown token resolution path:
+1. Try macro binding lookup.
+2. Try variable lookup.
+3. Re-evaluate resolved token as constant truthiness.
+4. If still unknown, false.
 
-| Input (Case Insensitive) | Boolean Result |
-| :--- | :--- |
-| `1`, `ON`, `YES`, `TRUE`, `Y` | **True** |
-| `0`, `OFF`, `NO`, `FALSE`, `N`, `IGNORE`, `""`, `NOTFOUND` | **False** |
-| `*-NOTFOUND` | **False** |
-| numeric strings (integer/float, e.g. `2`, `-3`, `0.5`) | **True** if non-zero |
-| *Any other string* | **False** (treated as string literal or variable name depending on context) |
+## 4. Condition Grammar and Operators
 
-### 3.3. Special Predicates
-*   `if(DEFINED VAR)`: Checks if `VAR` exists in the symbol table.
-*   `if(COMMAND cmd)`: Checks if `cmd` is a known command, macro, or function.
-*   `if(EXISTS path)`:
-    *   **Constraint:** Since the transpiler runs on the *host* machine but builds for a potentially different *target* environment, filesystem checks like `EXISTS` are tricky.
-    *   **Policy:** `if(EXISTS)` checks the file on the **host machine** at transpilation time. This assumes the source tree is present.
-*   `if(TARGET target_name)`: Checks if `target_name` has been declared *so far* in the execution flow.
-*   `if(TEST test_name)`: Checks if `add_test()` registered the given test during evaluator execution.
-*   `if(IS_READABLE|IS_WRITABLE|IS_EXECUTABLE path)`: Host-filesystem permission predicates.
-*   `if(path1 IS_NEWER_THAN path2)`: Host-filesystem mtime comparison.
+Condition parser supports parentheses and `NOT`, with precedence:
+1. unary/predicate and comparisons
+2. `AND`
+3. `OR`
 
-## 4. Interfaces
+Unary predicates:
+- `DEFINED`
+- `TARGET`
+- `COMMAND`
+- `POLICY`
+- `EXISTS`
+- `IS_DIRECTORY`
+- `IS_SYMLINK`
+- `IS_ABSOLUTE`
+- `IS_READABLE`
+- `IS_WRITABLE`
+- `IS_EXECUTABLE`
+- `TEST`
 
-```c
-// eval_expr.h
+Binary operators:
+- string: `STREQUAL`, `STRLESS`, `STRGREATER`, `STRLESS_EQUAL`, `STRGREATER_EQUAL`
+- numeric: `EQUAL`, `LESS`, `GREATER`, `LESS_EQUAL`, `GREATER_EQUAL`
+- version: `VERSION_LESS`, `VERSION_GREATER`, `VERSION_EQUAL`, `VERSION_LESS_EQUAL`, `VERSION_GREATER_EQUAL`
+- regex/list/path/time: `MATCHES`, `IN_LIST`, `PATH_EQUAL`, `IS_NEWER_THAN`
 
-// Expands variables in a string (e.g., "${SRC_DIR}/main.c" -> "/path/src/main.c")
-// Returns a new string allocated in ctx->arena.
-String_View eval_expand_vars(Evaluator_Context *ctx, String_View input);
+## 5. Host Environment Semantics
 
-// Evaluates a list of arguments as a boolean condition.
-// Returns true/false. Emits EV_DIAGNOSTIC on syntax error.
-bool eval_condition(Evaluator_Context *ctx, const Args *args);
+Filesystem and permission predicates are evaluated against host runtime environment:
+- `EXISTS`, directory/symlink checks
+- readability/writability/executability checks
+- mtime comparison for `IS_NEWER_THAN`
 
-// Helper: Checks CMake truthiness
-bool cmk_is_true(String_View value);
-```
+`if(COMMAND name)` checks both:
+- built-in dispatcher command table
+- user-defined function/macro registry
 
-## 5. Generator Expressions (`$<...>`)
+`if(TEST name)` checks evaluator-created test marker state.
 
-**Crucial Distinction:**
-*   The Evaluator **DOES NOT** evaluate Generator Expressions (`$<CONFIG:...>`, `$<TARGET_FILE:...>`).
-*   These are treated as **String Literals** and passed through to the Event Stream as-is.
-*   **Reason:** Their value often depends on the build configuration (Debug vs Release), which is not known until `nob` compiles/runs. The Build Model stores them, and `nob_codegen` emits logic to handle them at runtime (if supported) or they are passed to the compiler/linker (if supported by toolchain).
+## 6. Error Behavior
 
-## 6. Error Reporting
+Invalid expression syntax triggers diagnostic emission and evaluates as false in `eval_condition` path.
 
-Errors in expressions (e.g., `if(NOT)` with missing operand) are **fatal** for the condition evaluation but handled gracefully:
-1.  Emit `EV_DIAGNOSTIC` (Error: "Invalid boolean expression").
-2.  Return `false` (default safe fallback).
-3.  The Evaluator may choose to skip the block or abort depending on strictness policy.
+Typical syntax errors include:
+- unbalanced parentheses
+- unexpected trailing tokens
+- malformed comparison expressions
 
-All emitted diagnostics are classified with compatibility metadata (`code`, `error_class`) by the centralized evaluator diagnostic path.
+## 7. Generator Expressions
+
+Generator expressions (`$<...>`) are not evaluated in this module.
+They are treated as literal text at evaluator stage.
+
+## 8. Implemented Divergences
+
+Current intentional behavior:
+- Host-based predicate evaluation during transpilation.
+- Unknown/non-resolved tokens default to false after variable/macro lookup path.
+- Recursion hard cap to prevent pathological expansion loops.
+
+## 9. Roadmap (Not Yet Implemented)
+
+Roadmap, not current behavior:
+- Additional CMake expression predicates beyond current implemented set.
+- Wider policy-conditioned expression quirks matching legacy CMake edge cases.

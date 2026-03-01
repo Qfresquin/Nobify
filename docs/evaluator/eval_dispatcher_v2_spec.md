@@ -1,129 +1,101 @@
-# Evaluator Dispatcher v2 (Normative)
+# Evaluator Dispatcher v2 (Annex)
 
-## 1. Overview
+Status: Normative annex for command routing in `src_v2/evaluator/eval_dispatcher.c`.
 
-The `eval_dispatcher.c` module is the command routing layer of the Evaluator. It acts as the bridge between the raw AST command nodes and the structured Event Stream.
+## 1. Role
 
-**Responsibilities:**
-1.  **Command Lookup:** Find the handler for a given command name (e.g., `add_executable`).
-2.  **Argument Parsing:** Validate the number and type of arguments.
-3.  **Variable Resolution:** Call `eval_expand_vars` on arguments before processing.
-4.  **Event Emission:** Construct and push `Cmake_Event` structs to the output stream.
+`eval_dispatcher` is the command routing layer between AST command nodes and evaluator command handlers.
+
+Primary responsibilities:
+- Match command name to built-in handler.
+- Route unknown names to user-defined `function()`/`macro()` when available.
+- Apply unsupported-command policy for unresolved commands.
+- Expose command capability metadata via `eval_command_caps`.
 
 ## 2. Dispatch Mechanism
 
-### 2.1. The Dispatch Table
-A static constant array of `Command_Entry` structures maps string keys to function pointers.
-*   **Key:** Command name (case-insensitive).
-*   **Value:** Handler function.
-*   **Lookup:** Binary search or hash map (implementation detail, currently binary search for simplicity/performance).
+### 2.1 Built-in Table
 
-### 2.2. Handler Signature
-All handlers must conform to:
-```c
-typedef void (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node);
-```
+Built-ins are stored as static `Command_Entry` entries:
+- Key: command name (case-insensitive matching)
+- Value: `Cmd_Handler`
 
-### 2.3. Fallback
-If a command is not found in the table:
-1.  Check if it is a user-defined function/macro (via `ctx->scopes`).
-2.  If yes, invoke the function/macro evaluator.
-3.  If no, emit `EV_DIAGNOSTIC` (Warning: "Unknown command").
+Lookup strategy in current implementation is linear scan over the dispatch array.
 
-## 3. Standard Handlers Implementation
-
-### 3.1. Project & Targets
-*   `project(NAME ...)` -> `EV_PROJECT_DECLARE`
-    *   Parses `VERSION`, `LANGUAGES`, `DESCRIPTION`.
-*   `add_executable(name [WIN32] [MACOSX_BUNDLE] [EXCLUDE_FROM_ALL] source1 ...)` ->
-    1.  `EV_TARGET_DECLARE { name="name", type=TARGET_EXECUTABLE }`
-    2.  `EV_TARGET_PROP_SET { target="name", key="WIN32_EXECUTABLE", val="ON" }` (if `WIN32` present)
-    3.  `EV_TARGET_ADD_SOURCE` for each source file.
-*   `add_library(name [STATIC|SHARED|MODULE] source1 ...)` ->
-    1.  `EV_TARGET_DECLARE { name="name", type=TARGET_... }`
-    2.  `EV_TARGET_ADD_SOURCE` for each source file.
-
-### 3.2. Properties & Flags
-*   `set_target_properties(target PROPERTIES prop val ...)` ->
-    *   Iterates pairs of `prop` and `val`.
-    *   Emits `EV_TARGET_PROP_SET` for each pair.
-    *   Limitation: does not update an evaluator-side property store; only emits events.
-*   `set_property(TARGET ... PROPERTY key value...)` ->
-    *   Emits `EV_TARGET_PROP_SET` with operation semantics (`SET`, `APPEND`, `APPEND_STRING`) encoded in the event payload.
-    *   Limitation: same as above, no evaluator-side materialized property state.
-*   `target_include_directories(target [SYSTEM] [BEFORE] <INTERFACE|PUBLIC|PRIVATE> items...)` ->
-    *   Parses visibility scope.
-    *   Emits `EV_TARGET_INCLUDE_DIRECTORIES` for each item with the correct visibility.
-*   `target_compile_definitions` -> `EV_TARGET_COMPILE_DEFINITIONS`
-*   `target_compile_options` -> `EV_TARGET_COMPILE_OPTIONS`
-*   `target_link_libraries` -> `EV_TARGET_LINK_LIBRARIES`
-    *   **Special Handling:** Distinguishes between linking a *target* (e.g., `ZLIB::ZLIB`) and a *file path* (e.g., `/usr/lib/libz.so`) based on heuristics or explicit flags (though ideally passed raw to Build Model which handles the distinction).
-
-### 3.3. Variables & Flow Control (Evaluator-Internal)
-*   `set(VAR val)`:
-    *   **Action:** Updates `ctx->scopes` directly.
-    *   **Event:** Emits `EV_VAR_SET` **ONLY IF** the variable is marked as CACHE or intended for export (policy configurable). By default, local variables do not generate events.
-*   `unset(VAR)`:
-    *   **Action:** Removes from `ctx->scopes`.
-*   `message([STATUS|WARNING|FATAL_ERROR] "msg")`:
-    *   **Action:** Prints to stdout/stderr immediately during transpilation.
-    *   **Event:** Emits `EV_DIAGNOSTIC` for `WARNING` and `FATAL_ERROR` levels to ensure the build model captures the intent.
-*   `return([PROPAGATE <vars...>])`:
-    *   **Action:** requests early exit from current execution context (`function`, `macro`, `include`, or top-level file).
-    *   **Propagation:** when `PROPAGATE` is provided, evaluator propagates listed variables to parent scope during unwind.
-    *   **Compatibility:** `return()` inside `macro()` remains allowed in evaluator v2 for legacy scripts, with warning.
-*   `foreach(...)`:
-    *   **Action:** supports simple form plus `RANGE`, `IN ITEMS`, `IN LISTS`, `IN ZIP_LISTS`.
-    *   **Policy hook:** loop-variable restoration behavior follows `CMP0124` effective policy (`NEW` restores previous value).
-
-### 3.4. File System & Globbing
-*   `file(GLOB var patterns...)`:
-    *   **Action:** Evaluator performs the globbing on the *host* filesystem immediately.
-    *   **Result:** Sets variable `var` to the list of found files.
-    *   **Event:** None directly (the variable set is internal).
-*   `file(WRITE ...)`:
-    *   **Action:** Writes the file on the host immediately.
-    *   **Constraint:** Since transpilation happens before build, this side-effect is immediate.
-
-### 3.5. CMake Policy Directives
-*   `cmake_minimum_required(VERSION ...)`:
-    *   Parsed by evaluator and stored in variables (`CMAKE_MINIMUM_REQUIRED_VERSION`, `CMAKE_POLICY_VERSION`).
-*   `cmake_policy(...)`:
-    *   V2 supports `VERSION`, `SET`, `GET`, `PUSH`, and `POP` with real policy-stack effects.
-    *   Defaults are resolved by policy-table + `CMAKE_POLICY_VERSION` for supported flow/block policies (currently including `CMP0124`).
-    *   Policies outside the flow/block compatibility matrix are accepted syntactically, emit classified diagnostics, and continue in permissive profile.
-    *   Policy-dependent behaviors outside flow/block scope (for example, broader `if()` CMP interactions) are not fully modeled in evaluator v2.
-
-## 4. Helper Functions
+### 2.2 Handler Signature
 
 ```c
-// eval_dispatcher.h
-
-// Main entry point for command dispatch
-void eval_dispatch_command(Evaluator_Context *ctx, const Node *node);
-
-// Resolves arguments, expanding variables and handling quoting
-Args eval_resolve_args(Evaluator_Context *ctx, const Args *raw_args);
-
-// Parses visibility keywords (PUBLIC, PRIVATE, INTERFACE) from an argument list
-// Returns the index where the keyword was found or -1.
-int eval_parse_visibility(const Args *args, int start_index, Visibility *out_vis);
+bool (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node)
 ```
 
-## 5. Error Handling in Dispatcher
+Handlers return `false` only for fatal/internal stop conditions (for example OOM/stop state). Semantic failures are usually converted to diagnostics.
 
-*   **Argument Count Mismatch:** Emit `EV_DIAGNOSTIC` (Error: "Function called with incorrect number of arguments").
-*   **Invalid Argument Type:** Emit `EV_DIAGNOSTIC` (Error: "Invalid argument for command").
-*   **Missing Required Argument:** Emit `EV_DIAGNOSTIC` (Error: "Missing required argument").
-*   **Unknown Command Policy:** Fallback severity/behavior is controlled by `CMAKE_NOBIFY_UNSUPPORTED_POLICY` (`WARN|ERROR|NOOP_WARN`).
-*   **Diagnostic Classification:** Dispatcher diagnostics carry classifier metadata (`code`, `error_class`) via centralized evaluator diagnostic emission.
+### 2.3 Registered Built-ins (Current)
 
-## 6. Generator Expressions Note
+Current built-ins include (non-exhaustive grouping):
+- Flow/scope: `block`, `endblock`, `break`, `continue`, `return`
+- Variables/stdlib: `set`, `unset`, `list`, `string`, `math`, `message`
+- Project/targets: `project`, `add_executable`, `add_library`, target property/link/include commands
+- Directory/include: `add_subdirectory`, `include`, `include_guard`, `include_directories`, `link_directories`, `link_libraries`
+- Compatibility/project controls: `cmake_minimum_required`, `cmake_policy`, `cmake_path`
+- Filesystem and packaging: `file`, `find_package`, `install`, CPack subset
+- Tests/custom/other: `enable_testing`, `add_test`, `add_custom_target`, `add_custom_command`, `try_compile`
 
-As per the general Evaluator spec, arguments containing `$<...>` are passed through as literal strings to the event payload. The Dispatcher does **not** attempt to evaluate them.
+For authoritative command-level compatibility, see `evaluator_v2_coverage_status.md` and `eval_command_caps.c`.
 
-## 7. Compatibility Limitation: Property Read Commands
+## 3. Unknown Command Resolution
 
-Because the Dispatcher/Evaluator do not own a target-property state table, read-side commands such as `get_target_property(...)` and `get_property(TARGET ...)` are not currently representable with full CMake semantics. Implementing them requires either:
-1.  A dedicated evaluator-side property state cache (new layer), or
-2.  Deferring these commands to a model-aware phase with explicit policy.
+When no built-in command matches:
+
+1. Evaluator checks user command registry (`function`/`macro`).
+2. If found, invokes user command body:
+- `function`: new variable scope
+- `macro`: macro-frame binding model in caller scope
+3. If still unresolved, emits diagnostic with severity decided by unsupported policy:
+- `WARN` => warning
+- `ERROR` => error
+- `NOOP_WARN` => warning with explicit no-op hint
+
+Unknown command handling is policy-driven and deterministic.
+
+## 4. Capability Contract
+
+Dispatcher capability API:
+- `eval_dispatcher_get_command_capability(String_View name, Command_Capability *out_capability)`
+
+Backing registry: `src_v2/evaluator/eval_command_caps.c`.
+
+For unknown commands:
+- API returns `false`
+- `out_capability` is filled as `MISSING + NOOP_WARN`
+
+This keeps client behavior deterministic even for unknown symbols.
+
+## 5. Error and Diagnostic Contract
+
+Dispatcher and handlers use centralized diagnostic emission (`eval_emit_diag`) so diagnostics carry:
+- severity
+- component
+- command
+- classification metadata (`code`, `error_class`)
+
+Dispatcher itself does not reclassify diagnostics.
+
+## 6. Generator Expression Policy
+
+Dispatcher does not evaluate generator expressions (`$<...>`).
+Arguments containing genex text are passed as literals to downstream event payloads.
+
+## 7. Implemented Divergences
+
+Current intentional divergences include:
+- Unsupported built-ins are policy-managed instead of hard fail by default.
+- User-defined command invocation is integrated directly in unknown-command fallback path.
+- Capability API provides explicit `FULL|PARTIAL|MISSING` metadata independent of runtime success in a specific script.
+
+## 8. Roadmap (Not Yet Implemented)
+
+Roadmap, not current behavior:
+- Alternative lookup structure (for example hashed lookup) if command table growth requires it.
+- Extended command-surface parity with additional CMake legacy commands.
+- Additional diagnostics for ambiguous function/macro override scenarios.
