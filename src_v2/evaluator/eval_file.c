@@ -407,23 +407,26 @@ static bool scope_canonicalize_existing_or_parent_temp(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
-                                        const Node *node,
-                                        Cmake_Event_Origin origin,
-                                        String_View input_path,
-                                        String_View relative_base,
-                                        String_View *out_path) {
+bool eval_file_resolve_path(Evaluator_Context *ctx,
+                            const Node *node,
+                            Cmake_Event_Origin origin,
+                            String_View input_path,
+                            String_View relative_base,
+                            Eval_File_Path_Mode mode,
+                            String_View *out_path) {
     if (!ctx || !node || !out_path) return false;
 
-    if (!is_path_safe(input_path)) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("eval_file"),
-                       node->as.cmd.name,
-                       origin,
-                       nob_sv_from_cstr("Security Violation: Path traversal (..) is not allowed"),
-                       input_path);
-        return false;
+    if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
+        if (!is_path_safe(input_path)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_file"),
+                           node->as.cmd.name,
+                           origin,
+                           nob_sv_from_cstr("Security Violation: Path traversal (..) is not allowed"),
+                           input_path);
+            return false;
+        }
     }
 
     String_View path = input_path;
@@ -438,20 +441,23 @@ bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
     ci = true;
 #endif
 
-    if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
-        !scope_path_has_prefix(path, ctx->source_dir, ci)) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("eval_file"),
-                       node->as.cmd.name,
-                       origin,
-                       nob_sv_from_cstr("Security Violation: Absolute path outside project scope"),
-                       path);
-        return false;
+    if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
+        if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
+            !scope_path_has_prefix(path, ctx->source_dir, ci)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_file"),
+                           node->as.cmd.name,
+                           origin,
+                           nob_sv_from_cstr("Security Violation: Absolute path outside project scope"),
+                           path);
+            return false;
+        }
     }
 
     String_View resolved_probe = nob_sv_from_cstr("");
-    if (scope_canonicalize_existing_or_parent_temp(ctx, path, &resolved_probe)) {
+    if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED &&
+        scope_canonicalize_existing_or_parent_temp(ctx, path, &resolved_probe)) {
         String_View source_scope = ctx->source_dir;
         String_View binary_scope = ctx->binary_dir;
 
@@ -480,6 +486,18 @@ bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
 
     *out_path = path;
     return true;
+}
+
+// Backward-compatible helper kept to reduce churn in existing handlers.
+// file() now defaults to CMake-like path behavior (no project sandbox).
+bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
+                                           const Node *node,
+                                           Cmake_Event_Origin origin,
+                                           String_View input_path,
+                                           String_View relative_base,
+                                           String_View *out_path) {
+    return eval_file_resolve_path(
+        ctx, node, origin, input_path, relative_base, EVAL_FILE_PATH_MODE_CMAKE, out_path);
 }
 
 String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
@@ -2029,6 +2047,20 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
             return;
         }
 
+        if (perms.saw_use_source_permissions &&
+            !perms.has_permissions &&
+            !perms.has_file_permissions &&
+            !perms.has_directory_permissions) {
+#if !defined(_WIN32)
+            struct stat src_st = {0};
+            if (stat(src_c, &src_st) == 0) {
+                if (copy_apply_permissions(dst_c, src_st.st_mode & 0777)) {
+                    applied_any_permissions = true;
+                }
+            }
+#endif
+        }
+
         mode_t mode = 0;
         if (copy_permissions_pick_mode(&perms, src_is_dir, &mode)) {
             if (!copy_apply_permissions(dst_c, mode)) {
@@ -2048,12 +2080,6 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
                        nob_sv_from_cstr("file(COPY) permissions were requested but not applied"),
                        nob_sv_from_cstr("Check destination type and platform permission support"));
     }
-    if (perms.saw_use_source_permissions || perms.saw_no_source_permissions) {
-        eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(COPY) USE_SOURCE_PERMISSIONS/NO_SOURCE_PERMISSIONS are not implemented"),
-                       nob_sv_from_cstr("Use explicit PERMISSIONS/FILE_PERMISSIONS/DIRECTORY_PERMISSIONS"));
-    }
-
     for (size_t i = 0; i < filter_count; i++) {
         if (filters[i].is_regex && filters[i].regex_ready) regfree(&filters[i].regex);
     }
@@ -2086,6 +2112,8 @@ bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
         // handled in eval_file_transfer.c
     } else if (eval_file_handle_generate_lock_archive(ctx, node, args)) {
         // handled in eval_file_generate_lock_archive.c
+    } else if (eval_file_handle_extra(ctx, node, args)) {
+        // handled in eval_file_extra.c
     } else {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         eval_emit_diag(ctx,

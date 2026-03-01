@@ -1,6 +1,7 @@
 #include "eval_stdlib.h"
 
 #include "evaluator_internal.h"
+#include "eval_hash.h"
 #include "arena_dyn.h"
 #include "sv_utils.h"
 
@@ -744,7 +745,8 @@ static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned 
     return nob_sv_from_cstr(buf);
 }
 
-static bool string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, String_View input, String_View *out_hash) {
+static bool __attribute__((unused))
+string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, String_View input, String_View *out_hash) {
     if (!ctx || !out_hash) return false;
     *out_hash = nob_sv_from_cstr("");
     const unsigned char *msg = (const unsigned char*)input.data;
@@ -2324,7 +2326,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         String_View hash = nob_sv_from_cstr("");
-        if (!string_hash_compute_temp(ctx, a.items[0], a.items[2], &hash)) {
+        if (!eval_hash_compute_hex_temp(ctx, a.items[0], a.items[2], &hash)) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
                            nob_sv_from_cstr("Unsupported hash algorithm"),
                            a.items[0]);

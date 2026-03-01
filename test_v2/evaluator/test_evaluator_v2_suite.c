@@ -3859,6 +3859,115 @@ TEST(evaluator_string_hash_repeat_and_json_full_surface) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(V \"qq\")\n"
+        "file(WRITE extra_src.txt \"abc\")\n"
+        "file(SHA256 extra_src.txt EXTRA_HASH)\n"
+        "file(CONFIGURE OUTPUT extra_cfg.txt CONTENT \"@V@-${V}\" @ONLY)\n"
+        "file(READ extra_cfg.txt EXTRA_CFG)\n"
+        "file(COPY_FILE extra_src.txt extra_dst.txt RESULT COPY_RES ONLY_IF_DIFFERENT INPUT_MAY_BE_RECENT)\n"
+        "file(READ extra_dst.txt COPY_TXT)\n"
+        "file(TOUCH extra_touch.txt)\n"
+        "if(EXISTS extra_touch.txt)\n"
+        "  set(TOUCH_CREATED 1)\n"
+        "else()\n"
+        "  set(TOUCH_CREATED 0)\n"
+        "endif()\n"
+        "file(TOUCH_NOCREATE extra_touch_missing.txt)\n"
+        "if(EXISTS extra_touch_missing.txt)\n"
+        "  set(TOUCH_NOCREATE_CREATED 1)\n"
+        "else()\n"
+        "  set(TOUCH_NOCREATE_CREATED 0)\n"
+        "endif()\n"
+        "file(GET_RUNTIME_DEPENDENCIES RESOLVED_DEPENDENCIES_VAR RD_RES UNRESOLVED_DEPENDENCIES_VAR RD_UNRES DIRECTORIES .)\n"
+        "file(WRITE extra_dl_src.txt \"hello\")\n"
+        "file(DOWNLOAD extra_dl_src.txt extra_dl_ok.txt EXPECTED_HASH SHA256=2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824)\n"
+        "file(READ extra_dl_ok.txt DL_OK_TXT)\n"
+        "file(DOWNLOAD extra_dl_src.txt extra_dl_bad.txt EXPECTED_HASH SHA256=0000 STATUS DL_BAD_STATUS)\n"
+        "list(LENGTH DL_BAD_STATUS DL_BAD_LEN)\n"
+        "list(GET DL_BAD_STATUS 0 DL_BAD_CODE)\n"
+        "add_executable(file_extra_probe main.c)\n"
+        "target_compile_definitions(file_extra_probe PRIVATE "
+        "\"EXTRA_HASH=${EXTRA_HASH}\" \"EXTRA_CFG=${EXTRA_CFG}\" "
+        "\"COPY_RES=${COPY_RES}\" \"COPY_TXT=${COPY_TXT}\" "
+        "\"TOUCH_CREATED=${TOUCH_CREATED}\" \"TOUCH_NOCREATE_CREATED=${TOUCH_NOCREATE_CREATED}\" "
+        "\"RD_RES=${RD_RES}\" \"RD_UNRES=${RD_UNRES}\" "
+        "\"DL_OK_TXT=${DL_OK_TXT}\" \"DL_BAD_LEN=${DL_BAD_LEN}\" \"DL_BAD_CODE=${DL_BAD_CODE}\")\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_hash = false;
+    bool saw_cfg = false;
+    bool saw_copy_res = false;
+    bool saw_copy_txt = false;
+    bool saw_touch_created = false;
+    bool saw_touch_nocreate_created = false;
+    bool saw_rd_res = false;
+    bool saw_rd_unres = false;
+    bool saw_dl_ok = false;
+    bool saw_dl_bad_len = false;
+    bool saw_dl_bad_code = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("file_extra_probe"))) continue;
+        String_View it = ev->as.target_compile_definitions.item;
+        if (nob_sv_eq(it, nob_sv_from_cstr("EXTRA_HASH=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"))) saw_hash = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("EXTRA_CFG=qq-qq"))) saw_cfg = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("COPY_RES=0"))) saw_copy_res = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("COPY_TXT=abc"))) saw_copy_txt = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("TOUCH_CREATED=1"))) saw_touch_created = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("TOUCH_NOCREATE_CREATED=0"))) saw_touch_nocreate_created = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("RD_RES="))) saw_rd_res = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("RD_UNRES="))) saw_rd_unres = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("DL_OK_TXT=hello"))) saw_dl_ok = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("DL_BAD_LEN=2"))) saw_dl_bad_len = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("DL_BAD_CODE=1"))) saw_dl_bad_code = true;
+    }
+
+    ASSERT(saw_hash);
+    ASSERT(saw_cfg);
+    ASSERT(saw_copy_res);
+    ASSERT(saw_copy_txt);
+    ASSERT(saw_touch_created);
+    ASSERT(saw_touch_nocreate_created);
+    ASSERT(saw_rd_res);
+    ASSERT(saw_rd_unres);
+    ASSERT(saw_dl_ok);
+    ASSERT(saw_dl_bad_len);
+    ASSERT(saw_dl_bad_code);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -3927,6 +4036,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
+    test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

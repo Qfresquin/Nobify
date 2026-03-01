@@ -861,10 +861,12 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     bool is_function = (cmd->kind == USER_CMD_FUNCTION);
     bool is_macro = (cmd->kind == USER_CMD_MACRO);
     Eval_Return_Context saved_return_ctx = ctx->return_context;
+    size_t entered_function_depth = 0;
     bool scope_pushed = false;
     bool macro_pushed = false;
     if (is_function) {
         if (!eval_scope_push(ctx)) return false;
+        entered_function_depth = ++ctx->function_eval_depth;
         ctx->return_context = EVAL_RETURN_CTX_FUNCTION;
         scope_pushed = true;
     } else if (is_macro) {
@@ -951,6 +953,10 @@ cleanup:
     ctx->return_propagate_vars = NULL;
     ctx->return_propagate_count = 0;
     ctx->return_context = saved_return_ctx;
+    if (entered_function_depth > 0) {
+        eval_file_lock_release_function_scope(ctx, entered_function_depth);
+        if (ctx->function_eval_depth > 0) ctx->function_eval_depth--;
+    }
     if (scope_pushed) {
         eval_scope_pop(ctx);
     } else if (macro_pushed) {
@@ -1167,6 +1173,7 @@ bool eval_execute_file(Evaluator_Context *ctx,
                        bool is_add_subdirectory,
                        String_View explicit_bin_dir) {
     if (eval_should_stop(ctx)) return false;
+    size_t entered_file_depth = ++ctx->file_eval_depth;
     Eval_Return_Context saved_return_ctx = ctx->return_context;
     ctx->return_context = EVAL_RETURN_CTX_INCLUDE;
     Arena_Mark temp_mark = arena_mark(ctx->arena);
@@ -1192,6 +1199,8 @@ bool eval_execute_file(Evaluator_Context *ctx,
     eval_pop_external_context(ctx, &state);
 
 cleanup:
+    eval_file_lock_release_file_scope(ctx, entered_file_depth);
+    if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
     ctx->return_context = saved_return_ctx;
     arena_rewind(ctx->arena, temp_mark);
     return ok;
@@ -1380,6 +1389,7 @@ void evaluator_destroy(Evaluator_Context *ctx) {
 
 bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     if (!ctx || eval_should_stop(ctx)) return false;
+    size_t entered_file_depth = ++ctx->file_eval_depth;
     eval_report_reset(ctx);
     bool ok = eval_node_list(ctx, &ast);
     if (ctx->return_requested) {
@@ -1387,6 +1397,8 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     }
     ctx->return_propagate_vars = NULL;
     ctx->return_propagate_count = 0;
+    eval_file_lock_release_file_scope(ctx, entered_file_depth);
+    if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
     eval_report_finalize(ctx);
     return ok && !eval_should_stop(ctx);
 }

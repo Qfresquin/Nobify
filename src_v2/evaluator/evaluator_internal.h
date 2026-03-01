@@ -96,6 +96,9 @@ typedef struct {
 } Block_Frame_Stack;
 
 typedef struct {
+    int guard_kind;
+    size_t owner_file_depth;
+    size_t owner_function_depth;
     String_View path;
 #if defined(_WIN32)
     void *handle;
@@ -149,6 +152,8 @@ struct Evaluator_Context {
     size_t policy_depth;
     size_t policy_capacity;
     bool cpack_component_module_loaded;
+    size_t file_eval_depth;
+    size_t function_eval_depth;
 
     size_t loop_depth;
     bool break_requested;

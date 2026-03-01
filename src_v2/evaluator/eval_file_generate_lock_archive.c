@@ -16,12 +16,62 @@
 #include <time.h>
 #endif
 
+enum {
+    EVAL_FILE_LOCK_GUARD_PROCESS = 0,
+    EVAL_FILE_LOCK_GUARD_FILE = 1,
+    EVAL_FILE_LOCK_GUARD_FUNCTION = 2,
+};
+
 static ssize_t eval_file_lock_find(Evaluator_Context *ctx, String_View path) {
     if (!ctx) return -1;
     for (size_t i = 0; i < ctx->file_locks.count; i++) {
         if (eval_sv_key_eq(ctx->file_locks.items[i].path, path)) return (ssize_t)i;
     }
     return -1;
+}
+
+static void eval_file_lock_close_entry(Eval_File_Lock *lock) {
+    if (!lock) return;
+#if defined(_WIN32)
+    HANDLE h = (HANDLE)lock->handle;
+    if (h) CloseHandle(h);
+    lock->handle = NULL;
+#else
+    if (lock->fd >= 0) {
+        (void)flock(lock->fd, LOCK_UN);
+        (void)close(lock->fd);
+        lock->fd = -1;
+    }
+#endif
+}
+
+static void eval_file_lock_release_by_scope(Evaluator_Context *ctx, int guard_kind, size_t owner_depth) {
+    if (!ctx) return;
+    for (size_t i = 0; i < ctx->file_locks.count;) {
+        Eval_File_Lock *lock = &ctx->file_locks.items[i];
+        if (lock->guard_kind != guard_kind) {
+            i++;
+            continue;
+        }
+
+        size_t depth = (guard_kind == EVAL_FILE_LOCK_GUARD_FILE) ? lock->owner_file_depth : lock->owner_function_depth;
+        if (depth < owner_depth) {
+            i++;
+            continue;
+        }
+
+        eval_file_lock_close_entry(lock);
+        ctx->file_locks.items[i] = ctx->file_locks.items[ctx->file_locks.count - 1];
+        ctx->file_locks.count--;
+    }
+}
+
+void eval_file_lock_release_file_scope(Evaluator_Context *ctx, size_t owner_depth) {
+    eval_file_lock_release_by_scope(ctx, EVAL_FILE_LOCK_GUARD_FILE, owner_depth);
+}
+
+void eval_file_lock_release_function_scope(Evaluator_Context *ctx, size_t owner_depth) {
+    eval_file_lock_release_by_scope(ctx, EVAL_FILE_LOCK_GUARD_FUNCTION, owner_depth);
 }
 
 static bool file_parse_permission_token(mode_t *mode, String_View token) {
@@ -86,20 +136,12 @@ static bool file_parse_permission_token(mode_t *mode, String_View token) {
 void eval_file_lock_cleanup(Evaluator_Context *ctx) {
     if (!ctx) return;
     for (size_t i = 0; i < ctx->file_locks.count; i++) {
-#if defined(_WIN32)
-        HANDLE h = (HANDLE)ctx->file_locks.items[i].handle;
-        if (h) CloseHandle(h);
-#else
-        if (ctx->file_locks.items[i].fd >= 0) {
-            (void)flock(ctx->file_locks.items[i].fd, LOCK_UN);
-            (void)close(ctx->file_locks.items[i].fd);
-        }
-#endif
+        eval_file_lock_close_entry(&ctx->file_locks.items[i]);
     }
     ctx->file_locks.count = 0;
 }
 
-static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, int fd_or_dummy) {
+static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, int fd_or_dummy, int guard_kind) {
     if (!ctx) return false;
     if (!arena_da_reserve(ctx->event_arena,
                           (void**)&ctx->file_locks.items,
@@ -111,6 +153,9 @@ static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, int fd_
 
     Eval_File_Lock lock = {0};
     lock.path = sv_copy_to_event_arena(ctx, path);
+    lock.guard_kind = guard_kind;
+    lock.owner_file_depth = ctx->file_eval_depth;
+    lock.owner_function_depth = ctx->function_eval_depth;
 #if defined(_WIN32)
     lock.handle = (void*)(uintptr_t)fd_or_dummy;
 #else
@@ -275,6 +320,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     bool release = false;
     size_t timeout_sec = 0;
     bool has_timeout = false;
+    int guard_kind = EVAL_FILE_LOCK_GUARD_PROCESS;
     String_View result_var = nob_sv_from_cstr("");
     for (size_t i = 2; i < args.count; i++) {
         if (eval_sv_eq_ci_lit(args.items[i], "RELEASE")) {
@@ -285,9 +331,13 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
             result_var = args.items[++i];
         } else if (eval_sv_eq_ci_lit(args.items[i], "GUARD") && i + 1 < args.count) {
             String_View guard = args.items[++i];
-            if (!eval_sv_eq_ci_lit(guard, "PROCESS")) {
-                eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(LOCK) GUARD mode is approximated as PROCESS"), guard);
+            if (eval_sv_eq_ci_lit(guard, "PROCESS")) guard_kind = EVAL_FILE_LOCK_GUARD_PROCESS;
+            else if (eval_sv_eq_ci_lit(guard, "FILE")) guard_kind = EVAL_FILE_LOCK_GUARD_FILE;
+            else if (eval_sv_eq_ci_lit(guard, "FUNCTION")) guard_kind = EVAL_FILE_LOCK_GUARD_FUNCTION;
+            else {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(LOCK) invalid GUARD value"), guard);
+                return true;
             }
         }
     }
@@ -298,16 +348,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     ssize_t existing = eval_file_lock_find(ctx, lock_path);
     if (release) {
         if (existing >= 0) {
-#if defined(_WIN32)
-            HANDLE h = (HANDLE)ctx->file_locks.items[existing].handle;
-            if (h) CloseHandle(h);
-#else
-            int fd = ctx->file_locks.items[existing].fd;
-            if (fd >= 0) {
-                (void)flock(fd, LOCK_UN);
-                (void)close(fd);
-            }
-#endif
+            eval_file_lock_close_entry(&ctx->file_locks.items[existing]);
             eval_file_lock_remove_at(ctx, (size_t)existing);
         }
         if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("0"));
@@ -360,7 +401,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
         return true;
     }
 
-    if (!eval_file_lock_add(ctx, lock_path, fd)) {
+    if (!eval_file_lock_add(ctx, lock_path, fd, guard_kind)) {
         flock(fd, LOCK_UN);
         close(fd);
         return true;
@@ -404,14 +445,14 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
                        nob_sv_from_cstr("Usage: file(ARCHIVE_CREATE OUTPUT <archive> PATHS <path>...)"));
         return true;
     }
-    if (!(eval_sv_eq_ci_lit(format, "TAR") || eval_sv_eq_ci_lit(format, "PAXR") || eval_sv_eq_ci_lit(format, "GNUTAR"))) {
+    bool format_tar_like = eval_sv_eq_ci_lit(format, "TAR") ||
+                           eval_sv_eq_ci_lit(format, "PAXR") ||
+                           eval_sv_eq_ci_lit(format, "PAX") ||
+                           eval_sv_eq_ci_lit(format, "GNUTAR");
+    bool format_zip = eval_sv_eq_ci_lit(format, "ZIP");
+    if (!(format_tar_like || format_zip)) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(ARCHIVE_CREATE) unsupported FORMAT in local backend"), format);
-        return true;
-    }
-    if (!(eval_sv_eq_ci_lit(compression, "NONE") || compression.count == 0)) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend"), compression);
         return true;
     }
 
@@ -419,13 +460,8 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, out, eval_file_current_bin_dir(ctx), &out_path)) return true;
     if (!eval_file_mkdir_p(ctx, svu_dirname(out_path))) return true;
 
-    Nob_Cmd cmd = {0};
-    nob_da_append(&cmd, "tar");
-    nob_da_append(&cmd, "-cf");
     char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
     EVAL_OOM_RETURN_IF_NULL(ctx, out_c, true);
-    nob_da_append(&cmd, out_c);
-    nob_da_append(&cmd, "--");
 
     char cwd_buf[4096] = {0};
 #if defined(_WIN32)
@@ -438,6 +474,7 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
         if (cwd_buf[i] == '\\') cwd_buf[i] = '/';
     }
 
+    SV_List mapped_paths = {0};
     for (size_t i = 0; i < paths.count; i++) {
         String_View p = nob_sv_from_cstr("");
         if (!eval_file_resolve_project_scoped_path(ctx, node, o, paths.items[i], eval_file_current_src_dir(ctx), &p)) return true;
@@ -447,9 +484,47 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
             if (off < p.count && (p.data[off] == '/' || p.data[off] == '\\')) off++;
             p_arg = nob_sv_from_parts(p.data + off, p.count - off);
         }
-        char *pc = eval_sv_to_cstr_temp(ctx, p_arg);
-        EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
-        nob_da_append(&cmd, pc);
+        if (!svu_list_push_temp(ctx, &mapped_paths, p_arg)) return true;
+    }
+
+    Nob_Cmd cmd = {0};
+    if (format_zip) {
+        nob_da_append(&cmd, "zip");
+        nob_da_append(&cmd, "-r");
+        nob_da_append(&cmd, out_c);
+        for (size_t i = 0; i < mapped_paths.count; i++) {
+            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths.items[i]);
+            EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
+            nob_da_append(&cmd, pc);
+        }
+    } else {
+        nob_da_append(&cmd, "tar");
+        if (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) {
+            nob_da_append(&cmd, "-cf");
+        } else if (eval_sv_eq_ci_lit(compression, "GZIP")) {
+            nob_da_append(&cmd, "-czf");
+        } else if (eval_sv_eq_ci_lit(compression, "BZIP2")) {
+            nob_da_append(&cmd, "-cjf");
+        } else if (eval_sv_eq_ci_lit(compression, "XZ")) {
+            nob_da_append(&cmd, "-cJf");
+        } else if (eval_sv_eq_ci_lit(compression, "ZSTD")) {
+            nob_da_append(&cmd, "--zstd");
+            nob_da_append(&cmd, "-cf");
+        } else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend"), compression);
+            return true;
+        }
+        nob_da_append(&cmd, out_c);
+        if (eval_sv_eq_ci_lit(format, "PAXR")) nob_da_append(&cmd, "--format=pax");
+        else if (eval_sv_eq_ci_lit(format, "PAX")) nob_da_append(&cmd, "--format=pax");
+        else if (eval_sv_eq_ci_lit(format, "GNUTAR")) nob_da_append(&cmd, "--format=gnu");
+        nob_da_append(&cmd, "--");
+        for (size_t i = 0; i < mapped_paths.count; i++) {
+            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths.items[i]);
+            EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
+            nob_da_append(&cmd, pc);
+        }
     }
 
     if (!nob_cmd_run_sync(cmd)) {
@@ -486,11 +561,20 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
     EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
 
     Nob_Cmd cmd = {0};
-    nob_da_append(&cmd, "tar");
-    nob_da_append(&cmd, "-xf");
-    nob_da_append(&cmd, in_c);
-    nob_da_append(&cmd, "-C");
-    nob_da_append(&cmd, dst_c);
+    if (in_path.count >= 4 &&
+        (eval_sv_eq_ci_lit(nob_sv_from_parts(in_path.data + in_path.count - 4, 4), ".zip"))) {
+        nob_da_append(&cmd, "unzip");
+        nob_da_append(&cmd, "-o");
+        nob_da_append(&cmd, in_c);
+        nob_da_append(&cmd, "-d");
+        nob_da_append(&cmd, dst_c);
+    } else {
+        nob_da_append(&cmd, "tar");
+        nob_da_append(&cmd, "-xf");
+        nob_da_append(&cmd, in_c);
+        nob_da_append(&cmd, "-C");
+        nob_da_append(&cmd, dst_c);
+    }
     if (!nob_cmd_run_sync(cmd)) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed to run tar backend"), in_path);

@@ -1,4 +1,6 @@
 #include "eval_file_internal.h"
+#include "eval_hash.h"
+#include "eval_expr.h"
 #include "sv_utils.h"
 
 #include <ctype.h>
@@ -13,6 +15,18 @@
 #include <unistd.h>
 #endif
 
+static bool file_transfer_sv_eq_ci(String_View a, String_View b) {
+    if (a.count != b.count) return false;
+    for (size_t i = 0; i < a.count; i++) {
+        char ca = a.data[i];
+        char cb = b.data[i];
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
 typedef struct {
     String_View status_var;
     String_View log_var;
@@ -26,6 +40,15 @@ typedef struct {
     size_t inactivity_timeout_sec;
     String_View expected_hash;
     String_View expected_md5;
+    String_View userpwd;
+    String_View tls_cainfo;
+    String_View netrc_file;
+    bool has_tls_verify;
+    bool tls_verify;
+    bool show_progress;
+    bool use_netrc;
+    String_View http_headers[16];
+    size_t http_headers_count;
 } File_Transfer_Options;
 
 static bool file_transfer_is_remote_url(String_View in) {
@@ -180,7 +203,108 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
                 return false;
             }
             out->expected_md5 = args.items[++i];
+        } else if (eval_sv_eq_ci_lit(args.items[i], "USERPWD")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() USERPWD requires a value"), args.items[i]);
+                return false;
+            }
+            out->userpwd = args.items[++i];
+        } else if (eval_sv_eq_ci_lit(args.items[i], "TLS_CAINFO")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() TLS_CAINFO requires a value"), args.items[i]);
+                return false;
+            }
+            out->tls_cainfo = args.items[++i];
+        } else if (eval_sv_eq_ci_lit(args.items[i], "TLS_VERIFY")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() TLS_VERIFY requires a value"), args.items[i]);
+                return false;
+            }
+            out->has_tls_verify = true;
+            out->tls_verify = eval_truthy(ctx, args.items[++i]);
+        } else if (eval_sv_eq_ci_lit(args.items[i], "HTTPHEADER")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() HTTPHEADER requires a value"), args.items[i]);
+                return false;
+            }
+            if (out->http_headers_count < NOB_ARRAY_LEN(out->http_headers)) {
+                out->http_headers[out->http_headers_count++] = args.items[++i];
+            } else {
+                i++;
+            }
+        } else if (eval_sv_eq_ci_lit(args.items[i], "NETRC")) {
+            out->use_netrc = true;
+        } else if (eval_sv_eq_ci_lit(args.items[i], "NETRC_FILE")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() NETRC_FILE requires a value"), args.items[i]);
+                return false;
+            }
+            out->netrc_file = args.items[++i];
+        } else if (eval_sv_eq_ci_lit(args.items[i], "SHOW_PROGRESS")) {
+            out->show_progress = true;
         }
+    }
+    return true;
+}
+
+static bool file_transfer_parse_expected_hash(String_View in, String_View *out_algo, String_View *out_hex) {
+    if (!out_algo || !out_hex) return false;
+    *out_algo = nob_sv_from_cstr("");
+    *out_hex = nob_sv_from_cstr("");
+    for (size_t i = 0; i < in.count; i++) {
+        if (in.data[i] != '=') continue;
+        *out_algo = nob_sv_from_parts(in.data, i);
+        *out_hex = nob_sv_from_parts(in.data + i + 1, in.count - i - 1);
+        return out_algo->count > 0 && out_hex->count > 0;
+    }
+    return false;
+}
+
+static bool file_transfer_verify_download_hash(Evaluator_Context *ctx,
+                                               String_View dst,
+                                               const File_Transfer_Options *opt,
+                                               String_View *out_status) {
+    if (!ctx || !opt || !out_status) return false;
+    *out_status = nob_sv_from_cstr("");
+
+    String_View algo = nob_sv_from_cstr("");
+    String_View expected = nob_sv_from_cstr("");
+    if (opt->expected_hash.count > 0) {
+        if (!file_transfer_parse_expected_hash(opt->expected_hash, &algo, &expected)) {
+            *out_status = nob_sv_from_cstr("EXPECTED_HASH must be <ALGO>=<VALUE>");
+            return false;
+        }
+    } else if (opt->expected_md5.count > 0) {
+        algo = nob_sv_from_cstr("MD5");
+        expected = opt->expected_md5;
+    } else {
+        return true;
+    }
+
+    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(dst_c, &sb)) {
+        *out_status = nob_sv_from_cstr("failed to read downloaded file for hash verification");
+        return false;
+    }
+    String_View payload = nob_sv_from_parts(sb.items, sb.count);
+    String_View actual = nob_sv_from_cstr("");
+    bool ok = eval_hash_compute_hex_temp(ctx, algo, payload, &actual);
+    nob_sb_free(sb);
+    if (!ok) {
+        *out_status = nob_sv_from_cstr("unsupported EXPECTED_HASH algorithm");
+        return false;
+    }
+
+    if (!file_transfer_sv_eq_ci(actual, expected)) {
+        *out_status = nob_sv_from_cstr("download hash mismatch");
+        return false;
     }
     return true;
 }
@@ -286,10 +410,10 @@ static bool file_transfer_remote_download(Evaluator_Context *ctx,
     char inactivity_buf[64] = {0};
     char range_buf[96] = {0};
 
-    char *argv[24] = {0};
+    char *argv[96] = {0};
     size_t argc = 0;
     argv[argc++] = "curl";
-    argv[argc++] = "--silent";
+    if (!opt->show_progress) argv[argc++] = "--silent";
     argv[argc++] = "--show-error";
     argv[argc++] = "--location";
     argv[argc++] = "--output";
@@ -306,6 +430,28 @@ static bool file_transfer_remote_download(Evaluator_Context *ctx,
         argv[argc++] = inactivity_buf;
         argv[argc++] = "--speed-limit";
         argv[argc++] = "1";
+    }
+    if (opt->userpwd.count > 0) {
+        argv[argc++] = "--user";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->userpwd);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
+    }
+    if (opt->has_tls_verify && !opt->tls_verify) argv[argc++] = "--insecure";
+    if (opt->tls_cainfo.count > 0) {
+        argv[argc++] = "--cacert";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->tls_cainfo);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
+    }
+    if (opt->use_netrc) argv[argc++] = "--netrc";
+    if (opt->netrc_file.count > 0) {
+        argv[argc++] = "--netrc-file";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->netrc_file);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
+    }
+    for (size_t i = 0; i < opt->http_headers_count; i++) {
+        argv[argc++] = "--header";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->http_headers[i]);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
     }
     if (opt->has_range_start || opt->has_range_end) {
         if (opt->has_range_start && opt->has_range_end) {
@@ -345,10 +491,10 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
     char timeout_buf[64] = {0};
     char inactivity_buf[64] = {0};
 
-    char *argv[24] = {0};
+    char *argv[96] = {0};
     size_t argc = 0;
     argv[argc++] = "curl";
-    argv[argc++] = "--silent";
+    if (!opt->show_progress) argv[argc++] = "--silent";
     argv[argc++] = "--show-error";
     argv[argc++] = "--location";
     argv[argc++] = "--upload-file";
@@ -365,6 +511,28 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
         argv[argc++] = inactivity_buf;
         argv[argc++] = "--speed-limit";
         argv[argc++] = "1";
+    }
+    if (opt->userpwd.count > 0) {
+        argv[argc++] = "--user";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->userpwd);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
+    }
+    if (opt->has_tls_verify && !opt->tls_verify) argv[argc++] = "--insecure";
+    if (opt->tls_cainfo.count > 0) {
+        argv[argc++] = "--cacert";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->tls_cainfo);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
+    }
+    if (opt->use_netrc) argv[argc++] = "--netrc";
+    if (opt->netrc_file.count > 0) {
+        argv[argc++] = "--netrc-file";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->netrc_file);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
+    }
+    for (size_t i = 0; i < opt->http_headers_count; i++) {
+        argv[argc++] = "--header";
+        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->http_headers[i]);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
     }
 
     argv[argc++] = url_c;
@@ -384,19 +552,6 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
 
     File_Transfer_Options opt = {0};
     if (!file_transfer_parse_options(ctx, node, args, 3, &opt)) return true;
-
-    if (opt.expected_hash.count > 0 || opt.expected_md5.count > 0) {
-        file_transfer_fail(ctx,
-                           node,
-                           o,
-                           &opt,
-                           1,
-                           nob_sv_from_cstr("EXPECTED_HASH unsupported"),
-                           nob_sv_from_cstr("EXPECTED_HASH/EXPECTED_MD5 is not implemented yet"),
-                           nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_HASH/EXPECTED_MD5 is not implemented"),
-                           nob_sv_from_cstr("Use file(DOWNLOAD ...) without EXPECTED_HASH for now"));
-        return true;
-    }
 
     String_View dst = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[2], eval_file_current_bin_dir(ctx), &dst)) return true;
@@ -444,6 +599,20 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
                                log_trim,
                                nob_sv_from_cstr("file(DOWNLOAD) failed to fetch remote URL"),
                                args.items[1]);
+            return true;
+        }
+
+        String_View hash_status = nob_sv_from_cstr("");
+        if (!file_transfer_verify_download_hash(ctx, dst, &opt, &hash_status)) {
+            file_transfer_fail(ctx,
+                               node,
+                               o,
+                               &opt,
+                               1,
+                               hash_status.count > 0 ? hash_status : nob_sv_from_cstr("hash verification failed"),
+                               log_trim,
+                               nob_sv_from_cstr("file(DOWNLOAD) hash verification failed"),
+                               dst);
             return true;
         }
 
@@ -505,6 +674,20 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
                            nob_sv_from_cstr("write destination failed"),
                            nob_sv_from_cstr("write destination failed"),
                            nob_sv_from_cstr("file(DOWNLOAD) failed to write destination"),
+                           dst);
+        return true;
+    }
+
+    String_View hash_status = nob_sv_from_cstr("");
+    if (!file_transfer_verify_download_hash(ctx, dst, &opt, &hash_status)) {
+        file_transfer_fail(ctx,
+                           node,
+                           o,
+                           &opt,
+                           1,
+                           hash_status.count > 0 ? hash_status : nob_sv_from_cstr("hash verification failed"),
+                           hash_status,
+                           nob_sv_from_cstr("file(DOWNLOAD) hash verification failed"),
                            dst);
         return true;
     }
