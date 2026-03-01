@@ -203,6 +203,8 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
             if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.group)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.depends)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.install_types)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.archive_file)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.cpack_add_component.plist)) return false;
             break;
 
         case EV_FIND_PACKAGE:
@@ -494,6 +496,8 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
                 ev_print_sv("group", ev->as.cpack_add_component.group);
                 ev_print_sv("depends", ev->as.cpack_add_component.depends);
                 ev_print_sv("install_types", ev->as.cpack_add_component.install_types);
+                ev_print_sv("archive_file", ev->as.cpack_add_component.archive_file);
+                ev_print_sv("plist", ev->as.cpack_add_component.plist);
                 printf(" required=%d hidden=%d disabled=%d downloaded=%d",
                        ev->as.cpack_add_component.required ? 1 : 0,
                        ev->as.cpack_add_component.hidden ? 1 : 0,

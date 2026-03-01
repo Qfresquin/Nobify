@@ -38,9 +38,10 @@ target_compile_definitions(file_app PRIVATE OUT_${OUT})
 
 #@@CASE golden_cpack_commands
 project(CPackDemo VERSION 2.0)
+include(CPackComponent)
 cpack_add_install_type(Full DISPLAY_NAME "Full")
 cpack_add_component_group(base DISPLAY_NAME "Base Group" DESCRIPTION "Core Group")
-cpack_add_component(core DISPLAY_NAME "Core")
+cpack_add_component(core DISPLAY_NAME "Core" ARCHIVE_FILE "core.txz" PLIST "core.plist")
 add_executable(pkg_app main.c)
 #@@ENDCASE
 

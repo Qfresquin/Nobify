@@ -11,6 +11,21 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
+static bool require_cpack_component_module(Evaluator_Context *ctx,
+                                           String_View command,
+                                           Cmake_Event_Origin origin) {
+    if (!ctx) return false;
+    if (ctx->cpack_component_module_loaded) return true;
+    eval_emit_diag(ctx,
+                   EV_DIAG_ERROR,
+                   nob_sv_from_cstr("dispatcher"),
+                   command,
+                   origin,
+                   nob_sv_from_cstr("Unknown command"),
+                   nob_sv_from_cstr("include(CPackComponent) must be called before using this command"));
+    return false;
+}
+
 enum {
     CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME = 1,
 };
@@ -122,6 +137,8 @@ enum {
     CPACK_COMPONENT_OPT_GROUP,
     CPACK_COMPONENT_OPT_DEPENDS,
     CPACK_COMPONENT_OPT_INSTALL_TYPES,
+    CPACK_COMPONENT_OPT_ARCHIVE_FILE,
+    CPACK_COMPONENT_OPT_PLIST,
     CPACK_COMPONENT_OPT_REQUIRED,
     CPACK_COMPONENT_OPT_HIDDEN,
     CPACK_COMPONENT_OPT_DISABLED,
@@ -136,6 +153,8 @@ typedef struct {
     String_View group;
     String_View depends;
     String_View install_types;
+    String_View archive_file;
+    String_View plist;
     bool required;
     bool hidden;
     bool disabled;
@@ -165,6 +184,12 @@ static bool cpack_component_on_option(Evaluator_Context *ctx,
         return true;
     case CPACK_COMPONENT_OPT_INSTALL_TYPES:
         st->install_types = values.count > 0 ? eval_sv_join_semi_temp(ctx, values.items, values.count) : nob_sv_from_cstr("");
+        return true;
+    case CPACK_COMPONENT_OPT_ARCHIVE_FILE:
+        if (values.count > 0) st->archive_file = values.items[0];
+        return true;
+    case CPACK_COMPONENT_OPT_PLIST:
+        if (values.count > 0) st->plist = values.items[0];
         return true;
     case CPACK_COMPONENT_OPT_REQUIRED:
         st->required = true;
@@ -202,6 +227,7 @@ static bool cpack_component_on_positional(Evaluator_Context *ctx,
 
 bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (a.count < 1) {
@@ -254,6 +280,7 @@ bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node
 
 bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (a.count < 1) {
@@ -318,6 +345,7 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
 
 bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (a.count < 1) {
@@ -340,6 +368,8 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
         .group = nob_sv_from_cstr(""),
         .depends = nob_sv_from_cstr(""),
         .install_types = nob_sv_from_cstr(""),
+        .archive_file = nob_sv_from_cstr(""),
+        .plist = nob_sv_from_cstr(""),
         .required = false,
         .hidden = false,
         .disabled = false,
@@ -351,6 +381,8 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
         {CPACK_COMPONENT_OPT_GROUP, "GROUP", EVAL_OPT_SINGLE},
         {CPACK_COMPONENT_OPT_DEPENDS, "DEPENDS", EVAL_OPT_MULTI},
         {CPACK_COMPONENT_OPT_INSTALL_TYPES, "INSTALL_TYPES", EVAL_OPT_MULTI},
+        {CPACK_COMPONENT_OPT_ARCHIVE_FILE, "ARCHIVE_FILE", EVAL_OPT_SINGLE},
+        {CPACK_COMPONENT_OPT_PLIST, "PLIST", EVAL_OPT_SINGLE},
         {CPACK_COMPONENT_OPT_REQUIRED, "REQUIRED", EVAL_OPT_FLAG},
         {CPACK_COMPONENT_OPT_HIDDEN, "HIDDEN", EVAL_OPT_FLAG},
         {CPACK_COMPONENT_OPT_DISABLED, "DISABLED", EVAL_OPT_FLAG},
@@ -384,6 +416,8 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
     ev.as.cpack_add_component.group = sv_copy_to_event_arena(ctx, opt.group);
     ev.as.cpack_add_component.depends = sv_copy_to_event_arena(ctx, opt.depends);
     ev.as.cpack_add_component.install_types = sv_copy_to_event_arena(ctx, opt.install_types);
+    ev.as.cpack_add_component.archive_file = sv_copy_to_event_arena(ctx, opt.archive_file);
+    ev.as.cpack_add_component.plist = sv_copy_to_event_arena(ctx, opt.plist);
     ev.as.cpack_add_component.required = opt.required;
     ev.as.cpack_add_component.hidden = opt.hidden;
     ev.as.cpack_add_component.disabled = opt.disabled;

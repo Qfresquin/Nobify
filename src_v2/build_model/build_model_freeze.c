@@ -422,6 +422,8 @@ static bool bm_freeze_copy_cpack(Build_Model_Freeze_Ctx *ctx,
             dst->display_name = bm_freeze_intern(ctx, src->display_name);
             dst->description = bm_freeze_intern(ctx, src->description);
             dst->group = bm_freeze_intern(ctx, src->group);
+            dst->archive_file = bm_freeze_intern(ctx, src->archive_file);
+            dst->plist = bm_freeze_intern(ctx, src->plist);
             dst->required = src->required;
             dst->hidden = src->hidden;
             dst->disabled = src->disabled;

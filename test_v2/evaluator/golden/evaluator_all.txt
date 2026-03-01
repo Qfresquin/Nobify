@@ -50,11 +50,11 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 targ
 DIAG errors=0 warnings=0
 EVENTS count=6
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CPackDemo' version='2.0' description='' languages='C;CXX'
-EV[1] kind=EV_CPACK_ADD_INSTALL_TYPE file='CMakeLists.txt' line=2 col=1 name='Full' display_name='Full'
-EV[2] kind=EV_CPACK_ADD_COMPONENT_GROUP file='CMakeLists.txt' line=3 col=1 name='base' display_name='Base Group' description='Core Group' parent_group='' expanded=0 bold_title=0
-EV[3] kind=EV_CPACK_ADD_COMPONENT file='CMakeLists.txt' line=4 col=1 name='core' display_name='Core' description='' group='' depends='' install_types='' required=0 hidden=0 disabled=0 downloaded=0
-EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='pkg_app' type=EXECUTABLE
-EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='pkg_app' path='main.c'
+EV[1] kind=EV_CPACK_ADD_INSTALL_TYPE file='CMakeLists.txt' line=3 col=1 name='Full' display_name='Full'
+EV[2] kind=EV_CPACK_ADD_COMPONENT_GROUP file='CMakeLists.txt' line=4 col=1 name='base' display_name='Base Group' description='Core Group' parent_group='' expanded=0 bold_title=0
+EV[3] kind=EV_CPACK_ADD_COMPONENT file='CMakeLists.txt' line=5 col=1 name='core' display_name='Core' description='' group='' depends='' install_types='' archive_file='core.txz' plist='core.plist' required=0 hidden=0 disabled=0 downloaded=0
+EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='pkg_app' type=EXECUTABLE
+EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='pkg_app' path='main.c'
 === END CASE ===
 
 === CASE golden_probes_and_try_compile ===

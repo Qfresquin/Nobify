@@ -665,6 +665,10 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.depends);
             nob_sb_append_cstr(sb, " install_types=");
             snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.install_types);
+            nob_sb_append_cstr(sb, " archive_file=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.archive_file);
+            nob_sb_append_cstr(sb, " plist=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_add_component.plist);
             nob_sb_append_cstr(sb, nob_temp_sprintf(" required=%d hidden=%d disabled=%d downloaded=%d",
                 ev->as.cpack_add_component.required ? 1 : 0,
                 ev->as.cpack_add_component.hidden ? 1 : 0,
@@ -2801,6 +2805,64 @@ TEST(evaluator_cmake_minimum_required_inside_function_applies_policy_not_variabl
     TEST_PASS();
 }
 
+TEST(evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(CPackGate)\n"
+        "cpack_add_component(core)\n"
+        "include(CPackComponent)\n"
+        "cpack_add_component(core DISPLAY_NAME Core ARCHIVE_FILE core.txz PLIST core.plist)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_gate_error = false;
+    bool saw_component_event = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Unknown command")) &&
+            nob_sv_eq(ev->as.diag.hint,
+                      nob_sv_from_cstr("include(CPackComponent) must be called before using this command"))) {
+            saw_gate_error = true;
+        }
+        if (ev->kind == EV_CPACK_ADD_COMPONENT &&
+            nob_sv_eq(ev->as.cpack_add_component.name, nob_sv_from_cstr("core")) &&
+            nob_sv_eq(ev->as.cpack_add_component.archive_file, nob_sv_from_cstr("core.txz")) &&
+            nob_sv_eq(ev->as.cpack_add_component.plist, nob_sv_from_cstr("core.plist"))) {
+            saw_component_event = true;
+        }
+    }
+    ASSERT(saw_gate_error);
+    ASSERT(saw_component_event);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -2852,6 +2914,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_policy_known_unknown_and_if_predicate(passed, failed);
     test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
+    test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

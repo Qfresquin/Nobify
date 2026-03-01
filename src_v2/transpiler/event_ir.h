@@ -296,6 +296,8 @@ typedef struct {
             String_View group;
             String_View depends; // semi-separated list
             String_View install_types; // semi-separated list
+            String_View archive_file;
+            String_View plist;
             bool required;
             bool hidden;
             bool disabled;

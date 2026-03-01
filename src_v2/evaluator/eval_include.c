@@ -33,6 +33,13 @@ static bool emit_dir_pop_event(Evaluator_Context *ctx, Cmake_Event_Origin origin
     return emit_event(ctx, ev);
 }
 
+static bool include_enables_cpack_component_commands(String_View arg) {
+    return eval_sv_eq_ci_lit(arg, "CPackComponent") ||
+           eval_sv_eq_ci_lit(arg, "CPackComponent.cmake") ||
+           eval_sv_eq_ci_lit(arg, "CPack") ||
+           eval_sv_eq_ci_lit(arg, "CPack.cmake");
+}
+
 bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -99,6 +106,12 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         if (eval_sv_eq_ci_lit(a.items[i], "NO_POLICY_SCOPE")) {
             no_policy_scope = true;
         }
+    }
+
+    // CPack component commands are provided by CPackComponent (and by CPack, which includes it).
+    if (include_enables_cpack_component_commands(file_path)) {
+        ctx->cpack_component_module_loaded = true;
+        return !eval_should_stop(ctx);
     }
 
     if (!eval_sv_is_abs_path(file_path)) {

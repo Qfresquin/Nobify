@@ -2290,6 +2290,16 @@ String_View build_cpack_component_get_group(const CPack_Component *component) {
     return component->group;
 }
 
+String_View build_cpack_component_get_archive_file(const CPack_Component *component) {
+    if (!component) return sv_from_cstr("");
+    return component->archive_file;
+}
+
+String_View build_cpack_component_get_plist(const CPack_Component *component) {
+    if (!component) return sv_from_cstr("");
+    return component->plist;
+}
+
 const String_List* build_cpack_component_get_depends(const CPack_Component *component) {
     if (!component) return &g_empty_string_list;
     return &component->depends;
@@ -2412,6 +2422,16 @@ void build_cpack_component_set_description(CPack_Component *component, String_Vi
 void build_cpack_component_set_group(CPack_Component *component, String_View group) {
     if (!component) return;
     component->group = group;
+}
+
+void build_cpack_component_set_archive_file(CPack_Component *component, String_View archive_file) {
+    if (!component) return;
+    component->archive_file = archive_file;
+}
+
+void build_cpack_component_set_plist(CPack_Component *component, String_View plist) {
+    if (!component) return;
+    component->plist = plist;
 }
 
 void build_cpack_component_add_dependency(CPack_Component *component, Arena *arena, String_View dependency) {

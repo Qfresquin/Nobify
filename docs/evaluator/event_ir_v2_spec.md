@@ -108,7 +108,7 @@ Payload mapping (`Cmake_Event.as.*`):
 | `EV_INSTALL_ADD_RULE` | `install_add_rule` | `rule_type`, `item`, `destination` |
 | `EV_CPACK_ADD_INSTALL_TYPE` | `cpack_add_install_type` | `name`, `display_name` |
 | `EV_CPACK_ADD_COMPONENT_GROUP` | `cpack_add_component_group` | `name`, `display_name`, `description`, `parent_group`, `expanded`, `bold_title` |
-| `EV_CPACK_ADD_COMPONENT` | `cpack_add_component` | `name`, `display_name`, `description`, `group`, `depends`, `install_types`, `required`, `hidden`, `disabled`, `downloaded` |
+| `EV_CPACK_ADD_COMPONENT` | `cpack_add_component` | `name`, `display_name`, `description`, `group`, `depends`, `install_types`, `archive_file`, `plist`, `required`, `hidden`, `disabled`, `downloaded` |
 | `EV_FIND_PACKAGE` | `find_package` | `package_name`, `mode`, `required`, `found`, `location` |
 
 `commands*` indicates dynamic `String_View` arrays plus `command_count`.

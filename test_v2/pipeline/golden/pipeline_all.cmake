@@ -25,6 +25,7 @@ install(DIRECTORY assets DESTINATION share/assets)
 
 #@@CASE pipeline_positive_cpack
 project(PipePack)
+include(CPackComponent)
 cpack_add_install_type(Full DISPLAY_NAME "Full Install")
 cpack_add_component_group(base DISPLAY_NAME "Base" DESCRIPTION "Base Group")
 cpack_add_component(core DISPLAY_NAME "Core" GROUP base INSTALL_TYPES Full REQUIRED)
@@ -32,17 +33,20 @@ cpack_add_component(core DISPLAY_NAME "Core" GROUP base INSTALL_TYPES Full REQUI
 
 #@@CASE pipeline_negative_cpack_unknown_group
 project(BadPackGroup)
+include(CPackComponent)
 cpack_add_component(core GROUP missing)
 #@@ENDCASE
 
 #@@CASE pipeline_negative_cpack_unknown_dependency
 project(BadPackDepends)
+include(CPackComponent)
 cpack_add_install_type(Full)
 cpack_add_component(core DEPENDS missing INSTALL_TYPES Full)
 #@@ENDCASE
 
 #@@CASE pipeline_negative_cpack_unknown_install_type
 project(BadPackInstallType)
+include(CPackComponent)
 cpack_add_component(core INSTALL_TYPES MissingType)
 #@@ENDCASE
 

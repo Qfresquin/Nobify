@@ -988,6 +988,12 @@ static bool builder_handle_event_cpack_add_component(Build_Model_Builder *builde
     if (ev->as.cpack_add_component.group.count > 0) {
         build_cpack_component_set_group(component, ev->as.cpack_add_component.group);
     }
+    if (ev->as.cpack_add_component.archive_file.count > 0) {
+        build_cpack_component_set_archive_file(component, ev->as.cpack_add_component.archive_file);
+    }
+    if (ev->as.cpack_add_component.plist.count > 0) {
+        build_cpack_component_set_plist(component, ev->as.cpack_add_component.plist);
+    }
 
     build_cpack_component_set_required(component, ev->as.cpack_add_component.required);
     build_cpack_component_set_hidden(component, ev->as.cpack_add_component.hidden);

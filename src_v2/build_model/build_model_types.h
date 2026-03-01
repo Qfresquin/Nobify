@@ -125,6 +125,8 @@ typedef struct {
     String_View display_name;
     String_View description;
     String_View group;
+    String_View archive_file;
+    String_View plist;
     String_List depends;
     String_List install_types;
     bool required;

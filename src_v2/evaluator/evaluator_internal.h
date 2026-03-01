@@ -148,6 +148,7 @@ struct Evaluator_Context {
     Eval_Policy_Level *policy_levels;
     size_t policy_depth;
     size_t policy_capacity;
+    bool cpack_component_module_loaded;
 
     size_t loop_depth;
     bool break_requested;
