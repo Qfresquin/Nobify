@@ -1396,6 +1396,134 @@ TEST(evaluator_unset_env_rejects_options) {
     TEST_PASS();
 }
 
+TEST(evaluator_set_cache_cmp0126_old_and_new_semantics) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CACHE_OLD local_old)\n"
+        "set(CACHE_OLD cache_old CACHE STRING \"doc\")\n"
+        "add_executable(cache_old_t main.c)\n"
+        "target_compile_definitions(cache_old_t PRIVATE OLD_CA=${CACHE_OLD})\n"
+        "cmake_policy(SET CMP0126 NEW)\n"
+        "set(CACHE_NEW local_new)\n"
+        "set(CACHE_NEW cache_new CACHE STRING \"doc\" FORCE)\n"
+        "add_executable(cache_new_t main.c)\n"
+        "target_compile_definitions(cache_new_t PRIVATE NEW_CB=${CACHE_NEW})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_old_binding_from_cache = false;
+    bool saw_new_binding_from_local = false;
+    bool saw_cache_old_set = false;
+    bool saw_cache_new_set = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_SET_CACHE_ENTRY) {
+            if (nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("CACHE_OLD")) &&
+                nob_sv_eq(ev->as.cache_entry.value, nob_sv_from_cstr("cache_old"))) {
+                saw_cache_old_set = true;
+            }
+            if (nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("CACHE_NEW")) &&
+                nob_sv_eq(ev->as.cache_entry.value, nob_sv_from_cstr("cache_new"))) {
+                saw_cache_new_set = true;
+            }
+        }
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OLD_CA=cache_old"))) {
+            saw_old_binding_from_cache = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("NEW_CB=local_new"))) {
+            saw_new_binding_from_local = true;
+        }
+    }
+    ASSERT(saw_cache_old_set);
+    ASSERT(saw_cache_new_set);
+    ASSERT(saw_old_binding_from_cache);
+    ASSERT(saw_new_binding_from_local);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_set_cache_policy_version_defaults_cmp0126_to_new) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "set(CACHE_VER local_ver)\n"
+        "set(CACHE_VER cache_ver CACHE STRING \"doc\")\n"
+        "add_executable(cache_ver_t main.c)\n"
+        "target_compile_definitions(cache_ver_t PRIVATE VER=${CACHE_VER})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_cache_ver_set = false;
+    bool saw_local_binding = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_SET_CACHE_ENTRY &&
+            nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("CACHE_VER")) &&
+            nob_sv_eq(ev->as.cache_entry.value, nob_sv_from_cstr("cache_ver"))) {
+            saw_cache_ver_set = true;
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("VER=local_ver"))) {
+            saw_local_binding = true;
+        }
+    }
+    ASSERT(saw_cache_ver_set);
+    ASSERT(saw_local_binding);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1427,6 +1555,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_message_configure_log_persists_yaml_file(passed, failed);
     test_evaluator_set_and_unset_env_forms(passed, failed);
     test_evaluator_unset_env_rejects_options(passed, failed);
+    test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
+    test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

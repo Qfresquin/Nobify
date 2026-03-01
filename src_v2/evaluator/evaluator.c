@@ -135,6 +135,11 @@ static Eval_Var_Entry *eval_scope_var_find(Eval_Var_Entry *vars, String_View key
     return stbds_shgetp_null(vars, nob_temp_sv_to_cstr(key));
 }
 
+static Eval_Cache_Entry *eval_cache_var_find(Eval_Cache_Entry *entries, String_View key) {
+    if (!entries || !key.data) return NULL;
+    return stbds_shgetp_null(entries, nob_temp_sv_to_cstr(key));
+}
+
 static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
     if (!ctx) return NULL;
     char *buf = (char*)arena_alloc(ctx->event_arena, key.count + 1);
@@ -151,6 +156,8 @@ String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
         Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return b->value;
     }
+    Eval_Cache_Entry *ce = eval_cache_var_find(ctx->cache_entries, key);
+    if (ce) return ce->value.data;
     return nob_sv_from_cstr("");
 }
 
@@ -191,6 +198,7 @@ bool eval_var_defined(Evaluator_Context *ctx, String_View key) {
         Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return true;
     }
+    if (eval_cache_var_find(ctx->cache_entries, key)) return true;
     return false;
 }
 
@@ -1349,6 +1357,10 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 void evaluator_destroy(Evaluator_Context *ctx) {
     if (!ctx) return;
     eval_file_lock_cleanup(ctx);
+    if (ctx->cache_entries) {
+        stbds_shfree(ctx->cache_entries);
+        ctx->cache_entries = NULL;
+    }
     for (size_t i = 0; i < ctx->scope_depth; i++) {
         if (ctx->scopes[i].vars) {
             stbds_shfree(ctx->scopes[i].vars);

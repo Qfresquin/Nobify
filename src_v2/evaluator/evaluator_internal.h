@@ -31,6 +31,17 @@ typedef struct Eval_Var_Entry {
     String_View value;
 } Eval_Var_Entry;
 
+typedef struct {
+    String_View data;
+    String_View type;
+    String_View doc;
+} Eval_Cache_Value;
+
+typedef struct Eval_Cache_Entry {
+    char *key;
+    Eval_Cache_Value value;
+} Eval_Cache_Entry;
+
 typedef struct Var_Scope {
     Eval_Var_Entry *vars;
 } Var_Scope;
@@ -121,6 +132,7 @@ struct Evaluator_Context {
     Var_Scope *scopes;
     size_t scope_depth;
     size_t scope_capacity;
+    Eval_Cache_Entry *cache_entries;
 
     SV_List known_targets; 
     SV_List alias_targets;

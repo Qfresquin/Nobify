@@ -37,7 +37,7 @@ Status snapshot sources:
 | `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
 | `cmake_minimum_required` | `PARTIAL` | `NOOP_WARN` | Policy-version side effects are reduced to evaluator policy model and do not reflect complete CMake policy activation surface. | `Medium` |
 | `cmake_path` | `PARTIAL` | `ERROR_CONTINUE` | Subset of modes implemented (see subcommand matrix). | `Medium` |
-| `cmake_policy` | `PARTIAL` | `NOOP_WARN` | Command syntax is implemented, but effective policy semantics are only modeled for a narrow subset (`CMP0124` behavior coverage). | `Medium` |
+| `cmake_policy` | `PARTIAL` | `NOOP_WARN` | Command syntax is implemented, but effective policy semantics are only modeled for a narrow subset (`CMP0124`, `CMP0126`). | `Medium` |
 | `continue` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`continue()`). | - |
 | `cpack_add_component` | `PARTIAL` | `NOOP_WARN` | Valid options `ARCHIVE_FILE` and `PLIST` are missing from implementation. | `Medium` |
 | `cpack_add_component_group` | `PARTIAL` | `NOOP_WARN` | In CMake these commands are provided by `CPackComponent` module; evaluator exposes them as always-available built-ins. | `Medium` |
@@ -57,7 +57,7 @@ Status snapshot sources:
 | `message` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented modes (`NOTICE/STATUS/VERBOSE/DEBUG/TRACE/WARNING/AUTHOR_WARNING/DEPRECATION/SEND_ERROR/FATAL_ERROR/CHECK_*/CONFIGURE_LOG`). | - |
 | `project` | `PARTIAL` | `NOOP_WARN` | Reduced signature support (e.g. missing `HOMEPAGE_URL`, reduced language-signature handling and variable surface). | `Medium` |
 | `return` | `PARTIAL` | `NOOP_WARN` | CMake states `macro()` cannot handle `return()`; evaluator allows it (warning only), changing control-flow outcome in macro contexts. | `Medium` |
-| `set` | `PARTIAL` | `NOOP_WARN` | Reduced support for `CACHE` detail semantics (`type/doc/force` modeling remains partial). | `Medium` |
+| `set` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`set(<var> <value>... [PARENT_SCOPE])`, `set(<var> <value>... CACHE <type> <doc> [FORCE])`, `set(ENV{<var>} [<value>])`). | - |
 | `set_property` | `PARTIAL` | `ERROR_CONTINUE` | Scope coverage exists; parity for all CMake property semantics is not complete. | `Medium` |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
@@ -140,7 +140,7 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 | Signature | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
 | `set(<var> <value>... [PARENT_SCOPE])` | Supported | Supported | None for this signature |
-| `set(<var> <value>... CACHE <type> <doc> [FORCE])` | Supported | Reduced cache parsing; type/doc/force semantics not fully modeled | `Medium` |
+| `set(<var> <value>... CACHE <type> <doc> [FORCE])` | Supported | Supported (including `INTERNAL` implies `FORCE`, untyped-cache type promotion, and `CMP0126` OLD/NEW local-binding behavior) | None for this signature |
 | `set(ENV{<var>} [<value>])` | Supported | Supported | None for this signature |
 
 ### `unset()`
@@ -196,7 +196,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`block`, `break`, `continue`, `endblock`, `math`, `message`, `set_target_properties`, `unset`.
+`block`, `break`, `continue`, `endblock`, `math`, `message`, `set`, `set_target_properties`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

@@ -15,6 +15,8 @@ typedef struct {
 static const Eval_Policy_Default_Entry POLICY_DEFAULTS[] = {
     // CMP0124 (foreach loop variable scope) defaults to NEW for policy-version >= 3.21.
     {"CMP0124", POLICY_STATUS_OLD, POLICY_STATUS_NEW, EVAL_POLICY_SCOPE_FLOW_BLOCK, EVAL_POLICY_IMPL_SUPPORTED, 3, 21, 0},
+    // CMP0126 (set(CACHE) local-variable removal behavior) defaults to NEW for policy-version >= 3.21.
+    {"CMP0126", POLICY_STATUS_OLD, POLICY_STATUS_NEW, EVAL_POLICY_SCOPE_FLOW_BLOCK, EVAL_POLICY_IMPL_SUPPORTED, 3, 21, 0},
 };
 static const size_t POLICY_DEFAULTS_COUNT = sizeof(POLICY_DEFAULTS) / sizeof(POLICY_DEFAULTS[0]);
 
@@ -96,7 +98,7 @@ bool eval_policy_get_default_entry(String_View policy_id, Eval_Policy_Default_En
 bool eval_policy_is_supported_flow_block(String_View policy_id) {
     Eval_Policy_Default_Entry entry = {0};
     if (!eval_policy_get_default_entry(policy_id, &entry)) return false;
-    return entry.scope == EVAL_POLICY_SCOPE_FLOW_BLOCK;
+    return entry.status == EVAL_POLICY_IMPL_SUPPORTED;
 }
 
 static bool policy_parse_depth(String_View sv, size_t *out_depth) {

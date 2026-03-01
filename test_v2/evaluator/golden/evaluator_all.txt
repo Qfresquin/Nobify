@@ -153,7 +153,7 @@ EV[1] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=4 col=1 key='U_CACHE' v
 EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='unset_local_cache' type=EXECUTABLE
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='unset_local_cache' path='main.c'
 EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_LOCAL=' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_CACHE=cached' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_CACHE=' vis=PRIVATE
 === END CASE ===
 
 === CASE vars_unset_parent_scope_mode ===
