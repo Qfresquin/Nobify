@@ -46,7 +46,7 @@ Status snapshot sources:
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
 | `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (see matrix). | `Medium` |
 | `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, and `CMAKE_FIND_PACKAGE_PREFER_CONFIG`). | - |
-| `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including module resolution through `CMAKE_MODULE_PATH` and `CMAKE_ROOT/Modules` fallback when available. | - |
+| `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including `CMAKE_MODULE_PATH`/`CMAKE_ROOT/Modules` lookup and `CMP0017` search-order behavior (`NEW` vs `OLD`). | - |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
 | `include_guard` | `PARTIAL` | `NOOP_WARN` | Default no-arg scope in CMake matches variable scope, while evaluator defaults to directory-style guarding; unsupported modes are downgraded to warning+fallback. | `Medium` |
 | `install` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator event-model install surface (core + advanced signatures emitted as install rules). | - |

@@ -79,8 +79,33 @@ static bool include_has_cmake_extension(String_View value) {
     return eval_sv_eq_ci_lit(tail, k_suffix);
 }
 
+static bool include_path_is_same_or_child(String_View path, String_View base) {
+    if (path.count < base.count) return false;
+    if (!nob_sv_eq(nob_sv_from_parts(path.data, base.count), base)) return false;
+    if (path.count == base.count) return true;
+    return path.data[base.count] == '/' || path.data[base.count] == '\\';
+}
+
+static bool include_find_module_candidate_in_dir(Evaluator_Context *ctx,
+                                                 String_View dir,
+                                                 const String_View *candidates,
+                                                 size_t candidate_count,
+                                                 String_View *out_path) {
+    if (!ctx || !out_path || !candidates) return false;
+    for (size_t ci = 0; ci < candidate_count; ci++) {
+        String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, candidates[ci]);
+        candidate = eval_sv_path_normalize_temp(ctx, candidate);
+        if (include_file_exists_sv(ctx, candidate)) {
+            *out_path = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool include_try_module_search(Evaluator_Context *ctx,
                                       String_View module_name,
+                                      String_View current_list_dir,
                                       String_View current_source_dir,
                                       String_View *out_path) {
     if (!ctx || !out_path || module_name.count == 0) return false;
@@ -100,6 +125,26 @@ static bool include_try_module_search(Evaluator_Context *ctx,
         return false;
     }
 
+    String_View modules_dir = nob_sv_from_cstr("");
+    String_View cmake_root = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_ROOT"));
+    if (cmake_root.count > 0) {
+        modules_dir = eval_sv_path_join(eval_temp_arena(ctx), cmake_root, nob_sv_from_cstr("Modules"));
+        modules_dir = eval_sv_path_normalize_temp(ctx, modules_dir);
+    }
+
+    bool cmp0017_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0017")), "NEW");
+    bool search_builtin_first = false;
+    if (cmp0017_new && modules_dir.count > 0 && current_list_dir.count > 0) {
+        String_View normalized_list_dir = eval_sv_path_normalize_temp(ctx, current_list_dir);
+        search_builtin_first = include_path_is_same_or_child(normalized_list_dir, modules_dir);
+    }
+
+    if (search_builtin_first && modules_dir.count > 0) {
+        if (include_find_module_candidate_in_dir(ctx, modules_dir, candidates, candidate_count, out_path)) {
+            return true;
+        }
+    }
+
     for (size_t di = 0; di < module_dirs.count; di++) {
         String_View dir = module_dirs.items[di];
         if (dir.count == 0) continue;
@@ -109,27 +154,14 @@ static bool include_try_module_search(Evaluator_Context *ctx,
         } else {
             dir = eval_sv_path_normalize_temp(ctx, dir);
         }
-        for (size_t ci = 0; ci < candidate_count; ci++) {
-            String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, candidates[ci]);
-            candidate = eval_sv_path_normalize_temp(ctx, candidate);
-            if (include_file_exists_sv(ctx, candidate)) {
-                *out_path = candidate;
-                return true;
-            }
+        if (include_find_module_candidate_in_dir(ctx, dir, candidates, candidate_count, out_path)) {
+            return true;
         }
     }
 
-    String_View cmake_root = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_ROOT"));
-    if (cmake_root.count > 0) {
-        String_View modules_dir = eval_sv_path_join(eval_temp_arena(ctx), cmake_root, nob_sv_from_cstr("Modules"));
-        modules_dir = eval_sv_path_normalize_temp(ctx, modules_dir);
-        for (size_t ci = 0; ci < candidate_count; ci++) {
-            String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), modules_dir, candidates[ci]);
-            candidate = eval_sv_path_normalize_temp(ctx, candidate);
-            if (include_file_exists_sv(ctx, candidate)) {
-                *out_path = candidate;
-                return true;
-            }
+    if (!search_builtin_first && modules_dir.count > 0) {
+        if (include_find_module_candidate_in_dir(ctx, modules_dir, candidates, candidate_count, out_path)) {
+            return true;
         }
     }
 
@@ -166,7 +198,7 @@ static bool include_resolve_target(Evaluator_Context *ctx,
     }
 
     if (has_sep) return false;
-    return include_try_module_search(ctx, file_or_module, current_src_dir, out_resolved);
+    return include_try_module_search(ctx, file_or_module, current_list_dir, current_src_dir, out_resolved);
 }
 
 bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {

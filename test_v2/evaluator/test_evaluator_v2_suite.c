@@ -1191,6 +1191,68 @@ TEST(evaluator_include_validates_options_strictly) {
     TEST_PASS();
 }
 
+TEST(evaluator_include_cmp0017_search_order_from_builtin_modules) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY user_mods)\n"
+        "file(MAKE_DIRECTORY fake_root/Modules)\n"
+        "file(WRITE user_mods/Foo.cmake [=[set(PICK user)\n]=])\n"
+        "file(WRITE fake_root/Modules/Foo.cmake [=[set(PICK root)\n]=])\n"
+        "file(WRITE fake_root/Modules/Caller.cmake [=[include(Foo)\n]=])\n"
+        "set(CMAKE_MODULE_PATH user_mods)\n"
+        "set(CMAKE_ROOT fake_root)\n"
+        "cmake_policy(SET CMP0017 OLD)\n"
+        "include(fake_root/Modules/Caller.cmake)\n"
+        "set(PICK_OLD ${PICK})\n"
+        "unset(PICK)\n"
+        "cmake_policy(SET CMP0017 NEW)\n"
+        "include(fake_root/Modules/Caller.cmake)\n"
+        "set(PICK_NEW ${PICK})\n"
+        "add_executable(include_cmp0017_probe main.c)\n"
+        "target_compile_definitions(include_cmp0017_probe PRIVATE PICK_OLD=${PICK_OLD} PICK_NEW=${PICK_NEW})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_pick_old = false;
+    bool saw_pick_new = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("include_cmp0017_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("PICK_OLD=user"))) saw_pick_old = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("PICK_NEW=root"))) saw_pick_new = true;
+    }
+    ASSERT(saw_pick_old);
+    ASSERT(saw_pick_new);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_add_test_name_signature_parses_supported_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3478,6 +3540,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
     test_evaluator_include_supports_result_variable_optional_and_module_search(passed, failed);
     test_evaluator_include_validates_options_strictly(passed, failed);
+    test_evaluator_include_cmp0017_search_order_from_builtin_modules(passed, failed);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed);
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
