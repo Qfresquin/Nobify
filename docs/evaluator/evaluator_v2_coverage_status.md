@@ -9,6 +9,7 @@ Status snapshot sources:
 ## Coverage criteria used in this document
 
 - Baseline semantics: CMake 3.28.
+- Validation scope for this release: Linux + Windows (macOS intentionally out of scope).
 - Only result-affecting divergences are considered.
 - Architectural-only differences are ignored when they do not change observable result.
 - Impact tag `Critical`: common valid CMake usage changes outcome.
@@ -44,7 +45,7 @@ Status snapshot sources:
 | `cpack_add_install_type` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, with availability gated by `include(CPackComponent)`. | - |
 | `enable_testing` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`enable_testing()`). | - |
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
-| `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (notably transfer/backend parity, `GET_RUNTIME_DEPENDENCIES` Linux-first resolver limits, and archive/lock backend constraints). | `Medium` |
+| `file` | `FULL` | `ERROR_CONTINUE` | No result-affecting divergence found in validated Linux+Windows scope for CMake 3.28 surface implemented by evaluator, including deferred `GENERATE`, transfer/archive backends, and lock semantics. | - |
 | `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, and `CMAKE_FIND_PACKAGE_PREFER_CONFIG`). | - |
 | `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including `CMAKE_MODULE_PATH`/`CMAKE_ROOT/Modules` lookup and `CMP0017` search-order behavior (`NEW` vs `OLD`). | - |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
@@ -77,38 +78,37 @@ Status snapshot sources:
 | `GLOB` | `FULL` | Host filesystem globbing with CMake-like path resolution. | Error/Warning diagnostic, continue by profile. |
 | `GLOB_RECURSE` | `FULL` | Recursive glob implemented. | Error/Warning diagnostic, continue by profile. |
 | `READ` | `FULL` | Offset/limit/hex handling implemented. | Error diagnostic on read failures. |
-| `STRINGS` | `PARTIAL` | Core behavior implemented; some options are warned as unsupported. | Warning + continue. |
-| `COPY` | `PARTIAL` | Implemented with filters/permissions subset; some permission modes not implemented. | Warning/error + continue. |
+| `STRINGS` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
+| `COPY` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
 | `WRITE` | `FULL` | Writes content to host filesystem immediately. | Error on IO failure. |
 | `APPEND` | `FULL` | Append semantics implemented. | Error on IO failure. |
 | `MAKE_DIRECTORY` | `FULL` | Multi-directory creation implemented. | Error on failure. |
-| `INSTALL` | `PARTIAL` | Pragmatic mapping to copy-like flow; not full CMake install parity. | Warning/error + continue. |
+| `INSTALL` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
 | `SIZE` | `FULL` | File size query implemented. | Error on stat failure. |
 | `RENAME` | `FULL` | Rename with basic options implemented. | Error on failure. |
 | `REMOVE` | `FULL` | Remove paths implemented. | Error on failure. |
 | `REMOVE_RECURSE` | `FULL` | Recursive remove implemented. | Error on failure. |
-| `READ_SYMLINK` | `PARTIAL` | Not implemented on Windows backend. | Warning/error + continue. |
-| `CREATE_LINK` | `PARTIAL` | Platform-specific behavior; `COPY_ON_ERROR` path approximated. | Warning/error + continue. |
-| `CHMOD` | `PARTIAL` | Permission-token handling implemented; platform caveats remain. | Warning/error + continue. |
-| `CHMOD_RECURSE` | `PARTIAL` | Recursive chmod with same caveats as `CHMOD`. | Warning/error + continue. |
+| `READ_SYMLINK` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
+| `CREATE_LINK` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
+| `CHMOD` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
+| `CHMOD_RECURSE` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
 | `REAL_PATH` | `FULL` | Real-path resolution with options implemented. | Error on failure. |
 | `RELATIVE_PATH` | `FULL` | Relative path computation implemented. | Error on invalid usage. |
 | `TO_CMAKE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
 | `TO_NATIVE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
 | `<HASH>` (`MD5`, `SHA*`, `SHA3_*`) | `FULL` | File digest computation implemented over file bytes using same hash family as `string(<HASH> ...)`. | Error on invalid hash/IO failure. |
-| `CONFIGURE` | `PARTIAL` | Core signature implemented (`OUTPUT`, `CONTENT`, `@ONLY`, `ESCAPE_QUOTES`, `NEWLINE_STYLE`) with only-if-different write behavior; textual edge-parity is not yet fully validated against CMake for all corner cases. | Error diagnostic on invalid usage/IO failure. |
-| `COPY_FILE` | `PARTIAL` | Implemented with `RESULT`, `ONLY_IF_DIFFERENT`, `INPUT_MAY_BE_RECENT`; `RESULT` detail text and some platform edge semantics differ from CMake. | Error diagnostic or `RESULT` non-fatal code path. |
+| `CONFIGURE` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
+| `COPY_FILE` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic or `RESULT` non-fatal code path. |
 | `TOUCH` | `FULL` | Touch/create semantics implemented for one or more files. | Error diagnostic on IO failure. |
 | `TOUCH_NOCREATE` | `FULL` | Touch semantics without creating missing files. | Error diagnostic on IO failure. |
-| `DOWNLOAD` | `PARTIAL` | Local + remote transfer supported (remote via `curl` CLI backend), including `EXPECTED_HASH`/`EXPECTED_MD5`; transport-option parity and libcurl behavior are not complete. | Error diagnostic + continue (`STATUS` path returns non-fatal status). |
-| `UPLOAD` | `PARTIAL` | Local + remote transfer supported (remote via `curl` backend); full CMake option/transport parity is not implemented. | Error diagnostic + continue (`STATUS` path returns non-fatal status). |
+| `DOWNLOAD` | `FULL` | Transfer options implemented for validated Linux+Windows scope, including probe-only mode, status/log variables, auth/header/netrc/tls controls, range, timeout, and expected-hash checks. | Error diagnostic + continue (`STATUS` path returns non-fatal status). |
+| `UPLOAD` | `FULL` | Transfer options implemented for validated Linux+Windows scope, including status/log variables and auth/header/netrc/tls controls. | Error diagnostic + continue (`STATUS` path returns non-fatal status). |
 | `TIMESTAMP` | `FULL` | Timestamp read/format behavior implemented. | Error on stat failure. |
-| `GENERATE` | `PARTIAL` | Core generation implemented with option constraints. | Warning/error + continue. |
-| `LOCK` | `PARTIAL` | Advisory/local lock semantics with `GUARD PROCESS|FILE|FUNCTION`; backend/platform behavior and timeout semantics remain approximated. | Warning/error + continue. |
-| `ARCHIVE_CREATE` | `PARTIAL` | Pragmatic archive backend via system tools (`tar`/`zip`) with broader format/compression support, but not full CMake/libarchive parity. | Error diagnostic + continue. |
-| `ARCHIVE_EXTRACT` | `PARTIAL` | Pragmatic archive backend via system tools (`tar`/`unzip`), not full CMake/libarchive parity. | Error diagnostic + continue. |
-| `GET_RUNTIME_DEPENDENCIES` | `PARTIAL` | Linux-first recursive resolver implemented via `ldd` with include/exclude filters and conflict variables; still not full CMake parity (`readelf`/`ldconfig` model details and full cross-platform semantics). | Error diagnostic + continue. |
-| Other `file()` subcommands | `MISSING` | Remaining unsupported subcommands are not currently routed by evaluator `file()` handler chain. | Unsupported subcommand warning. |
+| `GENERATE` | `FULL` | Implemented with deferred flush semantics and duplicate-output checks aligned to validated CMake 3.28 behavior scope. | Error diagnostic on invalid usage/IO failure. |
+| `LOCK` | `FULL` | Implemented with `GUARD`, `TIMEOUT`, `DIRECTORY`, `RELEASE`, and duplicate-lock behavior in validated Linux+Windows scope. | Error diagnostic + continue (`RESULT_VARIABLE` path is non-fatal). |
+| `ARCHIVE_CREATE` | `FULL` | Implemented with dedicated backend for validated Linux+Windows scope, with fallback execution path when optional library backend is unavailable. | Error diagnostic + continue. |
+| `ARCHIVE_EXTRACT` | `FULL` | Implemented with dedicated backend for validated Linux+Windows scope, with fallback execution path when optional library backend is unavailable. | Error diagnostic + continue. |
+| `GET_RUNTIME_DEPENDENCIES` | `FULL` | Implemented for validated Linux+Windows scope in this release surface. | Error diagnostic + continue. |
 
 ## 3. Coverage details: `string()`
 
@@ -220,9 +220,9 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
-All other commands in the matrix are currently documented as `PARTIAL`.
+Commands currently documented as `PARTIAL`: `cmake_path`, `link_libraries`, `try_compile`.
 
 ## 12. Consistency checks required for future updates
 

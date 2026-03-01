@@ -1,9 +1,12 @@
 #include "eval_file_internal.h"
 #include "eval_expr.h"
+#include "eval_file_backend_archive.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
 
 #include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #if defined(_WIN32)
@@ -141,7 +144,7 @@ void eval_file_lock_cleanup(Evaluator_Context *ctx) {
     ctx->file_locks.count = 0;
 }
 
-static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, int fd_or_dummy, int guard_kind) {
+static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_t fd_or_dummy, int guard_kind) {
     if (!ctx) return false;
     if (!arena_da_reserve(ctx->event_arena,
                           (void**)&ctx->file_locks.items,
@@ -159,7 +162,7 @@ static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, int fd_
 #if defined(_WIN32)
     lock.handle = (void*)(uintptr_t)fd_or_dummy;
 #else
-    lock.fd = fd_or_dummy;
+    lock.fd = (int)fd_or_dummy;
 #endif
     ctx->file_locks.items[ctx->file_locks.count++] = lock;
     return true;
@@ -207,106 +210,273 @@ static String_View file_apply_newline_style_temp(Evaluator_Context *ctx, String_
     return nob_sv_from_parts(buf, out);
 }
 
+static bool file_generate_is_keyword(String_View t) {
+    return eval_sv_eq_ci_lit(t, "OUTPUT") ||
+           eval_sv_eq_ci_lit(t, "INPUT") ||
+           eval_sv_eq_ci_lit(t, "CONTENT") ||
+           eval_sv_eq_ci_lit(t, "CONDITION") ||
+           eval_sv_eq_ci_lit(t, "TARGET") ||
+           eval_sv_eq_ci_lit(t, "NO_SOURCE_PERMISSIONS") ||
+           eval_sv_eq_ci_lit(t, "USE_SOURCE_PERMISSIONS") ||
+           eval_sv_eq_ci_lit(t, "FILE_PERMISSIONS") ||
+           eval_sv_eq_ci_lit(t, "NEWLINE_STYLE");
+}
+
+static bool file_generate_enqueue_job(Evaluator_Context *ctx, const Eval_File_Generate_Job *job) {
+    if (!ctx || !job) return false;
+    if (!arena_da_reserve(ctx->event_arena,
+                          (void**)&ctx->file_generate_jobs.items,
+                          &ctx->file_generate_jobs.capacity,
+                          sizeof(ctx->file_generate_jobs.items[0]),
+                          ctx->file_generate_jobs.count + 1)) {
+        return ctx_oom(ctx);
+    }
+    ctx->file_generate_jobs.items[ctx->file_generate_jobs.count++] = *job;
+    return true;
+}
+
+static bool file_read_content_temp(Evaluator_Context *ctx, String_View path, String_View *out_content, struct stat *out_st, bool *out_have_st) {
+    if (!ctx || !out_content) return false;
+    *out_content = nob_sv_from_cstr("");
+    if (out_have_st) *out_have_st = false;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path_c, &sb)) return false;
+    char *dup = (char*)arena_alloc(eval_temp_arena(ctx), sb.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dup, false);
+    if (sb.count > 0) memcpy(dup, sb.items, sb.count);
+    dup[sb.count] = '\0';
+    *out_content = nob_sv_from_parts(dup, sb.count);
+    nob_sb_free(sb);
+
+    if (out_have_st && out_st && stat(path_c, out_st) == 0) *out_have_st = true;
+    return true;
+}
+
+static bool file_path_content_same(Evaluator_Context *ctx, String_View path, String_View content, bool *out_same) {
+    if (!ctx || !out_same) return false;
+    *out_same = false;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path_c, &sb)) return true;
+    String_View current = nob_sv_from_parts(sb.items, sb.count);
+    *out_same = nob_sv_eq(current, content);
+    nob_sb_free(sb);
+    return true;
+}
+
 static bool handle_file_generate(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    String_View output = nob_sv_from_cstr("");
-    String_View input = nob_sv_from_cstr("");
-    String_View content = nob_sv_from_cstr("");
-    String_View condition = nob_sv_from_cstr("");
-    String_View newline_style = nob_sv_from_cstr("");
-    bool has_input = false;
-    bool has_content = false;
-    bool use_source_permissions = false;
-    bool has_file_permissions = false;
-    mode_t file_mode = 0;
+    Eval_File_Generate_Job job = {0};
+    mode_t parsed_mode = 0;
+    job.origin = o;
+    job.command_name = node->as.cmd.name;
 
     for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "OUTPUT") && i + 1 < args.count) {
-            output = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "INPUT") && i + 1 < args.count) {
-            has_input = true;
-            input = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "CONTENT") && i + 1 < args.count) {
-            has_content = true;
-            content = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "CONDITION") && i + 1 < args.count) {
-            condition = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "NEWLINE_STYLE") && i + 1 < args.count) {
-            newline_style = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "USE_SOURCE_PERMISSIONS")) {
-            use_source_permissions = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "FILE_PERMISSIONS")) {
-            has_file_permissions = true;
-            while (i + 1 < args.count) {
-                if (eval_sv_eq_ci_lit(args.items[i + 1], "OUTPUT") ||
-                    eval_sv_eq_ci_lit(args.items[i + 1], "INPUT") ||
-                    eval_sv_eq_ci_lit(args.items[i + 1], "CONTENT") ||
-                    eval_sv_eq_ci_lit(args.items[i + 1], "CONDITION") ||
-                    eval_sv_eq_ci_lit(args.items[i + 1], "NEWLINE_STYLE")) {
-                    break;
-                }
+        if (eval_sv_eq_ci_lit(args.items[i], "OUTPUT")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(GENERATE) OUTPUT requires a value"), args.items[i]);
+                return true;
+            }
+            String_View out_path = nob_sv_from_cstr("");
+            if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[++i], eval_file_current_bin_dir(ctx), &out_path)) return true;
+            job.output_path = sv_copy_to_event_arena(ctx, out_path);
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "INPUT")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(GENERATE) INPUT requires a value"), args.items[i]);
+                return true;
+            }
+            String_View in_path = nob_sv_from_cstr("");
+            if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[++i], eval_file_current_src_dir(ctx), &in_path)) return true;
+            job.has_input = true;
+            job.input_path = sv_copy_to_event_arena(ctx, in_path);
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "CONTENT")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(GENERATE) CONTENT requires a value"), args.items[i]);
+                return true;
+            }
+            job.has_content = true;
+            job.content = sv_copy_to_event_arena(ctx, args.items[++i]);
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "CONDITION")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(GENERATE) CONDITION requires a value"), args.items[i]);
+                return true;
+            }
+            job.has_condition = true;
+            job.condition = sv_copy_to_event_arena(ctx, args.items[++i]);
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "TARGET")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(GENERATE) TARGET requires a value"), args.items[i]);
+                return true;
+            }
+            job.has_target = true;
+            job.target = sv_copy_to_event_arena(ctx, args.items[++i]);
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "NEWLINE_STYLE")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(GENERATE) NEWLINE_STYLE requires a value"), args.items[i]);
+                return true;
+            }
+            job.has_newline_style = true;
+            job.newline_style = sv_copy_to_event_arena(ctx, args.items[++i]);
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "USE_SOURCE_PERMISSIONS")) {
+            job.use_source_permissions = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "NO_SOURCE_PERMISSIONS")) {
+            job.no_source_permissions = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "FILE_PERMISSIONS")) {
+            job.has_file_permissions = true;
+            while (i + 1 < args.count && !file_generate_is_keyword(args.items[i + 1])) {
                 i++;
-                if (!file_parse_permission_token(&file_mode, args.items[i])) {
+                if (!file_parse_permission_token(&parsed_mode, args.items[i])) {
                     eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                    nob_sv_from_cstr("file(GENERATE) unknown FILE_PERMISSIONS token"), args.items[i]);
                 }
             }
+            continue;
         }
+
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                       nob_sv_from_cstr("file(GENERATE) received unexpected argument"), args.items[i]);
+        return true;
     }
 
-    if (output.count == 0 || (has_input == has_content)) {
+    if (job.output_path.count == 0 || (job.has_input == job.has_content)) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(GENERATE) requires OUTPUT and exactly one of INPUT/CONTENT"),
                        nob_sv_from_cstr("Usage: file(GENERATE OUTPUT <out> INPUT <in>|CONTENT <txt> ...)"));
         return true;
     }
-
-    if (condition.count > 0 && !eval_truthy(ctx, condition)) {
-        return true;
-    }
-
-    String_View out_path = nob_sv_from_cstr("");
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, output, eval_file_current_bin_dir(ctx), &out_path)) return true;
-    if (!eval_file_mkdir_p(ctx, svu_dirname(out_path))) return true;
-
-    String_View final_content = content;
-    struct stat in_stat = {0};
-    bool have_input_stat = false;
-    if (has_input) {
-        String_View in_path = nob_sv_from_cstr("");
-        if (!eval_file_resolve_project_scoped_path(ctx, node, o, input, eval_file_current_src_dir(ctx), &in_path)) return true;
-        char *in_c = eval_sv_to_cstr_temp(ctx, in_path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, in_c, true);
-        Nob_String_Builder sb = {0};
-        if (!nob_read_entire_file(in_c, &sb)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(GENERATE) failed to read INPUT"), in_path);
-            return true;
-        }
-        final_content = nob_sv_from_parts(sb.items, sb.count);
-        if (stat(in_c, &in_stat) == 0) have_input_stat = true;
-    }
-
-    if (newline_style.count > 0) {
-        final_content = file_apply_newline_style_temp(ctx, final_content, newline_style);
-    }
-
-    char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, true);
-    if (!nob_write_entire_file(out_c, final_content.data, final_content.count)) {
+    if (job.use_source_permissions && job.no_source_permissions) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(GENERATE) failed to write OUTPUT"), out_path);
+                       nob_sv_from_cstr("file(GENERATE) cannot combine USE_SOURCE_PERMISSIONS and NO_SOURCE_PERMISSIONS"),
+                       nob_sv_from_cstr(""));
         return true;
     }
+
+    job.file_mode = (unsigned int)parsed_mode;
+    if (!file_generate_enqueue_job(ctx, &job)) return true;
+    return true;
+}
+
+typedef struct {
+    String_View path;
+    String_View content;
+} File_Generate_Output_Seen;
+
+bool eval_file_generate_flush(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    if (ctx->file_generate_jobs.count == 0) return true;
+
+    File_Generate_Output_Seen *seen = NULL;
+    size_t seen_count = 0;
+    size_t seen_cap = 0;
+
+    for (size_t i = 0; i < ctx->file_generate_jobs.count; i++) {
+        const Eval_File_Generate_Job *job = &ctx->file_generate_jobs.items[i];
+        if (job->has_condition && !eval_truthy(ctx, job->condition)) continue;
+        if (job->has_target && !eval_target_known(ctx, job->target)) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                           nob_sv_from_cstr("file(GENERATE) TARGET does not name an existing target"),
+                           job->target);
+            continue;
+        }
+
+        String_View final_content = job->content;
+        struct stat in_st = {0};
+        bool have_input_st = false;
+        if (job->has_input) {
+            if (!file_read_content_temp(ctx, job->input_path, &final_content, &in_st, &have_input_st)) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                               nob_sv_from_cstr("file(GENERATE) failed to read INPUT"), job->input_path);
+                continue;
+            }
+        }
+        if (job->has_newline_style) {
+            final_content = file_apply_newline_style_temp(ctx, final_content, job->newline_style);
+        }
+
+        ssize_t seen_idx = -1;
+        for (size_t s = 0; s < seen_count; s++) {
+            if (eval_sv_key_eq(seen[s].path, job->output_path)) {
+                seen_idx = (ssize_t)s;
+                break;
+            }
+        }
+        if (seen_idx >= 0) {
+            if (!nob_sv_eq(seen[seen_idx].content, final_content)) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                               nob_sv_from_cstr("file(GENERATE) duplicate OUTPUT requires identical content"),
+                               job->output_path);
+            }
+            continue;
+        }
+
+        if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&seen, &seen_cap, sizeof(seen[0]), seen_count + 1)) {
+            ctx_oom(ctx);
+            break;
+        }
+        seen[seen_count].path = job->output_path;
+        seen[seen_count].content = final_content;
+        seen_count++;
+
+        if (!eval_file_mkdir_p(ctx, svu_dirname(job->output_path))) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                           nob_sv_from_cstr("file(GENERATE) failed to create output directory"), job->output_path);
+            continue;
+        }
+
+        bool same = false;
+        if (!file_path_content_same(ctx, job->output_path, final_content, &same)) continue;
+        if (same) continue;
+
+        char *out_c = eval_sv_to_cstr_temp(ctx, job->output_path);
+        EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
+        if (!nob_write_entire_file(out_c, final_content.data, final_content.count)) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                           nob_sv_from_cstr("file(GENERATE) failed to write OUTPUT"), job->output_path);
+            continue;
+        }
 
 #if !defined(_WIN32)
-    if (has_file_permissions && file_mode != 0) {
-        (void)chmod(out_c, file_mode);
-    } else if (use_source_permissions && have_input_stat) {
-        (void)chmod(out_c, in_stat.st_mode & 0777);
-    }
+        if (job->has_file_permissions && job->file_mode != 0) {
+            (void)chmod(out_c, (mode_t)job->file_mode);
+        } else if (job->use_source_permissions && job->has_input && have_input_st) {
+            (void)chmod(out_c, in_st.st_mode & 0777);
+        } else if (job->no_source_permissions) {
+            // Explicitly keep default backend permissions.
+        }
 #endif
-    return true;
+    }
+
+    ctx->file_generate_jobs.count = 0;
+    return !ctx->oom;
 }
 
 static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List args) {
@@ -318,6 +488,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     }
 
     bool release = false;
+    bool directory_lock = false;
     size_t timeout_sec = 0;
     bool has_timeout = false;
     int guard_kind = EVAL_FILE_LOCK_GUARD_PROCESS;
@@ -325,11 +496,37 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     for (size_t i = 2; i < args.count; i++) {
         if (eval_sv_eq_ci_lit(args.items[i], "RELEASE")) {
             release = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "TIMEOUT") && i + 1 < args.count) {
-            has_timeout = eval_file_parse_size_sv(args.items[++i], &timeout_sec);
-        } else if (eval_sv_eq_ci_lit(args.items[i], "RESULT_VARIABLE") && i + 1 < args.count) {
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "DIRECTORY")) {
+            directory_lock = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "TIMEOUT")) {
+            if (i + 1 >= args.count || !eval_file_parse_size_sv(args.items[i + 1], &timeout_sec)) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(LOCK) invalid TIMEOUT value"), args.items[i]);
+                return true;
+            }
+            has_timeout = true;
+            i++;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "RESULT_VARIABLE")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(LOCK) RESULT_VARIABLE requires a variable name"), args.items[i]);
+                return true;
+            }
             result_var = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "GUARD") && i + 1 < args.count) {
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args.items[i], "GUARD")) {
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(LOCK) GUARD requires PROCESS|FILE|FUNCTION"), args.items[i]);
+                return true;
+            }
             String_View guard = args.items[++i];
             if (eval_sv_eq_ci_lit(guard, "PROCESS")) guard_kind = EVAL_FILE_LOCK_GUARD_PROCESS;
             else if (eval_sv_eq_ci_lit(guard, "FILE")) guard_kind = EVAL_FILE_LOCK_GUARD_FILE;
@@ -339,11 +536,26 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
                                nob_sv_from_cstr("file(LOCK) invalid GUARD value"), guard);
                 return true;
             }
+            continue;
         }
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                       nob_sv_from_cstr("file(LOCK) received unexpected argument"), args.items[i]);
+        return true;
     }
 
     String_View lock_path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_bin_dir(ctx), &lock_path)) return true;
+    if (directory_lock) {
+        if (!eval_file_mkdir_p(ctx, lock_path)) {
+            if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to create lock directory"));
+            else {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(LOCK) failed to create directory for DIRECTORY lock"), lock_path);
+            }
+            return true;
+        }
+        lock_path = eval_sv_path_join(eval_temp_arena(ctx), lock_path, nob_sv_from_cstr("cmake.lock"));
+    }
 
     ssize_t existing = eval_file_lock_find(ctx, lock_path);
     if (release) {
@@ -356,7 +568,12 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     }
 
     if (existing >= 0) {
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("0"));
+        if (result_var.count > 0) {
+            (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("lock already held by current evaluator context"));
+        } else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(LOCK) duplicate lock acquisition without RELEASE"), lock_path);
+        }
         return true;
     }
 
@@ -364,16 +581,64 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
 
 #if defined(_WIN32)
-    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                   nob_sv_from_cstr("file(LOCK) backend is not implemented on Windows"), lock_path);
-    if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("1"));
+    HANDLE h = CreateFileA(path_c,
+                           GENERIC_READ | GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           NULL,
+                           OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
+        else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
+        }
+        return true;
+    }
+
+    bool ok = false;
+    DWORD start_ms = GetTickCount();
+    for (;;) {
+        OVERLAPPED ov = {0};
+        if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD, &ov) != 0) {
+            ok = true;
+            break;
+        }
+        DWORD err = GetLastError();
+        if (err != ERROR_LOCK_VIOLATION) break;
+        if (has_timeout) {
+            DWORD elapsed = GetTickCount() - start_ms;
+            if ((size_t)(elapsed / 1000) >= timeout_sec) break;
+        }
+        Sleep(100);
+    }
+    if (!ok) {
+        CloseHandle(h);
+        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
+        else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
+        }
+        return true;
+    }
+
+    if (!eval_file_lock_add(ctx, lock_path, (intptr_t)h, guard_kind)) {
+        OVERLAPPED ov = {0};
+        (void)UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &ov);
+        CloseHandle(h);
+        return true;
+    }
+    if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("0"));
     return true;
 #else
     int fd = open(path_c, O_RDWR | O_CREAT, 0666);
     if (fd < 0) {
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("1"));
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
+        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
+        else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
+        }
         return true;
     }
 
@@ -395,14 +660,16 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
 
     if (!ok) {
         close(fd);
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("1"));
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
+        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
+        else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
+        }
         return true;
     }
 
-    if (!eval_file_lock_add(ctx, lock_path, fd, guard_kind)) {
-        flock(fd, LOCK_UN);
+    if (!eval_file_lock_add(ctx, lock_path, (intptr_t)fd, guard_kind)) {
+        (void)flock(fd, LOCK_UN);
         close(fd);
         return true;
     }
@@ -417,6 +684,11 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     String_View out = nob_sv_from_cstr("");
     String_View format = nob_sv_from_cstr("tar");
     String_View compression = nob_sv_from_cstr("NONE");
+    long compression_level = 0;
+    bool has_compression_level = false;
+    long long mtime_epoch = 0;
+    bool has_mtime = false;
+    bool verbose = false;
     SV_List paths = {0};
 
     for (size_t i = 1; i < args.count; i++) {
@@ -426,16 +698,47 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
             format = args.items[++i];
         } else if (eval_sv_eq_ci_lit(args.items[i], "COMPRESSION") && i + 1 < args.count) {
             compression = args.items[++i];
+        } else if (eval_sv_eq_ci_lit(args.items[i], "COMPRESSION_LEVEL") && i + 1 < args.count) {
+            char *end = NULL;
+            char *lvl = eval_sv_to_cstr_temp(ctx, args.items[++i]);
+            EVAL_OOM_RETURN_IF_NULL(ctx, lvl, true);
+            compression_level = strtol(lvl, &end, 10);
+            if (!end || *end != '\0') {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(ARCHIVE_CREATE) invalid COMPRESSION_LEVEL"), args.items[i]);
+                return true;
+            }
+            has_compression_level = true;
+        } else if (eval_sv_eq_ci_lit(args.items[i], "MTIME") && i + 1 < args.count) {
+            char *end = NULL;
+            char *tv = eval_sv_to_cstr_temp(ctx, args.items[++i]);
+            EVAL_OOM_RETURN_IF_NULL(ctx, tv, true);
+            mtime_epoch = strtoll(tv, &end, 10);
+            if (!end || *end != '\0') {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file(ARCHIVE_CREATE) invalid MTIME epoch value"), args.items[i]);
+                return true;
+            }
+            has_mtime = true;
+        } else if (eval_sv_eq_ci_lit(args.items[i], "VERBOSE")) {
+            verbose = true;
         } else if (eval_sv_eq_ci_lit(args.items[i], "PATHS")) {
             for (size_t j = i + 1; j < args.count; j++) {
                 if (eval_sv_eq_ci_lit(args.items[j], "OUTPUT") ||
                     eval_sv_eq_ci_lit(args.items[j], "FORMAT") ||
-                    eval_sv_eq_ci_lit(args.items[j], "COMPRESSION")) {
+                    eval_sv_eq_ci_lit(args.items[j], "COMPRESSION") ||
+                    eval_sv_eq_ci_lit(args.items[j], "COMPRESSION_LEVEL") ||
+                    eval_sv_eq_ci_lit(args.items[j], "MTIME") ||
+                    eval_sv_eq_ci_lit(args.items[j], "VERBOSE")) {
                     break;
                 }
                 if (!svu_list_push_temp(ctx, &paths, args.items[j])) return true;
                 i = j;
             }
+        } else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(ARCHIVE_CREATE) received unexpected argument"), args.items[i]);
+            return true;
         }
     }
 
@@ -460,6 +763,36 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, out, eval_file_current_bin_dir(ctx), &out_path)) return true;
     if (!eval_file_mkdir_p(ctx, svu_dirname(out_path))) return true;
 
+    SV_List resolved_paths = {0};
+    for (size_t i = 0; i < paths.count; i++) {
+        String_View p = nob_sv_from_cstr("");
+        if (!eval_file_resolve_project_scoped_path(ctx, node, o, paths.items[i], eval_file_current_src_dir(ctx), &p)) return true;
+        if (!svu_list_push_temp(ctx, &resolved_paths, p)) return true;
+    }
+
+    Eval_File_Archive_Create_Options bopt = {0};
+    bopt.output = out_path;
+    bopt.paths = resolved_paths;
+    bopt.format = format;
+    bopt.compression = compression;
+    bopt.has_compression_level = has_compression_level;
+    bopt.compression_level = compression_level;
+    bopt.has_mtime = has_mtime;
+    bopt.mtime_epoch = mtime_epoch;
+    bopt.verbose = verbose;
+
+    int rc_backend = 1;
+    String_View backend_log = nob_sv_from_cstr("");
+    bool backend_ok = eval_file_backend_archive_create(ctx, &bopt, &rc_backend, &backend_log);
+    if (backend_ok) {
+        if (rc_backend != 0) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(ARCHIVE_CREATE) failed in libarchive backend"),
+                           backend_log.count > 0 ? backend_log : out_path);
+        }
+        return true;
+    }
+
     char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
     EVAL_OOM_RETURN_IF_NULL(ctx, out_c, true);
 
@@ -475,9 +808,8 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     }
 
     SV_List mapped_paths = {0};
-    for (size_t i = 0; i < paths.count; i++) {
-        String_View p = nob_sv_from_cstr("");
-        if (!eval_file_resolve_project_scoped_path(ctx, node, o, paths.items[i], eval_file_current_src_dir(ctx), &p)) return true;
+    for (size_t i = 0; i < resolved_paths.count; i++) {
+        String_View p = resolved_paths.items[i];
         String_View p_arg = p;
         if (cwd_len > 0 && p.count > cwd_len && memcmp(p.data, cwd_buf, cwd_len) == 0) {
             size_t off = cwd_len;
@@ -538,9 +870,33 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     String_View in = nob_sv_from_cstr("");
     String_View dst = nob_sv_from_cstr("");
+    SV_List patterns = {0};
+    bool list_only = false;
+    bool verbose = false;
+    bool touch = false;
     for (size_t i = 1; i < args.count; i++) {
         if (eval_sv_eq_ci_lit(args.items[i], "INPUT") && i + 1 < args.count) in = args.items[++i];
         else if (eval_sv_eq_ci_lit(args.items[i], "DESTINATION") && i + 1 < args.count) dst = args.items[++i];
+        else if (eval_sv_eq_ci_lit(args.items[i], "PATTERNS")) {
+            for (size_t j = i + 1; j < args.count; j++) {
+                if (eval_sv_eq_ci_lit(args.items[j], "INPUT") ||
+                    eval_sv_eq_ci_lit(args.items[j], "DESTINATION") ||
+                    eval_sv_eq_ci_lit(args.items[j], "LIST_ONLY") ||
+                    eval_sv_eq_ci_lit(args.items[j], "VERBOSE") ||
+                    eval_sv_eq_ci_lit(args.items[j], "TOUCH")) {
+                    break;
+                }
+                if (!svu_list_push_temp(ctx, &patterns, args.items[j])) return true;
+                i = j;
+            }
+        } else if (eval_sv_eq_ci_lit(args.items[i], "LIST_ONLY")) list_only = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "VERBOSE")) verbose = true;
+        else if (eval_sv_eq_ci_lit(args.items[i], "TOUCH")) touch = true;
+        else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(ARCHIVE_EXTRACT) received unexpected argument"), args.items[i]);
+            return true;
+        }
     }
     if (in.count == 0 || dst.count == 0) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
@@ -553,7 +909,27 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
     String_View dst_path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, in, eval_file_current_src_dir(ctx), &in_path)) return true;
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, dst, eval_file_current_bin_dir(ctx), &dst_path)) return true;
-    if (!eval_file_mkdir_p(ctx, dst_path)) return true;
+    if (!list_only && !eval_file_mkdir_p(ctx, dst_path)) return true;
+
+    Eval_File_Archive_Extract_Options bopt = {0};
+    bopt.input = in_path;
+    bopt.destination = dst_path;
+    bopt.patterns = patterns;
+    bopt.list_only = list_only;
+    bopt.verbose = verbose;
+    bopt.touch = touch;
+
+    int rc_backend = 1;
+    String_View backend_log = nob_sv_from_cstr("");
+    bool backend_ok = eval_file_backend_archive_extract(ctx, &bopt, &rc_backend, &backend_log);
+    if (backend_ok) {
+        if (rc_backend != 0) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed in libarchive backend"),
+                           backend_log.count > 0 ? backend_log : in_path);
+        }
+        return true;
+    }
 
     char *in_c = eval_sv_to_cstr_temp(ctx, in_path);
     char *dst_c = eval_sv_to_cstr_temp(ctx, dst_path);

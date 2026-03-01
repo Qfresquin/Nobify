@@ -952,14 +952,12 @@ file(WRITE temp_file_generate_input.in "IN_LINE")
 file(GENERATE OUTPUT temp_file_generate_content.txt CONTENT "OUT_LINE")
 file(GENERATE OUTPUT temp_file_generate_from_input.txt INPUT temp_file_generate_input.in)
 file(GENERATE OUTPUT temp_file_generate_skip.txt CONTENT "SKIP" CONDITION 0)
-file(READ temp_file_generate_content.txt FILE_GEN_CONTENT)
-file(READ temp_file_generate_from_input.txt FILE_GEN_INPUT)
-set(FILE_GEN_SKIP_OK 1)
-if(EXISTS temp_file_generate_skip.txt)
-  set(FILE_GEN_SKIP_OK 0)
+set(FILE_GEN_BEFORE_FLUSH 0)
+if(EXISTS temp_file_generate_content.txt)
+  set(FILE_GEN_BEFORE_FLUSH 1)
 endif()
 add_executable(file_generate_case main.c)
-target_compile_definitions(file_generate_case PRIVATE FILE_GEN_CONTENT=${FILE_GEN_CONTENT} FILE_GEN_INPUT=${FILE_GEN_INPUT} FILE_GEN_SKIP_OK=${FILE_GEN_SKIP_OK})
+target_compile_definitions(file_generate_case PRIVATE FILE_GEN_BEFORE_FLUSH=${FILE_GEN_BEFORE_FLUSH})
 #@@ENDCASE
 
 #@@CASE file_lock_acquire_release_reacquire

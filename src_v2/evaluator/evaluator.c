@@ -1392,6 +1392,9 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     size_t entered_file_depth = ++ctx->file_eval_depth;
     eval_report_reset(ctx);
     bool ok = eval_node_list(ctx, &ast);
+    if (ok && !eval_should_stop(ctx)) {
+        ok = eval_file_generate_flush(ctx);
+    }
     if (ctx->return_requested) {
         ctx->return_requested = false;
     }

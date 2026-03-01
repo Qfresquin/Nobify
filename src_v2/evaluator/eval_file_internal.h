@@ -32,6 +32,7 @@ bool eval_file_handle_fsops(Evaluator_Context *ctx, const Node *node, SV_List ar
 bool eval_file_handle_transfer(Evaluator_Context *ctx, const Node *node, SV_List args);
 bool eval_file_handle_generate_lock_archive(Evaluator_Context *ctx, const Node *node, SV_List args);
 bool eval_file_handle_extra(Evaluator_Context *ctx, const Node *node, SV_List args);
+bool eval_file_generate_flush(Evaluator_Context *ctx);
 void eval_file_lock_cleanup(Evaluator_Context *ctx);
 void eval_file_lock_release_file_scope(Evaluator_Context *ctx, size_t owner_depth);
 void eval_file_lock_release_function_scope(Evaluator_Context *ctx, size_t owner_depth);

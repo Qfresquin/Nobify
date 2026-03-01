@@ -114,6 +114,32 @@ typedef struct {
 } Eval_File_Lock_List;
 
 typedef struct {
+    Cmake_Event_Origin origin;
+    String_View command_name;
+    String_View output_path;
+    bool has_input;
+    String_View input_path;
+    bool has_content;
+    String_View content;
+    bool has_condition;
+    String_View condition;
+    bool has_target;
+    String_View target;
+    bool has_newline_style;
+    String_View newline_style;
+    bool use_source_permissions;
+    bool no_source_permissions;
+    bool has_file_permissions;
+    unsigned int file_mode;
+} Eval_File_Generate_Job;
+
+typedef struct {
+    Eval_File_Generate_Job *items;
+    size_t count;
+    size_t capacity;
+} Eval_File_Generate_Job_List;
+
+typedef struct {
     unsigned char states[156];
 } Eval_Policy_Level;
 
@@ -148,6 +174,7 @@ struct Evaluator_Context {
     Macro_Frame_Stack macro_frames;
     Block_Frame_Stack block_frames;
     Eval_File_Lock_List file_locks;
+    Eval_File_Generate_Job_List file_generate_jobs;
     Eval_Policy_Level *policy_levels;
     size_t policy_depth;
     size_t policy_capacity;

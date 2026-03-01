@@ -1,6 +1,7 @@
 #include "eval_file_internal.h"
 #include "eval_hash.h"
 #include "eval_expr.h"
+#include "eval_file_backend_curl.h"
 #include "sv_utils.h"
 
 #include <ctype.h>
@@ -9,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/stat.h>
 
 #if !defined(_WIN32)
 #include <sys/wait.h>
@@ -46,10 +48,28 @@ typedef struct {
     bool has_tls_verify;
     bool tls_verify;
     bool show_progress;
-    bool use_netrc;
+    Eval_File_Netrc_Mode netrc_mode;
     String_View http_headers[16];
     size_t http_headers_count;
 } File_Transfer_Options;
+
+static bool file_transfer_is_known_option(String_View t) {
+    return eval_sv_eq_ci_lit(t, "STATUS") ||
+           eval_sv_eq_ci_lit(t, "LOG") ||
+           eval_sv_eq_ci_lit(t, "RANGE_START") ||
+           eval_sv_eq_ci_lit(t, "RANGE_END") ||
+           eval_sv_eq_ci_lit(t, "TIMEOUT") ||
+           eval_sv_eq_ci_lit(t, "INACTIVITY_TIMEOUT") ||
+           eval_sv_eq_ci_lit(t, "EXPECTED_HASH") ||
+           eval_sv_eq_ci_lit(t, "EXPECTED_MD5") ||
+           eval_sv_eq_ci_lit(t, "USERPWD") ||
+           eval_sv_eq_ci_lit(t, "TLS_CAINFO") ||
+           eval_sv_eq_ci_lit(t, "TLS_VERIFY") ||
+           eval_sv_eq_ci_lit(t, "HTTPHEADER") ||
+           eval_sv_eq_ci_lit(t, "NETRC") ||
+           eval_sv_eq_ci_lit(t, "NETRC_FILE") ||
+           eval_sv_eq_ci_lit(t, "SHOW_PROGRESS");
+}
 
 static bool file_transfer_is_remote_url(String_View in) {
     if (in.count == 0) return false;
@@ -237,7 +257,20 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
                 i++;
             }
         } else if (eval_sv_eq_ci_lit(args.items[i], "NETRC")) {
-            out->use_netrc = true;
+            if (i + 1 >= args.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() NETRC requires one of IGNORED/OPTIONAL/REQUIRED"), args.items[i]);
+                return false;
+            }
+            String_View mode = args.items[++i];
+            if (eval_sv_eq_ci_lit(mode, "IGNORED")) out->netrc_mode = EVAL_FILE_NETRC_IGNORED;
+            else if (eval_sv_eq_ci_lit(mode, "OPTIONAL")) out->netrc_mode = EVAL_FILE_NETRC_OPTIONAL;
+            else if (eval_sv_eq_ci_lit(mode, "REQUIRED")) out->netrc_mode = EVAL_FILE_NETRC_REQUIRED;
+            else {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("file() NETRC requires IGNORED/OPTIONAL/REQUIRED"), mode);
+                return false;
+            }
         } else if (eval_sv_eq_ci_lit(args.items[i], "NETRC_FILE")) {
             if (i + 1 >= args.count) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
@@ -247,6 +280,10 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             out->netrc_file = args.items[++i];
         } else if (eval_sv_eq_ci_lit(args.items[i], "SHOW_PROGRESS")) {
             out->show_progress = true;
+        } else {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("file() received unknown transfer option"), args.items[i]);
+            return false;
         }
     }
     return true;
@@ -263,6 +300,14 @@ static bool file_transfer_parse_expected_hash(String_View in, String_View *out_a
         return out_algo->count > 0 && out_hex->count > 0;
     }
     return false;
+}
+
+static bool file_transfer_path_exists(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return false;
+    char *p = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
+    struct stat st = {0};
+    return stat(p, &st) == 0;
 }
 
 static bool file_transfer_verify_download_hash(Evaluator_Context *ctx,
@@ -401,6 +446,37 @@ static bool file_transfer_remote_download(Evaluator_Context *ctx,
     (void)o;
     if (!ctx || !opt || !out_status_code || !out_log) return false;
 
+    Eval_File_Curl_Options bopt = {0};
+    bopt.has_timeout = opt->has_timeout;
+    bopt.has_inactivity_timeout = opt->has_inactivity_timeout;
+    bopt.timeout_sec = (long)opt->timeout_sec;
+    bopt.inactivity_timeout_sec = (long)opt->inactivity_timeout_sec;
+    bopt.has_range_start = opt->has_range_start;
+    bopt.has_range_end = opt->has_range_end;
+    bopt.range_start = opt->range_start;
+    bopt.range_end = opt->range_end;
+    bopt.has_tls_verify = opt->has_tls_verify;
+    bopt.tls_verify = opt->tls_verify;
+    bopt.show_progress = opt->show_progress;
+    bopt.userpwd = opt->userpwd;
+    bopt.tls_cainfo = opt->tls_cainfo;
+    bopt.netrc_file = opt->netrc_file;
+    bopt.netrc_mode = opt->netrc_mode;
+    SV_List header_list = {0};
+    header_list.items = (String_View*)opt->http_headers;
+    header_list.count = opt->http_headers_count;
+    bopt.http_headers = header_list;
+
+    bool has_dst = dst.count > 0;
+    bool backend_ok = eval_file_backend_curl_download(ctx, url, dst, has_dst, &bopt, out_status_code, out_log);
+    if (backend_ok) return true;
+    if (ctx->oom) return false;
+    if (!has_dst) {
+        *out_status_code = 1;
+        *out_log = nob_sv_from_cstr("probe-only remote DOWNLOAD requires libcurl backend");
+        return true;
+    }
+
     char *url_c = eval_sv_to_cstr_temp(ctx, url);
     char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
     EVAL_OOM_RETURN_IF_NULL(ctx, url_c, false);
@@ -442,7 +518,11 @@ static bool file_transfer_remote_download(Evaluator_Context *ctx,
         argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->tls_cainfo);
         EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
     }
-    if (opt->use_netrc) argv[argc++] = "--netrc";
+    if (opt->netrc_mode == EVAL_FILE_NETRC_OPTIONAL) {
+        argv[argc++] = "--netrc-optional";
+    } else if (opt->netrc_mode == EVAL_FILE_NETRC_REQUIRED) {
+        argv[argc++] = "--netrc";
+    }
     if (opt->netrc_file.count > 0) {
         argv[argc++] = "--netrc-file";
         argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->netrc_file);
@@ -482,6 +562,27 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
     (void)node;
     (void)o;
     if (!ctx || !opt || !out_status_code || !out_log) return false;
+
+    Eval_File_Curl_Options bopt = {0};
+    bopt.has_timeout = opt->has_timeout;
+    bopt.has_inactivity_timeout = opt->has_inactivity_timeout;
+    bopt.timeout_sec = (long)opt->timeout_sec;
+    bopt.inactivity_timeout_sec = (long)opt->inactivity_timeout_sec;
+    bopt.has_tls_verify = opt->has_tls_verify;
+    bopt.tls_verify = opt->tls_verify;
+    bopt.show_progress = opt->show_progress;
+    bopt.userpwd = opt->userpwd;
+    bopt.tls_cainfo = opt->tls_cainfo;
+    bopt.netrc_file = opt->netrc_file;
+    bopt.netrc_mode = opt->netrc_mode;
+    SV_List header_list = {0};
+    header_list.items = (String_View*)opt->http_headers;
+    header_list.count = opt->http_headers_count;
+    bopt.http_headers = header_list;
+
+    bool backend_ok = eval_file_backend_curl_upload(ctx, src, url, &bopt, out_status_code, out_log);
+    if (backend_ok) return true;
+    if (ctx->oom) return false;
 
     char *src_c = eval_sv_to_cstr_temp(ctx, src);
     char *url_c = eval_sv_to_cstr_temp(ctx, url);
@@ -523,7 +624,11 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
         argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->tls_cainfo);
         EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
     }
-    if (opt->use_netrc) argv[argc++] = "--netrc";
+    if (opt->netrc_mode == EVAL_FILE_NETRC_OPTIONAL) {
+        argv[argc++] = "--netrc-optional";
+    } else if (opt->netrc_mode == EVAL_FILE_NETRC_REQUIRED) {
+        argv[argc++] = "--netrc";
+    }
     if (opt->netrc_file.count > 0) {
         argv[argc++] = "--netrc-file";
         argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->netrc_file);
@@ -543,21 +648,55 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
 
 static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (args.count < 2) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(DOWNLOAD) requires URL/path and destination"),
-                       nob_sv_from_cstr("Usage: file(DOWNLOAD <url> <file> [STATUS var] [LOG var])"));
+                       nob_sv_from_cstr("file(DOWNLOAD) requires at least URL/path"),
+                       nob_sv_from_cstr("Usage: file(DOWNLOAD <url> [<file>] [STATUS var] [LOG var])"));
         return true;
     }
 
+    bool has_dst = false;
+    String_View dst_arg = nob_sv_from_cstr("");
+    size_t opt_start = 2;
+    if (args.count >= 3 && !file_transfer_is_known_option(args.items[2])) {
+        has_dst = true;
+        dst_arg = args.items[2];
+        opt_start = 3;
+    }
+
     File_Transfer_Options opt = {0};
-    if (!file_transfer_parse_options(ctx, node, args, 3, &opt)) return true;
+    if (!file_transfer_parse_options(ctx, node, args, opt_start, &opt)) return true;
 
     String_View dst = nob_sv_from_cstr("");
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[2], eval_file_current_bin_dir(ctx), &dst)) return true;
+    if (has_dst) {
+        if (!eval_file_resolve_project_scoped_path(ctx, node, o, dst_arg, eval_file_current_bin_dir(ctx), &dst)) return true;
+    }
+
+    if (!has_dst && (opt.expected_hash.count > 0 || opt.expected_md5.count > 0)) {
+        file_transfer_fail(ctx,
+                           node,
+                           o,
+                           &opt,
+                           1,
+                           nob_sv_from_cstr("EXPECTED_HASH requires destination file"),
+                           nob_sv_from_cstr("EXPECTED_HASH/EXPECTED_MD5 cannot be used in probe-only DOWNLOAD"),
+                           nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_HASH requires destination"),
+                           nob_sv_from_cstr("Add destination path or remove EXPECTED_HASH/EXPECTED_MD5"));
+        return true;
+    }
+
+    if (has_dst && !opt.has_range_start && !opt.has_range_end &&
+        (opt.expected_hash.count > 0 || opt.expected_md5.count > 0) &&
+        file_transfer_path_exists(ctx, dst)) {
+        String_View hash_status = nob_sv_from_cstr("");
+        if (file_transfer_verify_download_hash(ctx, dst, &opt, &hash_status)) {
+            file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("download skipped (destination already matches EXPECTED_HASH)"));
+            return true;
+        }
+    }
 
     if (file_transfer_is_remote_url(args.items[1])) {
-        if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) {
+        if (has_dst && !eval_file_mkdir_p(ctx, svu_dirname(dst))) {
             file_transfer_fail(ctx,
                                node,
                                o,
@@ -603,7 +742,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
         }
 
         String_View hash_status = nob_sv_from_cstr("");
-        if (!file_transfer_verify_download_hash(ctx, dst, &opt, &hash_status)) {
+        if (has_dst && !file_transfer_verify_download_hash(ctx, dst, &opt, &hash_status)) {
             file_transfer_fail(ctx,
                                node,
                                o,
@@ -625,9 +764,9 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, src_input, eval_file_current_src_dir(ctx), &src)) return true;
 
     char *src_c = eval_sv_to_cstr_temp(ctx, src);
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+    char *dst_c = has_dst ? eval_sv_to_cstr_temp(ctx, dst) : NULL;
     EVAL_OOM_RETURN_IF_NULL(ctx, src_c, true);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
+    if (has_dst) EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
 
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(src_c, &sb)) {
@@ -648,6 +787,12 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
     if (opt.has_range_start && opt.range_start < sb.count) begin = opt.range_start;
     if (opt.has_range_end && opt.range_end + 1 < end) end = opt.range_end + 1;
     if (begin > end) begin = end;
+
+    if (!has_dst) {
+        nob_sb_free(sb);
+        file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("local download probe completed"));
+        return true;
+    }
 
     if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) {
         nob_sb_free(sb);

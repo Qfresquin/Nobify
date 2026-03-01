@@ -923,7 +923,7 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
 
     Command_Capability cap = {0};
     ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("file"), &cap));
-    ASSERT(cap.implemented_level == EVAL_CMD_IMPL_PARTIAL);
+    ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
     Command_Capability missing = {0};
     ASSERT(!evaluator_get_command_capability(nob_sv_from_cstr("unknown_public_api_command"), &missing));
@@ -3982,6 +3982,198 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE gen_in.txt \"IN\")\n"
+        "file(GENERATE OUTPUT gen_out_content.txt CONTENT \"OUT\")\n"
+        "file(GENERATE OUTPUT gen_out_input.txt INPUT gen_in.txt)\n"
+        "file(GENERATE OUTPUT gen_out_skip.txt CONTENT \"SKIP\" CONDITION 0)\n"
+        "if(EXISTS gen_out_content.txt)\n"
+        "  set(GEN_BEFORE 1)\n"
+        "else()\n"
+        "  set(GEN_BEFORE 0)\n"
+        "endif()\n"
+        "add_executable(gen_deferred_probe main.c)\n"
+        "target_compile_definitions(gen_deferred_probe PRIVATE GEN_BEFORE=${GEN_BEFORE})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_before_zero = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("gen_deferred_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("GEN_BEFORE=0"))) {
+            saw_before_zero = true;
+        }
+    }
+    ASSERT(saw_before_zero);
+
+    Ast_Root verify = parse_cmake(
+        temp_arena,
+        "file(READ gen_out_content.txt GEN_OUT)\n"
+        "file(READ gen_out_input.txt GEN_IN)\n"
+        "if(EXISTS gen_out_skip.txt)\n"
+        "  set(GEN_SKIP 1)\n"
+        "else()\n"
+        "  set(GEN_SKIP 0)\n"
+        "endif()\n"
+        "add_executable(gen_deferred_verify main.c)\n"
+        "target_compile_definitions(gen_deferred_verify PRIVATE GEN_OUT=${GEN_OUT} GEN_IN=${GEN_IN} GEN_SKIP=${GEN_SKIP})\n");
+    ASSERT(evaluator_run(ctx, verify));
+
+    bool saw_out = false;
+    bool saw_in = false;
+    bool saw_skip = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("gen_deferred_verify"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("GEN_OUT=OUT"))) saw_out = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("GEN_IN=IN"))) saw_in = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("GEN_SKIP=0"))) saw_skip = true;
+    }
+    ASSERT(saw_out);
+    ASSERT(saw_in);
+    ASSERT(saw_skip);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_lock_directory_and_duplicate_lock_result) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY lock_dir)\n"
+        "file(LOCK lock_dir DIRECTORY RESULT_VARIABLE L1)\n"
+        "file(LOCK lock_dir DIRECTORY RESULT_VARIABLE L2)\n"
+        "file(LOCK lock_dir DIRECTORY RELEASE RESULT_VARIABLE L3)\n"
+        "add_executable(lock_probe main.c)\n"
+        "target_compile_definitions(lock_probe PRIVATE L1=${L1} L2=${L2} L3=${L3})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_l1_ok = false;
+    bool saw_l2_nonzero = false;
+    bool saw_l3_ok = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("lock_probe"))) continue;
+        String_View item = ev->as.target_compile_definitions.item;
+        if (nob_sv_eq(item, nob_sv_from_cstr("L1=0"))) saw_l1_ok = true;
+        if (item.count > 3 && memcmp(item.data, "L2=", 3) == 0 && !nob_sv_eq(item, nob_sv_from_cstr("L2=0"))) {
+            saw_l2_nonzero = true;
+        }
+        if (nob_sv_eq(item, nob_sv_from_cstr("L3=0"))) saw_l3_ok = true;
+    }
+    ASSERT(saw_l1_ok);
+    ASSERT(saw_l2_nonzero);
+    ASSERT(saw_l3_ok);
+    ASSERT(nob_file_exists("lock_dir/cmake.lock"));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_download_probe_mode_without_destination) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE probe_src.txt \"abc\")\n"
+        "file(DOWNLOAD probe_src.txt STATUS DL_STATUS LOG DL_LOG)\n"
+        "list(LENGTH DL_STATUS DL_LEN)\n"
+        "list(GET DL_STATUS 0 DL_CODE)\n"
+        "add_executable(dl_probe main.c)\n"
+        "target_compile_definitions(dl_probe PRIVATE DL_LEN=${DL_LEN} DL_CODE=${DL_CODE})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_len = false;
+    bool saw_code = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("dl_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DL_LEN=2"))) saw_len = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DL_CODE=0"))) saw_code = true;
+    }
+    ASSERT(saw_len);
+    ASSERT(saw_code);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -4051,6 +4243,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
+    test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed);
+    test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed);
+    test_evaluator_file_download_probe_mode_without_destination(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

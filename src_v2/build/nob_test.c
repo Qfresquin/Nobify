@@ -4,6 +4,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #if !defined(_WIN32)
 #include <errno.h>
@@ -82,6 +83,15 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
         "-I", "src obsoleto so use de referencia/logic_model",
         "-I", "src obsoleto so use de referencia/ds_adapter",
         "-Itest_v2");
+
+    const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
+    const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
+    if (use_libcurl && strcmp(use_libcurl, "1") == 0) {
+        nob_cmd_append(cmd, "-DEVAL_HAVE_LIBCURL=1");
+    }
+    if (use_libarchive && strcmp(use_libarchive, "1") == 0) {
+        nob_cmd_append(cmd, "-DEVAL_HAVE_LIBARCHIVE=1");
+    }
 }
 
 static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
@@ -107,6 +117,8 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_file.c",
         "src_v2/evaluator/eval_file_extra.c",
         "src_v2/evaluator/eval_file_fsops.c",
+        "src_v2/evaluator/eval_file_backend_curl.c",
+        "src_v2/evaluator/eval_file_backend_archive.c",
         "src_v2/evaluator/eval_file_transfer.c",
         "src_v2/evaluator/eval_file_generate_lock_archive.c",
         "src_v2/evaluator/eval_flow.c",
@@ -238,6 +250,14 @@ static void append_platform_link_flags(Nob_Cmd *cmd) {
 #else
     (void)cmd;
 #endif
+    const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
+    const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
+    if (use_libcurl && strcmp(use_libcurl, "1") == 0) {
+        nob_cmd_append(cmd, "-lcurl");
+    }
+    if (use_libarchive && strcmp(use_libarchive, "1") == 0) {
+        nob_cmd_append(cmd, "-larchive");
+    }
 }
 
 static bool tiny_is_dot_or_dotdot(const char *name) {

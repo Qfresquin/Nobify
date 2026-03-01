@@ -926,12 +926,10 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 targ
 
 === CASE file_generate_content_input_and_condition ===
 DIAG errors=0 warnings=0
-EVENTS count=5
-EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='file_generate_case' type=EXECUTABLE
-EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='file_generate_case' path='main.c'
-EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='file_generate_case' item='FILE_GEN_CONTENT=OUT_LINE' vis=PRIVATE
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='file_generate_case' item='FILE_GEN_INPUT=IN_LINE' vis=PRIVATE
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='file_generate_case' item='FILE_GEN_SKIP_OK=1' vis=PRIVATE
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=1 name='file_generate_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=1 target='file_generate_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='file_generate_case' item='FILE_GEN_BEFORE_FLUSH=0' vis=PRIVATE
 === END CASE ===
 
 === CASE file_lock_acquire_release_reacquire ===

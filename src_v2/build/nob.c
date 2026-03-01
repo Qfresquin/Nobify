@@ -2,6 +2,7 @@
 #include "nob.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 // Caminhos relativos à raiz do projeto
 static const char *APP_SRC = "src_v2/app/nobify.c";
@@ -27,6 +28,15 @@ static void append_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/evaluator",
         "-Isrc_v2/genex",
         "-Isrc_v2/build_model");
+
+    const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
+    const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
+    if (use_libcurl && strcmp(use_libcurl, "1") == 0) {
+        nob_cmd_append(cmd, "-DEVAL_HAVE_LIBCURL=1");
+    }
+    if (use_libarchive && strcmp(use_libarchive, "1") == 0) {
+        nob_cmd_append(cmd, "-DEVAL_HAVE_LIBARCHIVE=1");
+    }
 }
 
 static void append_evaluator_sources(Nob_Cmd *cmd) {
@@ -52,6 +62,8 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_file.c",
         "src_v2/evaluator/eval_file_extra.c",
         "src_v2/evaluator/eval_file_fsops.c",
+        "src_v2/evaluator/eval_file_backend_curl.c",
+        "src_v2/evaluator/eval_file_backend_archive.c",
         "src_v2/evaluator/eval_file_transfer.c",
         "src_v2/evaluator/eval_file_generate_lock_archive.c",
         "src_v2/evaluator/eval_flow.c",
@@ -88,6 +100,15 @@ static void append_linker_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd, "-lpcre2-posix");
     nob_cmd_append(cmd, "-lpcre2-8"); // Linka com a libpcre2 instalada via apt
     nob_cmd_append(cmd, "-lm");       // Linka math lib (geralmente útil)
+
+    const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
+    const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
+    if (use_libcurl && strcmp(use_libcurl, "1") == 0) {
+        nob_cmd_append(cmd, "-lcurl");
+    }
+    if (use_libarchive && strcmp(use_libarchive, "1") == 0) {
+        nob_cmd_append(cmd, "-larchive");
+    }
 }
 
 static bool build_app(void) {
