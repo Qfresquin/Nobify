@@ -48,7 +48,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"project", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"return", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"set", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
-    {"set_property", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE},
+    {"set_property", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"set_target_properties", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"string", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"target_compile_definitions", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},

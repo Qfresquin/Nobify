@@ -210,6 +210,11 @@ bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key) 
     return b != NULL;
 }
 
+bool eval_cache_defined(Evaluator_Context *ctx, String_View key) {
+    if (!ctx || key.count == 0) return false;
+    return eval_cache_var_find(ctx->cache_entries, key) != NULL;
+}
+
 bool eval_macro_frame_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};

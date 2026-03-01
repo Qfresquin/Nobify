@@ -235,6 +235,7 @@ bool eval_var_defined(Evaluator_Context *ctx, String_View key);
 bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value);
 bool eval_var_unset(Evaluator_Context *ctx, String_View key);
 bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key);
+bool eval_cache_defined(Evaluator_Context *ctx, String_View key);
 
 // ---- targets ----
 bool eval_target_known(Evaluator_Context *ctx, String_View name);

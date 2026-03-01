@@ -1264,6 +1264,253 @@ TEST(evaluator_add_library_imported_alias_and_default_type) {
     TEST_PASS();
 }
 
+TEST(evaluator_set_property_target_rejects_alias_and_unknown_target) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(real STATIC real.c)\n"
+        "add_library(alias_real ALIAS real)\n"
+        "set_property(TARGET alias_real PROPERTY OUTPUT_NAME bad_alias)\n"
+        "set_property(TARGET missing_t PROPERTY OUTPUT_NAME bad_missing)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_alias_error = false;
+    bool saw_missing_error = false;
+    bool emitted_for_alias = false;
+    bool emitted_for_missing = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set_property(TARGET ...) cannot be used on ALIAS targets"))) {
+                saw_alias_error = true;
+            } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set_property(TARGET ...) target was not declared"))) {
+                saw_missing_error = true;
+            }
+        }
+        if (ev->kind == EV_TARGET_PROP_SET &&
+            nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("alias_real"))) {
+            emitted_for_alias = true;
+        }
+        if (ev->kind == EV_TARGET_PROP_SET &&
+            nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("missing_t"))) {
+            emitted_for_missing = true;
+        }
+    }
+
+    ASSERT(saw_alias_error);
+    ASSERT(saw_missing_error);
+    ASSERT(!emitted_for_alias);
+    ASSERT(!emitted_for_missing);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_set_property_source_test_directory_clauses_parse_and_apply) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_executable(src_t main.c)\n"
+        "add_test(NAME smoke COMMAND src_t)\n"
+        "set_property(SOURCE foo.c DIRECTORY src PROPERTY LANGUAGE C)\n"
+        "set_property(SOURCE bar.c TARGET_DIRECTORY src_t PROPERTY LANGUAGE CXX)\n"
+        "set_property(TEST smoke DIRECTORY . PROPERTY LABELS fast)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_source_dir_var_set = false;
+    bool saw_source_target_dir_var_set = false;
+    bool saw_test_dir_var_set = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_VAR_SET) continue;
+        if (nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("C")) &&
+            nob_sv_eq(ev->as.var_set.key,
+                      nob_sv_from_cstr("NOBIFY_PROPERTY_SOURCE::DIRECTORY::src::foo.c::LANGUAGE"))) {
+            saw_source_dir_var_set = true;
+        } else if (nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("CXX")) &&
+                   nob_sv_eq(ev->as.var_set.key,
+                             nob_sv_from_cstr("NOBIFY_PROPERTY_SOURCE::TARGET_DIRECTORY::src_t::bar.c::LANGUAGE"))) {
+            saw_source_target_dir_var_set = true;
+        } else if (nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("fast")) &&
+                   nob_sv_eq(ev->as.var_set.key,
+                             nob_sv_from_cstr("NOBIFY_PROPERTY_TEST::DIRECTORY::.::smoke::LABELS"))) {
+            saw_test_dir_var_set = true;
+        }
+    }
+
+    ASSERT(saw_source_dir_var_set);
+    ASSERT(saw_source_target_dir_var_set);
+    ASSERT(saw_test_dir_var_set);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_set_property_allows_zero_objects_and_validates_test_lookup) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(real STATIC real.c)\n"
+        "add_test(NAME smoke COMMAND real)\n"
+        "set_property(TARGET PROPERTY OUTPUT_NAME ignored)\n"
+        "set_property(SOURCE PROPERTY LANGUAGE C)\n"
+        "set_property(INSTALL PROPERTY FOO bar)\n"
+        "set_property(TEST PROPERTY LABELS fast)\n"
+        "set_property(CACHE PROPERTY VALUE cache_ignore)\n"
+        "set_property(TEST smoke PROPERTY LABELS ok)\n"
+        "set_property(TEST missing PROPERTY LABELS bad)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_missing_test_error = false;
+    bool saw_smoke_label_set = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("set_property(TEST ...) test was not declared in selected directory scope")) &&
+            nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("missing"))) {
+            saw_missing_test_error = true;
+        }
+        if (ev->kind == EV_VAR_SET &&
+            nob_sv_eq(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_PROPERTY_TEST::smoke::LABELS")) &&
+            nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("ok"))) {
+            saw_smoke_label_set = true;
+        }
+    }
+
+    ASSERT(saw_missing_test_error);
+    ASSERT(saw_smoke_label_set);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_set_property_cache_requires_existing_entry) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CACHED_X old CACHE STRING \"doc\")\n"
+        "set_property(CACHE CACHED_X PROPERTY VALUE new_ok)\n"
+        "set_property(CACHE MISSING_X PROPERTY VALUE bad)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_missing_cache_error = false;
+    bool saw_cache_value_update = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set_property(CACHE ...) cache entry does not exist"))) {
+            saw_missing_cache_error = true;
+        }
+        if (ev->kind == EV_SET_CACHE_ENTRY &&
+            nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("CACHED_X")) &&
+            nob_sv_eq(ev->as.cache_entry.value, nob_sv_from_cstr("new_ok"))) {
+            saw_cache_value_update = true;
+        }
+    }
+
+    ASSERT(saw_missing_cache_error);
+    ASSERT(saw_cache_value_update);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_message_mode_severity_mapping) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1949,6 +2196,10 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_set_target_properties_rejects_alias_target(passed, failed);
     test_evaluator_add_executable_imported_and_alias_signatures(passed, failed);
     test_evaluator_add_library_imported_alias_and_default_type(passed, failed);
+    test_evaluator_set_property_target_rejects_alias_and_unknown_target(passed, failed);
+    test_evaluator_set_property_source_test_directory_clauses_parse_and_apply(passed, failed);
+    test_evaluator_set_property_cache_requires_existing_entry(passed, failed);
+    test_evaluator_set_property_allows_zero_objects_and_validates_test_lookup(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);

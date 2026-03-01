@@ -58,7 +58,7 @@ Status snapshot sources:
 | `project` | `PARTIAL` | `NOOP_WARN` | Reduced signature support (e.g. missing `HOMEPAGE_URL`, reduced language-signature handling and variable surface). | `Medium` |
 | `return` | `PARTIAL` | `NOOP_WARN` | CMake states `macro()` cannot handle `return()`; evaluator allows it (warning only), changing control-flow outcome in macro contexts. | `Medium` |
 | `set` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`set(<var> <value>... [PARENT_SCOPE])`, `set(<var> <value>... CACHE <type> <doc> [FORCE])`, `set(ENV{<var>} [<value>])`). | - |
-| `set_property` | `PARTIAL` | `ERROR_CONTINUE` | Scope coverage exists; parity for all CMake property semantics is not complete. | `Medium` |
+| `set_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope/signature surface (`GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE`, `APPEND|APPEND_STRING`, `PROPERTY ...`), including zero-object scope handling and target/cache/test validations in covered flow. | - |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
 | `target_compile_definitions` | `PARTIAL` | `NOOP_WARN` | CMake normalization rules (e.g. `-D` handling nuances and related semantics) are not fully mirrored. | `Low` |
@@ -162,6 +162,14 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 8. Coverage details: target command family
 
+### `set_property()`
+
+| Signature area | CMake 3.28 | Evaluator v2 | Divergence impact |
+|---|---|---|---|
+| Scope/signature surface (`GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE`, `APPEND|APPEND_STRING`, `PROPERTY`) | Supported | Supported | None for covered signature surface |
+| Zero-object semantics | Supported for applicable scopes | Supported (no-op behavior) | None |
+| Target/test/cache validation in covered flow | Existing target/test/cache entry requirements apply by scope | Enforced with error diagnostics before property application | None |
+
 ### `set_target_properties()`
 
 | Signature | CMake 3.28 | Evaluator v2 | Divergence impact |
@@ -196,7 +204,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_target`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `include_directories`, `link_directories`, `math`, `message`, `set`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_target`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `include_directories`, `link_directories`, `math`, `message`, `set`, `set_property`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 
