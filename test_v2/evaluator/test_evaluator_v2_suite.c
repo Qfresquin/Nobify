@@ -3899,7 +3899,12 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         "else()\n"
         "  set(TOUCH_NOCREATE_CREATED 0)\n"
         "endif()\n"
-        "file(GET_RUNTIME_DEPENDENCIES RESOLVED_DEPENDENCIES_VAR RD_RES UNRESOLVED_DEPENDENCIES_VAR RD_UNRES DIRECTORIES .)\n"
+        "if(EXISTS \"/bin/ls\")\n"
+        "  file(GET_RUNTIME_DEPENDENCIES RESOLVED_DEPENDENCIES_VAR RD_RES UNRESOLVED_DEPENDENCIES_VAR RD_UNRES EXECUTABLES /bin/ls)\n"
+        "  list(LENGTH RD_RES RD_RES_LEN)\n"
+        "else()\n"
+        "  set(RD_RES_LEN 0)\n"
+        "endif()\n"
         "file(WRITE extra_dl_src.txt \"hello\")\n"
         "file(DOWNLOAD extra_dl_src.txt extra_dl_ok.txt EXPECTED_HASH SHA256=2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824)\n"
         "file(READ extra_dl_ok.txt DL_OK_TXT)\n"
@@ -3911,7 +3916,7 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         "\"EXTRA_HASH=${EXTRA_HASH}\" \"EXTRA_CFG=${EXTRA_CFG}\" "
         "\"COPY_RES=${COPY_RES}\" \"COPY_TXT=${COPY_TXT}\" "
         "\"TOUCH_CREATED=${TOUCH_CREATED}\" \"TOUCH_NOCREATE_CREATED=${TOUCH_NOCREATE_CREATED}\" "
-        "\"RD_RES=${RD_RES}\" \"RD_UNRES=${RD_UNRES}\" "
+        "\"RD_RES_LEN=${RD_RES_LEN}\" "
         "\"DL_OK_TXT=${DL_OK_TXT}\" \"DL_BAD_LEN=${DL_BAD_LEN}\" \"DL_BAD_CODE=${DL_BAD_CODE}\")\n");
     ASSERT(evaluator_run(ctx, root));
 
@@ -3926,11 +3931,11 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     bool saw_copy_txt = false;
     bool saw_touch_created = false;
     bool saw_touch_nocreate_created = false;
-    bool saw_rd_res = false;
-    bool saw_rd_unres = false;
+    bool saw_rd_res_len = false;
     bool saw_dl_ok = false;
     bool saw_dl_bad_len = false;
     bool saw_dl_bad_code = false;
+    bool expect_rd_nonempty = (access("/bin/ls", F_OK) == 0);
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -3943,8 +3948,18 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         if (nob_sv_eq(it, nob_sv_from_cstr("COPY_TXT=abc"))) saw_copy_txt = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("TOUCH_CREATED=1"))) saw_touch_created = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("TOUCH_NOCREATE_CREATED=0"))) saw_touch_nocreate_created = true;
-        if (nob_sv_eq(it, nob_sv_from_cstr("RD_RES="))) saw_rd_res = true;
-        if (nob_sv_eq(it, nob_sv_from_cstr("RD_UNRES="))) saw_rd_unres = true;
+        if (it.count >= 11 && memcmp(it.data, "RD_RES_LEN=", 11) == 0) {
+            char buf[64] = {0};
+            size_t n = it.count - 11;
+            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+            memcpy(buf, it.data + 11, n);
+            long v = strtol(buf, NULL, 10);
+            if (expect_rd_nonempty) {
+                if (v > 0) saw_rd_res_len = true;
+            } else {
+                if (v == 0) saw_rd_res_len = true;
+            }
+        }
         if (nob_sv_eq(it, nob_sv_from_cstr("DL_OK_TXT=hello"))) saw_dl_ok = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("DL_BAD_LEN=2"))) saw_dl_bad_len = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("DL_BAD_CODE=1"))) saw_dl_bad_code = true;
@@ -3956,8 +3971,7 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     ASSERT(saw_copy_txt);
     ASSERT(saw_touch_created);
     ASSERT(saw_touch_nocreate_created);
-    ASSERT(saw_rd_res);
-    ASSERT(saw_rd_unres);
+    ASSERT(saw_rd_res_len);
     ASSERT(saw_dl_ok);
     ASSERT(saw_dl_bad_len);
     ASSERT(saw_dl_bad_code);

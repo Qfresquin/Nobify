@@ -44,7 +44,7 @@ Status snapshot sources:
 | `cpack_add_install_type` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, with availability gated by `include(CPackComponent)`. | - |
 | `enable_testing` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`enable_testing()`). | - |
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
-| `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (notably transfer/backend parity, `GET_RUNTIME_DEPENDENCIES` execution model, and archive/lock backend constraints). | `Medium` |
+| `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (notably transfer/backend parity, `GET_RUNTIME_DEPENDENCIES` Linux-first resolver limits, and archive/lock backend constraints). | `Medium` |
 | `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, and `CMAKE_FIND_PACKAGE_PREFER_CONFIG`). | - |
 | `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including `CMAKE_MODULE_PATH`/`CMAKE_ROOT/Modules` lookup and `CMP0017` search-order behavior (`NEW` vs `OLD`). | - |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
@@ -107,7 +107,7 @@ Status snapshot sources:
 | `LOCK` | `PARTIAL` | Advisory/local lock semantics with `GUARD PROCESS|FILE|FUNCTION`; backend/platform behavior and timeout semantics remain approximated. | Warning/error + continue. |
 | `ARCHIVE_CREATE` | `PARTIAL` | Pragmatic archive backend via system tools (`tar`/`zip`) with broader format/compression support, but not full CMake/libarchive parity. | Error diagnostic + continue. |
 | `ARCHIVE_EXTRACT` | `PARTIAL` | Pragmatic archive backend via system tools (`tar`/`unzip`), not full CMake/libarchive parity. | Error diagnostic + continue. |
-| `GET_RUNTIME_DEPENDENCIES` | `PARTIAL` | Signature parsing implemented with deterministic output-variable handling; full runtime dependency resolution pipeline is not yet implemented. | Error diagnostic + continue. |
+| `GET_RUNTIME_DEPENDENCIES` | `PARTIAL` | Linux-first recursive resolver implemented via `ldd` with include/exclude filters and conflict variables; still not full CMake parity (`readelf`/`ldconfig` model details and full cross-platform semantics). | Error diagnostic + continue. |
 | Other `file()` subcommands | `MISSING` | Remaining unsupported subcommands are not currently routed by evaluator `file()` handler chain. | Unsupported subcommand warning. |
 
 ## 3. Coverage details: `string()`
