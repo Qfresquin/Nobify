@@ -578,7 +578,7 @@ static bool parse_unary(Expr *e) {
     if (eval_sv_eq_ci_lit(tok, "POLICY")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        return eval_policy_is_id(expr_next(e));
+        return eval_policy_is_known(expr_next(e));
     }
 
     if (eval_sv_eq_ci_lit(tok, "EXISTS")) {

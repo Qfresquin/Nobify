@@ -1357,6 +1357,10 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 void evaluator_destroy(Evaluator_Context *ctx) {
     if (!ctx) return;
     eval_file_lock_cleanup(ctx);
+    if (ctx->policy_levels) {
+        free(ctx->policy_levels);
+        ctx->policy_levels = NULL;
+    }
     if (ctx->cache_entries) {
         stbds_shfree(ctx->cache_entries);
         ctx->cache_entries = NULL;

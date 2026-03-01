@@ -110,6 +110,10 @@ typedef struct {
     size_t capacity;
 } Eval_File_Lock_List;
 
+typedef struct {
+    unsigned char states[156];
+} Eval_Policy_Level;
+
 typedef enum {
     EVAL_RETURN_CTX_TOPLEVEL = 0,
     EVAL_RETURN_CTX_INCLUDE,
@@ -141,6 +145,9 @@ struct Evaluator_Context {
     Macro_Frame_Stack macro_frames;
     Block_Frame_Stack block_frames;
     Eval_File_Lock_List file_locks;
+    Eval_Policy_Level *policy_levels;
+    size_t policy_depth;
+    size_t policy_capacity;
 
     size_t loop_depth;
     bool break_requested;
@@ -261,8 +268,11 @@ bool eval_scope_push(Evaluator_Context *ctx);
 void eval_scope_pop(Evaluator_Context *ctx);
 
 bool eval_policy_is_id(String_View policy_id);
+bool eval_policy_is_known(String_View policy_id);
+bool eval_policy_get_intro_version(String_View policy_id, int *major, int *minor, int *patch);
 bool eval_policy_push(Evaluator_Context *ctx);
 bool eval_policy_pop(Evaluator_Context *ctx);
+bool eval_policy_set_status(Evaluator_Context *ctx, String_View policy_id, Eval_Policy_Status status);
 bool eval_policy_set(Evaluator_Context *ctx, String_View policy_id, String_View value);
 String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id);
 

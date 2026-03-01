@@ -5,6 +5,8 @@
 
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
+#include <stdio.h>
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
@@ -61,48 +63,116 @@ static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
     return true;
 }
 
-static bool policy_parse_version_range(String_View token,
-                                       String_View *out_min_version,
-                                       String_View *out_policy_version) {
-    if (!out_min_version || !out_policy_version) return false;
-    *out_min_version = token;
-    *out_policy_version = token;
+typedef struct {
+    int major;
+    int minor;
+    int patch;
+    int tweak;
+} Eval_Semver;
+
+static const Eval_Semver k_policy_floor_24 = {2, 4, 0, 0};
+static const Eval_Semver k_running_cmake_328 = {3, 28, 0, 0};
+
+static bool semver_parse_component(String_View sv, int *out_value) {
+    if (!out_value || sv.count == 0) return false;
+    long long acc = 0;
+    for (size_t i = 0; i < sv.count; i++) {
+        if (sv.data[i] < '0' || sv.data[i] > '9') return false;
+        acc = (acc * 10) + (long long)(sv.data[i] - '0');
+        if (acc > INT_MAX) return false;
+    }
+    *out_value = (int)acc;
+    return true;
+}
+
+static bool semver_parse_strict(String_View version_token, Eval_Semver *out_version) {
+    if (!out_version || version_token.count == 0) return false;
+    int values[4] = {0, 0, 0, 0};
+    size_t value_count = 0;
+    size_t pos = 0;
+
+    while (pos < version_token.count) {
+        size_t start = pos;
+        while (pos < version_token.count && version_token.data[pos] != '.') pos++;
+        if (value_count >= 4) return false;
+        String_View part = nob_sv_from_parts(version_token.data + start, pos - start);
+        if (!semver_parse_component(part, &values[value_count])) return false;
+        value_count++;
+        if (pos == version_token.count) break;
+        pos++;
+        if (pos == version_token.count) return false;
+    }
+
+    if (value_count < 2 || value_count > 4) return false;
+    out_version->major = values[0];
+    out_version->minor = values[1];
+    out_version->patch = values[2];
+    out_version->tweak = values[3];
+    return true;
+}
+
+static int semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs) {
+    if (!lhs || !rhs) return 0;
+    if (lhs->major != rhs->major) return (lhs->major < rhs->major) ? -1 : 1;
+    if (lhs->minor != rhs->minor) return (lhs->minor < rhs->minor) ? -1 : 1;
+    if (lhs->patch != rhs->patch) return (lhs->patch < rhs->patch) ? -1 : 1;
+    if (lhs->tweak != rhs->tweak) return (lhs->tweak < rhs->tweak) ? -1 : 1;
+    return 0;
+}
+
+static bool policy_parse_version_range_strict(String_View token,
+                                              String_View *out_min_token,
+                                              Eval_Semver *out_min_version,
+                                              bool *out_has_max,
+                                              String_View *out_max_token,
+                                              Eval_Semver *out_max_version) {
+    if (!out_min_token || !out_min_version || !out_has_max || !out_max_token || !out_max_version) return false;
+
+    size_t range_pos = token.count;
+    bool found = false;
     for (size_t i = 0; i + 2 < token.count; i++) {
         if (token.data[i] == '.' && token.data[i + 1] == '.' && token.data[i + 2] == '.') {
-            *out_min_version = nob_sv_from_parts(token.data, i);
-            *out_policy_version = nob_sv_from_parts(token.data + i + 3, token.count - (i + 3));
-            break;
+            if (found) return false;
+            found = true;
+            range_pos = i;
+            i += 2;
         }
     }
-    if (out_min_version->count == 0) *out_min_version = token;
-    if (out_policy_version->count == 0) *out_policy_version = *out_min_version;
-    return out_min_version->count > 0 && out_policy_version->count > 0;
-}
 
-static size_t policy_depth_or_one(String_View depth_sv) {
-    size_t depth = 1;
-    if (depth_sv.count == 0) return depth;
-    size_t acc = 0;
-    for (size_t i = 0; i < depth_sv.count; i++) {
-        char c = depth_sv.data[i];
-        if (c < '0' || c > '9') return 1;
-        acc = (acc * 10) + (size_t)(c - '0');
+    *out_has_max = found;
+    if (found) {
+        *out_min_token = nob_sv_from_parts(token.data, range_pos);
+        *out_max_token = nob_sv_from_parts(token.data + range_pos + 3, token.count - (range_pos + 3));
+    } else {
+        *out_min_token = token;
+        *out_max_token = token;
     }
-    if (acc == 0) return 1;
-    return acc;
+
+    if (out_min_token->count == 0 || out_max_token->count == 0) return false;
+    if (!semver_parse_strict(*out_min_token, out_min_version)) return false;
+    if (!semver_parse_strict(*out_max_token, out_max_version)) return false;
+    return true;
 }
 
-static void policy_emit_unmapped_warning(Evaluator_Context *ctx,
-                                         const Node *node,
-                                         Cmake_Event_Origin o,
-                                         String_View policy_id) {
-    (void)eval_emit_diag(ctx,
-                         EV_DIAG_WARNING,
-                         nob_sv_from_cstr("dispatcher"),
-                         node->as.cmd.name,
-                         o,
-                         nob_sv_from_cstr("unsupported policy is outside evaluator flow/block compatibility matrix"),
-                         policy_id);
+static bool policy_apply_version_defaults(Evaluator_Context *ctx, Eval_Semver policy_version) {
+    if (!ctx || eval_should_stop(ctx)) return false;
+    int first = eval_policy_known_min_id();
+    int last = eval_policy_known_max_id();
+    for (int policy_no = first; policy_no <= last; policy_no++) {
+        char policy_id_buf[8];
+        if (snprintf(policy_id_buf, sizeof(policy_id_buf), "CMP%04d", policy_no) != 7) return ctx_oom(ctx);
+        String_View policy_id = nob_sv_from_parts(policy_id_buf, 7);
+        int intro_major = 0;
+        int intro_minor = 0;
+        int intro_patch = 0;
+        if (!eval_policy_get_intro_version(policy_id, &intro_major, &intro_minor, &intro_patch)) continue;
+
+        Eval_Semver intro = {intro_major, intro_minor, intro_patch, 0};
+        Eval_Policy_Status status =
+            semver_compare(&intro, &policy_version) <= 0 ? POLICY_STATUS_NEW : POLICY_STATUS_UNSET;
+        if (!eval_policy_set_status(ctx, policy_id, status)) return false;
+    }
+    return true;
 }
 
 bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node) {
@@ -120,10 +190,28 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
         return !eval_should_stop(ctx);
     }
+    if (a.count > 3 || (a.count == 3 && !eval_sv_eq_ci_lit(a.items[2], "FATAL_ERROR"))) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_minimum_required() received invalid arguments"),
+                       nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
+        return !eval_should_stop(ctx);
+    }
 
-    String_View min_version = nob_sv_from_cstr("");
-    String_View policy_version = nob_sv_from_cstr("");
-    if (!policy_parse_version_range(a.items[1], &min_version, &policy_version)) {
+    String_View min_token = nob_sv_from_cstr("");
+    String_View max_token = nob_sv_from_cstr("");
+    Eval_Semver min_version = {0};
+    Eval_Semver max_version = {0};
+    bool has_max = false;
+    if (!policy_parse_version_range_strict(a.items[1],
+                                           &min_token,
+                                           &min_version,
+                                           &has_max,
+                                           &max_token,
+                                           &max_version)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -133,20 +221,41 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        a.items[1]);
         return !eval_should_stop(ctx);
     }
-
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "FATAL_ERROR")) continue;
+    if (semver_compare(&min_version, &k_running_cmake_328) > 0) {
         eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
+                       EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
-                       nob_sv_from_cstr("cmake_minimum_required() argument is ignored in evaluator v2"),
-                       a.items[i]);
+                       nob_sv_from_cstr("cmake_minimum_required() requires a newer CMake than evaluator baseline"),
+                       min_token);
+        return !eval_should_stop(ctx);
+    }
+    if (has_max && semver_compare(&max_version, &min_version) < 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("cmake_minimum_required() requires max version >= min version"),
+                       a.items[1]);
+        return !eval_should_stop(ctx);
     }
 
-    (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_version);
-    (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version);
+    Eval_Semver policy_version = has_max ? max_version : min_version;
+    String_View policy_version_token = has_max ? max_token : min_token;
+    if (semver_compare(&policy_version, &k_policy_floor_24) < 0) {
+        policy_version = k_policy_floor_24;
+        policy_version_token = nob_sv_from_cstr("2.4");
+    }
+
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_token)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version_token)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!policy_apply_version_defaults(ctx, policy_version)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
 
@@ -167,19 +276,28 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "VERSION")) {
-        if (a.count < 2) {
+        if (a.count != 2) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
-                           nob_sv_from_cstr("cmake_policy(VERSION ...) missing version"),
-                           nob_sv_from_cstr(""));
+                           nob_sv_from_cstr("cmake_policy(VERSION ...) expects exactly one version argument"),
+                           nob_sv_from_cstr("Usage: cmake_policy(VERSION <min>[...<max>])"));
             return !eval_should_stop(ctx);
         }
-        String_View min_version = nob_sv_from_cstr("");
-        String_View policy_version = nob_sv_from_cstr("");
-        if (!policy_parse_version_range(a.items[1], &min_version, &policy_version)) {
+
+        String_View min_token = nob_sv_from_cstr("");
+        String_View max_token = nob_sv_from_cstr("");
+        Eval_Semver min_version = {0};
+        Eval_Semver max_version = {0};
+        bool has_max = false;
+        if (!policy_parse_version_range_strict(a.items[1],
+                                               &min_token,
+                                               &min_version,
+                                               &has_max,
+                                               &max_token,
+                                               &max_version)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -189,68 +307,132 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            a.items[1]);
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version);
-        return !eval_should_stop(ctx);
-    }
-
-    if (eval_sv_eq_ci_lit(a.items[0], "SET")) {
-        if (a.count < 3 || !eval_policy_is_id(a.items[1])) {
+        if (semver_compare(&min_version, &k_policy_floor_24) < 0) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
-                           nob_sv_from_cstr("cmake_policy(SET ...) expects CMP<NNNN> and value"),
+                           nob_sv_from_cstr("cmake_policy(VERSION ...) requires minimum version >= 2.4"),
+                           min_token);
+            return !eval_should_stop(ctx);
+        }
+        if (semver_compare(&min_version, &k_running_cmake_328) > 0) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(VERSION ...) min version exceeds evaluator baseline"),
+                           min_token);
+            return !eval_should_stop(ctx);
+        }
+        if (has_max && semver_compare(&max_version, &min_version) < 0) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(VERSION ...) requires max version >= min version"),
+                           a.items[1]);
+            return !eval_should_stop(ctx);
+        }
+
+        Eval_Semver policy_version = has_max ? max_version : min_version;
+        String_View policy_token = has_max ? max_token : min_token;
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_token)) return !eval_should_stop(ctx);
+        if (!policy_apply_version_defaults(ctx, policy_version)) return !eval_should_stop(ctx);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[0], "SET")) {
+        if (a.count != 3) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(SET ...) expects exactly policy id and value"),
                            nob_sv_from_cstr("Usage: cmake_policy(SET CMP0077 NEW)"));
             return !eval_should_stop(ctx);
         }
-        String_View value = a.items[2];
-        if (!(eval_sv_eq_ci_lit(value, "OLD") || eval_sv_eq_ci_lit(value, "NEW"))) {
+        if (!eval_policy_is_known(a.items[1])) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(SET ...) requires a known CMP policy id"),
+                           a.items[1]);
+            return !eval_should_stop(ctx);
+        }
+        if (!(eval_sv_eq_ci_lit(a.items[2], "OLD") || eval_sv_eq_ci_lit(a.items[2], "NEW"))) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("cmake_policy(SET ...) requires OLD or NEW"),
-                           value);
+                           a.items[2]);
             return !eval_should_stop(ctx);
         }
-        if (!eval_policy_is_supported_flow_block(a.items[1])) {
-            policy_emit_unmapped_warning(ctx, node, o, a.items[1]);
-            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-        }
-        if (!eval_policy_set(ctx, a.items[1], value)) return !eval_should_stop(ctx);
+        if (!eval_policy_set(ctx, a.items[1], a.items[2])) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "GET")) {
-        if (a.count < 3 || !eval_policy_is_id(a.items[1])) {
+        if (a.count != 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
-                           nob_sv_from_cstr("cmake_policy(GET ...) expects CMP<NNNN> and output variable"),
+                           nob_sv_from_cstr("cmake_policy(GET ...) expects exactly policy id and output variable"),
                            nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
             return !eval_should_stop(ctx);
         }
-        if (!eval_policy_is_supported_flow_block(a.items[1])) {
-            policy_emit_unmapped_warning(ctx, node, o, a.items[1]);
-            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (!eval_policy_is_known(a.items[1])) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(GET ...) requires a known CMP policy id"),
+                           a.items[1]);
+            return !eval_should_stop(ctx);
         }
         String_View val = eval_policy_get_effective(ctx, a.items[1]);
-        (void)eval_var_set(ctx, a.items[2], val);
+        if (!eval_var_set(ctx, a.items[2], val)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "PUSH")) {
+        if (a.count != 1) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(PUSH) does not accept extra arguments"),
+                           nob_sv_from_cstr("Usage: cmake_policy(PUSH)"));
+            return !eval_should_stop(ctx);
+        }
         if (!eval_policy_push(ctx)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "POP")) {
-        size_t depth = policy_depth_or_one(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH")));
-        if (depth <= 1) {
+        if (a.count != 1) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("cmake_policy(POP) does not accept extra arguments"),
+                           nob_sv_from_cstr("Usage: cmake_policy(POP)"));
+            return !eval_should_stop(ctx);
+        }
+        if (!eval_policy_pop(ctx)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -261,7 +443,6 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
             eval_request_stop_on_error(ctx);
             return !eval_should_stop(ctx);
         }
-        if (!eval_policy_pop(ctx)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 

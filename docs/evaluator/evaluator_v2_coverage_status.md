@@ -35,9 +35,9 @@ Status snapshot sources:
 | `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args/options remain. | `Medium` |
 | `block` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set (`SCOPE_FOR`, `PROPAGATE`). | - |
 | `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
-| `cmake_minimum_required` | `PARTIAL` | `NOOP_WARN` | Policy-version side effects are reduced to evaluator policy model and do not reflect complete CMake policy activation surface. | `Medium` |
+| `cmake_minimum_required` | `FULL` | `NOOP_WARN` | Signature/validation parity implemented for `VERSION <min>[...<max>] [FATAL_ERROR]`; implicit policy-version application matches evaluator CMake 3.28 baseline model. | - |
 | `cmake_path` | `PARTIAL` | `ERROR_CONTINUE` | Subset of modes implemented (see subcommand matrix). | `Medium` |
-| `cmake_policy` | `PARTIAL` | `NOOP_WARN` | Command syntax is implemented, but effective policy semantics are only modeled for a narrow subset (`CMP0124`, `CMP0126`). | `Medium` |
+| `cmake_policy` | `FULL` | `NOOP_WARN` | `VERSION|SET|GET|PUSH|POP` parity implemented with strict arity/known-policy validation and full CMake 3.28 policy registry (`CMP0000..CMP0155`). | - |
 | `continue` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`continue()`). | - |
 | `cpack_add_component` | `PARTIAL` | `NOOP_WARN` | Valid options `ARCHIVE_FILE` and `PLIST` are missing from implementation. | `Medium` |
 | `cpack_add_component_group` | `PARTIAL` | `NOOP_WARN` | In CMake these commands are provided by `CPackComponent` module; evaluator exposes them as always-available built-ins. | `Medium` |
@@ -196,7 +196,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`block`, `break`, `continue`, `endblock`, `math`, `message`, `set`, `set_target_properties`, `unset`.
+`block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `math`, `message`, `set`, `set_target_properties`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

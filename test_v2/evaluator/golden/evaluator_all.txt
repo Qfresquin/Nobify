@@ -189,22 +189,18 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 tar
 === END CASE ===
 
 === CASE flow_block_scope_and_propagate ===
-DIAG errors=0 warnings=4
-EVENTS count=14
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=7 col=3 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
-EV[2] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=8 col=3 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
-EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=3 name='block_inner' type=EXECUTABLE
-EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=3 target='block_inner' path='main.c'
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=3 target='block_inner' item='POL_INNER=NEW' vis=PRIVATE
-EV[6] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=12 col=1 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
-EV[7] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='block_outer' type=EXECUTABLE
-EV[8] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='block_outer' path='main.c'
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_OUTER=outer' vis=PRIVATE
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_PROP=propagated' vis=PRIVATE
-EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_LOCAL=' vis=PRIVATE
-EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_BEFORE=' vis=PRIVATE
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_AFTER=' vis=PRIVATE
+DIAG errors=0 warnings=0
+EVENTS count=10
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=3 name='block_inner' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=3 target='block_inner' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=3 target='block_inner' item='POL_INNER=NEW' vis=PRIVATE
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='block_outer' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='block_outer' path='main.c'
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_OUTER=outer' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_PROP=propagated' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_LOCAL=' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_BEFORE=' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_AFTER=' vis=PRIVATE
 === END CASE ===
 
 === CASE usercmd_function_scope_and_parent_scope ===
@@ -605,10 +601,8 @@ EVENTS count=0
 === END CASE ===
 
 === CASE dispatcher_cmake_policy_set_get_roundtrip ===
-DIAG errors=0 warnings=2
-EVENTS count=2
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
-EV[1] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
+DIAG errors=0 warnings=0
+EVENTS count=0
 === END CASE ===
 
 === CASE policy_version_cmp0124_default_new ===
@@ -636,12 +630,11 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 targ
 === END CASE ===
 
 === CASE policy_unmapped_get_warn_continue ===
-DIAG errors=0 warnings=1
-EVENTS count=4
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=WARNING component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
-EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='policy_unmapped_continue' type=EXECUTABLE
-EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='policy_unmapped_continue' path='main.c'
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='policy_unmapped_continue' item='OUT_UNMAPPED=' vis=PRIVATE
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='policy_unmapped_continue' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='policy_unmapped_continue' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='policy_unmapped_continue' item='OUT_UNMAPPED=' vis=PRIVATE
 === END CASE ===
 
 === CASE policy_include_scope_no_policy_scope_vs_scoped ===
@@ -666,9 +659,8 @@ EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='polic
 === END CASE ===
 
 === CASE compat_strict_promotes_policy_warning ===
-DIAG errors=1 warnings=0
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='dispatcher' command='cmake_policy' code='EVAL_ERR_UNSUPPORTED' class='POLICY_CONFLICT' cause='unsupported policy is outside evaluator flow/block compatibility matrix' hint='CMP0077'
+DIAG errors=0 warnings=0
+EVENTS count=0
 === END CASE ===
 
 === CASE compat_error_budget_stops_after_limit ===

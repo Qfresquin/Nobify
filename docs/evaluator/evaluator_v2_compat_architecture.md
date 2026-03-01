@@ -112,17 +112,14 @@ Coverage status document must remain aligned with this registry.
 
 ## 9. Policy Governance (Current)
 
-Current policy engine supports:
-- `cmake_policy(VERSION|SET|GET|PUSH|POP)` runtime mechanics
-- policy stack depth tracking via `NOBIFY_POLICY_STACK_DEPTH`
-- default-resolution table for supported policy IDs
+Current policy engine foundation covers CMake 3.28 command-level policy mechanics:
+- complete known-policy registry (`CMP0000..CMP0155`) with intro-version metadata
+- `cmake_policy(VERSION|SET|GET|PUSH|POP)` with strict arity and known-policy validation
+- internal policy stack state (independent from variable-scope stack) with level shadowing support (`UNSET` at upper level blocks fallback)
+- `cmake_minimum_required(VERSION ...)` implicit policy-version application aligned with the same policy core
 
-Current explicitly modeled flow/block policy:
-- `CMP0124`
-
-Policies outside currently modeled flow/block table:
-- can still be stored/read through policy commands
-- may emit unsupported-matrix warning depending on path
+Compatibility note:
+- command-level policy framework is complete for baseline 3.28, but behavior changes gated by each policy in other commands remain covered by those commands' own compatibility entries.
 
 ## 10. Fatal vs Recoverable Boundaries
 

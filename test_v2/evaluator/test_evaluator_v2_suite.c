@@ -1524,6 +1524,217 @@ TEST(evaluator_set_cache_policy_version_defaults_cmp0126_to_new) {
     TEST_PASS();
 }
 
+TEST(evaluator_policy_known_unknown_and_if_predicate) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(SET CMP0077 NEW)\n"
+        "cmake_policy(GET CMP0077 POL_OUT)\n"
+        "if(POLICY CMP0077)\n"
+        "  set(IF_KNOWN 1)\n"
+        "endif()\n"
+        "if(POLICY CMP9999)\n"
+        "  set(IF_UNKNOWN 1)\n"
+        "endif()\n"
+        "cmake_policy(GET CMP9999 BAD_OUT)\n"
+        "add_executable(policy_pred main.c)\n"
+        "target_compile_definitions(policy_pred PRIVATE POL_OUT=${POL_OUT} IF_KNOWN=${IF_KNOWN} IF_UNKNOWN=${IF_UNKNOWN})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 1);
+
+    bool saw_pol_out = false;
+    bool saw_if_known = false;
+    bool saw_if_unknown_empty = false;
+
+    bool saw_unknown_policy_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(GET ...) requires a known CMP policy id"))) {
+                saw_unknown_policy_error = true;
+            }
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("POL_OUT=NEW"))) {
+                saw_pol_out = true;
+            } else if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("IF_KNOWN=1"))) {
+                saw_if_known = true;
+            } else if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("IF_UNKNOWN="))) {
+                saw_if_unknown_empty = true;
+            }
+        }
+    }
+    ASSERT(saw_unknown_policy_error);
+    ASSERT(saw_pol_out);
+    ASSERT(saw_if_known);
+    ASSERT(saw_if_unknown_empty);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_policy_strict_arity_and_version_validation) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(PUSH EXTRA)\n"
+        "cmake_policy(POP EXTRA)\n"
+        "cmake_policy(SET CMP0077 NEW EXTRA)\n"
+        "cmake_policy(GET CMP0077)\n"
+        "cmake_policy(VERSION 3.10 3.11)\n"
+        "cmake_policy(VERSION 2.3)\n"
+        "cmake_policy(VERSION 3.29)\n"
+        "cmake_policy(VERSION 3.20...3.10)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 8);
+
+    bool saw_push_arity = false;
+    bool saw_pop_arity = false;
+    bool saw_set_arity = false;
+    bool saw_get_arity = false;
+    bool saw_version_arity = false;
+    bool saw_min_floor = false;
+    bool saw_min_running = false;
+    bool saw_max_lt_min = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(PUSH) does not accept extra arguments"))) {
+            saw_push_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(POP) does not accept extra arguments"))) {
+            saw_pop_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(SET ...) expects exactly policy id and value"))) {
+            saw_set_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(GET ...) expects exactly policy id and output variable"))) {
+            saw_get_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(VERSION ...) expects exactly one version argument"))) {
+            saw_version_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(VERSION ...) requires minimum version >= 2.4"))) {
+            saw_min_floor = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(VERSION ...) min version exceeds evaluator baseline"))) {
+            saw_min_running = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(VERSION ...) requires max version >= min version"))) {
+            saw_max_lt_min = true;
+        }
+    }
+
+    ASSERT(saw_push_arity);
+    ASSERT(saw_pop_arity);
+    ASSERT(saw_set_arity);
+    ASSERT(saw_get_arity);
+    ASSERT(saw_version_arity);
+    ASSERT(saw_min_floor);
+    ASSERT(saw_min_running);
+    ASSERT(saw_max_lt_min);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(VERSION 3.10)\n"
+        "function(set_local_min)\n"
+        "  cmake_minimum_required(VERSION 3.28)\n"
+        "endfunction()\n"
+        "set_local_min()\n"
+        "cmake_policy(GET CMP0124 OUT_POL)\n"
+        "add_executable(minreq_func main.c)\n"
+        "target_compile_definitions(minreq_func PRIVATE OUT_POL=${OUT_POL} MIN_VER=${CMAKE_MINIMUM_REQUIRED_VERSION})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_out_pol = false;
+    bool saw_min_ver_empty = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OUT_POL=NEW"))) {
+            saw_out_pol = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MIN_VER="))) {
+            saw_min_ver_empty = true;
+        }
+    }
+    ASSERT(saw_out_pol);
+    ASSERT(saw_min_ver_empty);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1557,6 +1768,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
+    test_evaluator_policy_known_unknown_and_if_predicate(passed, failed);
+    test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
+    test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;
