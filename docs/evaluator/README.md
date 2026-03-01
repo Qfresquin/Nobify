@@ -11,6 +11,7 @@ This folder is the evaluator documentation baseline for the v2 architecture.
 - `event_ir_v2_spec.md`
 - `evaluator_v2_compat_architecture.md`
 - `evaluator_v2_coverage_status.md`
+- `evaluator_v2_full_audit.md`
 
 If any conflict exists, `evaluator_v2_spec.md` wins and annexes must be updated.
 
@@ -32,11 +33,15 @@ Evaluator-to-downstream event schema and event stream memory contract.
 Compatibility profiles, diagnostic classification, stop/continue decisions, and run reporting.
 
 - `evaluator_v2_coverage_status.md`
-Implementation coverage matrix (`FULL|PARTIAL|MISSING`) at command and subcommand granularity.
+Registry-backed implementation coverage matrix (`FULL|PARTIAL|MISSING`) for dispatcher-visible built-ins plus selected subcommand detail.
+
+- `evaluator_v2_full_audit.md`
+Full command-universe audit against the scoped CMake `3.28.6` surface, including missing-command inventory, policy findings, and code-health findings.
 
 ## Update Rules
 
 - Treat `src_v2/evaluator/*.c`, `src_v2/evaluator/*.h`, and `src_v2/transpiler/event_ir.*` as source of truth.
 - Keep implemented behavior and roadmap behavior in separate sections.
 - For each `PARTIAL` entry in coverage, include at least one explicit delta vs CMake behavior.
+- Keep `evaluator_v2_coverage_status.md` and `evaluator_v2_full_audit.md` aligned on command counts and confirmed divergences.
 - Keep links local to this folder when possible.
