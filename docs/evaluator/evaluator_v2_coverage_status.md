@@ -24,15 +24,15 @@ Status snapshot sources:
 
 | Command | Capability Level | Fallback | Functional Divergence vs CMake 3.28 | Impact |
 |---|---|---|---|---|
-| `add_compile_options` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 applies option de-duplication/group handling (`SHELL:` semantics); evaluator appends raw items and keeps duplicates. | `Medium` |
+| `add_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:` expansion + de-duplication). | - |
 | `add_custom_command` | `PARTIAL` | `ERROR_CONTINUE` | Supports `TARGET`/`OUTPUT` signatures; not full CMake permutation parity. | `Medium` |
-| `add_custom_target` | `PARTIAL` | `NOOP_WARN` | Missing/ignored signature options in valid CMake usage (notably scheduler-related options such as `JOB_POOL` and `JOB_SERVER_AWARE`). | `Medium` |
+| `add_custom_target` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including scheduler options (`JOB_POOL`, `JOB_SERVER_AWARE`). | - |
 | `add_definitions` | `PARTIAL` | `NOOP_WARN` | Treated as raw compile options only; CMake's compile-definition-oriented behavior and legacy conversion nuances are not fully mirrored. | `Low` |
 | `add_executable` | `PARTIAL` | `NOOP_WARN` | Valid signatures `IMPORTED` and `ALIAS` are not implemented; option/property semantics are reduced. | `Critical` |
 | `add_library` | `PARTIAL` | `NOOP_WARN` | Valid signatures/behaviors (`IMPORTED`, `ALIAS`, and broader type/property surface) are not fully implemented. | `Critical` |
-| `add_link_options` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 applies option de-duplication and `SHELL:`/`LINKER:` handling; evaluator emits raw items without equivalent normalization. | `Medium` |
-| `add_subdirectory` | `PARTIAL` | `NOOP_WARN` | Valid `SYSTEM` option is not implemented; behavior reduced to source/binary/exclude subset. | `Medium` |
-| `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args/options remain. | `Medium` |
+| `add_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:`/`LINKER:` expansion + de-duplication). | - |
+| `add_subdirectory` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature subset (`source_dir [binary_dir] [EXCLUDE_FROM_ALL] [SYSTEM]`). | - |
+| `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args/options are warning+ignore fallback rather than full CMake option-surface parity. | `Low` |
 | `block` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set (`SCOPE_FOR`, `PROPAGATE`). | - |
 | `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
 | `cmake_minimum_required` | `FULL` | `NOOP_WARN` | Signature/validation parity implemented for `VERSION <min>[...<max>] [FATAL_ERROR]`; implicit policy-version application matches evaluator CMake 3.28 baseline model. | - |
@@ -47,10 +47,10 @@ Status snapshot sources:
 | `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (see matrix). | `Medium` |
 | `find_package` | `PARTIAL` | `ERROR_CONTINUE` | Core resolver flow implemented; option/discovery parity not complete. | `Medium` |
 | `include` | `PARTIAL` | `ERROR_CONTINUE` | `OPTIONAL` and `NO_POLICY_SCOPE` implemented; not full option parity. | `Medium` |
-| `include_directories` | `PARTIAL` | `NOOP_WARN` | Relative path canonicalization/normalization semantics are reduced versus CMake directory property behavior. | `Medium` |
+| `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE|AFTER`, relative canonicalization). | - |
 | `include_guard` | `PARTIAL` | `NOOP_WARN` | Default no-arg scope in CMake matches variable scope, while evaluator defaults to directory-style guarding; unsupported modes are downgraded to warning+fallback. | `Medium` |
 | `install` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 install command surface is much broader; implementation only supports a reduced subset of signatures/options. | `Critical` |
-| `link_directories` | `PARTIAL` | `NOOP_WARN` | Relative directory handling and full link-directory semantics are reduced versus CMake behavior. | `Medium` |
+| `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE|AFTER`, relative canonicalization). | - |
 | `link_libraries` | `PARTIAL` | `NOOP_WARN` | CMake item qualifiers (`debug`, `optimized`, `general`) and broader semantic handling are not implemented. | `Medium` |
 | `list` | `PARTIAL` | `NOOP_WARN` | Subcommand/action coverage is incomplete relative to CMake 3.28 list command behavior. | `Medium` |
 | `math` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])`). | - |
@@ -62,11 +62,11 @@ Status snapshot sources:
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
 | `target_compile_definitions` | `PARTIAL` | `NOOP_WARN` | CMake normalization rules (e.g. `-D` handling nuances and related semantics) are not fully mirrored. | `Low` |
-| `target_compile_options` | `PARTIAL` | `NOOP_WARN` | Valid `BEFORE` option is not implemented. | `Medium` |
-| `target_include_directories` | `PARTIAL` | `NOOP_WARN` | Relative path treatment and full CMake path semantics are reduced. | `Medium` |
-| `target_link_directories` | `PARTIAL` | `NOOP_WARN` | Relative path handling and full CMake semantics are reduced. | `Medium` |
-| `target_link_libraries` | `PARTIAL` | `NOOP_WARN` | Valid item-class semantics (`debug|optimized|general` and related forms) are not fully implemented. | `Medium` |
-| `target_link_options` | `PARTIAL` | `NOOP_WARN` | Valid `BEFORE` option is not implemented. | `Medium` |
+| `target_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
+| `target_include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
+| `target_link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
+| `target_link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented item qualifiers (`debug|optimized|general`). | - |
+| `target_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
 | `try_compile` | `PARTIAL` | `NOOP_WARN` | Evaluator uses simulated compile success/failure logic instead of native compile pipeline semantics. | `Critical` |
 | `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE|PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
 
@@ -174,11 +174,11 @@ Current evaluator `install()` handler supports only a reduced subset.
 | Command | Key CMake 3.28 semantic | Evaluator gap | Impact |
 |---|---|---|---|
 | `target_compile_definitions` | Scope-based items with normalization behavior | Normalization nuances not fully mirrored | `Low` |
-| `target_compile_options` | Supports `[BEFORE]` and scope grouping | `BEFORE` not implemented | `Medium` |
-| `target_include_directories` | Scope, `SYSTEM`, order, path semantics | Relative path behavior reduced | `Medium` |
-| `target_link_directories` | Scope, order, path semantics | Relative path behavior reduced | `Medium` |
-| `target_link_libraries` | Rich item classification (`debug/optimized/general`, etc.) | Reduced item-class semantics | `Medium` |
-| `target_link_options` | Supports `[BEFORE]` and scope grouping | `BEFORE` not implemented | `Medium` |
+| `target_compile_options` | Supports `[BEFORE]` and scope grouping | No known result-affecting gap in covered signature surface | - |
+| `target_include_directories` | Scope, `SYSTEM`, order, path semantics | No known result-affecting gap in covered signature surface | - |
+| `target_link_directories` | Scope, order, path semantics | No known result-affecting gap in covered signature surface | - |
+| `target_link_libraries` | Rich item classification (`debug/optimized/general`, etc.) | No known result-affecting gap for qualifier handling | - |
+| `target_link_options` | Supports `[BEFORE]` and scope grouping | No known result-affecting gap in covered signature surface | - |
 
 ## 9. Coverage details: `project()`
 
@@ -196,7 +196,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `math`, `message`, `set`, `set_target_properties`, `unset`.
+`add_compile_options`, `add_custom_target`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `include_directories`, `link_directories`, `math`, `message`, `set`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

@@ -43,6 +43,24 @@ static bool emit_var_set(Evaluator_Context *ctx, Cmake_Event_Origin o, String_Vi
     return emit_event(ctx, ev);
 }
 
+static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
+                                                         String_View item,
+                                                         String_View cond_prefix) {
+    if (!ctx || item.count == 0 || cond_prefix.count == 0) return item;
+    String_View parts[3] = {
+        cond_prefix,
+        item,
+        nob_sv_from_cstr(">")
+    };
+    return svu_join_no_sep_temp(ctx, parts, 3);
+}
+
+static String_View current_source_dir_for_paths(Evaluator_Context *ctx) {
+    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (cur_src.count == 0 && ctx) cur_src = ctx->source_dir;
+    return cur_src;
+}
+
 static String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -176,6 +194,7 @@ bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node)
 
     String_View tgt = a.items[0];
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    String_View qualifier = nob_sv_from_cstr("");
 
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
@@ -190,14 +209,42 @@ bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node)
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
+        if (eval_sv_eq_ci_lit(a.items[i], "DEBUG") ||
+            eval_sv_eq_ci_lit(a.items[i], "OPTIMIZED") ||
+            eval_sv_eq_ci_lit(a.items[i], "GENERAL")) {
+            qualifier = a.items[i];
+            continue;
+        }
+
+        String_View item = a.items[i];
+        if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
+            item = wrap_link_item_with_config_genex_temp(ctx,
+                                                         item,
+                                                         nob_sv_from_cstr("$<$<CONFIG:Debug>:"));
+        } else if (eval_sv_eq_ci_lit(qualifier, "OPTIMIZED")) {
+            item = wrap_link_item_with_config_genex_temp(ctx,
+                                                         item,
+                                                         nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
+        }
 
         Cmake_Event ev = {0};
         ev.kind = EV_TARGET_LINK_LIBRARIES;
         ev.origin = o;
         ev.as.target_link_libraries.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_link_libraries.visibility = vis;
-        ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, item);
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+        qualifier = nob_sv_from_cstr("");
+    }
+
+    if (qualifier.count > 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_WARNING,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("target_link_libraries() qualifier without following item"),
+                       qualifier);
     }
     return !eval_should_stop(ctx);
 }
@@ -214,13 +261,18 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("target_link_options() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_link_options(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+                       nob_sv_from_cstr("Usage: target_link_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return !eval_should_stop(ctx);
     }
 
     String_View tgt = a.items[0];
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    bool is_before = false;
     for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+            is_before = true;
+            continue;
+        }
         if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
@@ -240,6 +292,7 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
         ev.as.target_link_options.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_link_options.visibility = vis;
         ev.as.target_link_options.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_link_options.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
 
@@ -264,6 +317,7 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
 
     String_View tgt = a.items[0];
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    String_View cur_src = current_source_dir_for_paths(ctx);
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
@@ -281,9 +335,11 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
         Cmake_Event ev = {0};
         ev.kind = EV_TARGET_LINK_DIRECTORIES;
         ev.origin = o;
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         ev.as.target_link_directories.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_link_directories.visibility = vis;
-        ev.as.target_link_directories.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_link_directories.path = sv_copy_to_event_arena(ctx, resolved);
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
 
@@ -310,6 +366,7 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_system = false;
     bool is_before = false;
+    String_View cur_src = current_source_dir_for_paths(ctx);
 
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "SYSTEM")) {
@@ -340,9 +397,11 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
         Cmake_Event ev = {0};
         ev.kind = EV_TARGET_INCLUDE_DIRECTORIES;
         ev.origin = o;
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         ev.as.target_include_directories.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_include_directories.visibility = vis;
-        ev.as.target_include_directories.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_include_directories.path = sv_copy_to_event_arena(ctx, resolved);
         ev.as.target_include_directories.is_system = is_system;
         ev.as.target_include_directories.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
@@ -406,13 +465,18 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("target_compile_options() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_compile_options(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+                       nob_sv_from_cstr("Usage: target_compile_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return !eval_should_stop(ctx);
     }
 
     String_View tgt = a.items[0];
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    bool is_before = false;
     for (size_t i = 1; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+            is_before = true;
+            continue;
+        }
         if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
@@ -432,6 +496,7 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
         ev.as.target_compile_options.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_compile_options.visibility = vis;
         ev.as.target_compile_options.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_compile_options.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);

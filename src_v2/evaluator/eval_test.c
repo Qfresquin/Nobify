@@ -47,6 +47,7 @@ typedef struct {
     String_View command_name;
     String_View working_dir;
     bool command_expand_lists;
+    bool warned_extra_args;
 } Add_Test_Option_State;
 
 static bool add_test_on_option(Evaluator_Context *ctx,
@@ -76,12 +77,14 @@ static bool add_test_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
+    if (st->warned_extra_args) return true;
+    st->warned_extra_args = true;
     eval_emit_diag(ctx,
                    EV_DIAG_WARNING,
                    nob_sv_from_cstr("dispatcher"),
                    st->command_name,
                    st->origin,
-                   nob_sv_from_cstr("add_test() has unsupported/extra argument"),
+                   nob_sv_from_cstr("add_test() has unsupported extra arguments; remaining tokens are ignored"),
                    value);
     return !eval_should_stop(ctx);
 }

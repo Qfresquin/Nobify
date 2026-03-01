@@ -371,7 +371,9 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
             case EV_TARGET_COMPILE_OPTIONS:
                 ev_print_sv("target", ev->as.target_compile_options.target_name);
                 ev_print_sv("item", ev->as.target_compile_options.item);
-                printf(" vis=%d", (int)ev->as.target_compile_options.visibility);
+                printf(" vis=%d is_before=%d",
+                       (int)ev->as.target_compile_options.visibility,
+                       ev->as.target_compile_options.is_before ? 1 : 0);
                 break;
             case EV_TARGET_LINK_LIBRARIES:
                 ev_print_sv("target", ev->as.target_link_libraries.target_name);
@@ -381,7 +383,9 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
             case EV_TARGET_LINK_OPTIONS:
                 ev_print_sv("target", ev->as.target_link_options.target_name);
                 ev_print_sv("item", ev->as.target_link_options.item);
-                printf(" vis=%d", (int)ev->as.target_link_options.visibility);
+                printf(" vis=%d is_before=%d",
+                       (int)ev->as.target_link_options.visibility,
+                       ev->as.target_link_options.is_before ? 1 : 0);
                 break;
             case EV_TARGET_LINK_DIRECTORIES:
                 ev_print_sv("target", ev->as.target_link_directories.target_name);

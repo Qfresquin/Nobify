@@ -166,6 +166,7 @@ typedef struct {
             String_View target_name;
             Cmake_Visibility visibility;
             String_View item;
+            bool is_before;
         } target_compile_options;
 
         struct {
@@ -178,6 +179,7 @@ typedef struct {
             String_View target_name;
             Cmake_Visibility visibility;
             String_View item;
+            bool is_before;
         } target_link_options;
 
         struct {

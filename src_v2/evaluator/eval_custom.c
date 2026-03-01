@@ -51,6 +51,8 @@ enum {
     CUSTOM_TARGET_OPT_USES_TERMINAL,
     CUSTOM_TARGET_OPT_COMMAND_EXPAND_LISTS,
     CUSTOM_TARGET_OPT_COMMAND,
+    CUSTOM_TARGET_OPT_JOB_POOL,
+    CUSTOM_TARGET_OPT_JOB_SERVER_AWARE,
 };
 
 typedef struct {
@@ -59,6 +61,10 @@ typedef struct {
     bool verbatim;
     bool uses_terminal;
     bool command_expand_lists;
+    bool has_job_pool;
+    String_View job_pool;
+    bool has_job_server_aware;
+    String_View job_server_aware;
     SV_List depends;
     SV_List byproducts;
     SV_List commands;
@@ -113,6 +119,14 @@ static bool add_custom_target_on_option(Evaluator_Context *ctx,
         }
         return true;
     }
+    case CUSTOM_TARGET_OPT_JOB_POOL:
+        st->has_job_pool = true;
+        if (values.count > 0) st->job_pool = values.items[0];
+        return true;
+    case CUSTOM_TARGET_OPT_JOB_SERVER_AWARE:
+        st->has_job_server_aware = true;
+        st->job_server_aware = (values.count > 0) ? values.items[0] : nob_sv_from_cstr("1");
+        return true;
     default:
         return true;
     }
@@ -127,6 +141,22 @@ static bool add_custom_noop_positional(Evaluator_Context *ctx,
     (void)value;
     (void)token_index;
     return true;
+}
+
+static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
+                                                  Cmake_Event_Origin o,
+                                                  String_View target_name) {
+    String_View raw = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
+    if (raw.count == 0) return true;
+    if (eval_sv_eq_ci_lit(raw, "0") || eval_sv_eq_ci_lit(raw, "FALSE") || eval_sv_eq_ci_lit(raw, "OFF")) {
+        return true;
+    }
+    return emit_target_prop_set(ctx,
+                                o,
+                                target_name,
+                                nob_sv_from_cstr("SYSTEM"),
+                                nob_sv_from_cstr("1"),
+                                EV_PROP_SET);
 }
 
 enum {
@@ -288,6 +318,8 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
         {CUSTOM_TARGET_OPT_VERBATIM, "VERBATIM", EVAL_OPT_FLAG},
         {CUSTOM_TARGET_OPT_USES_TERMINAL, "USES_TERMINAL", EVAL_OPT_FLAG},
         {CUSTOM_TARGET_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
+        {CUSTOM_TARGET_OPT_JOB_POOL, "JOB_POOL", EVAL_OPT_SINGLE},
+        {CUSTOM_TARGET_OPT_JOB_SERVER_AWARE, "JOB_SERVER_AWARE", EVAL_OPT_OPTIONAL_SINGLE},
         {CUSTOM_TARGET_OPT_COMMAND, "COMMAND", EVAL_OPT_MULTI},
     };
     Add_Custom_Target_Opts opt = {0};
@@ -318,6 +350,7 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
     decl.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     decl.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
     if (!emit_event(ctx, decl)) return !eval_should_stop(ctx);
+    if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
 
     if (!emit_target_prop_set(ctx,
                               o,
@@ -326,6 +359,27 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
                               all ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"),
                               EV_PROP_SET)) {
         return !eval_should_stop(ctx);
+    }
+    if (opt.has_job_pool && opt.job_pool.count > 0) {
+        if (!emit_target_prop_set(ctx,
+                                  o,
+                                  name,
+                                  nob_sv_from_cstr("JOB_POOL"),
+                                  opt.job_pool,
+                                  EV_PROP_SET)) {
+            return !eval_should_stop(ctx);
+        }
+    }
+    if (opt.has_job_server_aware) {
+        String_View aware = opt.job_server_aware.count > 0 ? opt.job_server_aware : nob_sv_from_cstr("1");
+        if (!emit_target_prop_set(ctx,
+                                  o,
+                                  name,
+                                  nob_sv_from_cstr("JOB_SERVER_AWARE"),
+                                  aware,
+                                  EV_PROP_SET)) {
+            return !eval_should_stop(ctx);
+        }
     }
 
     for (size_t s = 0; s < opt.sources.count; s++) {

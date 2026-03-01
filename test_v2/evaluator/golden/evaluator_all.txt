@@ -21,8 +21,8 @@ EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='lib' type=
 EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='lib' path='lib.c'
 EV[6] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
 EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE
-EV[9] kind=EV_TARGET_LINK_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wl,--as-needed' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE is_before=0
+EV[9] kind=EV_TARGET_LINK_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wl,--as-needed' vis=PRIVATE is_before=0
 EV[10] kind=EV_TARGET_LINK_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='lib' vis=PRIVATE
 EV[11] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=9 col=1 target='app' item='lib' vis=PRIVATE
 EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET
@@ -587,12 +587,12 @@ EV[6] kind=EV_DIRECTORY_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=5 col=1 p
 EV[7] kind=EV_DIRECTORY_LINK_DIRECTORIES file='CMakeLists.txt' line=6 col=1 path='lib' is_before=1
 EV[8] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='app' type=EXECUTABLE
 EV[9] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='app' path='main.c'
-EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-DLEGACY=1' vis=UNSPECIFIED
-EV[11] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=UNSPECIFIED
-EV[12] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=UNSPECIFIED
+EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-DLEGACY=1' vis=UNSPECIFIED is_before=0
+EV[11] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=UNSPECIFIED is_before=0
+EV[12] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=UNSPECIFIED is_before=0
 EV[13] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
 EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='app' item='APPDEF=1' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE
+EV[15] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE is_before=0
 === END CASE ===
 
 === CASE dispatcher_cmake_minimum_required ===
@@ -760,8 +760,8 @@ EV[5] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=5 col=1 key='CACHED_X' 
 EV[6] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='non_target_prop' type=EXECUTABLE
 EV[7] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='non_target_prop' path='main.c'
 EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='non_target_prop' item='DIR_DEF=1' vis=UNSPECIFIED
-EV[9] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='non_target_prop' item='-Wall' vis=UNSPECIFIED
-EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='non_target_prop' item='-Wextra' vis=UNSPECIFIED
+EV[9] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='non_target_prop' item='-Wall' vis=UNSPECIFIED is_before=0
+EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='non_target_prop' item='-Wextra' vis=UNSPECIFIED is_before=0
 EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='non_target_prop' item='CACHED_X=cache_ok' vis=PRIVATE
 === END CASE ===
 

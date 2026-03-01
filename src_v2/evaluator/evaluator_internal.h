@@ -254,6 +254,11 @@ String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, s
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_sv_is_abs_path(String_View p);
 String_View eval_sv_path_join(Arena *arena, String_View a, String_View b);
+String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input);
+String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
+                                            String_View raw_path,
+                                            String_View base_dir,
+                                            bool preserve_generator_expressions);
 const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name);
 bool eval_has_env(Evaluator_Context *ctx, const char *name);
 

@@ -472,7 +472,9 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.target_compile_options.target_name);
             nob_sb_append_cstr(sb, " item=");
             snapshot_append_escaped_sv(sb, ev->as.target_compile_options.item);
-            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_compile_options.visibility)));
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s is_before=%d",
+                visibility_name(ev->as.target_compile_options.visibility),
+                ev->as.target_compile_options.is_before ? 1 : 0));
             break;
 
         case EV_TARGET_LINK_LIBRARIES:
@@ -488,7 +490,9 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.target_link_options.target_name);
             nob_sb_append_cstr(sb, " item=");
             snapshot_append_escaped_sv(sb, ev->as.target_link_options.item);
-            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_link_options.visibility)));
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s is_before=%d",
+                visibility_name(ev->as.target_link_options.visibility),
+                ev->as.target_link_options.is_before ? 1 : 0));
             break;
 
         case EV_TARGET_LINK_DIRECTORIES:

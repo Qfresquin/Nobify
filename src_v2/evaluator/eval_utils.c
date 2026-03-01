@@ -132,6 +132,131 @@ String_View eval_sv_path_join(Arena *arena, String_View a, String_View b) {
     return nob_sv_from_cstr(buf);
 }
 
+String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (input.count == 0) return nob_sv_from_cstr(".");
+
+    bool is_unc = input.count >= 2 && svu_is_path_sep(input.data[0]) && svu_is_path_sep(input.data[1]);
+    bool has_drive = input.count >= 2 &&
+                     isalpha((unsigned char)input.data[0]) &&
+                     input.data[1] == ':';
+    bool absolute = false;
+    size_t pos = 0;
+
+    if (is_unc) {
+        pos = 2;
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
+    } else if (has_drive) {
+        pos = 2;
+        if (pos < input.count && svu_is_path_sep(input.data[pos])) {
+            absolute = true;
+            while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
+        }
+    } else if (svu_is_path_sep(input.data[0])) {
+        absolute = true;
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
+    }
+
+    SV_List segments = {0};
+    size_t unc_root_segments = 0;
+    while (pos < input.count) {
+        size_t start = pos;
+        while (pos < input.count && !svu_is_path_sep(input.data[pos])) pos++;
+        String_View seg = nob_sv_from_parts(input.data + start, pos - start);
+        while (pos < input.count && svu_is_path_sep(input.data[pos])) pos++;
+
+        if (seg.count == 0 || nob_sv_eq(seg, nob_sv_from_cstr("."))) continue;
+        if (nob_sv_eq(seg, nob_sv_from_cstr(".."))) {
+            if (segments.count > 0 &&
+                !nob_sv_eq(segments.items[segments.count - 1], nob_sv_from_cstr("..")) &&
+                (!is_unc || segments.count > unc_root_segments)) {
+                segments.count--;
+                continue;
+            }
+            if (!absolute) {
+                if (!svu_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
+            }
+            continue;
+        }
+
+        if (!svu_list_push_temp(ctx, &segments, seg)) return nob_sv_from_cstr("");
+        if (is_unc && unc_root_segments < 2) unc_root_segments++;
+    }
+
+    size_t total = 0;
+    if (is_unc) total += 2;
+    else if (has_drive) total += 2;
+    if (absolute && !is_unc && !has_drive) total += 1;
+    if (absolute && has_drive) total += 1;
+
+    for (size_t i = 0; i < segments.count; i++) {
+        if (i > 0 || is_unc || absolute || (has_drive && absolute)) total += 1;
+        total += segments.items[i].count;
+    }
+
+    if (segments.count == 0) {
+        if (is_unc) total += 0;
+        else if (has_drive && absolute) {
+            if (total == 2) total += 1;
+        } else if (!has_drive && !absolute) {
+            total += 1;
+        }
+    }
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    size_t off = 0;
+
+    if (is_unc) {
+        buf[off++] = '/';
+        buf[off++] = '/';
+    } else if (has_drive) {
+        buf[off++] = input.data[0];
+        buf[off++] = ':';
+        if (absolute) buf[off++] = '/';
+    } else if (absolute) {
+        buf[off++] = '/';
+    }
+
+    for (size_t i = 0; i < segments.count; i++) {
+        if (off > 0 && buf[off - 1] != '/') buf[off++] = '/';
+        memcpy(buf + off, segments.items[i].data, segments.items[i].count);
+        off += segments.items[i].count;
+    }
+
+    if (segments.count == 0) {
+        if (has_drive && absolute) {
+            if (off == 2) buf[off++] = '/';
+        } else if (!is_unc && !has_drive && !absolute) {
+            buf[off++] = '.';
+        }
+    }
+
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
+                                            String_View raw_path,
+                                            String_View base_dir,
+                                            bool preserve_generator_expressions) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (raw_path.count == 0) return nob_sv_from_cstr("");
+
+    if (preserve_generator_expressions &&
+        raw_path.count >= 2 &&
+        raw_path.data[0] == '$' &&
+        raw_path.data[1] == '<') {
+        return raw_path;
+    }
+
+    String_View resolved = raw_path;
+    if (!eval_sv_is_abs_path(resolved)) {
+        resolved = eval_sv_path_join(eval_temp_arena(ctx), base_dir, resolved);
+    }
+    return eval_sv_path_normalize_temp(ctx, resolved);
+}
+
 const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name) {
     if (!name || name[0] == '\0') return NULL;
 

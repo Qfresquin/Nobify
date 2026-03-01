@@ -761,6 +761,10 @@ static bool builder_handle_event_target_compile_options(Build_Model_Builder *bui
         .visibility = vis,
     };
 
+    if (ev->as.target_compile_options.is_before) {
+        builder_warn_before_after_once(builder, ev);
+    }
+
     return builder_for_each_semicolon_item(ev->as.target_compile_options.item,
                                            true,
                                            builder_append_target_option_item,
@@ -821,6 +825,9 @@ static bool builder_handle_event_target_link_options(Build_Model_Builder *builde
         .arena = builder->arena,
         .visibility = vis,
     };
+    if (ev->as.target_link_options.is_before) {
+        builder_warn_before_after_once(builder, ev);
+    }
     return builder_for_each_semicolon_item(ev->as.target_link_options.item,
                                            true,
                                            builder_append_target_link_option_item,

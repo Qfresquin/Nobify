@@ -19,6 +19,38 @@ static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return true;
 }
 
+static bool emit_target_prop_set(Evaluator_Context *ctx,
+                                 Cmake_Event_Origin o,
+                                 String_View target_name,
+                                 String_View key,
+                                 String_View value,
+                                 Cmake_Target_Property_Op op) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_TARGET_PROP_SET;
+    ev.origin = o;
+    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.target_prop_set.op = op;
+    return emit_event(ctx, ev);
+}
+
+static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
+                                                  Cmake_Event_Origin o,
+                                                  String_View target_name) {
+    String_View raw = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
+    if (raw.count == 0) return true;
+    if (eval_sv_eq_ci_lit(raw, "0") || eval_sv_eq_ci_lit(raw, "FALSE") || eval_sv_eq_ci_lit(raw, "OFF")) {
+        return true;
+    }
+    return emit_target_prop_set(ctx,
+                                o,
+                                target_name,
+                                nob_sv_from_cstr("SYSTEM"),
+                                nob_sv_from_cstr("1"),
+                                EV_PROP_SET);
+}
+
 static bool emit_items_from_list(Evaluator_Context *ctx,
                                  Cmake_Event_Origin o,
                                  String_View target_name,
@@ -551,6 +583,7 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     ev.as.target_declare.type = EV_TARGET_EXECUTABLE;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
 
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "WIN32") ||
@@ -614,6 +647,7 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     ev.as.target_declare.type = ty;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
 
     for (; i < a.count; i++) {
         Cmake_Event src_ev = {0};
