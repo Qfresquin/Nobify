@@ -123,6 +123,8 @@ struct Evaluator_Context {
     size_t scope_capacity;
 
     SV_List known_targets; 
+    SV_List alias_targets;
+    SV_List message_check_stack;
     User_Command_List user_commands;
     Macro_Frame_Stack macro_frames;
     Block_Frame_Stack block_frames;
@@ -218,6 +220,8 @@ bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key);
 // ---- targets ----
 bool eval_target_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_register(Evaluator_Context *ctx, String_View name);
+bool eval_target_alias_known(Evaluator_Context *ctx, String_View name);
+bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 
 // ---- user commands ----
 bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node);

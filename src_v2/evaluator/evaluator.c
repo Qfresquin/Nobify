@@ -266,6 +266,22 @@ bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     return true;
 }
 
+bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
+    if (!ctx) return false;
+    for (size_t i = 0; i < ctx->alias_targets.count; i++) {
+        if (eval_sv_key_eq(ctx->alias_targets.items[i], name)) return true;
+    }
+    return false;
+}
+
+bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
+    if (!ctx || eval_target_alias_known(ctx, name)) return true;
+    name = sv_copy_to_event_arena(ctx, name);
+    if (eval_should_stop(ctx)) return false;
+    if (!arena_da_try_append(ctx->known_targets_arena, &ctx->alias_targets, name)) return ctx_oom(ctx);
+    return true;
+}
+
 // -----------------------------------------------------------------------------
 // Argument resolution (token flattening + variable expansion + list splitting)
 // -----------------------------------------------------------------------------

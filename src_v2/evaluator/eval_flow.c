@@ -160,6 +160,23 @@ static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_r
     return true;
 }
 
+static bool flow_require_no_args(Evaluator_Context *ctx, const Node *node, String_View usage_hint) {
+    if (!ctx || !node) return false;
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (args.count == 0) return true;
+
+    (void)eval_emit_diag(ctx,
+                         EV_DIAG_ERROR,
+                         nob_sv_from_cstr("flow"),
+                         node->as.cmd.name,
+                         eval_origin_from_node(ctx, node),
+                         nob_sv_from_cstr("Command does not accept arguments"),
+                         usage_hint);
+    return false;
+}
+
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     if (!ctx) return false;
     while (ctx->block_frames.count > 0) {
@@ -170,6 +187,7 @@ bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
 
 bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
+    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: break()"))) return !eval_should_stop(ctx);
     if (ctx->loop_depth == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
@@ -186,6 +204,7 @@ bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
 
 bool eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
+    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: continue()"))) return !eval_should_stop(ctx);
     if (ctx->loop_depth == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
@@ -279,18 +298,7 @@ bool eval_handle_block(Evaluator_Context *ctx, const Node *node) {
 
 bool eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
-
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (args.count > 0) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_WARNING,
-                             nob_sv_from_cstr("flow"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("endblock() arguments are ignored in evaluator v2"),
-                             nob_sv_from_cstr(""));
-    }
+    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: endblock()"))) return !eval_should_stop(ctx);
 
     if (ctx->block_frames.count == 0) {
         (void)eval_emit_diag(ctx,

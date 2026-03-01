@@ -293,7 +293,13 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return !eval_should_stop(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 1) {
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
+                       nob_sv_from_cstr("math() requires a subcommand"),
+                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+        return !eval_should_stop(ctx);
+    }
 
     if (!eval_sv_eq_ci_lit(a.items[0], "EXPR")) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,

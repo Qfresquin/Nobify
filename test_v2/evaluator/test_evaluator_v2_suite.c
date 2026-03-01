@@ -179,6 +179,15 @@ static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
     return memcmp(sv.data, p.data, p.count) == 0;
 }
 
+static bool sv_contains_sv(String_View haystack, String_View needle) {
+    if (needle.count == 0) return true;
+    if (haystack.count < needle.count) return false;
+    for (size_t i = 0; i + needle.count <= haystack.count; i++) {
+        if (memcmp(haystack.data + i, needle.data, needle.count) == 0) return true;
+    }
+    return false;
+}
+
 static String_View sv_trim_cr(String_View sv) {
     if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
         return nob_sv_from_parts(sv.data, sv.count - 1);
@@ -918,6 +927,366 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     TEST_PASS();
 }
 
+TEST(evaluator_flow_commands_reject_extra_arguments) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "break(oops)\n"
+        "continue(oops)\n"
+        "block()\n"
+        "endblock(oops)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 3);
+
+    size_t usage_hint_hits = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].kind != EV_DIAGNOSTIC) continue;
+        if (stream->items[i].as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(stream->items[i].as.diag.cause, nob_sv_from_cstr("Command does not accept arguments"))) continue;
+        usage_hint_hits++;
+    }
+    ASSERT(usage_hint_hits == 3);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_math_rejects_empty_and_incomplete_invocations) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "math()\n"
+        "math(EXPR)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool found_empty_error = false;
+    bool found_expr_arity_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].kind != EV_DIAGNOSTIC) continue;
+        if (stream->items[i].as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(stream->items[i].as.diag.cause, nob_sv_from_cstr("math() requires a subcommand"))) {
+            found_empty_error = true;
+        }
+        if (nob_sv_eq(stream->items[i].as.diag.cause,
+                      nob_sv_from_cstr("math(EXPR) requires output variable and expression"))) {
+            found_expr_arity_error = true;
+        }
+    }
+    ASSERT(found_empty_error);
+    ASSERT(found_expr_arity_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_set_target_properties_rejects_alias_target) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(real STATIC real.c)\n"
+        "add_library(alias_real ALIAS real)\n"
+        "set_target_properties(alias_real PROPERTIES OUTPUT_NAME x)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool found_alias_error = false;
+    bool emitted_prop_for_alias = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set_target_properties() cannot be used on ALIAS targets"))) {
+            found_alias_error = true;
+        }
+        if (ev->kind == EV_TARGET_PROP_SET &&
+            nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("alias_real"))) {
+            emitted_prop_for_alias = true;
+        }
+    }
+    ASSERT(found_alias_error);
+    ASSERT(!emitted_prop_for_alias);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_message_mode_severity_mapping) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "message(NOTICE n)\n"
+        "message(STATUS s)\n"
+        "message(VERBOSE v)\n"
+        "message(DEBUG d)\n"
+        "message(TRACE t)\n"
+        "message(WARNING w)\n"
+        "message(AUTHOR_WARNING aw)\n"
+        "message(DEPRECATION dep)\n"
+        "message(SEND_ERROR se)\n"
+        "message(CHECK_START probe)\n"
+        "message(CHECK_PASS ok)\n"
+        "message(CHECK_START probe2)\n"
+        "message(CHECK_FAIL fail)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 3);
+    ASSERT(report->error_count == 1);
+
+    size_t warning_diag_count = 0;
+    size_t error_diag_count = 0;
+    bool saw_check_pass_cause = false;
+    bool saw_check_fail_cause = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity == EV_DIAG_WARNING) warning_diag_count++;
+        if (ev->as.diag.severity == EV_DIAG_ERROR) error_diag_count++;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("probe - ok"))) saw_check_pass_cause = true;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("probe2 - fail"))) saw_check_fail_cause = true;
+    }
+
+    ASSERT(warning_diag_count == 3);
+    ASSERT(error_diag_count == 1);
+    ASSERT(!saw_check_pass_cause);
+    ASSERT(!saw_check_fail_cause);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_message_check_pass_without_start_is_error) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "message(CHECK_PASS done)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool found = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("message(CHECK_PASS/CHECK_FAIL) requires a preceding CHECK_START"))) {
+            found = true;
+            break;
+        }
+    }
+    ASSERT(found);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_message_deprecation_respects_control_variables) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_WARN_DEPRECATED FALSE)\n"
+        "message(DEPRECATION hidden)\n"
+        "set(CMAKE_WARN_DEPRECATED TRUE)\n"
+        "message(DEPRECATION shown)\n"
+        "set(CMAKE_ERROR_DEPRECATED TRUE)\n"
+        "message(DEPRECATION err)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 1);
+    ASSERT(report->error_count == 1);
+
+    bool saw_hidden = false;
+    bool saw_shown_warn = false;
+    bool saw_err_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("hidden"))) saw_hidden = true;
+        if (ev->as.diag.severity == EV_DIAG_WARNING &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("shown"))) {
+            saw_shown_warn = true;
+        }
+        if (ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("err"))) {
+            saw_err_error = true;
+        }
+    }
+    ASSERT(!saw_hidden);
+    ASSERT(saw_shown_warn);
+    ASSERT(saw_err_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_message_configure_log_persists_yaml_file) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "message(CHECK_START feature-probe)\n"
+        "message(CONFIGURE_LOG probe-start)\n"
+        "message(CHECK_PASS yes)\n"
+        "message(CONFIGURE_LOG probe-end)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    String_View log_text = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "./CMakeFiles/CMakeConfigureLog.yaml", &log_text));
+    ASSERT(sv_contains_sv(log_text, nob_sv_from_cstr("kind: \"message-v1\"")));
+    ASSERT(sv_contains_sv(log_text, nob_sv_from_cstr("probe-start")));
+    ASSERT(sv_contains_sv(log_text, nob_sv_from_cstr("probe-end")));
+    ASSERT(sv_contains_sv(log_text, nob_sv_from_cstr("feature-probe")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -940,6 +1309,13 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
 
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+    test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
+    test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);
+    test_evaluator_set_target_properties_rejects_alias_target(passed, failed);
+    test_evaluator_message_mode_severity_mapping(passed, failed);
+    test_evaluator_message_check_pass_without_start_is_error(passed, failed);
+    test_evaluator_message_deprecation_respects_control_variables(passed, failed);
+    test_evaluator_message_configure_log_persists_yaml_file(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

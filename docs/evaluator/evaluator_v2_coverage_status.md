@@ -34,16 +34,16 @@ Status snapshot sources:
 | `add_subdirectory` | `PARTIAL` | `NOOP_WARN` | Valid `SYSTEM` option is not implemented; behavior reduced to source/binary/exclude subset. | `Medium` |
 | `add_test` | `PARTIAL` | `ERROR_CONTINUE` | Main signatures implemented; unsupported extra args/options remain. | `Medium` |
 | `block` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set (`SCOPE_FOR`, `PROPAGATE`). | - |
-| `break` | `PARTIAL` | `NOOP_WARN` | Signature is `break()` in CMake; evaluator ignores extra arguments instead of failing argument validation. | `Low` |
+| `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
 | `cmake_minimum_required` | `PARTIAL` | `NOOP_WARN` | Policy-version side effects are reduced to evaluator policy model and do not reflect complete CMake policy activation surface. | `Medium` |
 | `cmake_path` | `PARTIAL` | `ERROR_CONTINUE` | Subset of modes implemented (see subcommand matrix). | `Medium` |
 | `cmake_policy` | `PARTIAL` | `NOOP_WARN` | Command syntax is implemented, but effective policy semantics are only modeled for a narrow subset (`CMP0124` behavior coverage). | `Medium` |
-| `continue` | `PARTIAL` | `NOOP_WARN` | Signature is `continue()` in CMake; evaluator ignores extra arguments instead of failing argument validation. | `Low` |
+| `continue` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`continue()`). | - |
 | `cpack_add_component` | `PARTIAL` | `NOOP_WARN` | Valid options `ARCHIVE_FILE` and `PLIST` are missing from implementation. | `Medium` |
 | `cpack_add_component_group` | `PARTIAL` | `NOOP_WARN` | In CMake these commands are provided by `CPackComponent` module; evaluator exposes them as always-available built-ins. | `Medium` |
 | `cpack_add_install_type` | `PARTIAL` | `NOOP_WARN` | In CMake these commands are provided by `CPackComponent` module; evaluator exposes them as always-available built-ins. | `Medium` |
 | `enable_testing` | `PARTIAL` | `NOOP_WARN` | Evaluator additionally sets `BUILD_TESTING=1`, which can alter script-visible variable behavior compared to native CMake command semantics. | `Low` |
-| `endblock` | `PARTIAL` | `NOOP_WARN` | CMake signature is `endblock()`; evaluator accepts extra args and only warns that they are ignored. | `Low` |
+| `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
 | `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (see matrix). | `Medium` |
 | `find_package` | `PARTIAL` | `ERROR_CONTINUE` | Core resolver flow implemented; option/discovery parity not complete. | `Medium` |
 | `include` | `PARTIAL` | `ERROR_CONTINUE` | `OPTIONAL` and `NO_POLICY_SCOPE` implemented; not full option parity. | `Medium` |
@@ -53,13 +53,13 @@ Status snapshot sources:
 | `link_directories` | `PARTIAL` | `NOOP_WARN` | Relative directory handling and full link-directory semantics are reduced versus CMake behavior. | `Medium` |
 | `link_libraries` | `PARTIAL` | `NOOP_WARN` | CMake item qualifiers (`debug`, `optimized`, `general`) and broader semantic handling are not implemented. | `Medium` |
 | `list` | `PARTIAL` | `NOOP_WARN` | Subcommand/action coverage is incomplete relative to CMake 3.28 list command behavior. | `Medium` |
-| `math` | `PARTIAL` | `NOOP_WARN` | Argument validation is looser in edge cases (e.g., empty call path returns without hard command error in evaluator). | `Low` |
-| `message` | `PARTIAL` | `NOOP_WARN` | Many valid message modes are not implemented (`NOTICE`, `VERBOSE`, `DEBUG`, `TRACE`, `CHECK_*`, etc.). | `Critical` |
+| `math` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])`). | - |
+| `message` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented modes (`NOTICE/STATUS/VERBOSE/DEBUG/TRACE/WARNING/AUTHOR_WARNING/DEPRECATION/SEND_ERROR/FATAL_ERROR/CHECK_*/CONFIGURE_LOG`). | - |
 | `project` | `PARTIAL` | `NOOP_WARN` | Reduced signature support (e.g. missing `HOMEPAGE_URL`, reduced language-signature handling and variable surface). | `Medium` |
 | `return` | `PARTIAL` | `NOOP_WARN` | CMake states `macro()` cannot handle `return()`; evaluator allows it (warning only), changing control-flow outcome in macro contexts. | `Medium` |
 | `set` | `PARTIAL` | `NOOP_WARN` | Reduced support for valid signatures (`CACHE` detail semantics and `ENV{}` form). | `Medium` |
 | `set_property` | `PARTIAL` | `ERROR_CONTINUE` | Scope coverage exists; parity for all CMake property semantics is not complete. | `Medium` |
-| `set_target_properties` | `PARTIAL` | `NOOP_WARN` | CMake forbids setting properties on alias targets; evaluator does not enforce this restriction before emitting property events. | `Low` |
+| `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `string` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 string command surface is broader (hash family, `REPEAT`, JSON modes/options) than current implementation. | `Medium` |
 | `target_compile_definitions` | `PARTIAL` | `NOOP_WARN` | CMake normalization rules (e.g. `-D` handling nuances and related semantics) are not fully mirrored. | `Low` |
 | `target_compile_options` | `PARTIAL` | `NOOP_WARN` | Valid `BEFORE` option is not implemented. | `Medium` |
@@ -131,7 +131,7 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 |---|---|---|---|
 | `math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])` | Supported | Supported | None for main signature |
 | Output format | `DECIMAL`/`HEXADECIMAL` | Supported (including legacy trailing form) | None for normal usage |
-| Empty/invalid invocation edges | Hard command error on invalid arity | Some empty-call paths return without hard error | `Low` |
+| Empty/invalid invocation edges | Hard command error on invalid arity | Hard command error on invalid arity | None |
 
 ## 6. Coverage details: `set()` / `unset()`
 
@@ -167,7 +167,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 | Signature | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
 | `set_target_properties(<targets>... PROPERTIES <k> <v>...)` | Supported | Supported in evaluator event model | None for nominal signature |
-| Alias-target restriction | Alias targets do not allow setting properties | Restriction is not enforced before event emission | `Low` |
+| Alias-target restriction | Alias targets do not allow setting properties | Restriction enforced (error diagnostic, no property event for alias target) | None |
 
 ### Target usage-requirement commands
 
@@ -196,7 +196,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`block`.
+`block`, `break`, `continue`, `endblock`, `math`, `message`, `set_target_properties`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

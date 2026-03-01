@@ -497,6 +497,16 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
 
     for (size_t ti = 0; ti < props_i; ti++) {
         String_View tgt = a.items[ti];
+        if (eval_target_alias_known(ctx, tgt)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("set_target_properties() cannot be used on ALIAS targets"),
+                           tgt);
+            continue;
+        }
         for (size_t i = kv_start; i + 1 < a.count; i += 2) {
             if (!emit_target_prop_set(ctx, o, tgt, a.items[i], a.items[i + 1], EV_PROP_SET)) {
                 return !eval_should_stop(ctx);

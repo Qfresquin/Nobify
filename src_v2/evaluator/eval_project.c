@@ -354,6 +354,14 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
 
     String_View name = a.items[0];
+
+    // Minimal ALIAS-signature support used by flow/property validation.
+    if (a.count == 3 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
+        (void)eval_target_register(ctx, name);
+        (void)eval_target_alias_register(ctx, name);
+        return !eval_should_stop(ctx);
+    }
+
     (void)eval_target_register(ctx, name);
 
     Cmake_Event ev = {0};
@@ -388,6 +396,14 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx) || a.count < 1) return !eval_should_stop(ctx);
 
     String_View name = a.items[0];
+
+    // Minimal ALIAS-signature support used by flow/property validation.
+    if (a.count == 3 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
+        (void)eval_target_register(ctx, name);
+        (void)eval_target_alias_register(ctx, name);
+        return !eval_should_stop(ctx);
+    }
+
     (void)eval_target_register(ctx, name);
 
     Cmake_Target_Type ty = EV_TARGET_LIBRARY_UNKNOWN;
