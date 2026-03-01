@@ -137,7 +137,13 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_test.c",
         "src_v2/evaluator/eval_try_compile.c",
         "src_v2/evaluator/eval_utils.c",
-        "src_v2/evaluator/eval_vars.c");
+        "src_v2/evaluator/eval_vars.c",
+        "src_v2/build_model/build_model.c",
+        "src_v2/build_model/build_model_builder.c",
+        "src_v2/build_model/build_model_validate.c",
+        "src_v2/build_model/build_model_freeze.c",
+        "src_v2/build_model/build_model_query.c",
+        "src_v2/build_model/build_logic.c");
 }
 
 static void append_v2_parser_runtime_sources(Nob_Cmd *cmd) {

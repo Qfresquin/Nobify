@@ -1360,6 +1360,15 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"), nob_sv_from_cstr("WARN"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_FILE_GLOB_STRICT"), nob_sv_from_cstr("0"))) return NULL;
 
+    {
+        const char *cc = getenv("CC");
+        if (!cc || cc[0] == '\0') cc = "cc";
+        const char *cxx = getenv("CXX");
+        if (!cxx || cxx[0] == '\0') cxx = "c++";
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), nob_sv_from_cstr(cc))) return NULL;
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), nob_sv_from_cstr(cxx))) return NULL;
+    }
+
     // Compiler ID can be fixed for compatibility scripts.
     String_View compiler_id = detect_compiler_id();
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;

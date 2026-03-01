@@ -261,6 +261,7 @@ void eval_report_record_diag(Evaluator_Context *ctx,
                              Eval_Error_Class cls);
 void eval_report_finalize(Evaluator_Context *ctx);
 bool eval_command_caps_lookup(String_View name, Command_Capability *out_capability);
+bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg);
 
 // ---- vars ----
 String_View eval_var_get(Evaluator_Context *ctx, String_View key);

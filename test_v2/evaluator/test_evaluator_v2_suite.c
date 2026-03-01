@@ -935,7 +935,7 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
 
     Command_Capability try_compile_cap = {0};
     ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("try_compile"), &try_compile_cap));
-    ASSERT(try_compile_cap.implemented_level == EVAL_CMD_IMPL_PARTIAL);
+    ASSERT(try_compile_cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
     Command_Capability missing = {0};
     ASSERT(!evaluator_get_command_capability(nob_sv_from_cstr("unknown_public_api_command"), &missing));
@@ -4414,6 +4414,141 @@ TEST(evaluator_file_download_probe_mode_without_destination) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_compile(TC_LOCAL_ONLY tc_try_local\n"
+        "  SOURCE_FROM_CONTENT probe.c \"int main(void){return 0;}\"\n"
+        "  CMAKE_FLAGS -DINNER_ONLY:BOOL=ON\n"
+        "  NO_CACHE)\n"
+        "add_executable(tc_try_local_probe main.c)\n"
+        "target_compile_definitions(tc_try_local_probe PRIVATE TC_LOCAL_ONLY=${TC_LOCAL_ONLY} \"INNER_ONLY_PARENT=${INNER_ONLY}\")\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_local_only = false;
+    bool saw_parent_empty = false;
+    bool saw_cache_entry = false;
+    bool saw_parent_binding = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_SET_CACHE_ENTRY &&
+            nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("TC_LOCAL_ONLY"))) {
+            saw_cache_entry = true;
+        }
+        if (ev->kind == EV_VAR_SET &&
+            nob_sv_eq(ev->as.var_set.key, nob_sv_from_cstr("INNER_ONLY"))) {
+            saw_parent_binding = true;
+        }
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("tc_try_local_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_LOCAL_ONLY=1"))) {
+            saw_local_only = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INNER_ONLY_PARENT="))) {
+            saw_parent_empty = true;
+        }
+    }
+
+    ASSERT(saw_local_only);
+    ASSERT(saw_parent_empty);
+    ASSERT(!saw_cache_entry);
+    ASSERT(!saw_parent_binding);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_try_compile_failure_populates_output_variable) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_compile(TC_FAIL tc_try_fail\n"
+        "  SOURCE_FROM_CONTENT broken.c \"int main(void){ this is not valid C; }\"\n"
+        "  OUTPUT_VARIABLE TC_FAIL_LOG\n"
+        "  NO_CACHE)\n"
+        "string(LENGTH \"${TC_FAIL_LOG}\" TC_FAIL_LOG_LEN)\n"
+        "add_executable(tc_try_fail_probe main.c)\n"
+        "target_compile_definitions(tc_try_fail_probe PRIVATE TC_FAIL=${TC_FAIL} TC_FAIL_LOG_LEN=${TC_FAIL_LOG_LEN})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_fail_result = false;
+    size_t fail_log_len = 0;
+    bool saw_fail_log_len = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("tc_try_fail_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_FAIL=0"))) {
+            saw_fail_result = true;
+            continue;
+        }
+        if (sv_starts_with_cstr(ev->as.target_compile_definitions.item, "TC_FAIL_LOG_LEN=")) {
+            String_View len_sv = nob_sv_from_parts(
+                ev->as.target_compile_definitions.item.data + strlen("TC_FAIL_LOG_LEN="),
+                ev->as.target_compile_definitions.item.count - strlen("TC_FAIL_LOG_LEN="));
+            char buf[64] = {0};
+            ASSERT(len_sv.count < sizeof(buf));
+            memcpy(buf, len_sv.data, len_sv.count);
+            fail_log_len = (size_t)strtoull(buf, NULL, 10);
+            saw_fail_log_len = true;
+        }
+    }
+
+    ASSERT(saw_fail_result);
+    ASSERT(saw_fail_log_len);
+    ASSERT(fail_log_len > 0);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -4488,6 +4623,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed);
     test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed);
     test_evaluator_file_download_probe_mode_without_destination(passed, failed);
+    test_evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak(passed, failed);
+    test_evaluator_try_compile_failure_populates_output_variable(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

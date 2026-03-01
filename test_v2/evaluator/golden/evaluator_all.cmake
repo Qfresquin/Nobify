@@ -54,13 +54,11 @@ add_executable(probe_app main.c)
 
 #@@CASE try_compile_source_from_content_copy_file_and_cache
 try_compile(TC_CONTENT_OK tc_build
-  SOURCE_FROM_CONTENT tc_generated.c "ok_content"
-  OUTPUT_VARIABLE TC_CONTENT_MSG
-  COPY_FILE tc_copy_out.txt
+  SOURCE_FROM_CONTENT tc_generated.c "int main(void){return 0;}"
+  COPY_FILE tc_copy_out.bin
   CMAKE_FLAGS -DTC_FLAG:STRING=ready)
-file(READ tc_copy_out.txt TC_COPY_TEXT)
 add_executable(tc_content main.c)
-target_compile_definitions(tc_content PRIVATE TC_CONTENT_OK=${TC_CONTENT_OK} TC_FLAG=${TC_FLAG} TC_CONTENT_MSG=${TC_CONTENT_MSG} TC_COPY_TEXT=${TC_COPY_TEXT})
+target_compile_definitions(tc_content PRIVATE TC_CONTENT_OK=${TC_CONTENT_OK} TC_FLAG=${TC_FLAG})
 #@@ENDCASE
 
 #@@CASE try_compile_sources_missing_with_no_cache
@@ -70,29 +68,30 @@ target_compile_definitions(tc_missing PRIVATE TC_MISSING=${TC_MISSING} "TC_MISSI
 #@@ENDCASE
 
 #@@CASE try_compile_source_from_var_and_file_with_log_description
-file(WRITE tc_real_src.c "from_file_src")
-set(TC_VAR_SRC "from_var_src")
+file(WRITE tc_real_src.c "int helper(void); int main(void){return helper();}")
+set(TC_VAR_SRC "int helper(void){return 0;}")
 try_compile(TC_MIX_OK tc_build
   SOURCE_FROM_VAR from_var.c TC_VAR_SRC
   SOURCE_FROM_FILE from_file.c tc_real_src.c
-  OUTPUT_VARIABLE TC_MIX_MSG
   LOG_DESCRIPTION mix_log_ok
-  COPY_FILE tc_mix_copy.txt
+  COPY_FILE tc_mix_copy.bin
   COPY_FILE_ERROR TC_COPY_ERR
   NO_CACHE)
-file(READ tc_mix_copy.txt TC_MIX_COPY_TXT)
 add_executable(tc_mix main.c)
-target_compile_definitions(tc_mix PRIVATE TC_MIX_OK=${TC_MIX_OK} TC_MIX_MSG=${TC_MIX_MSG} TC_COPY_ERR=${TC_COPY_ERR} TC_MIX_COPY_TXT=${TC_MIX_COPY_TXT})
+target_compile_definitions(tc_mix PRIVATE TC_MIX_OK=${TC_MIX_OK} TC_COPY_ERR=${TC_COPY_ERR})
 #@@ENDCASE
 
 #@@CASE try_compile_project_signature_success_and_failure
 file(MAKE_DIRECTORY tc_proj_ok)
-file(WRITE tc_proj_ok/CMakeLists.txt "project(TryProj)")
-try_compile(TC_PROJ_OK PROJECT TryProj SOURCE_DIR tc_proj_ok BINARY_DIR tc_proj_bin OUTPUT_VARIABLE TC_PROJ_MSG CMAKE_FLAGS -DTC_PROJ_FLAG:BOOL=ON)
+file(WRITE tc_proj_ok/CMakeLists.txt [=[project(TryProj C)
+add_executable(tc_proj_main main.c)
+]=])
+file(WRITE tc_proj_ok/main.c "int main(void){return 0;}")
+try_compile(TC_PROJ_OK PROJECT TryProj SOURCE_DIR tc_proj_ok BINARY_DIR tc_proj_bin TARGET tc_proj_main CMAKE_FLAGS -DTC_PROJ_FLAG:BOOL=ON)
 file(MAKE_DIRECTORY tc_proj_fail)
 try_compile(TC_PROJ_FAIL PROJECT TryProjFail SOURCE_DIR tc_proj_fail OUTPUT_VARIABLE TC_PROJ_FAIL_MSG NO_CACHE)
 add_executable(tc_proj main.c)
-target_compile_definitions(tc_proj PRIVATE TC_PROJ_OK=${TC_PROJ_OK} TC_PROJ_MSG=${TC_PROJ_MSG} TC_PROJ_FLAG=${TC_PROJ_FLAG} TC_PROJ_FAIL=${TC_PROJ_FAIL} "TC_PROJ_FAIL_MSG=${TC_PROJ_FAIL_MSG}")
+target_compile_definitions(tc_proj PRIVATE TC_PROJ_OK=${TC_PROJ_OK} TC_PROJ_FLAG=${TC_PROJ_FLAG} TC_PROJ_FAIL=${TC_PROJ_FAIL} "TC_PROJ_FAIL_MSG=${TC_PROJ_FAIL_MSG}")
 #@@ENDCASE
 
 #@@CASE golden_ctest_meta

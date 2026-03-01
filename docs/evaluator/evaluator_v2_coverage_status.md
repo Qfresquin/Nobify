@@ -68,7 +68,7 @@ Status snapshot sources:
 | `target_link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
 | `target_link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented item qualifiers (`debug optimized general`). | - |
 | `target_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
-| `try_compile` | `PARTIAL` | `NOOP_WARN` | Evaluator uses simulated compile success/failure logic instead of native compile pipeline semantics. | `Critical` |
+| `try_compile` | `FULL` | `NOOP_WARN` | Native evaluator-side `SOURCE`/`PROJECT` execution now performs real toolchain probes, publishes actual compile output, and records configure-log entries without relying on a simulated existence-only shortcut. | - |
 | `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
 
 ## 2. Subcommand Matrix: `file()`
@@ -224,14 +224,15 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 | Area | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
-| Full compile pipeline semantics | Actual configure/compile checks | Simulated result based on source/CMakeLists existence and simplified flow | `Critical` |
-| Signature parsing | Broad signature support | Broad parsing exists, but execution model is simulated | `Critical` |
+| Full compile pipeline semantics | Actual configure/compile checks | Actual evaluator-side compile pipeline using host toolchain (`SOURCE`) plus isolated child-evaluator configure/build flow (`PROJECT`) | None in covered flow |
+| Result publication | `CACHE` by default, `NO_CACHE` for local scope, output/configure-log populated from real probe | Matches covered flow, including cache/local scope split, `OUTPUT_VARIABLE`, `COPY_FILE`, and `LOG_DESCRIPTION` publication | None in covered flow |
+| Signature parsing | Broad signature support | Covered `SOURCE` and `PROJECT` forms are normalized into the internal probe request model before execution | None in covered flow |
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_path`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_path`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
 
-Commands currently documented as `PARTIAL`: `try_compile`.
+Commands currently documented as `PARTIAL`: none.
 
 ## 12. Consistency checks required for future updates
 

@@ -57,7 +57,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"target_link_directories", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"target_link_libraries", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"target_link_options", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
-    {"try_compile", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
+    {"try_compile", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"unset", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
 };
 static const size_t COMMAND_CAPS_COUNT = sizeof(COMMAND_CAPS) / sizeof(COMMAND_CAPS[0]);

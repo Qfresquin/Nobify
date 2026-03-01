@@ -122,8 +122,8 @@ static bool msg_write_all(FILE *f, const char *text) {
     return fwrite(text, 1, n, f) == n;
 }
 
-static bool msg_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg) {
-    if (!ctx || !node) return false;
+bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg) {
+    if (!ctx) return false;
 
     String_View bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
     if (bin.count == 0) bin = ctx->binary_dir;
@@ -150,7 +150,7 @@ static bool msg_append_configure_log(Evaluator_Context *ctx, const Node *node, S
     char bt[1024];
     snprintf(bt, sizeof(bt), "    backtrace:\n      - \"%s:%zu (message)\"\n",
              ctx->current_file ? ctx->current_file : "CMakeLists.txt",
-             node->line);
+             node ? node->line : 0u);
     ok = ok && msg_write_all(f, bt);
 
     if (ctx->message_check_stack.count > 0) {
@@ -227,7 +227,7 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (mode == MSG_MODE_CONFIGURE_LOG) {
-        if (!msg_append_configure_log(ctx, node, msg)) {
+        if (!eval_append_configure_log(ctx, node, msg)) {
             return ctx_oom(ctx) ? false : !eval_should_stop(ctx);
         }
         return !eval_should_stop(ctx);
