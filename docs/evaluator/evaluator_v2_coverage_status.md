@@ -37,7 +37,7 @@ Status snapshot sources:
 | `block` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set (`SCOPE_FOR`, `PROPAGATE`). | - |
 | `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
 | `cmake_minimum_required` | `FULL` | `NOOP_WARN` | Signature/validation parity implemented for `VERSION <min>[...<max>] [FATAL_ERROR]`; implicit policy-version application matches evaluator CMake 3.28 baseline model. | - |
-| `cmake_path` | `PARTIAL` | `ERROR_CONTINUE` | Subset of modes implemented (see subcommand matrix). | `Medium` |
+| `cmake_path` | `FULL` | `ERROR_CONTINUE` | No result-affecting divergence found for the documented CMake 3.28.6 surface implemented in evaluator v2, including mutating path transforms, `CONVERT`, `COMPARE`, and `HAS_*` / `IS_ABSOLUTE` predicates in validated Linux+Windows scope. | - |
 | `cmake_policy` | `FULL` | `NOOP_WARN` | `VERSION SET GET PUSH POP` parity implemented with strict arity/known-policy validation and full CMake 3.28 policy registry (`CMP0000..CMP0155`). | - |
 | `continue` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`continue()`). | - |
 | `cpack_add_component` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including `ARCHIVE_FILE` and `PLIST`, with availability gated by `include(CPackComponent)`. | - |
@@ -52,7 +52,7 @@ Status snapshot sources:
 | `include_guard` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include_guard([DIRECTORY|GLOBAL])`), including default variable-like scope (no-arg form), strict argument validation, and `DIRECTORY`/`GLOBAL` behavior. | - |
 | `install` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator event-model install surface (core + advanced signatures emitted as install rules). | - |
 | `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE AFTER`, relative canonicalization). | - |
-| `link_libraries` | `PARTIAL` | `NOOP_WARN` | CMake item qualifiers (`debug`, `optimized`, `general`) and broader semantic handling are not implemented. | `Medium` |
+| `link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented global link item handling, including `debug`, `optimized`, and `general` qualifiers emitted as deterministic per-item link payloads. | - |
 | `list` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented subcommand surface, including `FILTER` and `TRANSFORM` actions/selectors (`GENEX_STRIP`, `OUTPUT_VARIABLE`). | - |
 | `math` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])`). | - |
 | `message` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented modes (`NOTICE/STATUS/VERBOSE/DEBUG/TRACE/WARNING/AUTHOR_WARNING/DEPRECATION/SEND_ERROR/FATAL_ERROR/CHECK_*/CONFIGURE_LOG`). | - |
@@ -129,7 +129,16 @@ Status snapshot sources:
 | `FILTER` | `INCLUDE|EXCLUDE REGEX` | Supported | None |
 | `TRANSFORM` | Actions/selectors + `OUTPUT_VARIABLE` | Supported (`APPEND`, `PREPEND`, `TOLOWER`, `TOUPPER`, `STRIP`, `GENEX_STRIP`, `REPLACE`; selectors `AT FOR REGEX`; optional `OUTPUT_VARIABLE`) | None |
 
-## 4.1 Coverage details: `find_package()`
+## 4.1 Coverage details: `cmake_path()`
+
+| Area | CMake 3.28.6 | Evaluator v2 | Divergence impact |
+|---|---|---|---|
+| Mutation / transform surface (`SET`, `APPEND`, `APPEND_STRING`, `REMOVE_*`, `REPLACE_*`, `NORMAL_PATH`) | Supported | Supported, with in-place mutation or `OUTPUT_VARIABLE` handling on the documented mutating subcommands | None |
+| Query surface (`GET`, `HAS_*`, `IS_ABSOLUTE`) | Supported | Supported for documented components (`ROOT_NAME`, `ROOT_DIRECTORY`, `ROOT_PATH`, `FILENAME`, `EXTENSION`, `STEM`, `RELATIVE_PART`, `PARENT_PATH`) including `LAST_ONLY` on `EXTENSION` / `STEM` | None |
+| Path conversion / comparison (`RELATIVE_PATH`, `ABSOLUTE_PATH`, `NATIVE_PATH`, `CONVERT`, `COMPARE`) | Supported | Supported with strict argument validation, `EQUAL` / `NOT_EQUAL` compare parity, and Linux+Windows separator semantics including drive / UNC-aware handling in covered path decomposition | None |
+| Invalid arity / option combinations | Hard command error | Hard command error | None |
+
+## 4.2 Coverage details: `find_package()`
 
 | Area | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
@@ -220,9 +229,9 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_path`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
-Commands currently documented as `PARTIAL`: `cmake_path`, `link_libraries`, `try_compile`.
+Commands currently documented as `PARTIAL`: `try_compile`.
 
 ## 12. Consistency checks required for future updates
 

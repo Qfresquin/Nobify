@@ -26,7 +26,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"block", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"break", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"cmake_minimum_required", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
-    {"cmake_path", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE},
+    {"cmake_path", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE},
     {"cmake_policy", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"continue", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"cpack_add_component", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
@@ -57,7 +57,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"target_link_directories", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"target_link_libraries", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"target_link_options", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
-    {"try_compile", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
+    {"try_compile", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
     {"unset", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
 };
 static const size_t COMMAND_CAPS_COUNT = sizeof(COMMAND_CAPS) / sizeof(COMMAND_CAPS[0]);

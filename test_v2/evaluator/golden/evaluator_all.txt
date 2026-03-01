@@ -141,11 +141,17 @@ EV[22] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=20 col=1 rule_type=0 
 
 === CASE golden_misc_path_and_property ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=10
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='MiscDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_VAR_SET file='CMakeLists.txt' line=2 col=1 key='NOBIFY_PROPERTY_GLOBAL::USE_FOLDERS' value='ON'
-EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='misc_app' type=EXECUTABLE
-EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='misc_app' path='main.c'
+EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='misc_app' type=EXECUTABLE
+EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='misc_app' path='main.c'
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_EXT=.tar.gz' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_STEM_LAST=c.tar' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_DIR=a/c.tar.gz/' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_NORM=a/c.log' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_EQ=ON' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_HAS_EXT=ON' vis=PRIVATE
 === END CASE ===
 
 === CASE expr_variable_expansion_and_if_ops ===
@@ -608,23 +614,25 @@ EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='custo
 
 === CASE dispatcher_command_handlers ===
 DIAG errors=0 warnings=0
-EVENTS count=16
+EVENTS count=18
 EV[0] kind=EV_GLOBAL_COMPILE_DEFINITIONS file='CMakeLists.txt' line=1 col=1 item='LEGACY=1'
 EV[1] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=1 col=1 item='-fPIC'
 EV[2] kind=EV_GLOBAL_COMPILE_OPTIONS file='CMakeLists.txt' line=2 col=1 item='-Wall'
 EV[3] kind=EV_GLOBAL_LINK_OPTIONS file='CMakeLists.txt' line=3 col=1 item='-Wl,--gc-sections'
-EV[4] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='m'
-EV[5] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='pthread'
-EV[6] kind=EV_DIRECTORY_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=5 col=1 path='include' is_system=1 is_before=0
-EV[7] kind=EV_DIRECTORY_LINK_DIRECTORIES file='CMakeLists.txt' line=6 col=1 path='lib' is_before=1
-EV[8] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='app' type=EXECUTABLE
-EV[9] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='app' path='main.c'
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='app' item='LEGACY=1' vis=UNSPECIFIED
-EV[11] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=UNSPECIFIED is_before=0
-EV[12] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=UNSPECIFIED is_before=0
-EV[13] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
-EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='app' item='APPDEF=1' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE is_before=0
+EV[4] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='$<$<CONFIG:Debug>:m>'
+EV[5] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='$<$<NOT:$<CONFIG:Debug>>:pthread>'
+EV[6] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='dl'
+EV[7] kind=EV_GLOBAL_LINK_LIBRARIES file='CMakeLists.txt' line=4 col=1 item='plain'
+EV[8] kind=EV_DIRECTORY_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=5 col=1 path='include' is_system=1 is_before=0
+EV[9] kind=EV_DIRECTORY_LINK_DIRECTORIES file='CMakeLists.txt' line=6 col=1 path='lib' is_before=1
+EV[10] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='app' type=EXECUTABLE
+EV[11] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='app' path='main.c'
+EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='app' item='LEGACY=1' vis=UNSPECIFIED
+EV[13] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=UNSPECIFIED is_before=0
+EV[14] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=UNSPECIFIED is_before=0
+EV[15] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[16] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[17] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE is_before=0
 === END CASE ===
 
 === CASE dispatcher_cmake_minimum_required ===

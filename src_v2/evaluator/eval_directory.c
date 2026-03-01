@@ -83,6 +83,18 @@ static bool split_definition_flag(String_View item, String_View *out_definition)
     return true;
 }
 
+static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
+                                                         String_View item,
+                                                         String_View cond_prefix) {
+    if (!ctx || item.count == 0 || cond_prefix.count == 0) return item;
+    String_View parts[3] = {
+        cond_prefix,
+        item,
+        nob_sv_from_cstr(">")
+    };
+    return svu_join_no_sep_temp(ctx, parts, 3);
+}
+
 static bool split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
 
@@ -314,13 +326,52 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
+    String_View qualifier = nob_sv_from_cstr("");
     for (size_t i = 0; i < a.count; i++) {
         if (a.items[i].count == 0) continue;
+        if (eval_sv_eq_ci_lit(a.items[i], "DEBUG") ||
+            eval_sv_eq_ci_lit(a.items[i], "OPTIMIZED") ||
+            eval_sv_eq_ci_lit(a.items[i], "GENERAL")) {
+            if (qualifier.count > 0) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("link_libraries() qualifier without following item"),
+                               qualifier);
+            }
+            qualifier = a.items[i];
+            continue;
+        }
+
+        String_View item = a.items[i];
+        if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
+            item = wrap_link_item_with_config_genex_temp(ctx,
+                                                         item,
+                                                         nob_sv_from_cstr("$<$<CONFIG:Debug>:"));
+        } else if (eval_sv_eq_ci_lit(qualifier, "OPTIMIZED")) {
+            item = wrap_link_item_with_config_genex_temp(ctx,
+                                                         item,
+                                                         nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
+        }
+
         Cmake_Event ev = {0};
         ev.kind = EV_GLOBAL_LINK_LIBRARIES;
         ev.origin = o;
-        ev.as.global_link_libraries.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.global_link_libraries.item = sv_copy_to_event_arena(ctx, item);
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+        qualifier = nob_sv_from_cstr("");
+    }
+
+    if (qualifier.count > 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("link_libraries() qualifier without following item"),
+                       qualifier);
     }
     return !eval_should_stop(ctx);
 }

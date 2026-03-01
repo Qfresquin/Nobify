@@ -925,9 +925,249 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("file"), &cap));
     ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
+    Command_Capability cmk_path_cap = {0};
+    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("cmake_path"), &cmk_path_cap));
+    ASSERT(cmk_path_cap.implemented_level == EVAL_CMD_IMPL_FULL);
+
+    Command_Capability link_libs_cap = {0};
+    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("link_libraries"), &link_libs_cap));
+    ASSERT(link_libs_cap.implemented_level == EVAL_CMD_IMPL_FULL);
+
+    Command_Capability try_compile_cap = {0};
+    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("try_compile"), &try_compile_cap));
+    ASSERT(try_compile_cap.implemented_level == EVAL_CMD_IMPL_PARTIAL);
+
     Command_Capability missing = {0};
     ASSERT(!evaluator_get_command_capability(nob_sv_from_cstr("unknown_public_api_command"), &missing));
     ASSERT(missing.implemented_level == EVAL_CMD_IMPL_MISSING);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "link_libraries(debug dbg optimized opt general gen plain)\n"
+        "link_libraries(debug)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_dbg = false;
+    bool saw_opt = false;
+    bool saw_gen = false;
+    bool saw_plain = false;
+    bool saw_diag = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_GLOBAL_LINK_LIBRARIES) {
+            String_View item = ev->as.global_link_libraries.item;
+            if (nob_sv_eq(item, nob_sv_from_cstr("$<$<CONFIG:Debug>:dbg>"))) saw_dbg = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:opt>"))) saw_opt = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("gen"))) saw_gen = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("plain"))) saw_plain = true;
+            continue;
+        }
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("link_libraries() qualifier without following item"))) {
+            saw_diag = true;
+        }
+    }
+
+    ASSERT(saw_dbg);
+    ASSERT(saw_opt);
+    ASSERT(saw_gen);
+    ASSERT(saw_plain);
+    ASSERT(saw_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr("/src");
+    init.binary_dir = nob_sv_from_cstr("/bin");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    const char *convert_to_cmake_input =
+#if defined(_WIN32)
+        "x;y;z";
+#else
+        "x:y:z";
+#endif
+    const char *script = nob_temp_sprintf(
+        "cmake_path(SET P NORMALIZE \"a/./b/../c.tar.gz\")\n"
+        "cmake_path(GET P EXTENSION P_EXT)\n"
+        "cmake_path(GET P EXTENSION LAST_ONLY P_EXT_LAST)\n"
+        "cmake_path(GET P STEM P_STEM)\n"
+        "cmake_path(GET P STEM LAST_ONLY P_STEM_LAST)\n"
+        "cmake_path(APPEND P sub OUTPUT_VARIABLE P_APPEND)\n"
+        "cmake_path(APPEND_STRING P_APPEND .meta OUTPUT_VARIABLE P_APPEND_S)\n"
+        "cmake_path(REMOVE_FILENAME P_APPEND_S OUTPUT_VARIABLE P_RMF)\n"
+        "cmake_path(REPLACE_FILENAME P_APPEND_S repl.txt OUTPUT_VARIABLE P_REPF)\n"
+        "cmake_path(REMOVE_EXTENSION P_REPF LAST_ONLY OUTPUT_VARIABLE P_NOEXT)\n"
+        "cmake_path(REPLACE_EXTENSION P_NOEXT .log OUTPUT_VARIABLE P_REPEXT)\n"
+        "cmake_path(NORMAL_PATH P_REPEXT OUTPUT_VARIABLE P_NORM)\n"
+        "cmake_path(RELATIVE_PATH P_NORM BASE_DIRECTORY a OUTPUT_VARIABLE P_REL)\n"
+        "cmake_path(ABSOLUTE_PATH P_REL BASE_DIRECTORY . NORMALIZE OUTPUT_VARIABLE P_ABS)\n"
+        "cmake_path(NATIVE_PATH P_ABS P_NATIVE)\n"
+        "cmake_path(CONVERT \"%s\" TO_CMAKE_PATH_LIST P_CMAKE_LIST)\n"
+        "cmake_path(CONVERT \"a;b;c\" TO_NATIVE_PATH_LIST P_NATIVE_LIST)\n"
+        "cmake_path(SET P_UNC \"//srv/share/dir/file.tar.gz\")\n"
+        "cmake_path(HAS_ROOT_NAME P_UNC P_HAS_ROOT_NAME)\n"
+        "cmake_path(HAS_ROOT_DIRECTORY P_UNC P_HAS_ROOT_DIRECTORY)\n"
+        "cmake_path(HAS_ROOT_PATH P_UNC P_HAS_ROOT_PATH)\n"
+        "cmake_path(HAS_FILENAME P_UNC P_HAS_FILENAME)\n"
+        "cmake_path(HAS_EXTENSION P_UNC P_HAS_EXTENSION)\n"
+        "cmake_path(HAS_STEM P_UNC P_HAS_STEM)\n"
+        "cmake_path(HAS_RELATIVE_PART P_UNC P_HAS_RELATIVE_PART)\n"
+        "cmake_path(HAS_PARENT_PATH P_UNC P_HAS_PARENT_PATH)\n"
+        "cmake_path(IS_ABSOLUTE P_UNC P_IS_ABSOLUTE)\n"
+        "list(LENGTH P_CMAKE_LIST P_CMAKE_LEN)\n"
+        "string(LENGTH \"${P_NATIVE_LIST}\" P_NATIVE_LEN)\n"
+        "cmake_path(COMPARE \"a//b\" EQUAL \"a/b\" P_CMP_EQ)\n"
+        "cmake_path(COMPARE \"a\" NOT_EQUAL \"b\" P_CMP_NEQ)\n"
+        "cmake_path(GET P BAD_COMPONENT P_BAD)\n"
+        "cmake_path(NATIVE_PATH P_ABS OUTPUT_VARIABLE P_BAD_NATIVE)\n"
+        "cmake_path(CONVERT \"x:y\" TO_CMAKE_PATH_LIST OUTPUT_VARIABLE P_BAD_CONVERT)\n"
+        "add_executable(cmake_path_probe main.c)\n"
+        "target_compile_definitions(cmake_path_probe PRIVATE "
+        "P_EXT=${P_EXT} P_EXT_LAST=${P_EXT_LAST} "
+        "P_STEM=${P_STEM} P_STEM_LAST=${P_STEM_LAST} "
+        "P_CMAKE_LEN=${P_CMAKE_LEN} P_NATIVE_LEN=${P_NATIVE_LEN} "
+        "P_CMP_EQ=${P_CMP_EQ} P_CMP_NEQ=${P_CMP_NEQ} "
+        "P_HAS_ROOT_NAME=${P_HAS_ROOT_NAME} P_HAS_ROOT_DIRECTORY=${P_HAS_ROOT_DIRECTORY} "
+        "P_HAS_ROOT_PATH=${P_HAS_ROOT_PATH} P_HAS_FILENAME=${P_HAS_FILENAME} "
+        "P_HAS_EXTENSION=${P_HAS_EXTENSION} P_HAS_STEM=${P_HAS_STEM} "
+        "P_HAS_RELATIVE_PART=${P_HAS_RELATIVE_PART} P_HAS_PARENT_PATH=${P_HAS_PARENT_PATH} "
+        "P_IS_ABSOLUTE=${P_IS_ABSOLUTE})\n",
+        convert_to_cmake_input);
+    Ast_Root root = parse_cmake(temp_arena, script);
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 3);
+
+    bool saw_ext = false;
+    bool saw_ext_last = false;
+    bool saw_stem = false;
+    bool saw_stem_last = false;
+    bool saw_cmake_len = false;
+    bool saw_native_len = false;
+    bool saw_cmp_eq = false;
+    bool saw_cmp_neq = false;
+    bool saw_has_root_name = false;
+    bool saw_has_root_directory = false;
+    bool saw_has_root_path = false;
+    bool saw_has_filename = false;
+    bool saw_has_extension = false;
+    bool saw_has_stem = false;
+    bool saw_has_relative_part = false;
+    bool saw_has_parent_path = false;
+    bool saw_is_absolute = false;
+    bool saw_bad_component = false;
+    bool saw_bad_native = false;
+    bool saw_bad_convert = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("cmake_path_probe"))) {
+            String_View item = ev->as.target_compile_definitions.item;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_EXT=.tar.gz"))) saw_ext = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_EXT_LAST=.gz"))) saw_ext_last = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_STEM=c"))) saw_stem = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_STEM_LAST=c.tar"))) saw_stem_last = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_CMAKE_LEN=3"))) saw_cmake_len = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_NATIVE_LEN=5"))) saw_native_len = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_CMP_EQ=ON"))) saw_cmp_eq = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_CMP_NEQ=ON"))) saw_cmp_neq = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_ROOT_NAME=ON"))) saw_has_root_name = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_ROOT_DIRECTORY=ON"))) saw_has_root_directory = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_ROOT_PATH=ON"))) saw_has_root_path = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_FILENAME=ON"))) saw_has_filename = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_EXTENSION=ON"))) saw_has_extension = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_STEM=ON"))) saw_has_stem = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_RELATIVE_PART=ON"))) saw_has_relative_part = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_PARENT_PATH=ON"))) saw_has_parent_path = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_IS_ABSOLUTE=ON"))) saw_is_absolute = true;
+            continue;
+        }
+        if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_path(GET) unsupported component"))) {
+                saw_bad_component = true;
+            }
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_path(NATIVE_PATH) received unexpected argument"))) {
+                saw_bad_native = true;
+            }
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_path(CONVERT) received unexpected argument"))) {
+                saw_bad_convert = true;
+            }
+        }
+    }
+
+    ASSERT(saw_ext);
+    ASSERT(saw_ext_last);
+    ASSERT(saw_stem);
+    ASSERT(saw_stem_last);
+    ASSERT(saw_cmake_len);
+    ASSERT(saw_native_len);
+    ASSERT(saw_cmp_eq);
+    ASSERT(saw_cmp_neq);
+    ASSERT(saw_has_root_name);
+    ASSERT(saw_has_root_directory);
+    ASSERT(saw_has_root_path);
+    ASSERT(saw_has_filename);
+    ASSERT(saw_has_extension);
+    ASSERT(saw_has_stem);
+    ASSERT(saw_has_relative_part);
+    ASSERT(saw_has_parent_path);
+    ASSERT(saw_is_absolute);
+    ASSERT(saw_bad_component);
+    ASSERT(saw_bad_native);
+    ASSERT(saw_bad_convert);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -4196,6 +4436,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
 
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+    test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed);
+    test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed);
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
     test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed);
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
