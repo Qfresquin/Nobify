@@ -239,6 +239,36 @@ static uint32_t string_rotr32(uint32_t x, uint32_t n) {
     return (x >> n) | (x << (32 - n));
 }
 
+static uint64_t string_load_be64(const unsigned char *p) {
+    return ((uint64_t)p[0] << 56) |
+           ((uint64_t)p[1] << 48) |
+           ((uint64_t)p[2] << 40) |
+           ((uint64_t)p[3] << 32) |
+           ((uint64_t)p[4] << 24) |
+           ((uint64_t)p[5] << 16) |
+           ((uint64_t)p[6] << 8) |
+           ((uint64_t)p[7]);
+}
+
+static void string_store_be64(unsigned char *p, uint64_t v) {
+    p[0] = (unsigned char)((v >> 56) & 0xFF);
+    p[1] = (unsigned char)((v >> 48) & 0xFF);
+    p[2] = (unsigned char)((v >> 40) & 0xFF);
+    p[3] = (unsigned char)((v >> 32) & 0xFF);
+    p[4] = (unsigned char)((v >> 24) & 0xFF);
+    p[5] = (unsigned char)((v >> 16) & 0xFF);
+    p[6] = (unsigned char)((v >> 8) & 0xFF);
+    p[7] = (unsigned char)(v & 0xFF);
+}
+
+static uint64_t string_rotl64(uint64_t x, uint32_t n) {
+    return (x << n) | (x >> (64 - n));
+}
+
+static uint64_t string_rotr64(uint64_t x, uint32_t n) {
+    return (x >> n) | (x << (64 - n));
+}
+
 static void string_md5_process_block(uint32_t state[4], const unsigned char block[64]) {
     static const uint32_t k[64] = {
         0xd76aa478U, 0xe8c7b756U, 0x242070dbU, 0xc1bdceeeU, 0xf57c0fafU, 0x4787c62aU, 0xa8304613U, 0xfd469501U,
@@ -449,12 +479,12 @@ static void string_sha256_process_block(uint32_t state[8], const unsigned char b
     state[7] += h;
 }
 
-static void string_sha256_compute(const unsigned char *msg, size_t len, unsigned char out[32]) {
-    uint32_t state[8] = {
-        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
-        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
-    };
-
+static void string_sha256_compute_state(const unsigned char *msg,
+                                        size_t len,
+                                        const uint32_t init_state[8],
+                                        uint32_t out_state[8]) {
+    uint32_t state[8];
+    for (size_t i = 0; i < 8; i++) state[i] = init_state[i];
     size_t full = len / 64;
     for (size_t i = 0; i < full; i++) {
         string_sha256_process_block(state, msg + (i * 64));
@@ -474,7 +504,230 @@ static void string_sha256_compute(const unsigned char *msg, size_t len, unsigned
     string_sha256_process_block(state, tail);
     if (tail_len == 128) string_sha256_process_block(state, tail + 64);
 
+    for (size_t i = 0; i < 8; i++) out_state[i] = state[i];
+}
+
+static void string_sha256_compute(const unsigned char *msg, size_t len, unsigned char out[32]) {
+    static const uint32_t k_init[8] = {
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
+    };
+    uint32_t state[8];
+    string_sha256_compute_state(msg, len, k_init, state);
     for (size_t i = 0; i < 8; i++) string_store_be32(out + (i * 4), state[i]);
+}
+
+static void string_sha224_compute(const unsigned char *msg, size_t len, unsigned char out[28]) {
+    static const uint32_t k_init[8] = {
+        0xc1059ed8U, 0x367cd507U, 0x3070dd17U, 0xf70e5939U,
+        0xffc00b31U, 0x68581511U, 0x64f98fa7U, 0xbefa4fa4U
+    };
+    uint32_t state[8];
+    string_sha256_compute_state(msg, len, k_init, state);
+    for (size_t i = 0; i < 7; i++) string_store_be32(out + (i * 4), state[i]);
+}
+
+static void string_sha512_process_block(uint64_t state[8], const unsigned char block[128]) {
+    static const uint64_t k[80] = {
+        0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL, 0xe9b5dba58189dbbcULL,
+        0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL, 0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL,
+        0xd807aa98a3030242ULL, 0x12835b0145706fbeULL, 0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
+        0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL, 0x9bdc06a725c71235ULL, 0xc19bf174cf692694ULL,
+        0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL, 0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL,
+        0x2de92c6f592b0275ULL, 0x4a7484aa6ea6e483ULL, 0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
+        0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL, 0xb00327c898fb213fULL, 0xbf597fc7beef0ee4ULL,
+        0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL, 0x06ca6351e003826fULL, 0x142929670a0e6e70ULL,
+        0x27b70a8546d22ffcULL, 0x2e1b21385c26c926ULL, 0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
+        0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL, 0x81c2c92e47edaee6ULL, 0x92722c851482353bULL,
+        0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL, 0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL,
+        0xd192e819d6ef5218ULL, 0xd69906245565a910ULL, 0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
+        0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL, 0x2748774cdf8eeb99ULL, 0x34b0bcb5e19b48a8ULL,
+        0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL, 0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL,
+        0x748f82ee5defb2fcULL, 0x78a5636f43172f60ULL, 0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
+        0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL, 0xbef9a3f7b2c67915ULL, 0xc67178f2e372532bULL,
+        0xca273eceea26619cULL, 0xd186b8c721c0c207ULL, 0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL,
+        0x06f067aa72176fbaULL, 0x0a637dc5a2c898a6ULL, 0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
+        0x28db77f523047d84ULL, 0x32caab7b40c72493ULL, 0x3c9ebe0a15c9bebcULL, 0x431d67c49c100d4cULL,
+        0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL, 0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL
+    };
+
+    uint64_t w[80];
+    for (size_t i = 0; i < 16; i++) w[i] = string_load_be64(block + (i * 8));
+    for (size_t i = 16; i < 80; i++) {
+        uint64_t s0 = string_rotr64(w[i - 15], 1) ^ string_rotr64(w[i - 15], 8) ^ (w[i - 15] >> 7);
+        uint64_t s1 = string_rotr64(w[i - 2], 19) ^ string_rotr64(w[i - 2], 61) ^ (w[i - 2] >> 6);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    uint64_t a = state[0];
+    uint64_t b = state[1];
+    uint64_t c = state[2];
+    uint64_t d = state[3];
+    uint64_t e = state[4];
+    uint64_t f = state[5];
+    uint64_t g = state[6];
+    uint64_t h = state[7];
+
+    for (size_t i = 0; i < 80; i++) {
+        uint64_t S1 = string_rotr64(e, 14) ^ string_rotr64(e, 18) ^ string_rotr64(e, 41);
+        uint64_t ch = (e & f) ^ ((~e) & g);
+        uint64_t temp1 = h + S1 + ch + k[i] + w[i];
+        uint64_t S0 = string_rotr64(a, 28) ^ string_rotr64(a, 34) ^ string_rotr64(a, 39);
+        uint64_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint64_t temp2 = S0 + maj;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+}
+
+static void string_sha512_compute_state(const unsigned char *msg,
+                                        size_t len,
+                                        const uint64_t init_state[8],
+                                        uint64_t out_state[8]) {
+    uint64_t state[8];
+    for (size_t i = 0; i < 8; i++) state[i] = init_state[i];
+
+    size_t full = len / 128;
+    for (size_t i = 0; i < full; i++) {
+        string_sha512_process_block(state, msg + (i * 128));
+    }
+
+    unsigned char tail[256] = {0};
+    size_t rem = len % 128;
+    if (rem > 0) memcpy(tail, msg + (full * 128), rem);
+    tail[rem] = 0x80;
+    size_t tail_len = (rem < 112) ? 128 : 256;
+
+    uint64_t bits_lo = ((uint64_t)len) * 8ULL;
+    uint64_t bits_hi = ((uint64_t)len >> 61);
+    string_store_be64(tail + tail_len - 16, bits_hi);
+    string_store_be64(tail + tail_len - 8, bits_lo);
+
+    string_sha512_process_block(state, tail);
+    if (tail_len == 256) string_sha512_process_block(state, tail + 128);
+
+    for (size_t i = 0; i < 8; i++) out_state[i] = state[i];
+}
+
+static void string_sha512_compute(const unsigned char *msg, size_t len, unsigned char out[64]) {
+    static const uint64_t k_init[8] = {
+        0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
+        0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
+        0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
+        0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
+    };
+    uint64_t state[8];
+    string_sha512_compute_state(msg, len, k_init, state);
+    for (size_t i = 0; i < 8; i++) string_store_be64(out + (i * 8), state[i]);
+}
+
+static void string_sha384_compute(const unsigned char *msg, size_t len, unsigned char out[48]) {
+    static const uint64_t k_init[8] = {
+        0xcbbb9d5dc1059ed8ULL, 0x629a292a367cd507ULL,
+        0x9159015a3070dd17ULL, 0x152fecd8f70e5939ULL,
+        0x67332667ffc00b31ULL, 0x8eb44a8768581511ULL,
+        0xdb0c2e0d64f98fa7ULL, 0x47b5481dbefa4fa4ULL
+    };
+    uint64_t state[8];
+    string_sha512_compute_state(msg, len, k_init, state);
+    for (size_t i = 0; i < 6; i++) string_store_be64(out + (i * 8), state[i]);
+}
+
+static void string_keccakf1600(uint64_t st[25]) {
+    static const uint64_t rc[24] = {
+        0x0000000000000001ULL, 0x0000000000008082ULL, 0x800000000000808aULL, 0x8000000080008000ULL,
+        0x000000000000808bULL, 0x0000000080000001ULL, 0x8000000080008081ULL, 0x8000000000008009ULL,
+        0x000000000000008aULL, 0x0000000000000088ULL, 0x0000000080008009ULL, 0x000000008000000aULL,
+        0x000000008000808bULL, 0x800000000000008bULL, 0x8000000000008089ULL, 0x8000000000008003ULL,
+        0x8000000000008002ULL, 0x8000000000000080ULL, 0x000000000000800aULL, 0x800000008000000aULL,
+        0x8000000080008081ULL, 0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL
+    };
+    static const int rotc[24] = {
+        1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14,
+        27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44
+    };
+    static const int piln[24] = {
+        10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4,
+        15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1
+    };
+
+    for (size_t r = 0; r < 24; r++) {
+        uint64_t c[5];
+        for (size_t x = 0; x < 5; x++) {
+            c[x] = st[x] ^ st[x + 5] ^ st[x + 10] ^ st[x + 15] ^ st[x + 20];
+        }
+
+        for (size_t x = 0; x < 5; x++) {
+            uint64_t d = c[(x + 4) % 5] ^ string_rotl64(c[(x + 1) % 5], 1);
+            for (size_t y = 0; y < 25; y += 5) st[y + x] ^= d;
+        }
+
+        uint64_t t = st[1];
+        for (size_t i = 0; i < 24; i++) {
+            int j = piln[i];
+            uint64_t tmp = st[j];
+            st[j] = string_rotl64(t, (uint32_t)rotc[i]);
+            t = tmp;
+        }
+
+        for (size_t y = 0; y < 25; y += 5) {
+            uint64_t row[5];
+            for (size_t x = 0; x < 5; x++) row[x] = st[y + x];
+            for (size_t x = 0; x < 5; x++) {
+                st[y + x] = row[x] ^ ((~row[(x + 1) % 5]) & row[(x + 2) % 5]);
+            }
+        }
+
+        st[0] ^= rc[r];
+    }
+}
+
+static void string_sha3_compute(const unsigned char *msg,
+                                size_t len,
+                                unsigned char *out,
+                                size_t out_len) {
+    size_t rate = 200 - (2 * out_len);
+    uint64_t st[25] = {0};
+    unsigned char *st_bytes = (unsigned char*)st;
+
+    size_t off = 0;
+    while (off + rate <= len) {
+        for (size_t i = 0; i < rate; i++) st_bytes[i] ^= msg[off + i];
+        string_keccakf1600(st);
+        off += rate;
+    }
+
+    unsigned char block[200] = {0};
+    size_t rem = len - off;
+    for (size_t i = 0; i < rem; i++) block[i] = msg[off + i];
+    block[rem] ^= 0x06;
+    block[rate - 1] ^= 0x80;
+    for (size_t i = 0; i < rate; i++) st_bytes[i] ^= block[i];
+    string_keccakf1600(st);
+
+    size_t out_off = 0;
+    while (out_off < out_len) {
+        size_t take = (out_len - out_off < rate) ? (out_len - out_off) : rate;
+        memcpy(out + out_off, st_bytes, take);
+        out_off += take;
+        if (out_off < out_len) string_keccakf1600(st);
+    }
 }
 
 static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned char *bytes, size_t count, bool upper) {
@@ -510,6 +763,48 @@ static bool string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, S
     if (eval_sv_eq_ci_lit(algo, "SHA256")) {
         unsigned char d[32];
         string_sha256_compute(msg, input.count, d);
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA224")) {
+        unsigned char d[28];
+        string_sha224_compute(msg, input.count, d);
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA384")) {
+        unsigned char d[48];
+        string_sha384_compute(msg, input.count, d);
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA512")) {
+        unsigned char d[64];
+        string_sha512_compute(msg, input.count, d);
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA3_224")) {
+        unsigned char d[28];
+        string_sha3_compute(msg, input.count, d, sizeof(d));
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA3_256")) {
+        unsigned char d[32];
+        string_sha3_compute(msg, input.count, d, sizeof(d));
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA3_384")) {
+        unsigned char d[48];
+        string_sha3_compute(msg, input.count, d, sizeof(d));
+        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_sv_eq_ci_lit(algo, "SHA3_512")) {
+        unsigned char d[64];
+        string_sha3_compute(msg, input.count, d, sizeof(d));
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
         return !eval_should_stop(ctx);
     }
@@ -684,12 +979,6 @@ typedef enum {
     STRING_JSON_OBJECT,
 } String_Json_Type;
 
-typedef struct {
-    String_Json_Type type;
-    size_t start;
-    size_t end;
-} String_Json_Node;
-
 static void string_json_skip_ws(String_View json, size_t *io) {
     if (!io) return;
     while (*io < json.count && isspace((unsigned char)json.data[*io])) (*io)++;
@@ -818,270 +1107,6 @@ static bool string_json_match_lit(String_View json, size_t *io, const char *lit)
     return true;
 }
 
-static bool string_json_parse_value(String_View json, size_t *io, String_Json_Node *out);
-
-static bool string_json_parse_array(String_View json, size_t *io, String_Json_Node *out) {
-    size_t start = *io;
-    if (*io >= json.count || json.data[*io] != '[') return false;
-    (*io)++;
-    string_json_skip_ws(json, io);
-    if (*io < json.count && json.data[*io] == ']') {
-        (*io)++;
-        *out = (String_Json_Node){ .type = STRING_JSON_ARRAY, .start = start, .end = *io };
-        return true;
-    }
-
-    for (;;) {
-        String_Json_Node v = {0};
-        if (!string_json_parse_value(json, io, &v)) return false;
-        (void)v;
-        string_json_skip_ws(json, io);
-        if (*io >= json.count) return false;
-        if (json.data[*io] == ',') {
-            (*io)++;
-            string_json_skip_ws(json, io);
-            continue;
-        }
-        if (json.data[*io] == ']') {
-            (*io)++;
-            *out = (String_Json_Node){ .type = STRING_JSON_ARRAY, .start = start, .end = *io };
-            return true;
-        }
-        return false;
-    }
-}
-
-static bool string_json_parse_object(String_View json, size_t *io, String_Json_Node *out) {
-    size_t start = *io;
-    if (*io >= json.count || json.data[*io] != '{') return false;
-    (*io)++;
-    string_json_skip_ws(json, io);
-    if (*io < json.count && json.data[*io] == '}') {
-        (*io)++;
-        *out = (String_Json_Node){ .type = STRING_JSON_OBJECT, .start = start, .end = *io };
-        return true;
-    }
-
-    for (;;) {
-        size_t k0 = 0, k1 = 0;
-        if (!string_json_parse_string_token(json, io, &k0, &k1)) return false;
-        (void)k0;
-        (void)k1;
-        string_json_skip_ws(json, io);
-        if (*io >= json.count || json.data[*io] != ':') return false;
-        (*io)++;
-        string_json_skip_ws(json, io);
-        String_Json_Node v = {0};
-        if (!string_json_parse_value(json, io, &v)) return false;
-        (void)v;
-        string_json_skip_ws(json, io);
-        if (*io >= json.count) return false;
-        if (json.data[*io] == ',') {
-            (*io)++;
-            string_json_skip_ws(json, io);
-            continue;
-        }
-        if (json.data[*io] == '}') {
-            (*io)++;
-            *out = (String_Json_Node){ .type = STRING_JSON_OBJECT, .start = start, .end = *io };
-            return true;
-        }
-        return false;
-    }
-}
-
-static bool string_json_parse_value(String_View json, size_t *io, String_Json_Node *out) {
-    if (!io || !out) return false;
-    string_json_skip_ws(json, io);
-    if (*io >= json.count) return false;
-
-    size_t start = *io;
-    char c = json.data[*io];
-    if (c == '"') {
-        if (!string_json_parse_string_token(json, io, NULL, NULL)) return false;
-        *out = (String_Json_Node){ .type = STRING_JSON_STRING, .start = start, .end = *io };
-        return true;
-    }
-    if (c == '{') return string_json_parse_object(json, io, out);
-    if (c == '[') return string_json_parse_array(json, io, out);
-    if (c == '-' || (c >= '0' && c <= '9')) {
-        if (!string_json_parse_number_token(json, io)) return false;
-        *out = (String_Json_Node){ .type = STRING_JSON_NUMBER, .start = start, .end = *io };
-        return true;
-    }
-    if (c == 't') {
-        if (!string_json_match_lit(json, io, "true")) return false;
-        *out = (String_Json_Node){ .type = STRING_JSON_BOOL, .start = start, .end = *io };
-        return true;
-    }
-    if (c == 'f') {
-        if (!string_json_match_lit(json, io, "false")) return false;
-        *out = (String_Json_Node){ .type = STRING_JSON_BOOL, .start = start, .end = *io };
-        return true;
-    }
-    if (c == 'n') {
-        if (!string_json_match_lit(json, io, "null")) return false;
-        *out = (String_Json_Node){ .type = STRING_JSON_NULL, .start = start, .end = *io };
-        return true;
-    }
-    return false;
-}
-
-static bool string_json_parse_root(String_View json, String_Json_Node *out) {
-    if (!out) return false;
-    size_t i = 0;
-    if (!string_json_parse_value(json, &i, out)) return false;
-    string_json_skip_ws(json, &i);
-    return i == json.count;
-}
-
-static bool string_json_object_find_member(Evaluator_Context *ctx,
-                                           String_View json,
-                                           String_Json_Node obj,
-                                           String_View key,
-                                           bool *found,
-                                           String_Json_Node *out) {
-    if (!ctx || !found || !out || obj.type != STRING_JSON_OBJECT) return false;
-    *found = false;
-
-    size_t i = obj.start + 1;
-    string_json_skip_ws(json, &i);
-    if (i >= obj.end) return false;
-    if (json.data[i] == '}') return true;
-
-    for (;;) {
-        size_t k0 = 0, k1 = 0;
-        if (!string_json_parse_string_token(json, &i, &k0, &k1)) return false;
-        String_View key_raw = nob_sv_from_parts(json.data + k0, k1 - k0);
-        String_View key_dec = key_raw;
-        bool need_decode = false;
-        for (size_t t = 0; t < key_raw.count; t++) {
-            if (key_raw.data[t] == '\\') {
-                need_decode = true;
-                break;
-            }
-        }
-        if (need_decode) {
-            if (!string_json_decode_string_temp(ctx, key_raw, &key_dec)) return false;
-        }
-
-        string_json_skip_ws(json, &i);
-        if (i >= obj.end || json.data[i] != ':') return false;
-        i++;
-        string_json_skip_ws(json, &i);
-
-        String_Json_Node val = {0};
-        if (!string_json_parse_value(json, &i, &val)) return false;
-        if (nob_sv_eq(key_dec, key)) {
-            *found = true;
-            *out = val;
-            return true;
-        }
-
-        string_json_skip_ws(json, &i);
-        if (i >= obj.end) return false;
-        if (json.data[i] == ',') {
-            i++;
-            string_json_skip_ws(json, &i);
-            continue;
-        }
-        if (json.data[i] == '}') return true;
-        return false;
-    }
-}
-
-static bool string_json_array_find_index(String_View json,
-                                         String_Json_Node arr,
-                                         size_t wanted,
-                                         bool *found,
-                                         String_Json_Node *out) {
-    if (!found || !out || arr.type != STRING_JSON_ARRAY) return false;
-    *found = false;
-
-    size_t i = arr.start + 1;
-    string_json_skip_ws(json, &i);
-    if (i >= arr.end) return false;
-    if (json.data[i] == ']') return true;
-
-    size_t index = 0;
-    for (;;) {
-        String_Json_Node val = {0};
-        if (!string_json_parse_value(json, &i, &val)) return false;
-        if (index == wanted) {
-            *found = true;
-            *out = val;
-            return true;
-        }
-        index++;
-        string_json_skip_ws(json, &i);
-        if (i >= arr.end) return false;
-        if (json.data[i] == ',') {
-            i++;
-            string_json_skip_ws(json, &i);
-            continue;
-        }
-        if (json.data[i] == ']') return true;
-        return false;
-    }
-}
-
-static bool string_json_container_length(String_View json, String_Json_Node node, size_t *out_len) {
-    if (!out_len) return false;
-    *out_len = 0;
-    if (node.type == STRING_JSON_OBJECT) {
-        size_t i = node.start + 1;
-        string_json_skip_ws(json, &i);
-        if (i >= node.end) return false;
-        if (json.data[i] == '}') return true;
-        for (;;) {
-            size_t k0 = 0, k1 = 0;
-            if (!string_json_parse_string_token(json, &i, &k0, &k1)) return false;
-            (void)k0; (void)k1;
-            string_json_skip_ws(json, &i);
-            if (i >= node.end || json.data[i] != ':') return false;
-            i++;
-            string_json_skip_ws(json, &i);
-            String_Json_Node val = {0};
-            if (!string_json_parse_value(json, &i, &val)) return false;
-            (void)val;
-            (*out_len)++;
-            string_json_skip_ws(json, &i);
-            if (i >= node.end) return false;
-            if (json.data[i] == ',') {
-                i++;
-                string_json_skip_ws(json, &i);
-                continue;
-            }
-            if (json.data[i] == '}') return true;
-            return false;
-        }
-    }
-
-    if (node.type == STRING_JSON_ARRAY) {
-        size_t i = node.start + 1;
-        string_json_skip_ws(json, &i);
-        if (i >= node.end) return false;
-        if (json.data[i] == ']') return true;
-        for (;;) {
-            String_Json_Node val = {0};
-            if (!string_json_parse_value(json, &i, &val)) return false;
-            (void)val;
-            (*out_len)++;
-            string_json_skip_ws(json, &i);
-            if (i >= node.end) return false;
-            if (json.data[i] == ',') {
-                i++;
-                string_json_skip_ws(json, &i);
-                continue;
-            }
-            if (json.data[i] == ']') return true;
-            return false;
-        }
-    }
-
-    return false;
-}
-
 static String_View string_json_type_name(String_Json_Type t) {
     switch (t) {
         case STRING_JSON_NULL: return nob_sv_from_cstr("NULL");
@@ -1094,39 +1119,742 @@ static String_View string_json_type_name(String_Json_Type t) {
     }
 }
 
-static bool string_json_get_temp(Evaluator_Context *ctx,
-                                 String_View json,
-                                 String_Json_Node node,
-                                 String_View *out) {
-    if (!ctx || !out) return false;
-    *out = nob_sv_from_cstr("");
-    if (node.start > node.end || node.end > json.count) return false;
+typedef struct String_Json_Value String_Json_Value;
+typedef struct {
+    String_View key;
+    String_Json_Value *value;
+} String_Json_Object_Entry;
 
-    if (node.type == STRING_JSON_STRING) {
-        size_t i = node.start;
-        size_t s0 = 0, s1 = 0;
-        if (!string_json_parse_string_token(json, &i, &s0, &s1)) return false;
-        String_View raw = nob_sv_from_parts(json.data + s0, s1 - s0);
-        return string_json_decode_string_temp(ctx, raw, out);
+struct String_Json_Value {
+    String_Json_Type type;
+    bool bool_value;
+    String_View scalar; // STRING (decoded) or NUMBER (raw token)
+    String_Json_Value **array_items;
+    size_t array_count;
+    size_t array_capacity;
+    String_Json_Object_Entry *object_items;
+    size_t object_count;
+    size_t object_capacity;
+};
+
+typedef struct {
+    String_View message;
+    size_t path_prefix_count;
+} String_Json_Error;
+
+static String_View string_sb_to_temp_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+    if (!ctx || !sb) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sb->count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    if (sb->count > 0) memcpy(buf, sb->items, sb->count);
+    buf[sb->count] = '\0';
+    return nob_sv_from_parts(buf, sb->count);
+}
+
+static String_View string_json_notfound_temp(Evaluator_Context *ctx, String_View *path, size_t path_count) {
+    if (!ctx || path_count == 0) return nob_sv_from_cstr("NOTFOUND");
+    Nob_String_Builder sb = {0};
+    for (size_t i = 0; i < path_count; i++) {
+        if (i > 0) nob_sb_append(&sb, '-');
+        nob_sb_append_buf(&sb, path[i].data, path[i].count);
     }
-    if (node.type == STRING_JSON_NUMBER) {
-        *out = nob_sv_from_parts(json.data + node.start, node.end - node.start);
-        return true;
+    nob_sb_append_cstr(&sb, "-NOTFOUND");
+    String_View out = string_sb_to_temp_sv(ctx, &sb);
+    nob_sb_free(sb);
+    return out;
+}
+
+static String_View string_json_message_with_token_temp(Evaluator_Context *ctx, const char *prefix, String_View token) {
+    if (!ctx) return nob_sv_from_cstr("");
+    Nob_String_Builder sb = {0};
+    if (prefix) nob_sb_append_cstr(&sb, prefix);
+    if (token.count > 0) {
+        if (sb.count > 0) nob_sb_append_cstr(&sb, ": ");
+        nob_sb_append_buf(&sb, token.data, token.count);
     }
-    if (node.type == STRING_JSON_BOOL) {
-        if (node.end - node.start == 4 && memcmp(json.data + node.start, "true", 4) == 0) {
-            *out = nob_sv_from_cstr("ON");
-        } else {
-            *out = nob_sv_from_cstr("OFF");
-        }
-        return true;
+    String_View out = string_sb_to_temp_sv(ctx, &sb);
+    nob_sb_free(sb);
+    return out;
+}
+
+static bool string_json_emit_or_store_error(Evaluator_Context *ctx,
+                                            const Node *node,
+                                            Cmake_Event_Origin o,
+                                            bool has_error_var,
+                                            String_View error_var,
+                                            String_View out_var,
+                                            String_View message,
+                                            String_View *path,
+                                            size_t path_prefix_count) {
+    if (!ctx || !node) return !eval_should_stop(ctx);
+    if (has_error_var) {
+        (void)eval_var_set(ctx, out_var, string_json_notfound_temp(ctx, path, path_prefix_count));
+        (void)eval_var_set(ctx, error_var, message);
+        return !eval_should_stop(ctx);
     }
-    if (node.type == STRING_JSON_NULL) {
-        *out = nob_sv_from_cstr("");
-        return true;
+    eval_emit_diag(ctx,
+                   EV_DIAG_ERROR,
+                   nob_sv_from_cstr("string"),
+                   node->as.cmd.name,
+                   o,
+                   message,
+                   nob_sv_from_cstr(""));
+    return !eval_should_stop(ctx);
+}
+
+static String_Json_Value *string_jsonv_new(Evaluator_Context *ctx, String_Json_Type type) {
+    if (!ctx) return NULL;
+    String_Json_Value *v = (String_Json_Value*)arena_alloc(eval_temp_arena(ctx), sizeof(*v));
+    EVAL_OOM_RETURN_IF_NULL(ctx, v, NULL);
+    memset(v, 0, sizeof(*v));
+    v->type = type;
+    return v;
+}
+
+static bool string_jsonv_array_push(Evaluator_Context *ctx, String_Json_Value *arr, String_Json_Value *item) {
+    if (!ctx || !arr || arr->type != STRING_JSON_ARRAY || !item) return false;
+    if (!arena_da_reserve(eval_temp_arena(ctx),
+                          (void**)&arr->array_items,
+                          &arr->array_capacity,
+                          sizeof(arr->array_items[0]),
+                          arr->array_count + 1)) {
+        return ctx_oom(ctx);
     }
-    *out = nob_sv_from_parts(json.data + node.start, node.end - node.start);
+    arr->array_items[arr->array_count++] = item;
     return true;
+}
+
+static bool string_jsonv_object_push(Evaluator_Context *ctx, String_Json_Value *obj, String_View key, String_Json_Value *item) {
+    if (!ctx || !obj || obj->type != STRING_JSON_OBJECT || !item) return false;
+    if (!arena_da_reserve(eval_temp_arena(ctx),
+                          (void**)&obj->object_items,
+                          &obj->object_capacity,
+                          sizeof(obj->object_items[0]),
+                          obj->object_count + 1)) {
+        return ctx_oom(ctx);
+    }
+    obj->object_items[obj->object_count++] = (String_Json_Object_Entry){ .key = key, .value = item };
+    return true;
+}
+
+static bool string_jsonv_parse_value_temp(Evaluator_Context *ctx,
+                                          String_View json,
+                                          size_t *io,
+                                          String_Json_Value **out,
+                                          String_View *err_msg);
+
+static bool string_jsonv_parse_object_temp(Evaluator_Context *ctx,
+                                           String_View json,
+                                           size_t *io,
+                                           String_Json_Value **out,
+                                           String_View *err_msg) {
+    if (!ctx || !io || !out || !err_msg) return false;
+    if (*io >= json.count || json.data[*io] != '{') return false;
+    (*io)++;
+    String_Json_Value *obj = string_jsonv_new(ctx, STRING_JSON_OBJECT);
+    if (!obj) return false;
+
+    string_json_skip_ws(json, io);
+    if (*io < json.count && json.data[*io] == '}') {
+        (*io)++;
+        *out = obj;
+        return true;
+    }
+
+    for (;;) {
+        size_t k0 = 0, k1 = 0;
+        if (!string_json_parse_string_token(json, io, &k0, &k1)) {
+            *err_msg = nob_sv_from_cstr("string(JSON) failed to parse object key");
+            return false;
+        }
+        String_View key_raw = nob_sv_from_parts(json.data + k0, k1 - k0);
+        String_View key_dec = nob_sv_from_cstr("");
+        if (!string_json_decode_string_temp(ctx, key_raw, &key_dec)) {
+            *err_msg = nob_sv_from_cstr("string(JSON) failed to decode object key");
+            return false;
+        }
+        string_json_skip_ws(json, io);
+        if (*io >= json.count || json.data[*io] != ':') {
+            *err_msg = nob_sv_from_cstr("string(JSON) expected ':' after object key");
+            return false;
+        }
+        (*io)++;
+        string_json_skip_ws(json, io);
+
+        String_Json_Value *child = NULL;
+        if (!string_jsonv_parse_value_temp(ctx, json, io, &child, err_msg)) return false;
+        if (!string_jsonv_object_push(ctx, obj, key_dec, child)) return false;
+
+        string_json_skip_ws(json, io);
+        if (*io >= json.count) {
+            *err_msg = nob_sv_from_cstr("string(JSON) object is not terminated");
+            return false;
+        }
+        if (json.data[*io] == ',') {
+            (*io)++;
+            string_json_skip_ws(json, io);
+            continue;
+        }
+        if (json.data[*io] == '}') {
+            (*io)++;
+            *out = obj;
+            return true;
+        }
+        *err_msg = nob_sv_from_cstr("string(JSON) expected ',' or '}' in object");
+        return false;
+    }
+}
+
+static bool string_jsonv_parse_array_temp(Evaluator_Context *ctx,
+                                          String_View json,
+                                          size_t *io,
+                                          String_Json_Value **out,
+                                          String_View *err_msg) {
+    if (!ctx || !io || !out || !err_msg) return false;
+    if (*io >= json.count || json.data[*io] != '[') return false;
+    (*io)++;
+    String_Json_Value *arr = string_jsonv_new(ctx, STRING_JSON_ARRAY);
+    if (!arr) return false;
+
+    string_json_skip_ws(json, io);
+    if (*io < json.count && json.data[*io] == ']') {
+        (*io)++;
+        *out = arr;
+        return true;
+    }
+
+    for (;;) {
+        String_Json_Value *child = NULL;
+        if (!string_jsonv_parse_value_temp(ctx, json, io, &child, err_msg)) return false;
+        if (!string_jsonv_array_push(ctx, arr, child)) return false;
+
+        string_json_skip_ws(json, io);
+        if (*io >= json.count) {
+            *err_msg = nob_sv_from_cstr("string(JSON) array is not terminated");
+            return false;
+        }
+        if (json.data[*io] == ',') {
+            (*io)++;
+            string_json_skip_ws(json, io);
+            continue;
+        }
+        if (json.data[*io] == ']') {
+            (*io)++;
+            *out = arr;
+            return true;
+        }
+        *err_msg = nob_sv_from_cstr("string(JSON) expected ',' or ']' in array");
+        return false;
+    }
+}
+
+static bool string_jsonv_parse_value_temp(Evaluator_Context *ctx,
+                                          String_View json,
+                                          size_t *io,
+                                          String_Json_Value **out,
+                                          String_View *err_msg) {
+    if (!ctx || !io || !out || !err_msg) return false;
+    *out = NULL;
+    string_json_skip_ws(json, io);
+    if (*io >= json.count) {
+        *err_msg = nob_sv_from_cstr("string(JSON) unexpected end of input");
+        return false;
+    }
+
+    char c = json.data[*io];
+    if (c == '{') return string_jsonv_parse_object_temp(ctx, json, io, out, err_msg);
+    if (c == '[') return string_jsonv_parse_array_temp(ctx, json, io, out, err_msg);
+    if (c == '"') {
+        size_t s0 = 0, s1 = 0;
+        if (!string_json_parse_string_token(json, io, &s0, &s1)) {
+            *err_msg = nob_sv_from_cstr("string(JSON) invalid string value");
+            return false;
+        }
+        String_View raw = nob_sv_from_parts(json.data + s0, s1 - s0);
+        String_View dec = nob_sv_from_cstr("");
+        if (!string_json_decode_string_temp(ctx, raw, &dec)) {
+            *err_msg = nob_sv_from_cstr("string(JSON) failed to decode string value");
+            return false;
+        }
+        String_Json_Value *v = string_jsonv_new(ctx, STRING_JSON_STRING);
+        if (!v) return false;
+        v->scalar = dec;
+        *out = v;
+        return true;
+    }
+    if (c == '-' || (c >= '0' && c <= '9')) {
+        size_t s = *io;
+        if (!string_json_parse_number_token(json, io)) {
+            *err_msg = nob_sv_from_cstr("string(JSON) invalid number");
+            return false;
+        }
+        String_Json_Value *v = string_jsonv_new(ctx, STRING_JSON_NUMBER);
+        if (!v) return false;
+        v->scalar = nob_sv_from_parts(json.data + s, *io - s);
+        *out = v;
+        return true;
+    }
+    if (c == 't') {
+        if (!string_json_match_lit(json, io, "true")) {
+            *err_msg = nob_sv_from_cstr("string(JSON) invalid literal");
+            return false;
+        }
+        String_Json_Value *v = string_jsonv_new(ctx, STRING_JSON_BOOL);
+        if (!v) return false;
+        v->bool_value = true;
+        *out = v;
+        return true;
+    }
+    if (c == 'f') {
+        if (!string_json_match_lit(json, io, "false")) {
+            *err_msg = nob_sv_from_cstr("string(JSON) invalid literal");
+            return false;
+        }
+        String_Json_Value *v = string_jsonv_new(ctx, STRING_JSON_BOOL);
+        if (!v) return false;
+        v->bool_value = false;
+        *out = v;
+        return true;
+    }
+    if (c == 'n') {
+        if (!string_json_match_lit(json, io, "null")) {
+            *err_msg = nob_sv_from_cstr("string(JSON) invalid literal");
+            return false;
+        }
+        String_Json_Value *v = string_jsonv_new(ctx, STRING_JSON_NULL);
+        if (!v) return false;
+        *out = v;
+        return true;
+    }
+
+    *err_msg = nob_sv_from_cstr("string(JSON) invalid token");
+    return false;
+}
+
+static bool string_jsonv_parse_root_temp(Evaluator_Context *ctx,
+                                         String_View json,
+                                         String_Json_Value **out,
+                                         String_View *err_msg) {
+    if (!ctx || !out || !err_msg) return false;
+    size_t i = 0;
+    if (!string_jsonv_parse_value_temp(ctx, json, &i, out, err_msg)) return false;
+    string_json_skip_ws(json, &i);
+    if (i != json.count) {
+        *err_msg = nob_sv_from_cstr("string(JSON) extra trailing input");
+        return false;
+    }
+    return true;
+}
+
+static bool string_jsonv_parse_index_sv(String_View token, bool bound_check, size_t bound, size_t *out) {
+    if (!out) return false;
+    long long idx = -1;
+    if (!sv_parse_i64(token, &idx) || idx < 0) return false;
+    if (bound_check && (size_t)idx >= bound) return false;
+    *out = (size_t)idx;
+    return true;
+}
+
+static bool string_jsonv_object_find(String_Json_Value *obj, String_View key, size_t *out_index) {
+    if (!obj || obj->type != STRING_JSON_OBJECT || !out_index) return false;
+    for (size_t i = 0; i < obj->object_count; i++) {
+        if (nob_sv_eq(obj->object_items[i].key, key)) {
+            *out_index = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool string_jsonv_resolve_path(String_Json_Value *root,
+                                      String_View *path,
+                                      size_t path_count,
+                                      String_Json_Value **out,
+                                      String_Json_Error *err,
+                                      Evaluator_Context *ctx) {
+    if (!root || !out || !err || !ctx) return false;
+    String_Json_Value *current = root;
+    for (size_t i = 0; i < path_count; i++) {
+        String_View tok = path[i];
+        if (current->type == STRING_JSON_OBJECT) {
+            size_t idx = 0;
+            if (!string_jsonv_object_find(current, tok, &idx)) {
+                err->message = string_json_message_with_token_temp(ctx, "string(JSON) object member not found", tok);
+                err->path_prefix_count = i + 1;
+                return false;
+            }
+            current = current->object_items[idx].value;
+            continue;
+        }
+        if (current->type == STRING_JSON_ARRAY) {
+            size_t idx = 0;
+            if (!string_jsonv_parse_index_sv(tok, true, current->array_count, &idx)) {
+                err->message = string_json_message_with_token_temp(ctx, "string(JSON) array index out of range", tok);
+                err->path_prefix_count = i + 1;
+                return false;
+            }
+            current = current->array_items[idx];
+            continue;
+        }
+        err->message = string_json_message_with_token_temp(ctx, "string(JSON) path traverses non-container value", tok);
+        err->path_prefix_count = i + 1;
+        return false;
+    }
+    *out = current;
+    return true;
+}
+
+static bool string_jsonv_equal(const String_Json_Value *a, const String_Json_Value *b) {
+    if (!a || !b || a->type != b->type) return false;
+    switch (a->type) {
+        case STRING_JSON_NULL: return true;
+        case STRING_JSON_BOOL: return a->bool_value == b->bool_value;
+        case STRING_JSON_NUMBER:
+        case STRING_JSON_STRING: return nob_sv_eq(a->scalar, b->scalar);
+        case STRING_JSON_ARRAY:
+            if (a->array_count != b->array_count) return false;
+            for (size_t i = 0; i < a->array_count; i++) {
+                if (!string_jsonv_equal(a->array_items[i], b->array_items[i])) return false;
+            }
+            return true;
+        case STRING_JSON_OBJECT:
+            if (a->object_count != b->object_count) return false;
+            for (size_t i = 0; i < a->object_count; i++) {
+                size_t j = 0;
+                if (!string_jsonv_object_find((String_Json_Value*)b, a->object_items[i].key, &j)) return false;
+                if (!string_jsonv_equal(a->object_items[i].value, b->object_items[j].value)) return false;
+            }
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void string_jsonv_append_indent(Nob_String_Builder *sb, size_t level) {
+    for (size_t i = 0; i < level; i++) {
+        nob_sb_append(sb, ' ');
+        nob_sb_append(sb, ' ');
+    }
+}
+
+static void string_jsonv_append_escaped_string(Nob_String_Builder *sb, String_View s) {
+    static const char hex[] = "0123456789abcdef";
+    nob_sb_append(sb, '"');
+    for (size_t i = 0; i < s.count; i++) {
+        unsigned char c = (unsigned char)s.data[i];
+        switch (c) {
+            case '"': nob_sb_append_cstr(sb, "\\\""); break;
+            case '\\': nob_sb_append_cstr(sb, "\\\\"); break;
+            case '\b': nob_sb_append_cstr(sb, "\\b"); break;
+            case '\f': nob_sb_append_cstr(sb, "\\f"); break;
+            case '\n': nob_sb_append_cstr(sb, "\\n"); break;
+            case '\r': nob_sb_append_cstr(sb, "\\r"); break;
+            case '\t': nob_sb_append_cstr(sb, "\\t"); break;
+            default:
+                if (c < 0x20) {
+                    char u[6] = {'\\', 'u', '0', '0', hex[(c >> 4) & 0x0F], hex[c & 0x0F]};
+                    nob_sb_append_buf(sb, u, sizeof(u));
+                } else {
+                    nob_sb_append(sb, (char)c);
+                }
+                break;
+        }
+    }
+    nob_sb_append(sb, '"');
+}
+
+static void string_jsonv_serialize_append(Nob_String_Builder *sb, const String_Json_Value *v, size_t indent) {
+    if (!sb || !v) return;
+    switch (v->type) {
+        case STRING_JSON_NULL:
+            nob_sb_append_cstr(sb, "null");
+            return;
+        case STRING_JSON_BOOL:
+            nob_sb_append_cstr(sb, v->bool_value ? "true" : "false");
+            return;
+        case STRING_JSON_NUMBER:
+            nob_sb_append_buf(sb, v->scalar.data, v->scalar.count);
+            return;
+        case STRING_JSON_STRING:
+            string_jsonv_append_escaped_string(sb, v->scalar);
+            return;
+        case STRING_JSON_ARRAY:
+            if (v->array_count == 0) {
+                nob_sb_append_cstr(sb, "[]");
+                return;
+            }
+            nob_sb_append_cstr(sb, "[\n");
+            for (size_t i = 0; i < v->array_count; i++) {
+                string_jsonv_append_indent(sb, indent + 1);
+                string_jsonv_serialize_append(sb, v->array_items[i], indent + 1);
+                if (i + 1 < v->array_count) nob_sb_append_cstr(sb, ",");
+                nob_sb_append_cstr(sb, "\n");
+            }
+            string_jsonv_append_indent(sb, indent);
+            nob_sb_append_cstr(sb, "]");
+            return;
+        case STRING_JSON_OBJECT:
+            if (v->object_count == 0) {
+                nob_sb_append_cstr(sb, "{}");
+                return;
+            }
+            nob_sb_append_cstr(sb, "{\n");
+            for (size_t i = 0; i < v->object_count; i++) {
+                string_jsonv_append_indent(sb, indent + 1);
+                string_jsonv_append_escaped_string(sb, v->object_items[i].key);
+                nob_sb_append_cstr(sb, " : ");
+                string_jsonv_serialize_append(sb, v->object_items[i].value, indent + 1);
+                if (i + 1 < v->object_count) nob_sb_append_cstr(sb, ",");
+                nob_sb_append_cstr(sb, "\n");
+            }
+            string_jsonv_append_indent(sb, indent);
+            nob_sb_append_cstr(sb, "}");
+            return;
+        default:
+            return;
+    }
+}
+
+static String_View string_jsonv_serialize_temp(Evaluator_Context *ctx, const String_Json_Value *v) {
+    if (!ctx || !v) return nob_sv_from_cstr("");
+    Nob_String_Builder sb = {0};
+    string_jsonv_serialize_append(&sb, v, 0);
+    String_View out = string_sb_to_temp_sv(ctx, &sb);
+    nob_sb_free(sb);
+    return out;
+}
+
+static bool string_handle_json_command(Evaluator_Context *ctx,
+                                       const Node *node,
+                                       Cmake_Event_Origin o,
+                                       SV_List a) {
+    if (!ctx || !node) return !eval_should_stop(ctx);
+    if (a.count < 4) {
+        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
+                       nob_sv_from_cstr("string(JSON) requires out-var, mode and JSON string"),
+                       nob_sv_from_cstr("Usage: string(JSON <out-var> [ERROR_VARIABLE <err-var>] <mode> <json> ...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    size_t pos = 1;
+    String_View out_var = a.items[pos++];
+    bool has_error_var = false;
+    String_View error_var = nob_sv_from_cstr("");
+    if (pos < a.count && eval_sv_eq_ci_lit(a.items[pos], "ERROR_VARIABLE")) {
+        if (pos + 1 >= a.count) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("string(JSON ERROR_VARIABLE) requires output variable"),
+                           nob_sv_from_cstr("Usage: string(JSON <out-var> ERROR_VARIABLE <err-var> <mode> <json> ...)"));
+            return !eval_should_stop(ctx);
+        }
+        has_error_var = true;
+        error_var = a.items[pos + 1];
+        pos += 2;
+        (void)eval_var_set(ctx, error_var, nob_sv_from_cstr("NOTFOUND"));
+    }
+    if (pos >= a.count) {
+        return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                               nob_sv_from_cstr("string(JSON) missing mode argument"),
+                                               NULL, 0);
+    }
+
+    String_View mode = a.items[pos++];
+    if (!(eval_sv_eq_ci_lit(mode, "GET") ||
+          eval_sv_eq_ci_lit(mode, "TYPE") ||
+          eval_sv_eq_ci_lit(mode, "MEMBER") ||
+          eval_sv_eq_ci_lit(mode, "LENGTH") ||
+          eval_sv_eq_ci_lit(mode, "REMOVE") ||
+          eval_sv_eq_ci_lit(mode, "SET") ||
+          eval_sv_eq_ci_lit(mode, "EQUAL"))) {
+        return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                               string_json_message_with_token_temp(ctx, "string(JSON) received unsupported mode", mode),
+                                               NULL, 0);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "EQUAL")) {
+        if (pos + 1 >= a.count || pos + 2 != a.count) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON EQUAL) expects exactly two JSON strings"),
+                                                   NULL, 0);
+        }
+        String_View err = nob_sv_from_cstr("");
+        String_Json_Value *lhs = NULL;
+        if (!string_jsonv_parse_root_temp(ctx, a.items[pos], &lhs, &err)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, NULL, 0);
+        }
+        String_Json_Value *rhs = NULL;
+        if (!string_jsonv_parse_root_temp(ctx, a.items[pos + 1], &rhs, &err)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, NULL, 0);
+        }
+        (void)eval_var_set(ctx, out_var, string_jsonv_equal(lhs, rhs) ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (pos >= a.count) {
+        return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                               nob_sv_from_cstr("string(JSON) missing JSON string argument"),
+                                               NULL, 0);
+    }
+
+    String_View err = nob_sv_from_cstr("");
+    String_Json_Value *root = NULL;
+    if (!string_jsonv_parse_root_temp(ctx, a.items[pos++], &root, &err)) {
+        return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, NULL, 0);
+    }
+
+    String_View *path = (pos < a.count) ? &a.items[pos] : NULL;
+    size_t path_count = (pos < a.count) ? (a.count - pos) : 0;
+
+    if (eval_sv_eq_ci_lit(mode, "GET") || eval_sv_eq_ci_lit(mode, "TYPE") || eval_sv_eq_ci_lit(mode, "LENGTH")) {
+        String_Json_Error jerr = {0};
+        String_Json_Value *target = NULL;
+        if (!string_jsonv_resolve_path(root, path, path_count, &target, &jerr, ctx)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   jerr.message, path, jerr.path_prefix_count);
+        }
+        if (eval_sv_eq_ci_lit(mode, "GET")) {
+            if (target->type == STRING_JSON_STRING || target->type == STRING_JSON_NUMBER) {
+                (void)eval_var_set(ctx, out_var, target->scalar);
+            } else if (target->type == STRING_JSON_BOOL) {
+                (void)eval_var_set(ctx, out_var, target->bool_value ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+            } else if (target->type == STRING_JSON_NULL) {
+                (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(""));
+            } else {
+                (void)eval_var_set(ctx, out_var, string_jsonv_serialize_temp(ctx, target));
+            }
+            return !eval_should_stop(ctx);
+        }
+        if (eval_sv_eq_ci_lit(mode, "TYPE")) {
+            (void)eval_var_set(ctx, out_var, string_json_type_name(target->type));
+            return !eval_should_stop(ctx);
+        }
+        if (target->type != STRING_JSON_OBJECT && target->type != STRING_JSON_ARRAY) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON LENGTH) requires ARRAY or OBJECT"),
+                                                   path, path_count);
+        }
+        char num[64];
+        snprintf(num, sizeof(num), "%zu", target->type == STRING_JSON_ARRAY ? target->array_count : target->object_count);
+        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(num));
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "MEMBER")) {
+        if (path_count < 1) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON MEMBER) requires index argument"),
+                                                   path, 0);
+        }
+        String_View index_sv = path[path_count - 1];
+        String_Json_Error jerr = {0};
+        String_Json_Value *target = NULL;
+        if (!string_jsonv_resolve_path(root, path, path_count - 1, &target, &jerr, ctx)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   jerr.message, path, jerr.path_prefix_count);
+        }
+        if (target->type != STRING_JSON_OBJECT) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON MEMBER) requires OBJECT target"),
+                                                   path, path_count - 1);
+        }
+        size_t idx = 0;
+        if (!string_jsonv_parse_index_sv(index_sv, true, target->object_count, &idx)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   string_json_message_with_token_temp(ctx, "string(JSON MEMBER) invalid index", index_sv),
+                                                   path, path_count);
+        }
+        (void)eval_var_set(ctx, out_var, target->object_items[idx].key);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "REMOVE")) {
+        if (path_count < 1) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON REMOVE) requires at least one path token"),
+                                                   path, 0);
+        }
+        String_Json_Error jerr = {0};
+        String_Json_Value *parent = NULL;
+        if (!string_jsonv_resolve_path(root, path, path_count - 1, &parent, &jerr, ctx)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   jerr.message, path, jerr.path_prefix_count);
+        }
+        String_View rem = path[path_count - 1];
+        if (parent->type == STRING_JSON_OBJECT) {
+            size_t idx = 0;
+            if (string_jsonv_object_find(parent, rem, &idx)) {
+                for (size_t i = idx + 1; i < parent->object_count; i++) {
+                    parent->object_items[i - 1] = parent->object_items[i];
+                }
+                parent->object_count--;
+            }
+        } else if (parent->type == STRING_JSON_ARRAY) {
+            size_t idx = 0;
+            if (!string_jsonv_parse_index_sv(rem, true, parent->array_count, &idx)) {
+                return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                       string_json_message_with_token_temp(ctx, "string(JSON REMOVE) invalid index", rem),
+                                                       path, path_count);
+            }
+            for (size_t i = idx + 1; i < parent->array_count; i++) parent->array_items[i - 1] = parent->array_items[i];
+            parent->array_count--;
+        } else {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON REMOVE) requires OBJECT or ARRAY target"),
+                                                   path, path_count - 1);
+        }
+        (void)eval_var_set(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(mode, "SET")) {
+        if (path_count < 2) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON SET) requires path and value arguments"),
+                                                   path, 0);
+        }
+        String_View new_json = path[path_count - 1];
+        String_Json_Value *new_value = NULL;
+        if (!string_jsonv_parse_root_temp(ctx, new_json, &new_value, &err)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, path, path_count - 1);
+        }
+        String_View key_or_index = path[path_count - 2];
+        String_Json_Error jerr = {0};
+        String_Json_Value *parent = NULL;
+        if (!string_jsonv_resolve_path(root, path, path_count - 2, &parent, &jerr, ctx)) {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   jerr.message, path, jerr.path_prefix_count);
+        }
+        if (parent->type == STRING_JSON_OBJECT) {
+            size_t idx = 0;
+            if (string_jsonv_object_find(parent, key_or_index, &idx)) {
+                parent->object_items[idx].value = new_value;
+            } else {
+                if (!string_jsonv_object_push(ctx, parent, key_or_index, new_value)) return !eval_should_stop(ctx);
+            }
+        } else if (parent->type == STRING_JSON_ARRAY) {
+            size_t idx = 0;
+            if (!string_jsonv_parse_index_sv(key_or_index, false, 0, &idx)) {
+                return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                       string_json_message_with_token_temp(ctx, "string(JSON SET) invalid array index", key_or_index),
+                                                       path, path_count - 1);
+            }
+            if (idx < parent->array_count) {
+                parent->array_items[idx] = new_value;
+            } else {
+                if (!string_jsonv_array_push(ctx, parent, new_value)) return !eval_should_stop(ctx);
+            }
+        } else {
+            return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                                   nob_sv_from_cstr("string(JSON SET) requires OBJECT or ARRAY target"),
+                                                   path, path_count - 2);
+        }
+        (void)eval_var_set(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
+        return !eval_should_stop(ctx);
+    }
+
+    return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
+                                           nob_sv_from_cstr("Unsupported string(JSON) mode"),
+                                           path, 0);
 }
 
 bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
@@ -1380,6 +2108,45 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
+    if (eval_sv_eq_ci_lit(a.items[0], "REPEAT")) {
+        if (a.count != 4) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("string(REPEAT) requires input, count and output variable"),
+                           nob_sv_from_cstr("Usage: string(REPEAT <string> <count> <out-var>)"));
+            return !eval_should_stop(ctx);
+        }
+
+        unsigned long long count = 0;
+        if (!string_parse_u64_sv(a.items[2], &count)) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("string(REPEAT) repeat count is not a non-negative integer"),
+                           a.items[2]);
+            return !eval_should_stop(ctx);
+        }
+
+        String_View in = a.items[1];
+        if (in.count > 0 && count > (SIZE_MAX / in.count)) {
+            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
+                           nob_sv_from_cstr("string(REPEAT) result is too large"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+
+        size_t total = (size_t)count * in.count;
+        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        size_t off = 0;
+        for (size_t i = 0; i < (size_t)count; i++) {
+            if (in.count > 0) {
+                memcpy(buf + off, in.data, in.count);
+                off += in.count;
+            }
+        }
+        buf[off] = '\0';
+        (void)eval_var_set(ctx, a.items[3], nob_sv_from_cstr(buf));
+        return !eval_should_stop(ctx);
+    }
+
     if (eval_sv_eq_ci_lit(a.items[0], "RANDOM")) {
         if (a.count < 2) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
@@ -1542,11 +2309,18 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(a.items[0], "MD5") ||
         eval_sv_eq_ci_lit(a.items[0], "SHA1") ||
-        eval_sv_eq_ci_lit(a.items[0], "SHA256")) {
+        eval_sv_eq_ci_lit(a.items[0], "SHA224") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA256") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA384") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA512") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA3_224") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA3_256") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA3_384") ||
+        eval_sv_eq_ci_lit(a.items[0], "SHA3_512")) {
         if (a.count != 3) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("string(MD5/SHA1/SHA256) requires output variable and input"),
-                           nob_sv_from_cstr("Usage: string(MD5|SHA1|SHA256 <out-var> <input>)"));
+                           nob_sv_from_cstr("string(<HASH>) requires output variable and input"),
+                           nob_sv_from_cstr("Usage: string(<HASH> <out-var> <input>)"));
             return !eval_should_stop(ctx);
         }
         String_View hash = nob_sv_from_cstr("");
@@ -1561,107 +2335,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "JSON")) {
-        if (a.count < 4) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("string(JSON) requires out-var, mode and JSON string"),
-                           nob_sv_from_cstr("Usage: string(JSON <out-var> GET|TYPE|LENGTH <json> [path...])"));
-            return !eval_should_stop(ctx);
-        }
-        String_View out_var = a.items[1];
-        String_View json_mode = a.items[2];
-        String_View json_text = a.items[3];
-        String_Json_Node current = {0};
-        if (!string_json_parse_root(json_text, &current)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("string(JSON) received invalid JSON input"),
-                           json_text);
-            return !eval_should_stop(ctx);
-        }
-
-        for (size_t i = 4; i < a.count; i++) {
-            if (current.type == STRING_JSON_OBJECT) {
-                bool found = false;
-                String_Json_Node next = {0};
-                if (!string_json_object_find_member(ctx, json_text, current, a.items[i], &found, &next)) {
-                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("string(JSON) failed to parse object member access"),
-                                   a.items[i]);
-                    return !eval_should_stop(ctx);
-                }
-                if (!found) {
-                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("string(JSON) object member not found"),
-                                   a.items[i]);
-                    return !eval_should_stop(ctx);
-                }
-                current = next;
-                continue;
-            }
-
-            if (current.type == STRING_JSON_ARRAY) {
-                long long raw_idx = -1;
-                if (!sv_parse_i64(a.items[i], &raw_idx) || raw_idx < 0) {
-                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("string(JSON) array index must be non-negative integer"),
-                                   a.items[i]);
-                    return !eval_should_stop(ctx);
-                }
-                bool found = false;
-                String_Json_Node next = {0};
-                if (!string_json_array_find_index(json_text, current, (size_t)raw_idx, &found, &next)) {
-                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("string(JSON) failed to parse array access"),
-                                   a.items[i]);
-                    return !eval_should_stop(ctx);
-                }
-                if (!found) {
-                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("string(JSON) array index out of range"),
-                                   a.items[i]);
-                    return !eval_should_stop(ctx);
-                }
-                current = next;
-                continue;
-            }
-
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("string(JSON) path traverses non-container value"),
-                           a.items[i]);
-            return !eval_should_stop(ctx);
-        }
-
-        if (eval_sv_eq_ci_lit(json_mode, "GET")) {
-            String_View out = nob_sv_from_cstr("");
-            if (!string_json_get_temp(ctx, json_text, current, &out)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("string(JSON GET) failed to extract value"),
-                               nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
-            }
-            (void)eval_var_set(ctx, out_var, out);
-            return !eval_should_stop(ctx);
-        }
-        if (eval_sv_eq_ci_lit(json_mode, "TYPE")) {
-            (void)eval_var_set(ctx, out_var, string_json_type_name(current.type));
-            return !eval_should_stop(ctx);
-        }
-        if (eval_sv_eq_ci_lit(json_mode, "LENGTH")) {
-            size_t len = 0;
-            if (!string_json_container_length(json_text, current, &len)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("string(JSON LENGTH) requires ARRAY or OBJECT"),
-                               nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
-            }
-            char num_buf[64];
-            snprintf(num_buf, sizeof(num_buf), "%zu", len);
-            (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(num_buf));
-            return !eval_should_stop(ctx);
-        }
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("Unsupported string(JSON) mode"),
-                       nob_sv_from_cstr("Implemented: GET, TYPE, LENGTH"));
-        return !eval_should_stop(ctx);
+        return string_handle_json_command(ctx, node, o, a);
     }
 
     if (eval_sv_eq_ci_lit(a.items[0], "REPLACE")) {
@@ -2002,7 +2676,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
 
     eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("string"), node->as.cmd.name, o,
                    nob_sv_from_cstr("Unsupported string() subcommand"),
-                   nob_sv_from_cstr("Implemented: APPEND, PREPEND, CONCAT, JOIN, LENGTH, STRIP, FIND, COMPARE, ASCII, HEX, CONFIGURE, MAKE_C_IDENTIFIER, GENEX_STRIP, RANDOM, TIMESTAMP, UUID, MD5, SHA1, SHA256, REPLACE, TOUPPER, TOLOWER, SUBSTRING, REGEX MATCH, REGEX REPLACE, REGEX MATCHALL, JSON(GET|TYPE|LENGTH)"));
+                   nob_sv_from_cstr("Implemented: APPEND, PREPEND, CONCAT, JOIN, LENGTH, STRIP, FIND, COMPARE, ASCII, HEX, CONFIGURE, MAKE_C_IDENTIFIER, GENEX_STRIP, REPEAT, RANDOM, TIMESTAMP, UUID, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA3_224, SHA3_256, SHA3_384, SHA3_512, REPLACE, TOUPPER, TOLOWER, SUBSTRING, REGEX MATCH, REGEX REPLACE, REGEX MATCHALL, JSON(GET|TYPE|MEMBER|LENGTH|REMOVE|SET|EQUAL)"));
     eval_request_stop_on_error(ctx);
     return !eval_should_stop(ctx);
 }

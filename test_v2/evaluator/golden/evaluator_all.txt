@@ -380,12 +380,14 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 targ
 
 === CASE stdlib_string_append_prepend_concat_join_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=5
-EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='string_append_prepend' type=EXECUTABLE
-EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='string_append_prepend' path='main.c'
-EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='string_append_prepend' item='SV=P_mid_A_B' vis=PRIVATE
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='string_append_prepend' item='SCON=x-y' vis=PRIVATE
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='string_append_prepend' item='SJOIN=aa:bb:cc' vis=PRIVATE
+EVENTS count=7
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='string_append_prepend' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='string_append_prepend' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SV=P_mid_A_B' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SCON=x-y' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SJOIN=aa:bb:cc' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SREP=ababab' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SREP0=' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_length_strip_find_compare_extended ===
@@ -414,12 +416,19 @@ EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 targ
 
 === CASE stdlib_string_hash_md5_sha1_sha256_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=5
-EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='string_hashes' type=EXECUTABLE
-EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='string_hashes' path='main.c'
-EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_hashes' item='H_MD5=900150983cd24fb0d6963f7d28e17f72' vis=PRIVATE
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_hashes' item='H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d' vis=PRIVATE
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_hashes' item='H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' vis=PRIVATE
+EVENTS count=12
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='string_hashes' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='string_hashes' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_MD5=900150983cd24fb0d6963f7d28e17f72' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA224=23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA384=cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA512=ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_224=e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_256=3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_384=ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25' vis=PRIVATE
+EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_512=b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_ascii_hex_extended ===
@@ -485,14 +494,24 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 targ
 
 === CASE stdlib_string_json_get_type_length_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=7
-EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='string_json' type=EXECUTABLE
-EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='string_json' path='main.c'
-EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_TYPE=ARRAY' vis=PRIVATE
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_LEN=3' vis=PRIVATE
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_GET_NUM=2' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_GET_STR=x' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='string_json' item='SJ_GET_NULL=' vis=PRIVATE
+EVENTS count=17
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=17 col=1 name='string_json' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=17 col=1 target='string_json' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_TYPE=ARRAY' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_LEN=3' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_NUM=2' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_STR=x' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_NULL=' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_MEMBER=s' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_RM_LEN=2' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_SET_GET=99' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_EQ=ON' vis=PRIVATE
+EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_NEQ=OFF' vis=PRIVATE
+EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR_OK=NOTFOUND' vis=PRIVATE
+EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_E1=missing-NOTFOUND' vis=PRIVATE
+EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR1=string(JSON) object member not found: missing' vis=PRIVATE
+EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_E2=s-NOTFOUND' vis=PRIVATE
+EV[16] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR2=string(JSON LENGTH) requires ARRAY or OBJECT' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_ascii_invalid_code_error ===

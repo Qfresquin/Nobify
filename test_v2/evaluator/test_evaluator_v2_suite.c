@@ -1253,6 +1253,212 @@ TEST(evaluator_include_cmp0017_search_order_from_builtin_modules) {
     TEST_PASS();
 }
 
+TEST(evaluator_include_guard_default_scope_is_strict_and_warning_free) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE guard_var.cmake [=[include_guard()\nset(VAR_HIT 1)\n]=])\n"
+        "include(guard_var.cmake)\n"
+        "include(guard_var.cmake)\n"
+        "add_executable(guard_var_probe main.c)\n"
+        "target_compile_definitions(guard_var_probe PRIVATE VAR_HIT=${VAR_HIT})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_var_hit = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("guard_var_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("VAR_HIT=1"))) {
+            saw_var_hit = true;
+            break;
+        }
+    }
+    ASSERT(saw_var_hit);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_include_guard_directory_scope_applies_only_to_directory_and_children) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE guard_dir.cmake [=[include_guard(DIRECTORY)\nset(DIR_HIT \"${DIR_HIT}x\")\n]=])\n"
+        "include(guard_dir.cmake)\n"
+        "include(guard_dir.cmake)\n"
+        "add_executable(guard_dir_probe main.c)\n"
+        "target_compile_definitions(guard_dir_probe PRIVATE DIR_HIT=${DIR_HIT})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_dir_hit = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("guard_dir_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DIR_HIT=x"))) saw_dir_hit = true;
+    }
+    ASSERT(saw_dir_hit);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_include_guard_global_scope_persists_across_function_scope) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(GLOBAL_GUARD_HITS \"\")\n"
+        "file(WRITE guard_global.cmake [=[include_guard(GLOBAL)\nset(GLOBAL_GUARD_HITS \"${GLOBAL_GUARD_HITS}x\" PARENT_SCOPE)\n]=])\n"
+        "function(run_guard_once)\n"
+        "  include(guard_global.cmake)\n"
+        "endfunction()\n"
+        "run_guard_once()\n"
+        "run_guard_once()\n"
+        "add_executable(guard_global_probe main.c)\n"
+        "target_compile_definitions(guard_global_probe PRIVATE GLOBAL_GUARD_HITS=${GLOBAL_GUARD_HITS})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_global_hit = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("guard_global_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("GLOBAL_GUARD_HITS=x"))) {
+            saw_global_hit = true;
+            break;
+        }
+    }
+    ASSERT(saw_global_hit);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_include_guard_rejects_invalid_arguments) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include_guard(BAD)\n"
+        "include_guard(VARIABLE)\n"
+        "include_guard(GLOBAL EXTRA)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 3);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_invalid_scope = false;
+    bool saw_extra_args = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("include_guard() received invalid scope"))) {
+            saw_invalid_scope = true;
+        }
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("include_guard() accepts at most one scope argument"))) {
+            saw_extra_args = true;
+        }
+    }
+    ASSERT(saw_invalid_scope);
+    ASSERT(saw_extra_args);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_add_test_name_signature_parses_supported_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3513,6 +3719,146 @@ TEST(evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_
     TEST_PASS();
 }
 
+TEST(evaluator_string_hash_repeat_and_json_full_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(SJSON [=[{\"k\":[1,2,3],\"s\":\"x\",\"n\":null}]=])\n"
+        "string(MD5 H_MD5 \"abc\")\n"
+        "string(SHA1 H_SHA1 \"abc\")\n"
+        "string(SHA224 H_SHA224 \"abc\")\n"
+        "string(SHA256 H_SHA256 \"abc\")\n"
+        "string(SHA384 H_SHA384 \"abc\")\n"
+        "string(SHA512 H_SHA512 \"abc\")\n"
+        "string(SHA3_224 H_SHA3_224 \"abc\")\n"
+        "string(SHA3_256 H_SHA3_256 \"abc\")\n"
+        "string(SHA3_384 H_SHA3_384 \"abc\")\n"
+        "string(SHA3_512 H_SHA3_512 \"abc\")\n"
+        "string(REPEAT \"ab\" 3 SREP)\n"
+        "string(REPEAT \"x\" 0 SREP0)\n"
+        "string(JSON SJ_MEMBER MEMBER \"${SJSON}\" 1)\n"
+        "string(JSON SJ_RM REMOVE \"${SJSON}\" k 1)\n"
+        "string(JSON SJ_RM_LEN LENGTH \"${SJ_RM}\" k)\n"
+        "string(JSON SJ_SET SET \"${SJSON}\" k 5 99)\n"
+        "string(JSON SJ_SET_GET GET \"${SJ_SET}\" k 3)\n"
+        "string(JSON SJ_EQ EQUAL \"${SJSON}\" \"${SJSON}\")\n"
+        "string(JSON SJ_NEQ EQUAL \"${SJSON}\" [=[{\"k\":[1],\"s\":\"x\",\"n\":null}]=])\n"
+        "string(JSON SJ_OK ERROR_VARIABLE SJ_ERR_OK TYPE \"${SJSON}\" k)\n"
+        "string(JSON SJ_E1 ERROR_VARIABLE SJ_ERR1 GET \"${SJSON}\" missing)\n"
+        "string(JSON SJ_E2 ERROR_VARIABLE SJ_ERR2 LENGTH \"${SJSON}\" s)\n"
+        "add_executable(string_full_probe main.c)\n"
+        "target_compile_definitions(string_full_probe PRIVATE "
+        "\"H_MD5=${H_MD5}\" \"H_SHA1=${H_SHA1}\" \"H_SHA224=${H_SHA224}\" \"H_SHA256=${H_SHA256}\" "
+        "\"H_SHA384=${H_SHA384}\" \"H_SHA512=${H_SHA512}\" \"H_SHA3_224=${H_SHA3_224}\" "
+        "\"H_SHA3_256=${H_SHA3_256}\" \"H_SHA3_384=${H_SHA3_384}\" \"H_SHA3_512=${H_SHA3_512}\" "
+        "\"SREP=${SREP}\" \"SREP0=${SREP0}\" \"SJ_MEMBER=${SJ_MEMBER}\" \"SJ_RM_LEN=${SJ_RM_LEN}\" "
+        "\"SJ_SET_GET=${SJ_SET_GET}\" \"SJ_EQ=${SJ_EQ}\" \"SJ_NEQ=${SJ_NEQ}\" "
+        "\"SJ_ERR_OK=${SJ_ERR_OK}\" \"SJ_E1=${SJ_E1}\" \"SJ_ERR1=${SJ_ERR1}\" \"SJ_E2=${SJ_E2}\" \"SJ_ERR2=${SJ_ERR2}\")\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_md5 = false;
+    bool saw_sha1 = false;
+    bool saw_sha224 = false;
+    bool saw_sha256 = false;
+    bool saw_sha384 = false;
+    bool saw_sha512 = false;
+    bool saw_sha3_224 = false;
+    bool saw_sha3_256 = false;
+    bool saw_sha3_384 = false;
+    bool saw_sha3_512 = false;
+    bool saw_repeat = false;
+    bool saw_repeat_zero = false;
+    bool saw_member = false;
+    bool saw_rm_len = false;
+    bool saw_set_get = false;
+    bool saw_eq = false;
+    bool saw_neq = false;
+    bool saw_err_ok = false;
+    bool saw_e1 = false;
+    bool saw_err1 = false;
+    bool saw_e2 = false;
+    bool saw_err2 = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("string_full_probe"))) continue;
+        String_View it = ev->as.target_compile_definitions.item;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_MD5=900150983cd24fb0d6963f7d28e17f72"))) saw_md5 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d"))) saw_sha1 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA224=23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"))) saw_sha224 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"))) saw_sha256 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA384=cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"))) saw_sha384 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA512=ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"))) saw_sha512 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA3_224=e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf"))) saw_sha3_224 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA3_256=3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"))) saw_sha3_256 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA3_384=ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25"))) saw_sha3_384 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA3_512=b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0"))) saw_sha3_512 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SREP=ababab"))) saw_repeat = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SREP0="))) saw_repeat_zero = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_MEMBER=s"))) saw_member = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_RM_LEN=2"))) saw_rm_len = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_SET_GET=99"))) saw_set_get = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_EQ=ON"))) saw_eq = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_NEQ=OFF"))) saw_neq = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_ERR_OK=NOTFOUND"))) saw_err_ok = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_E1=missing-NOTFOUND"))) saw_e1 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_ERR1=string(JSON) object member not found: missing"))) saw_err1 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_E2=s-NOTFOUND"))) saw_e2 = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_ERR2=string(JSON LENGTH) requires ARRAY or OBJECT"))) saw_err2 = true;
+    }
+
+    ASSERT(saw_md5);
+    ASSERT(saw_sha1);
+    ASSERT(saw_sha224);
+    ASSERT(saw_sha256);
+    ASSERT(saw_sha384);
+    ASSERT(saw_sha512);
+    ASSERT(saw_sha3_224);
+    ASSERT(saw_sha3_256);
+    ASSERT(saw_sha3_384);
+    ASSERT(saw_sha3_512);
+    ASSERT(saw_repeat);
+    ASSERT(saw_repeat_zero);
+    ASSERT(saw_member);
+    ASSERT(saw_rm_len);
+    ASSERT(saw_set_get);
+    ASSERT(saw_eq);
+    ASSERT(saw_neq);
+    ASSERT(saw_err_ok);
+    ASSERT(saw_e1);
+    ASSERT(saw_err1);
+    ASSERT(saw_e2);
+    ASSERT(saw_err2);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -3541,6 +3887,10 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_include_supports_result_variable_optional_and_module_search(passed, failed);
     test_evaluator_include_validates_options_strictly(passed, failed);
     test_evaluator_include_cmp0017_search_order_from_builtin_modules(passed, failed);
+    test_evaluator_include_guard_default_scope_is_strict_and_warning_free(passed, failed);
+    test_evaluator_include_guard_directory_scope_applies_only_to_directory_and_children(passed, failed);
+    test_evaluator_include_guard_global_scope_persists_across_function_scope(passed, failed);
+    test_evaluator_include_guard_rejects_invalid_arguments(passed, failed);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed);
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
@@ -3576,6 +3926,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
+    test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

@@ -201,23 +201,129 @@ static bool include_resolve_target(Evaluator_Context *ctx,
     return include_try_module_search(ctx, file_or_module, current_list_dir, current_src_dir, out_resolved);
 }
 
+typedef enum {
+    INCLUDE_GUARD_VARIABLE = 0,
+    INCLUDE_GUARD_DIRECTORY,
+    INCLUDE_GUARD_GLOBAL,
+} Include_Guard_Mode;
+
+static bool include_guard_var_defined_global(Evaluator_Context *ctx, String_View key) {
+    if (!ctx || ctx->scope_depth == 0) return false;
+    size_t saved_depth = ctx->scope_depth;
+    ctx->scope_depth = 1;
+    bool defined = eval_var_defined(ctx, key);
+    ctx->scope_depth = saved_depth;
+    return defined;
+}
+
+static String_View include_guard_var_get_global(Evaluator_Context *ctx, String_View key) {
+    if (!ctx || ctx->scope_depth == 0) return nob_sv_from_cstr("");
+    size_t saved_depth = ctx->scope_depth;
+    ctx->scope_depth = 1;
+    String_View value = eval_var_get(ctx, key);
+    ctx->scope_depth = saved_depth;
+    return value;
+}
+
+static bool include_guard_var_set_global(Evaluator_Context *ctx, String_View key, String_View value) {
+    if (!ctx || ctx->scope_depth == 0) return false;
+    size_t saved_depth = ctx->scope_depth;
+    ctx->scope_depth = 1;
+    bool ok = eval_var_set(ctx, key, value);
+    ctx->scope_depth = saved_depth;
+    return ok;
+}
+
+static String_View include_guard_key_for_mode(Evaluator_Context *ctx, Include_Guard_Mode mode, String_View current_file) {
+    if (!ctx) return nob_sv_from_cstr("");
+    switch (mode) {
+        case INCLUDE_GUARD_GLOBAL: {
+            String_View parts[2] = {nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_GLOBAL::"), current_file};
+            return svu_join_no_sep_temp(ctx, parts, 2);
+        }
+        case INCLUDE_GUARD_DIRECTORY: {
+            String_View parts[2] = {nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_DIRECTORY::"), current_file};
+            return svu_join_no_sep_temp(ctx, parts, 2);
+        }
+        case INCLUDE_GUARD_VARIABLE:
+        default: {
+            String_View parts[2] = {nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_VARIABLE::"), current_file};
+            return svu_join_no_sep_temp(ctx, parts, 2);
+        }
+    }
+}
+
+static bool include_guard_directory_hit(Evaluator_Context *ctx, String_View key, String_View current_source_dir) {
+    if (!ctx) return false;
+    String_View current_norm = eval_sv_path_normalize_temp(ctx, current_source_dir);
+    String_View existing = include_guard_var_get_global(ctx, key);
+    if (existing.count == 0) return false;
+
+    SV_List dirs = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing, &dirs)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    for (size_t i = 0; i < dirs.count; i++) {
+        if (dirs.items[i].count == 0) continue;
+        String_View guard_dir = eval_sv_path_normalize_temp(ctx, dirs.items[i]);
+        if (include_path_is_same_or_child(current_norm, guard_dir)) return true;
+    }
+    return false;
+}
+
+static bool include_guard_directory_add(Evaluator_Context *ctx, String_View key, String_View current_source_dir) {
+    if (!ctx) return false;
+    String_View current_norm = eval_sv_path_normalize_temp(ctx, current_source_dir);
+    String_View existing = include_guard_var_get_global(ctx, key);
+    if (existing.count == 0) return include_guard_var_set_global(ctx, key, current_norm);
+
+    SV_List dirs = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing, &dirs)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    for (size_t i = 0; i < dirs.count; i++) {
+        if (nob_sv_eq(dirs.items[i], current_norm)) return true;
+    }
+
+    String_View *joined = arena_alloc_array(eval_temp_arena(ctx), String_View, dirs.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, joined, false);
+    for (size_t i = 0; i < dirs.count; i++) joined[i] = dirs.items[i];
+    joined[dirs.count] = current_norm;
+    String_View updated = eval_sv_join_semi_temp(ctx, joined, dirs.count + 1);
+    return include_guard_var_set_global(ctx, key, updated);
+}
+
 bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    String_View mode = nob_sv_from_cstr("DIRECTORY");
-    if (a.count > 0) {
-        mode = a.items[0];
-        if (!(eval_sv_eq_ci_lit(mode, "DIRECTORY") || eval_sv_eq_ci_lit(mode, "GLOBAL"))) {
+    if (a.count > 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_include"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("include_guard() accepts at most one scope argument"),
+                       nob_sv_from_cstr("Usage: include_guard([DIRECTORY|GLOBAL])"));
+        return !eval_should_stop(ctx);
+    }
+
+    Include_Guard_Mode mode = INCLUDE_GUARD_VARIABLE;
+    if (a.count == 1) {
+        if (eval_sv_eq_ci_lit(a.items[0], "DIRECTORY")) {
+            mode = INCLUDE_GUARD_DIRECTORY;
+        } else if (eval_sv_eq_ci_lit(a.items[0], "GLOBAL")) {
+            mode = INCLUDE_GUARD_GLOBAL;
+        } else {
             eval_emit_diag(ctx,
-                           EV_DIAG_WARNING,
-                           nob_sv_from_cstr("dispatcher"),
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("eval_include"),
                            node->as.cmd.name,
                            o,
-                           nob_sv_from_cstr("include_guard() unsupported mode"),
-                           mode);
-            mode = nob_sv_from_cstr("DIRECTORY");
+                           nob_sv_from_cstr("include_guard() received invalid scope"),
+                           nob_sv_from_cstr("Expected one of: DIRECTORY, GLOBAL"));
+            return !eval_should_stop(ctx);
         }
     }
 
@@ -225,28 +331,43 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     if (current_file.count == 0 && ctx->current_file) {
         current_file = nob_sv_from_cstr(ctx->current_file);
     }
-    String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
-
-    String_View key = nob_sv_from_cstr("");
-    if (eval_sv_eq_ci_lit(mode, "GLOBAL")) {
-        String_View parts[2] = {nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_GLOBAL::"), current_file};
-        key = svu_join_no_sep_temp(ctx, parts, 2);
-    } else {
-        String_View parts[4] = {
-            nob_sv_from_cstr("NOBIFY_INCLUDE_GUARD_DIR::"),
-            current_dir,
-            nob_sv_from_cstr("::"),
-            current_file
-        };
-        key = svu_join_no_sep_temp(ctx, parts, 4);
+    String_View current_source_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (current_source_dir.count == 0) {
+        current_source_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
     }
-    if (ctx->oom) return !eval_should_stop(ctx);
+    if (current_source_dir.count == 0) current_source_dir = ctx->source_dir;
 
-    if (eval_var_defined(ctx, key)) {
+    String_View key = include_guard_key_for_mode(ctx, mode, current_file);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    bool already_guarded = false;
+    switch (mode) {
+        case INCLUDE_GUARD_VARIABLE:
+            already_guarded = eval_var_defined(ctx, key);
+            if (!already_guarded && !eval_var_set(ctx, key, nob_sv_from_cstr("1"))) {
+                return !eval_should_stop(ctx);
+            }
+            break;
+        case INCLUDE_GUARD_GLOBAL:
+            already_guarded = include_guard_var_defined_global(ctx, key);
+            if (!already_guarded && !include_guard_var_set_global(ctx, key, nob_sv_from_cstr("1"))) {
+                return !eval_should_stop(ctx);
+            }
+            break;
+        case INCLUDE_GUARD_DIRECTORY:
+            already_guarded = include_guard_directory_hit(ctx, key, current_source_dir);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (!already_guarded && !include_guard_directory_add(ctx, key, current_source_dir)) {
+                return !eval_should_stop(ctx);
+            }
+            break;
+        default:
+            return !eval_should_stop(ctx);
+    }
+
+    if (already_guarded) {
         ctx->return_requested = true;
-        return !eval_should_stop(ctx);
     }
-    (void)eval_var_set(ctx, key, nob_sv_from_cstr("1"));
     return !eval_should_stop(ctx);
 }
 

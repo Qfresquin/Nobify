@@ -429,8 +429,10 @@ string(APPEND SV "_A" "_B")
 string(PREPEND SV "P_")
 string(CONCAT SCON "x" "-" "y")
 string(JOIN ":" SJOIN "aa" "bb" "cc")
+string(REPEAT "ab" 3 SREP)
+string(REPEAT "x" 0 SREP0)
 add_executable(string_append_prepend main.c)
-target_compile_definitions(string_append_prepend PRIVATE SV=${SV} SCON=${SCON} SJOIN=${SJOIN})
+target_compile_definitions(string_append_prepend PRIVATE SV=${SV} SCON=${SCON} SJOIN=${SJOIN} SREP=${SREP} SREP0=${SREP0})
 #@@ENDCASE
 
 #@@CASE stdlib_string_length_strip_find_compare_extended
@@ -454,9 +456,16 @@ target_compile_definitions(string_matchall PRIVATE SM_ALL=${SM_ALL})
 #@@CASE stdlib_string_hash_md5_sha1_sha256_extended
 string(MD5 H_MD5 "abc")
 string(SHA1 H_SHA1 "abc")
+string(SHA224 H_SHA224 "abc")
 string(SHA256 H_SHA256 "abc")
+string(SHA384 H_SHA384 "abc")
+string(SHA512 H_SHA512 "abc")
+string(SHA3_224 H_SHA3_224 "abc")
+string(SHA3_256 H_SHA3_256 "abc")
+string(SHA3_384 H_SHA3_384 "abc")
+string(SHA3_512 H_SHA3_512 "abc")
 add_executable(string_hashes main.c)
-target_compile_definitions(string_hashes PRIVATE H_MD5=${H_MD5} H_SHA1=${H_SHA1} H_SHA256=${H_SHA256})
+target_compile_definitions(string_hashes PRIVATE H_MD5=${H_MD5} H_SHA1=${H_SHA1} H_SHA224=${H_SHA224} H_SHA256=${H_SHA256} H_SHA384=${H_SHA384} H_SHA512=${H_SHA512} H_SHA3_224=${H_SHA3_224} H_SHA3_256=${H_SHA3_256} H_SHA3_384=${H_SHA3_384} H_SHA3_512=${H_SHA3_512})
 #@@ENDCASE
 
 #@@CASE stdlib_string_ascii_hex_extended
@@ -514,8 +523,18 @@ string(JSON SJ_LEN LENGTH "${SJSON}" k)
 string(JSON SJ_GET_NUM GET "${SJSON}" k 1)
 string(JSON SJ_GET_STR GET "${SJSON}" s)
 string(JSON SJ_GET_NULL GET "${SJSON}" n)
+string(JSON SJ_MEMBER MEMBER "${SJSON}" 1)
+string(JSON SJ_RM REMOVE "${SJSON}" k 1)
+string(JSON SJ_RM_LEN LENGTH "${SJ_RM}" k)
+string(JSON SJ_SET SET "${SJSON}" k 5 99)
+string(JSON SJ_SET_GET GET "${SJ_SET}" k 3)
+string(JSON SJ_EQ EQUAL "${SJSON}" "${SJSON}")
+string(JSON SJ_NEQ EQUAL "${SJSON}" [=[{"k":[1],"s":"x","n":null}]=])
+string(JSON SJ_OK ERROR_VARIABLE SJ_ERR_OK TYPE "${SJSON}" k)
+string(JSON SJ_E1 ERROR_VARIABLE SJ_ERR1 GET "${SJSON}" missing)
+string(JSON SJ_E2 ERROR_VARIABLE SJ_ERR2 LENGTH "${SJSON}" s)
 add_executable(string_json main.c)
-target_compile_definitions(string_json PRIVATE SJ_TYPE=${SJ_TYPE} SJ_LEN=${SJ_LEN} SJ_GET_NUM=${SJ_GET_NUM} SJ_GET_STR=${SJ_GET_STR} SJ_GET_NULL=${SJ_GET_NULL})
+target_compile_definitions(string_json PRIVATE "SJ_TYPE=${SJ_TYPE}" "SJ_LEN=${SJ_LEN}" "SJ_GET_NUM=${SJ_GET_NUM}" "SJ_GET_STR=${SJ_GET_STR}" "SJ_GET_NULL=${SJ_GET_NULL}" "SJ_MEMBER=${SJ_MEMBER}" "SJ_RM_LEN=${SJ_RM_LEN}" "SJ_SET_GET=${SJ_SET_GET}" "SJ_EQ=${SJ_EQ}" "SJ_NEQ=${SJ_NEQ}" "SJ_ERR_OK=${SJ_ERR_OK}" "SJ_E1=${SJ_E1}" "SJ_ERR1=${SJ_ERR1}" "SJ_E2=${SJ_E2}" "SJ_ERR2=${SJ_ERR2}")
 #@@ENDCASE
 
 #@@CASE stdlib_string_ascii_invalid_code_error
