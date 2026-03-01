@@ -20,19 +20,19 @@ bool eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (a.count > 0) {
         eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
+                       EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
-                       nob_sv_from_cstr("enable_testing() does not expect arguments"),
-                       nob_sv_from_cstr("Extra arguments are ignored"));
+                       nob_sv_from_cstr("Command does not accept arguments"),
+                       nob_sv_from_cstr("Usage: enable_testing()"));
+        return !eval_should_stop(ctx);
     }
 
     Cmake_Event ev = {0};
     ev.kind = EV_TESTING_ENABLE;
     ev.origin = o;
     ev.as.testing_enable.enabled = true;
-    (void)eval_var_set(ctx, nob_sv_from_cstr("BUILD_TESTING"), nob_sv_from_cstr("1"));
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
