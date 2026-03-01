@@ -183,14 +183,23 @@ enum {
 };
 
 typedef struct {
+    String_View command_name;
+    Cmake_Event_Origin origin;
     bool pre_build;
     bool got_stage;
+    size_t stage_count;
     bool append;
     bool verbatim;
     bool uses_terminal;
     bool command_expand_lists;
     bool depends_explicit_only;
     bool codegen;
+    bool has_implicit_depends;
+    bool has_depfile;
+    bool has_job_pool;
+    String_View job_pool;
+    bool has_job_server_aware;
+    String_View job_server_aware;
     String_View working_dir;
     String_View comment;
     String_View main_dependency;
@@ -200,6 +209,19 @@ typedef struct {
     SV_List depends;
     SV_List commands;
 } Add_Custom_Command_Opts;
+
+typedef struct {
+    String_View component;
+    String_View command;
+    Cmake_Event_Origin origin;
+    String_View usage_hint;
+} Add_Custom_Positional_Context;
+
+typedef struct {
+    Add_Custom_Command_Opts *opt;
+    Add_Custom_Positional_Context positional;
+    bool had_positional_error;
+} Add_Custom_Command_Parse_Context;
 
 static bool add_custom_command_on_option(Evaluator_Context *ctx,
                                          void *userdata,
@@ -216,13 +238,19 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         }
         return true;
     case CUSTOM_CMD_OPT_PRE_BUILD:
+        st->got_stage = true;
+        st->pre_build = true;
+        st->stage_count++;
+        return true;
     case CUSTOM_CMD_OPT_PRE_LINK:
         st->got_stage = true;
         st->pre_build = true;
+        st->stage_count++;
         return true;
     case CUSTOM_CMD_OPT_POST_BUILD:
         st->got_stage = true;
         st->pre_build = false;
+        st->stage_count++;
         return true;
     case CUSTOM_CMD_OPT_COMMAND: {
         size_t start = 0;
@@ -247,12 +275,37 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         if (values.count > 0) st->main_dependency = values.items[0];
         return true;
     case CUSTOM_CMD_OPT_IMPLICIT_DEPENDS:
+        if (values.count == 0 || (values.count % 2) != 0) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           st->command_name,
+                           st->origin,
+                           nob_sv_from_cstr("IMPLICIT_DEPENDS requires language/file pairs"),
+                           nob_sv_from_cstr("Usage: IMPLICIT_DEPENDS <lang> <file> [<lang> <file> ...]"));
+            return false;
+        }
+        st->has_implicit_depends = true;
+        for (size_t i = 0; i < values.count; i += 2) {
+            if (!eval_sv_eq_ci_lit(values.items[i], "C") &&
+                !eval_sv_eq_ci_lit(values.items[i], "CXX")) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               st->command_name,
+                               st->origin,
+                               nob_sv_from_cstr("Unsupported IMPLICIT_DEPENDS language"),
+                               values.items[i]);
+                return false;
+            }
+        }
         for (size_t i = 1; i < values.count; i += 2) {
             if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_DEPFILE:
         if (values.count > 0) st->depfile = values.items[0];
+        st->has_depfile = true;
         return true;
     case CUSTOM_CMD_OPT_WORKING_DIRECTORY:
         if (values.count > 0) st->working_dir = values.items[0];
@@ -279,11 +332,45 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         st->codegen = true;
         return true;
     case CUSTOM_CMD_OPT_JOB_POOL:
+        st->has_job_pool = true;
+        if (values.count > 0) st->job_pool = values.items[0];
+        return true;
     case CUSTOM_CMD_OPT_JOB_SERVER_AWARE:
+        st->has_job_server_aware = true;
+        st->job_server_aware = (values.count > 0) ? values.items[0] : nob_sv_from_cstr("1");
         return true;
     default:
         return true;
     }
+}
+
+static bool add_custom_command_on_option_parse_ctx(Evaluator_Context *ctx,
+                                                   void *userdata,
+                                                   int id,
+                                                   SV_List values,
+                                                   size_t token_index) {
+    if (!ctx || !userdata) return false;
+    Add_Custom_Command_Parse_Context *st = (Add_Custom_Command_Parse_Context*)userdata;
+    if (!st->opt) return false;
+    return add_custom_command_on_option(ctx, st->opt, id, values, token_index);
+}
+
+static bool add_custom_error_positional_parse_ctx(Evaluator_Context *ctx,
+                                                  void *userdata,
+                                                  String_View value,
+                                                  size_t token_index) {
+    (void)token_index;
+    if (!ctx || !userdata) return false;
+    Add_Custom_Command_Parse_Context *st = (Add_Custom_Command_Parse_Context*)userdata;
+    eval_emit_diag(ctx,
+                   EV_DIAG_ERROR,
+                   st->positional.component,
+                   st->positional.command,
+                   st->positional.origin,
+                   nob_sv_from_cstr("Unexpected argument in add_custom_command()"),
+                   value);
+    st->had_positional_error = true;
+    return false;
 }
 
 bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
@@ -450,7 +537,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     bool mode_output = eval_sv_eq_ci_lit(a.items[0], "OUTPUT");
     if (!mode_target && !mode_output) {
         eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
+                       EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
@@ -462,15 +549,42 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     String_View target_name = nob_sv_from_cstr("");
     size_t parse_start = 0;
     if (mode_target) {
+        if (a.count < 3) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_custom_command(TARGET ...) requires target name and stage"),
+                           nob_sv_from_cstr("Usage: add_custom_command(TARGET <target> PRE_BUILD|PRE_LINK|POST_BUILD COMMAND <cmd> ...)"));
+            return !eval_should_stop(ctx);
+        }
         target_name = a.items[1];
+        if (!eval_target_known(ctx, target_name)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_custom_command(TARGET ...) target was not declared"),
+                           target_name);
+            return !eval_should_stop(ctx);
+        }
+        if (eval_target_alias_known(ctx, target_name)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_custom_command(TARGET ...) cannot be used on ALIAS targets"),
+                           target_name);
+            return !eval_should_stop(ctx);
+        }
         parse_start = 2;
     }
 
-    static const Eval_Opt_Spec k_custom_command_specs[] = {
+    static const Eval_Opt_Spec k_custom_command_output_specs[] = {
         {CUSTOM_CMD_OPT_OUTPUT, "OUTPUT", EVAL_OPT_MULTI},
-        {CUSTOM_CMD_OPT_PRE_BUILD, "PRE_BUILD", EVAL_OPT_FLAG},
-        {CUSTOM_CMD_OPT_PRE_LINK, "PRE_LINK", EVAL_OPT_FLAG},
-        {CUSTOM_CMD_OPT_POST_BUILD, "POST_BUILD", EVAL_OPT_FLAG},
         {CUSTOM_CMD_OPT_COMMAND, "COMMAND", EVAL_OPT_MULTI},
         {CUSTOM_CMD_OPT_DEPENDS, "DEPENDS", EVAL_OPT_MULTI},
         {CUSTOM_CMD_OPT_BYPRODUCTS, "BYPRODUCTS", EVAL_OPT_MULTI},
@@ -488,7 +602,21 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         {CUSTOM_CMD_OPT_JOB_POOL, "JOB_POOL", EVAL_OPT_OPTIONAL_SINGLE},
         {CUSTOM_CMD_OPT_JOB_SERVER_AWARE, "JOB_SERVER_AWARE", EVAL_OPT_OPTIONAL_SINGLE},
     };
+    static const Eval_Opt_Spec k_custom_command_target_specs[] = {
+        {CUSTOM_CMD_OPT_PRE_BUILD, "PRE_BUILD", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_PRE_LINK, "PRE_LINK", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_POST_BUILD, "POST_BUILD", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_COMMAND, "COMMAND", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_BYPRODUCTS, "BYPRODUCTS", EVAL_OPT_MULTI},
+        {CUSTOM_CMD_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE},
+        {CUSTOM_CMD_OPT_COMMENT, "COMMENT", EVAL_OPT_SINGLE},
+        {CUSTOM_CMD_OPT_VERBATIM, "VERBATIM", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_USES_TERMINAL, "USES_TERMINAL", EVAL_OPT_FLAG},
+        {CUSTOM_CMD_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
+    };
     Add_Custom_Command_Opts opt = {0};
+    opt.command_name = node->as.cmd.name;
+    opt.origin = o;
     opt.pre_build = true;
     Eval_Opt_Parse_Config cfg = {
         .component = nob_sv_from_cstr("dispatcher"),
@@ -497,28 +625,88 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         .warn_unknown = false,
     };
     cfg.origin = o;
+    Add_Custom_Command_Parse_Context parse_ctx = {0};
+    parse_ctx.opt = &opt;
+    parse_ctx.positional.component = nob_sv_from_cstr("dispatcher");
+    parse_ctx.positional.command = node->as.cmd.name;
+    parse_ctx.positional.origin = o;
+    parse_ctx.positional.usage_hint = nob_sv_from_cstr("");
+    const Eval_Opt_Spec *specs = mode_target ? k_custom_command_target_specs : k_custom_command_output_specs;
+    size_t spec_count = mode_target ? NOB_ARRAY_LEN(k_custom_command_target_specs) : NOB_ARRAY_LEN(k_custom_command_output_specs);
     if (!eval_opt_parse_walk(ctx,
                              a,
                              parse_start,
-                             k_custom_command_specs,
-                             NOB_ARRAY_LEN(k_custom_command_specs),
+                             specs,
+                             spec_count,
                              cfg,
-                             add_custom_command_on_option,
-                             add_custom_noop_positional,
-                             &opt)) {
+                             add_custom_command_on_option_parse_ctx,
+                             add_custom_error_positional_parse_ctx,
+                             &parse_ctx)) {
+        return !eval_should_stop(ctx);
+    }
+    if (parse_ctx.had_positional_error) return !eval_should_stop(ctx);
+
+    if (mode_target) {
+        if (!opt.got_stage) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_custom_command(TARGET ...) requires PRE_BUILD, PRE_LINK or POST_BUILD"),
+                           nob_sv_from_cstr("Specify one build stage keyword"));
+            return !eval_should_stop(ctx);
+        }
+        if (opt.stage_count > 1) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_custom_command(TARGET ...) accepts exactly one build stage"),
+                           nob_sv_from_cstr("Use one of PRE_BUILD, PRE_LINK, POST_BUILD"));
+            return !eval_should_stop(ctx);
+        }
+    } else if (opt.got_stage) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_command(OUTPUT ...) does not accept build stage keywords"),
+                       nob_sv_from_cstr("PRE_BUILD/PRE_LINK/POST_BUILD are valid only for TARGET signature"));
         return !eval_should_stop(ctx);
     }
 
-    if (mode_target && !opt.got_stage) opt.pre_build = true;
+    if (opt.has_implicit_depends && opt.has_depfile) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_command(OUTPUT ...) cannot combine DEPFILE with IMPLICIT_DEPENDS"),
+                       nob_sv_from_cstr("Use either DEPFILE or IMPLICIT_DEPENDS"));
+        return !eval_should_stop(ctx);
+    }
+    if (opt.has_job_pool && opt.uses_terminal) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_custom_command(OUTPUT ...) JOB_POOL is incompatible with USES_TERMINAL"),
+                       nob_sv_from_cstr("Remove one of JOB_POOL or USES_TERMINAL"));
+        return !eval_should_stop(ctx);
+    }
 
     if (opt.commands.count == 0) {
         eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
+                       EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("add_custom_command() has no COMMAND entries"),
-                       nob_sv_from_cstr("Command was ignored"));
+                       nob_sv_from_cstr("Provide at least one COMMAND"));
         return !eval_should_stop(ctx);
     }
     if (mode_output && opt.outputs.count == 0) {
@@ -533,6 +721,13 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     }
     if (opt.main_dependency.count > 0) (void)svu_list_push_temp(ctx, &opt.depends, opt.main_dependency);
     if (opt.depfile.count > 0) (void)svu_list_push_temp(ctx, &opt.byproducts, opt.depfile);
+
+    if (mode_output && opt.append) {
+        // CMake ignores these on APPEND mode.
+        opt.comment = nob_sv_from_cstr("");
+        opt.working_dir = nob_sv_from_cstr("");
+        opt.main_dependency = nob_sv_from_cstr("");
+    }
 
     if (mode_target) {
         Cmake_Event ev = {0};

@@ -963,8 +963,7 @@ add_custom_target(gen ALL
   COMMENT "gen")
 add_custom_command(TARGET gen POST_BUILD
   COMMAND echo post
-  BYPRODUCTS post.txt
-  DEPENDS dep1)
+  BYPRODUCTS post.txt)
 add_custom_command(OUTPUT generated.c generated.h
   COMMAND python gen.py
   DEPENDS schema.idl

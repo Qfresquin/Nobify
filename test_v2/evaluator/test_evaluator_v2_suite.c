@@ -1212,6 +1212,137 @@ TEST(evaluator_target_compile_definitions_normalizes_dash_d_items) {
     TEST_PASS();
 }
 
+TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_custom_target(gen)\n"
+        "add_custom_command(TARGET gen POST_BUILD COMMAND echo ok BYPRODUCTS ok.txt)\n"
+        "add_custom_command(TARGET missing POST_BUILD COMMAND echo bad)\n"
+        "add_custom_command(TARGET gen COMMAND echo bad_no_stage)\n"
+        "add_custom_command(TARGET gen PRE_BUILD PRE_LINK COMMAND echo bad_multi_stage)\n"
+        "add_custom_command(TARGET gen POST_BUILD DEPENDS dep1 COMMAND echo bad_depends)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    size_t custom_target_events = 0;
+    bool saw_missing_target = false;
+    bool saw_missing_stage = false;
+    bool saw_multi_stage = false;
+    bool saw_unexpected_depends = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_CUSTOM_COMMAND_TARGET) custom_target_events++;
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_custom_command(TARGET ...) target was not declared"))) {
+            saw_missing_target = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_custom_command(TARGET ...) requires PRE_BUILD, PRE_LINK or POST_BUILD"))) {
+            saw_missing_stage = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_custom_command(TARGET ...) accepts exactly one build stage"))) {
+            saw_multi_stage = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Unexpected argument in add_custom_command()")) &&
+                   nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("DEPENDS"))) {
+            saw_unexpected_depends = true;
+        }
+    }
+
+    ASSERT(custom_target_events == 1);
+    ASSERT(saw_missing_target);
+    ASSERT(saw_missing_stage);
+    ASSERT(saw_multi_stage);
+    ASSERT(saw_unexpected_depends);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_custom_command_output_validates_conflicts) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_custom_command(OUTPUT bad_pairs.c IMPLICIT_DEPENDS C only.c CXX COMMAND gen)\n"
+        "add_custom_command(OUTPUT bad_conflict.c IMPLICIT_DEPENDS C in.c DEPFILE in.d COMMAND gen)\n"
+        "add_custom_command(OUTPUT bad_pool.c JOB_POOL pool USES_TERMINAL COMMAND gen)\n"
+        "add_custom_command(OUTPUT good.c COMMAND python gen.py DEPENDS schema.idl BYPRODUCTS gen.log MAIN_DEPENDENCY schema.idl)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 3);
+
+    bool saw_pairs_error = false;
+    bool saw_conflict_error = false;
+    bool saw_pool_error = false;
+    bool saw_valid_output_event = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_CUSTOM_COMMAND_OUTPUT &&
+            nob_sv_eq(ev->as.custom_command_output.outputs, nob_sv_from_cstr("good.c")) &&
+            nob_sv_eq(ev->as.custom_command_output.depends, nob_sv_from_cstr("schema.idl;schema.idl"))) {
+            saw_valid_output_event = true;
+        }
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("IMPLICIT_DEPENDS requires language/file pairs"))) {
+            saw_pairs_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_custom_command(OUTPUT ...) cannot combine DEPFILE with IMPLICIT_DEPENDS"))) {
+            saw_conflict_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_custom_command(OUTPUT ...) JOB_POOL is incompatible with USES_TERMINAL"))) {
+            saw_pool_error = true;
+        }
+    }
+
+    ASSERT(saw_pairs_error);
+    ASSERT(saw_conflict_error);
+    ASSERT(saw_pool_error);
+    ASSERT(saw_valid_output_event);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3121,6 +3252,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
+    test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
+    test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);

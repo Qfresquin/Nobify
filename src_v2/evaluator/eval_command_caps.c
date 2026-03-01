@@ -15,7 +15,7 @@ static Command_Capability eval_capability_make(String_View name,
 // Central capability registry consumed by dispatcher, API and docs.
 static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"add_compile_options", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
-    {"add_custom_command", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE},
+    {"add_custom_command", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_custom_target", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_definitions", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_executable", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},

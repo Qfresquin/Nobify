@@ -25,7 +25,7 @@ Status snapshot sources:
 | Command | Capability Level | Fallback | Functional Divergence vs CMake 3.28 | Impact |
 |---|---|---|---|---|
 | `add_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option handling (`SHELL:` expansion + de-duplication). | - |
-| `add_custom_command` | `PARTIAL` | `ERROR_CONTINUE` | Supports `TARGET`/`OUTPUT` signatures; not full CMake permutation parity. | `Medium` |
+| `add_custom_command` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset of CMake 3.28 signatures: strict `TARGET`/`OUTPUT` signature validation, stage/target checks for `TARGET`, and conflict validation in `OUTPUT` (`IMPLICIT_DEPENDS` pairs, `DEPFILE` conflict, `JOB_POOL` vs `USES_TERMINAL`). | - |
 | `add_custom_target` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including scheduler options (`JOB_POOL`, `JOB_SERVER_AWARE`). | - |
 | `add_definitions` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented legacy behavior: `-D`/`/D` items are routed as compile definitions and non-definition flags remain compile options. | - |
 | `add_executable` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`normal`, `IMPORTED [GLOBAL]`, `ALIAS`) and option handling (`WIN32`, `MACOSX_BUNDLE`, `EXCLUDE_FROM_ALL`). | - |
@@ -216,7 +216,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 
