@@ -113,7 +113,7 @@ EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 targ
 
 === CASE golden_ctest_meta ===
 DIAG errors=0 warnings=0
-EVENTS count=10
+EVENTS count=23
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TESTING_ENABLE file='CMakeLists.txt' line=2 col=1 enabled=1
 EV[2] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke' command='app' working_dir='' command_expand_lists=0
@@ -124,6 +124,19 @@ EV[6] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=6 col=1 rule_type=0 it
 EV[7] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=7 col=1 rule_type=1 item='readme.txt' destination='share/doc'
 EV[8] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=8 col=1 rule_type=2 item='run.sh' destination='bin'
 EV[9] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=9 col=1 rule_type=3 item='assets' destination='share/assets'
+EV[10] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=10 col=1 rule_type=0 item='app' destination='bin'
+EV[11] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=11 col=1 rule_type=1 item='license.txt' destination='share/doc'
+EV[12] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=12 col=1 rule_type=2 item='helper.sh' destination='bin'
+EV[13] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=13 col=1 rule_type=3 item='include/' destination='include'
+EV[14] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=14 col=1 rule_type=1 item='SCRIPT::cmake_install_hook.cmake' destination=''
+EV[15] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=15 col=1 rule_type=1 item='CODE::set(INSTALL_CODE_MARKER 1)' destination=''
+EV[16] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=16 col=1 rule_type=1 item='EXPORT::ctest_export' destination='share/cmake/CTestDemo'
+EV[17] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=17 col=1 rule_type=1 item='EXPORT_ANDROID_MK::ctest_export' destination='share/cmake/android'
+EV[18] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=18 col=1 name='ctest_imported' type=LIB_SHARED
+EV[19] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='ctest_imported' key='IMPORTED' value='1' op=SET
+EV[20] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='ctest_imported' key='IMPORTED_GLOBAL' value='1' op=SET
+EV[21] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=19 col=1 rule_type=0 item='IMPORTED_RUNTIME_ARTIFACTS::ctest_imported' destination='bin'
+EV[22] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=20 col=1 rule_type=0 item='RUNTIME_DEPENDENCY_SET::ctest_runtime_deps' destination='lib/deps'
 === END CASE ===
 
 === CASE golden_misc_path_and_property ===
@@ -886,10 +899,12 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 targ
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_UL_TXT=2345' vis=PRIVATE
 === END CASE ===
 
-=== CASE file_download_remote_url_reports_error ===
-DIAG errors=1 warnings=0
-EVENTS count=1
-EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component='eval_file' command='file' code='EVAL_ERR_SEMANTIC' class='IO_ENV_ERROR' cause='file(DOWNLOAD) remote URL is not supported without external backend' hint='https://example.com/demo.txt'
+=== CASE file_download_remote_url_status_nonfatal ===
+DIAG errors=0 warnings=0
+EVENTS count=3
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='file_remote_status_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='file_remote_status_case' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='file_remote_status_case' item='FILE_REMOTE_STATUS_LEN=2' vis=PRIVATE
 === END CASE ===
 
 === CASE file_generate_content_input_and_condition ===

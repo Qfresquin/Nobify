@@ -49,7 +49,7 @@ Status snapshot sources:
 | `include` | `PARTIAL` | `ERROR_CONTINUE` | `OPTIONAL` and `NO_POLICY_SCOPE` implemented; not full option parity. | `Medium` |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE|AFTER`, relative canonicalization). | - |
 | `include_guard` | `PARTIAL` | `NOOP_WARN` | Default no-arg scope in CMake matches variable scope, while evaluator defaults to directory-style guarding; unsupported modes are downgraded to warning+fallback. | `Medium` |
-| `install` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 install command surface is much broader; implementation only supports a reduced subset of signatures/options. | `Critical` |
+| `install` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator event-model install surface (core + advanced signatures emitted as install rules). | - |
 | `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE|AFTER`, relative canonicalization). | - |
 | `link_libraries` | `PARTIAL` | `NOOP_WARN` | CMake item qualifiers (`debug`, `optimized`, `general`) and broader semantic handling are not implemented. | `Medium` |
 | `list` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented subcommand surface, including `FILTER` and `TRANSFORM` actions/selectors (`GENEX_STRIP`, `OUTPUT_VARIABLE`). | - |
@@ -95,8 +95,8 @@ Status snapshot sources:
 | `RELATIVE_PATH` | `FULL` | Relative path computation implemented. | Error on invalid usage. |
 | `TO_CMAKE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
 | `TO_NATIVE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
-| `DOWNLOAD` | `PARTIAL` | Local backend only; remote URL unsupported without external backend. | Error diagnostic + continue. |
-| `UPLOAD` | `PARTIAL` | Local backend only; remote URL unsupported without external backend. | Error diagnostic + continue. |
+| `DOWNLOAD` | `PARTIAL` | Local + remote transfer supported (remote via `curl` backend); unsupported option surface remains (`EXPECTED_HASH`/`EXPECTED_MD5` and broader CMake transport options). | Error diagnostic + continue (`STATUS` path returns non-fatal status). |
+| `UPLOAD` | `PARTIAL` | Local + remote transfer supported (remote via `curl` backend); full CMake option/transport parity is not implemented. | Error diagnostic + continue (`STATUS` path returns non-fatal status). |
 | `TIMESTAMP` | `FULL` | Timestamp read/format behavior implemented. | Error on stat failure. |
 | `GENERATE` | `PARTIAL` | Core generation implemented with option constraints. | Warning/error + continue. |
 | `LOCK` | `PARTIAL` | Advisory/local lock semantics; backend/platform approximations. | Warning/error + continue. |
@@ -162,13 +162,13 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 
 ## 7. Coverage details: `install()`
 
-Current evaluator `install()` handler supports only a reduced subset.
+Evaluator `install()` handler covers core and advanced signature families in the current event-model contract.
 
 | Signature family | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
-| `install(TARGETS|FILES|PROGRAMS|DIRECTORY ... DESTINATION ...)` | Supported | Supported (reduced options) | `Medium` |
-| Advanced signatures (`SCRIPT`, `CODE`, `EXPORT`, `RUNTIME_DEPENDENCY_SET`, `IMPORTED_RUNTIME_ARTIFACTS`, etc.) | Supported | Missing | `Critical` |
-| Per-artifact option semantics (`CONFIGURATIONS`, `PERMISSIONS`, `COMPONENT`, etc.) | Supported | Not fully modeled | `Medium` |
+| `install(TARGETS|FILES|PROGRAMS|DIRECTORY ... DESTINATION|TYPE ...)` | Supported | Supported | None in covered event-model contract |
+| Advanced signatures (`SCRIPT`, `CODE`, `EXPORT`, `EXPORT_ANDROID_MK`, `RUNTIME_DEPENDENCY_SET`, `IMPORTED_RUNTIME_ARTIFACTS`) | Supported | Supported | None in covered event-model contract |
+| Option-rich forms (artifact groups, destination clauses, component/config/perms families) | Supported | Parsed and represented through install-rule emission in evaluator event model | None in covered event-model contract |
 
 ## 8. Coverage details: target command family
 
@@ -216,7 +216,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `find_package`, `include_directories`, `install`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

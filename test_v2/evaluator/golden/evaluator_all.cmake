@@ -105,6 +105,17 @@ install(TARGETS app DESTINATION bin)
 install(FILES readme.txt DESTINATION share/doc)
 install(PROGRAMS run.sh DESTINATION bin)
 install(DIRECTORY assets DESTINATION share/assets)
+install(TARGETS app EXPORT ctest_export RUNTIME DESTINATION bin)
+install(FILES license.txt TYPE DOC)
+install(PROGRAMS helper.sh TYPE BIN)
+install(DIRECTORY include/ TYPE INCLUDE)
+install(SCRIPT cmake_install_hook.cmake COMPONENT Runtime)
+install(CODE "set(INSTALL_CODE_MARKER 1)")
+install(EXPORT ctest_export DESTINATION share/cmake/CTestDemo)
+install(EXPORT_ANDROID_MK ctest_export DESTINATION share/cmake/android)
+add_library(ctest_imported SHARED IMPORTED GLOBAL)
+install(IMPORTED_RUNTIME_ARTIFACTS ctest_imported DESTINATION bin)
+install(RUNTIME_DEPENDENCY_SET ctest_runtime_deps DESTINATION lib/deps)
 #@@ENDCASE
 
 #@@CASE golden_misc_path_and_property
@@ -910,8 +921,11 @@ add_executable(file_transfer_case main.c)
 target_compile_definitions(file_transfer_case PRIVATE FILE_DL_TXT=${FILE_DL_TXT} FILE_UL_TXT=${FILE_UL_TXT})
 #@@ENDCASE
 
-#@@CASE file_download_remote_url_reports_error
-file(DOWNLOAD "https://example.com/demo.txt" temp_file_remote_out.txt STATUS FILE_REMOTE_STATUS LOG FILE_REMOTE_LOG)
+#@@CASE file_download_remote_url_status_nonfatal
+file(DOWNLOAD "http://127.0.0.1:9/demo.txt" temp_file_remote_out.txt TIMEOUT 1 STATUS FILE_REMOTE_STATUS LOG FILE_REMOTE_LOG)
+list(LENGTH FILE_REMOTE_STATUS FILE_REMOTE_STATUS_LEN)
+add_executable(file_remote_status_case main.c)
+target_compile_definitions(file_remote_status_case PRIVATE FILE_REMOTE_STATUS_LEN=${FILE_REMOTE_STATUS_LEN})
 #@@ENDCASE
 
 #@@CASE file_generate_content_input_and_condition
