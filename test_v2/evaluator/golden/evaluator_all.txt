@@ -4,7 +4,7 @@ CASES 107
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
 EVENTS count=4
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CoreDemo' version='1.0' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CoreDemo' version='1.0' description='' languages='C;CXX'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=3 name='core_app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=3 target='core_app' path='main.c'
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 target='core_app' item='CORE_OK=1' vis=PRIVATE
@@ -13,7 +13,7 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 targ
 === CASE golden_targets_props_events ===
 DIAG errors=0 warnings=0
 EVENTS count=13
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='TargetDemo' version='' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='TargetDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='main.c'
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='util.c'
@@ -31,7 +31,7 @@ EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='app' 
 === CASE golden_find_package_and_include ===
 DIAG errors=0 warnings=0
 EVENTS count=4
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FindDemo' version='' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FindDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_FIND_PACKAGE file='CMakeLists.txt' line=4 col=1 package='ZLIB' mode='AUTO' required=0 found=0 location=''
 EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='fp' type=EXECUTABLE
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='fp' path='main.c'
@@ -40,7 +40,7 @@ EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='fp' p
 === CASE golden_file_ops_and_security ===
 DIAG errors=0 warnings=0
 EVENTS count=4
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FileDemo' version='' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FileDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_app' path='main.c'
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_app' item='OUT_hello' vis=PRIVATE
@@ -49,7 +49,7 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 targ
 === CASE golden_cpack_commands ===
 DIAG errors=0 warnings=0
 EVENTS count=6
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CPackDemo' version='2.0' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CPackDemo' version='2.0' description='' languages='C;CXX'
 EV[1] kind=EV_CPACK_ADD_INSTALL_TYPE file='CMakeLists.txt' line=2 col=1 name='Full' display_name='Full'
 EV[2] kind=EV_CPACK_ADD_COMPONENT_GROUP file='CMakeLists.txt' line=3 col=1 name='base' display_name='Base Group' description='Core Group' parent_group='' expanded=0 bold_title=0
 EV[3] kind=EV_CPACK_ADD_COMPONENT file='CMakeLists.txt' line=4 col=1 name='core' display_name='Core' description='' group='' depends='' install_types='' required=0 hidden=0 disabled=0 downloaded=0
@@ -60,7 +60,7 @@ EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='pkg_a
 === CASE golden_probes_and_try_compile ===
 DIAG errors=0 warnings=0
 EVENTS count=4
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='HAVE_X' value='0'
 EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
@@ -114,7 +114,7 @@ EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 targ
 === CASE golden_ctest_meta ===
 DIAG errors=0 warnings=0
 EVENTS count=10
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TESTING_ENABLE file='CMakeLists.txt' line=2 col=1 enabled=1
 EV[2] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke' command='app' working_dir='' command_expand_lists=0
 EV[3] kind=EV_TEST_ADD file='CMakeLists.txt' line=4 col=1 name='legacy' command='app' working_dir='' command_expand_lists=0
@@ -129,7 +129,7 @@ EV[9] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=9 col=1 rule_type=3 it
 === CASE golden_misc_path_and_property ===
 DIAG errors=0 warnings=0
 EVENTS count=4
-EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='MiscDemo' version='' description='' languages=''
+EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='MiscDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_VAR_SET file='CMakeLists.txt' line=2 col=1 key='NOBIFY_PROPERTY_GLOBAL::USE_FOLDERS' value='ON'
 EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='misc_app' type=EXECUTABLE
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='misc_app' path='main.c'
@@ -234,10 +234,10 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 targ
 === CASE flow_return_propagate_and_block_unwind ===
 DIAG errors=0 warnings=0
 EVENTS count=4
-EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=10 col=1 name='ret_flow' type=EXECUTABLE
-EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=10 col=1 target='ret_flow' path='main.c'
-EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='ret_flow' item='RET_OUTER=from_return' vis=PRIVATE
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='ret_flow' item='BLK_A=' vis=PRIVATE
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='ret_flow' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='ret_flow' path='main.c'
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='ret_flow' item='RET_OUTER=from_return' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='ret_flow' item='BLK_A=' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_foreach_range_lists_zip ===

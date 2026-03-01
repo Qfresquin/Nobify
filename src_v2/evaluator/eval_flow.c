@@ -224,9 +224,23 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
+    if (ctx->return_context == EVAL_RETURN_CTX_MACRO) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("return() cannot be used inside macro()"),
+                             nob_sv_from_cstr("macro() is expanded in place; use function() if return() is required"));
+        return !eval_should_stop(ctx);
+    }
+
     ctx->return_propagate_vars = NULL;
     ctx->return_propagate_count = 0;
-    if (args.count > 0) {
+
+    String_View cmp0140 = eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0140"));
+    bool cmp0140_new = eval_sv_eq_ci_lit(cmp0140, "NEW");
+    if (cmp0140_new && args.count > 0) {
         if (!eval_sv_eq_ci_lit(args.items[0], "PROPAGATE")) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
@@ -254,16 +268,6 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
             ctx->return_propagate_vars[i] = sv_copy_to_event_arena(ctx, args.items[i + 1]);
             if (eval_should_stop(ctx)) return false;
         }
-    }
-
-    if (ctx->return_context == EVAL_RETURN_CTX_MACRO) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_WARNING,
-                             nob_sv_from_cstr("flow"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("return() inside macro() is legacy-compatible in evaluator v2"),
-                             nob_sv_from_cstr("CMake docs discourage using return() in macro()"));
     }
 
     if (ctx->return_propagate_count > 0) {

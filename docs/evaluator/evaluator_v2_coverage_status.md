@@ -45,18 +45,18 @@ Status snapshot sources:
 | `enable_testing` | `PARTIAL` | `NOOP_WARN` | Evaluator additionally sets `BUILD_TESTING=1`, which can alter script-visible variable behavior compared to native CMake command semantics. | `Low` |
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
 | `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand set with documented deltas (see matrix). | `Medium` |
-| `find_package` | `PARTIAL` | `ERROR_CONTINUE` | Core resolver flow implemented; option/discovery parity not complete. | `Medium` |
+| `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO|MODULE|CONFIG|NO_MODULE`, `REQUIRED|QUIET`, version/`EXACT`, components, `NAMES|CONFIGS|HINTS|PATHS|PATH_SUFFIXES`, `NO_*` path toggles, and `CMAKE_FIND_PACKAGE_PREFER_CONFIG`). | - |
 | `include` | `PARTIAL` | `ERROR_CONTINUE` | `OPTIONAL` and `NO_POLICY_SCOPE` implemented; not full option parity. | `Medium` |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE|AFTER`, relative canonicalization). | - |
 | `include_guard` | `PARTIAL` | `NOOP_WARN` | Default no-arg scope in CMake matches variable scope, while evaluator defaults to directory-style guarding; unsupported modes are downgraded to warning+fallback. | `Medium` |
 | `install` | `PARTIAL` | `NOOP_WARN` | CMake 3.28 install command surface is much broader; implementation only supports a reduced subset of signatures/options. | `Critical` |
 | `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE|AFTER`, relative canonicalization). | - |
 | `link_libraries` | `PARTIAL` | `NOOP_WARN` | CMake item qualifiers (`debug`, `optimized`, `general`) and broader semantic handling are not implemented. | `Medium` |
-| `list` | `PARTIAL` | `NOOP_WARN` | Subcommand/action coverage is incomplete relative to CMake 3.28 list command behavior. | `Medium` |
+| `list` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented subcommand surface, including `FILTER` and `TRANSFORM` actions/selectors (`GENEX_STRIP`, `OUTPUT_VARIABLE`). | - |
 | `math` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])`). | - |
 | `message` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented modes (`NOTICE/STATUS/VERBOSE/DEBUG/TRACE/WARNING/AUTHOR_WARNING/DEPRECATION/SEND_ERROR/FATAL_ERROR/CHECK_*/CONFIGURE_LOG`). | - |
-| `project` | `PARTIAL` | `NOOP_WARN` | Reduced signature support (e.g. missing `HOMEPAGE_URL`, reduced language-signature handling and variable surface). | `Medium` |
-| `return` | `PARTIAL` | `NOOP_WARN` | CMake states `macro()` cannot handle `return()`; evaluator allows it (warning only), changing control-flow outcome in macro contexts. | `Medium` |
+| `project` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature surface (`VERSION`, `DESCRIPTION`, `HOMEPAGE_URL`, short/long language forms including `LANGUAGES NONE`) and documented project-variable surface (`PROJECT_*`, `<PROJECT-NAME>_*`, top-level `CMAKE_PROJECT_*`, including `CMP0048`-driven no-`VERSION` behavior). | - |
+| `return` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented behavior (`return()`, `return(PROPAGATE ...)`, `CMP0140` argument handling, and macro-context rejection). | - |
 | `set` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`set(<var> <value>... [PARENT_SCOPE])`, `set(<var> <value>... CACHE <type> <doc> [FORCE])`, `set(ENV{<var>} [<value>])`). | - |
 | `set_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope/signature surface (`GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE`, `APPEND|APPEND_STRING`, `PROPERTY ...`), including zero-object scope handling and target/cache/test validations in covered flow. | - |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
@@ -122,8 +122,18 @@ CMake 3.28 supports a broader `string()` surface than current evaluator implemen
 | Area | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
 | Core list mutation/query (`APPEND/PREPEND/INSERT/REMOVE_*/LENGTH/GET/FIND/JOIN/SUBLIST/POP_*/REVERSE/SORT`) | Supported | Supported | None for covered forms |
-| `FILTER` | Full command semantics include mode constraints and regex behavior | Implemented with `INCLUDE|EXCLUDE REGEX` subset | `Low` |
-| `TRANSFORM` | Broad action set | Action/selector subset only | `Medium` |
+| `FILTER` | `INCLUDE|EXCLUDE REGEX` | Supported | None |
+| `TRANSFORM` | Actions/selectors + `OUTPUT_VARIABLE` | Supported (`APPEND`, `PREPEND`, `TOLOWER`, `TOUPPER`, `STRIP`, `GENEX_STRIP`, `REPLACE`; selectors `AT|FOR|REGEX`; optional `OUTPUT_VARIABLE`) | None |
+
+## 4.1 Coverage details: `find_package()`
+
+| Area | CMake 3.28 | Evaluator v2 | Divergence impact |
+|---|---|---|---|
+| Mode selection (`AUTO`, `MODULE`, `CONFIG`, `NO_MODULE`) | Supported | Supported, including `CMAKE_FIND_PACKAGE_PREFER_CONFIG` priority in `AUTO` mode | None for covered forms |
+| Name/config selection (`NAMES`, `CONFIGS`) | Supported | Supported | None for covered forms |
+| Config search shaping (`HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles) | Supported | Supported in local filesystem resolver | None for covered forms |
+| Version checks (`[version]`, `EXACT`, config-version file evaluation) | Supported | Supported | None for covered forms |
+| Find-context variables used by package scripts | Supported | Supported for covered subset (including `<Pkg>_FIND_REGISTRY_VIEW` when requested) | None for covered forms |
 
 ## 5. Coverage details: `math()`
 
@@ -192,8 +202,10 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 | Area | CMake 3.28 | Evaluator v2 | Divergence impact |
 |---|---|---|---|
-| Core name/version/description/languages | Supported | Supported subset | None for covered subset |
-| Additional signature surface (`HOMEPAGE_URL`, full language forms, related variable surface) | Supported | Reduced | `Medium` |
+| Signature forms (`project(<name> [<lang>...])` and keyword form with `VERSION`, `DESCRIPTION`, `HOMEPAGE_URL`, `LANGUAGES`) | Supported | Supported | None for covered forms |
+| Language handling (`LANGUAGES NONE`, omitted `LANGUAGES` defaults, explicit language lists) | Supported | Supported | None for covered forms |
+| Variable surface (`PROJECT_*`, `<PROJECT-NAME>_*`, top-level `CMAKE_PROJECT_*`) | Supported | Supported | None for covered forms |
+| `CMP0048` no-`VERSION` behavior | Supported | Supported (`NEW` clears version vars when omitted; `OLD` preserves prior values when omitted) | None for covered forms |
 
 ## 10. Coverage details: `try_compile()`
 
@@ -204,7 +216,7 @@ Current evaluator `install()` handler supports only a reduced subset.
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_target`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `include_directories`, `link_directories`, `math`, `message`, `set`, `set_property`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
+`add_compile_options`, `add_custom_target`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `block`, `break`, `cmake_minimum_required`, `cmake_policy`, `continue`, `endblock`, `find_package`, `include_directories`, `link_directories`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `unset`.
 
 All other commands in the matrix are currently documented as `PARTIAL`.
 

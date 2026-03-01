@@ -258,6 +258,7 @@ target_compile_definitions(nested_usercmd PRIVATE NESTED_VAL=${NESTED_VAL})
 #@@ENDCASE
 
 #@@CASE flow_return_propagate_and_block_unwind
+cmake_policy(SET CMP0140 NEW)
 set(RET_OUTER "root")
 function(ret_fn)
   block(PROPAGATE BLK_A)

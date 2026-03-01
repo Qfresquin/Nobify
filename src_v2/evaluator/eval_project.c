@@ -561,6 +561,55 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
     return !eval_should_stop(ctx);
 }
 
+typedef struct {
+    bool has_version;
+    String_View raw;
+    String_View major;
+    String_View minor;
+    String_View patch;
+    String_View tweak;
+} Project_Version_Info;
+
+static bool project_parse_version_token(String_View token, Project_Version_Info *out_info) {
+    if (!out_info || token.count == 0) return false;
+
+    String_View parts[4] = {0};
+    size_t part_count = 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= token.count; i++) {
+        bool at_end = (i == token.count);
+        if (!at_end && token.data[i] != '.') continue;
+
+        if (part_count >= 4) return false;
+        if (i == start) return false;
+        String_View part = nob_sv_from_parts(token.data + start, i - start);
+        for (size_t j = 0; j < part.count; j++) {
+            char c = part.data[j];
+            if (c < '0' || c > '9') return false;
+        }
+        parts[part_count++] = part;
+        start = i + 1;
+    }
+
+    if (part_count < 1 || part_count > 4) return false;
+    out_info->has_version = true;
+    out_info->raw = token;
+    out_info->major = parts[0];
+    out_info->minor = (part_count >= 2) ? parts[1] : nob_sv_from_cstr("0");
+    out_info->patch = (part_count >= 3) ? parts[2] : nob_sv_from_cstr("0");
+    out_info->tweak = (part_count >= 4) ? parts[3] : nob_sv_from_cstr("0");
+    return true;
+}
+
+static bool project_set_prefixed_var(Evaluator_Context *ctx,
+                                     String_View prefix,
+                                     const char *suffix,
+                                     String_View value) {
+    String_View key = svu_concat_suffix_temp(ctx, prefix, suffix);
+    if (eval_should_stop(ctx)) return false;
+    return eval_var_set(ctx, key, value);
+}
+
 bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -578,49 +627,228 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View name = a.items[0];
-    String_View version = nob_sv_from_cstr("");
+    String_View version_token = nob_sv_from_cstr("");
     String_View desc = nob_sv_from_cstr("");
-
-    String_View langs_items[32];
-    size_t langs_n = 0;
+    String_View homepage_url = nob_sv_from_cstr("");
+    bool has_version_arg = false;
+    bool seen_version = false;
+    bool seen_description = false;
+    bool seen_homepage = false;
+    bool seen_languages_keyword = false;
+    bool seen_named_options = false;
+    SV_List lang_items = {0};
 
     for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "VERSION") && i + 1 < a.count) {
-            version = a.items[++i];
-        } else if (eval_sv_eq_ci_lit(a.items[i], "DESCRIPTION") && i + 1 < a.count) {
+        String_View token = a.items[i];
+        if (eval_sv_eq_ci_lit(token, "VERSION")) {
+            seen_named_options = true;
+            if (seen_version) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project() received duplicate VERSION keyword"),
+                               nob_sv_from_cstr("Use VERSION only once"));
+                return !eval_should_stop(ctx);
+            }
+            if (i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project(VERSION ...) requires a version value"),
+                               nob_sv_from_cstr("Usage: project(<name> VERSION <major>[.<minor>[.<patch>[.<tweak>]])"));
+                return !eval_should_stop(ctx);
+            }
+            seen_version = true;
+            has_version_arg = true;
+            version_token = a.items[++i];
+            continue;
+        }
+
+        if (eval_sv_eq_ci_lit(token, "DESCRIPTION")) {
+            seen_named_options = true;
+            if (seen_description) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project() received duplicate DESCRIPTION keyword"),
+                               nob_sv_from_cstr("Use DESCRIPTION only once"));
+                return !eval_should_stop(ctx);
+            }
+            if (i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project(DESCRIPTION ...) requires a value"),
+                               nob_sv_from_cstr("Usage: project(<name> DESCRIPTION <text>)"));
+                return !eval_should_stop(ctx);
+            }
+            seen_description = true;
             desc = a.items[++i];
-        } else if (eval_sv_eq_ci_lit(a.items[i], "LANGUAGES")) {
-            for (size_t j = i + 1; j < a.count && langs_n < 32; j++) {
-                langs_items[langs_n++] = a.items[j];
+            continue;
+        }
+
+        if (eval_sv_eq_ci_lit(token, "HOMEPAGE_URL")) {
+            seen_named_options = true;
+            if (seen_homepage) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project() received duplicate HOMEPAGE_URL keyword"),
+                               nob_sv_from_cstr("Use HOMEPAGE_URL only once"));
+                return !eval_should_stop(ctx);
+            }
+            if (i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project(HOMEPAGE_URL ...) requires a value"),
+                               nob_sv_from_cstr("Usage: project(<name> HOMEPAGE_URL <url>)"));
+                return !eval_should_stop(ctx);
+            }
+            seen_homepage = true;
+            homepage_url = a.items[++i];
+            continue;
+        }
+
+        if (eval_sv_eq_ci_lit(token, "LANGUAGES")) {
+            seen_named_options = true;
+            if (seen_languages_keyword) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("project() received duplicate LANGUAGES keyword"),
+                               nob_sv_from_cstr("Use LANGUAGES only once"));
+                return !eval_should_stop(ctx);
+            }
+            seen_languages_keyword = true;
+            for (size_t j = i + 1; j < a.count; j++) {
+                if (!svu_list_push_temp(ctx, &lang_items, a.items[j])) return !eval_should_stop(ctx);
             }
             break;
         }
+
+        if (seen_named_options) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("project() received unexpected argument in keyword signature"),
+                           token);
+            return !eval_should_stop(ctx);
+        }
+
+        for (size_t j = i; j < a.count; j++) {
+            if (!svu_list_push_temp(ctx, &lang_items, a.items[j])) return !eval_should_stop(ctx);
+        }
+        break;
     }
 
-    String_View langs = eval_sv_join_semi_temp(ctx, langs_items, langs_n);
+    Project_Version_Info version_info = {0};
+    if (has_version_arg && !project_parse_version_token(version_token, &version_info)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("project(VERSION ...) expects numeric components"),
+                       version_token);
+        return !eval_should_stop(ctx);
+    }
+
+    if (lang_items.count == 0 && !seen_languages_keyword) {
+        if (!svu_list_push_temp(ctx, &lang_items, nob_sv_from_cstr("C"))) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &lang_items, nob_sv_from_cstr("CXX"))) return !eval_should_stop(ctx);
+    }
+
+    size_t none_count = 0;
+    for (size_t i = 0; i < lang_items.count; i++) {
+        if (eval_sv_eq_ci_lit(lang_items.items[i], "NONE")) none_count++;
+    }
+    if (none_count > 0) {
+        if (lang_items.count != 1 || none_count != 1) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("project() LANGUAGES NONE cannot be combined with other languages"),
+                           nob_sv_from_cstr("Use only NONE to skip enabling languages"));
+            return !eval_should_stop(ctx);
+        }
+        lang_items.count = 0;
+    }
+
+    String_View version = has_version_arg ? version_info.raw : nob_sv_from_cstr("");
+    String_View version_major = has_version_arg ? version_info.major : nob_sv_from_cstr("");
+    String_View version_minor = has_version_arg ? version_info.minor : nob_sv_from_cstr("");
+    String_View version_patch = has_version_arg ? version_info.patch : nob_sv_from_cstr("");
+    String_View version_tweak = has_version_arg ? version_info.tweak : nob_sv_from_cstr("");
+    String_View langs = eval_sv_join_semi_temp(ctx, lang_items.items, lang_items.count);
 
     String_View project_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (project_src_dir.count == 0) project_src_dir = ctx->source_dir;
     String_View project_bin_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (project_bin_dir.count == 0) project_bin_dir = ctx->binary_dir;
+    bool is_top_level = nob_sv_eq(project_src_dir, ctx->source_dir) && nob_sv_eq(project_bin_dir, ctx->binary_dir);
+    String_View is_top_level_sv = is_top_level ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
+    bool cmp0048_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0048")), "NEW");
+    bool should_apply_version_vars = has_version_arg || cmp0048_new;
 
-    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), name);
-    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), version);
-    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_SOURCE_DIR"), project_src_dir);
-    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_BINARY_DIR"), project_bin_dir);
-    (void)eval_var_set(ctx, nob_sv_from_cstr("PROJECT_DESCRIPTION"), desc);
-
-    String_View cmake_project_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"));
-    if (cmake_project_name.count == 0) {
-        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"), name);
+    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), name)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_SOURCE_DIR"), project_src_dir)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_BINARY_DIR"), project_bin_dir)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_DESCRIPTION"), desc)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_HOMEPAGE_URL"), homepage_url)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_IS_TOP_LEVEL"), is_top_level_sv)) return !eval_should_stop(ctx);
+    if (should_apply_version_vars) {
+        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), version)) return !eval_should_stop(ctx);
+        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_MAJOR"), version_major)) return !eval_should_stop(ctx);
+        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_MINOR"), version_minor)) return !eval_should_stop(ctx);
+        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_PATCH"), version_patch)) return !eval_should_stop(ctx);
+        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_TWEAK"), version_tweak)) return !eval_should_stop(ctx);
     }
 
-    String_View key_src = svu_concat_suffix_temp(ctx, name, "_SOURCE_DIR");
-    String_View key_bin = svu_concat_suffix_temp(ctx, name, "_BINARY_DIR");
-    String_View key_ver = svu_concat_suffix_temp(ctx, name, "_VERSION");
-    (void)eval_var_set(ctx, key_src, project_src_dir);
-    (void)eval_var_set(ctx, key_bin, project_bin_dir);
-    (void)eval_var_set(ctx, key_ver, version);
+    String_View cmake_project_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"));
+    if (is_top_level || cmake_project_name.count == 0) {
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"), name)) return !eval_should_stop(ctx);
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_DESCRIPTION"), desc)) return !eval_should_stop(ctx);
+        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_HOMEPAGE_URL"), homepage_url)) return !eval_should_stop(ctx);
+        if (should_apply_version_vars) {
+            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION"), version)) return !eval_should_stop(ctx);
+            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_MAJOR"), version_major)) return !eval_should_stop(ctx);
+            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_MINOR"), version_minor)) return !eval_should_stop(ctx);
+            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_PATCH"), version_patch)) return !eval_should_stop(ctx);
+            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_TWEAK"), version_tweak)) return !eval_should_stop(ctx);
+        }
+    }
+
+    if (!project_set_prefixed_var(ctx, name, "_SOURCE_DIR", project_src_dir)) return !eval_should_stop(ctx);
+    if (!project_set_prefixed_var(ctx, name, "_BINARY_DIR", project_bin_dir)) return !eval_should_stop(ctx);
+    if (!project_set_prefixed_var(ctx, name, "_DESCRIPTION", desc)) return !eval_should_stop(ctx);
+    if (!project_set_prefixed_var(ctx, name, "_HOMEPAGE_URL", homepage_url)) return !eval_should_stop(ctx);
+    if (!project_set_prefixed_var(ctx, name, "_IS_TOP_LEVEL", is_top_level_sv)) return !eval_should_stop(ctx);
+    if (should_apply_version_vars) {
+        if (!project_set_prefixed_var(ctx, name, "_VERSION", version)) return !eval_should_stop(ctx);
+        if (!project_set_prefixed_var(ctx, name, "_VERSION_MAJOR", version_major)) return !eval_should_stop(ctx);
+        if (!project_set_prefixed_var(ctx, name, "_VERSION_MINOR", version_minor)) return !eval_should_stop(ctx);
+        if (!project_set_prefixed_var(ctx, name, "_VERSION_PATCH", version_patch)) return !eval_should_stop(ctx);
+        if (!project_set_prefixed_var(ctx, name, "_VERSION_TWEAK", version_tweak)) return !eval_should_stop(ctx);
+    }
 
     Cmake_Event ev = {0};
     ev.kind = EV_PROJECT_DECLARE;

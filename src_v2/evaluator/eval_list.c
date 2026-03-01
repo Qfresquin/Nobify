@@ -85,6 +85,7 @@ typedef enum {
     LIST_TRANSFORM_TOLOWER,
     LIST_TRANSFORM_TOUPPER,
     LIST_TRANSFORM_STRIP,
+    LIST_TRANSFORM_GENEX_STRIP,
     LIST_TRANSFORM_REPLACE,
 } List_Transform_Action;
 
@@ -151,6 +152,40 @@ static String_View list_strip_ws_view(String_View in) {
     while (e > b && isspace((unsigned char)in.data[e - 1])) e--;
 
     return nob_sv_from_parts(in.data + b, e - b);
+}
+
+static String_View list_genex_strip_temp(Evaluator_Context *ctx, String_View in) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t out = 0;
+    for (size_t i = 0; i < in.count; i++) {
+        if (i + 1 < in.count && in.data[i] == '$' && in.data[i + 1] == '<') {
+            size_t j = i + 2;
+            size_t depth = 1;
+            while (j < in.count && depth > 0) {
+                if (j + 1 < in.count && in.data[j] == '$' && in.data[j + 1] == '<') {
+                    depth++;
+                    j += 2;
+                    continue;
+                }
+                if (in.data[j] == '>') {
+                    depth--;
+                    j++;
+                    continue;
+                }
+                j++;
+            }
+            if (j == 0) break;
+            i = j - 1;
+            continue;
+        }
+        buf[out++] = in.data[i];
+    }
+
+    buf[out] = '\0';
+    return nob_sv_from_cstr(buf);
 }
 
 static bool list_compile_regex(Evaluator_Context *ctx,
@@ -967,7 +1002,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         if (a.count < 3) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                            nob_sv_from_cstr("list(TRANSFORM) requires list variable and action"),
-                           nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> ... [AT|FOR|REGEX selector])"));
+                           nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
             return !eval_should_stop(ctx);
         }
 
@@ -1005,12 +1040,14 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             action = LIST_TRANSFORM_TOUPPER;
         } else if (eval_sv_eq_ci_lit(a.items[2], "STRIP")) {
             action = LIST_TRANSFORM_STRIP;
+        } else if (eval_sv_eq_ci_lit(a.items[2], "GENEX_STRIP")) {
+            action = LIST_TRANSFORM_GENEX_STRIP;
         } else if (eval_sv_eq_ci_lit(a.items[2], "REPLACE")) {
             action = LIST_TRANSFORM_REPLACE;
             if (next + 1 >= a.count) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                                nob_sv_from_cstr("list(TRANSFORM REPLACE) requires regex and replacement"),
-                               nob_sv_from_cstr("Usage: list(TRANSFORM <list> REPLACE <regex> <replace> [selector])"));
+                               nob_sv_from_cstr("Usage: list(TRANSFORM <list> REPLACE <regex> <replace> [selector] [OUTPUT_VARIABLE <out-var>])"));
                 return !eval_should_stop(ctx);
             }
             action_arg1 = a.items[next++];
@@ -1027,16 +1064,44 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             EVAL_OOM_RETURN_IF_NULL(ctx, selected, !eval_should_stop(ctx));
         }
 
+        String_View out_var = nob_sv_from_cstr("");
+        bool has_output_var = false;
+
         if (next == a.count) {
             for (size_t i = 0; i < items.count; i++) selected[i] = true;
+        } else if (eval_sv_eq_ci_lit(a.items[next], "OUTPUT_VARIABLE")) {
+            if (next + 2 != a.count) {
+                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
+                               nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
+                               nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
+                return !eval_should_stop(ctx);
+            }
+            has_output_var = true;
+            out_var = a.items[next + 1];
+            for (size_t i = 0; i < items.count; i++) selected[i] = true;
         } else if (eval_sv_eq_ci_lit(a.items[next], "AT")) {
-            if (next + 1 >= a.count) {
+            size_t end = a.count;
+            for (size_t i = next + 1; i < a.count; i++) {
+                if (!eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) continue;
+                end = i;
+                if (i + 2 != a.count) {
+                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
+                                   nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
+                                   nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
+                    return !eval_should_stop(ctx);
+                }
+                has_output_var = true;
+                out_var = a.items[i + 1];
+                break;
+            }
+
+            if (next + 1 >= end) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                                nob_sv_from_cstr("list(TRANSFORM AT) requires at least one index"),
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            for (size_t i = next + 1; i < a.count; i++) {
+            for (size_t i = next + 1; i < end; i++) {
                 long long raw_idx = 0;
                 size_t idx = 0;
                 if (!sv_parse_i64(a.items[i], &raw_idx) || !list_normalize_index(items.count, raw_idx, false, &idx)) {
@@ -1048,7 +1113,22 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 selected[idx] = true;
             }
         } else if (eval_sv_eq_ci_lit(a.items[next], "FOR")) {
-            if (a.count < next + 3 || a.count > next + 4) {
+            size_t end = a.count;
+            for (size_t i = next + 1; i < a.count; i++) {
+                if (!eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) continue;
+                end = i;
+                if (i + 2 != a.count) {
+                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
+                                   nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
+                                   nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
+                    return !eval_should_stop(ctx);
+                }
+                has_output_var = true;
+                out_var = a.items[i + 1];
+                break;
+            }
+
+            if (end < next + 3 || end > next + 4) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                                nob_sv_from_cstr("list(TRANSFORM FOR) expects start stop [step]"),
                                nob_sv_from_cstr(""));
@@ -1063,29 +1143,55 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            if (a.count == next + 4 && !sv_parse_i64(a.items[next + 3], &step)) {
+            if (end == next + 4 && !sv_parse_i64(a.items[next + 3], &step)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                                nob_sv_from_cstr("list(TRANSFORM FOR) step must be an integer"),
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            if (start < 0 || stop < 0 || step <= 0 || start > stop) {
+            if (step <= 0) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("list(TRANSFORM FOR) expects non-negative range with positive step"),
+                               nob_sv_from_cstr("list(TRANSFORM FOR) step must be greater than zero"),
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            if (items.count > 0 && ((size_t)start >= items.count || (size_t)stop >= items.count)) {
+            size_t start_idx = 0;
+            size_t stop_idx = 0;
+            if (!list_normalize_index(items.count, start, false, &start_idx) ||
+                !list_normalize_index(items.count, stop, false, &stop_idx)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                                nob_sv_from_cstr("list(TRANSFORM FOR) range out of bounds"),
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            for (long long i = start; i <= stop && items.count > 0; i += step) {
-                selected[(size_t)i] = true;
+            if (start_idx <= stop_idx) {
+                for (size_t i = start_idx; i <= stop_idx; i += (size_t)step) {
+                    selected[i] = true;
+                    if (stop_idx - i < (size_t)step) break;
+                }
+            } else {
+                for (size_t i = start_idx;; i -= (size_t)step) {
+                    selected[i] = true;
+                    if (i <= stop_idx || i - stop_idx < (size_t)step) break;
+                }
             }
         } else if (eval_sv_eq_ci_lit(a.items[next], "REGEX")) {
-            if (a.count != next + 2) {
+            size_t end = a.count;
+            for (size_t i = next + 2; i < a.count; i++) {
+                if (!eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) continue;
+                end = i;
+                if (i + 2 != a.count) {
+                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
+                                   nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
+                                   nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
+                    return !eval_should_stop(ctx);
+                }
+                has_output_var = true;
+                out_var = a.items[i + 1];
+                break;
+            }
+
+            if (end != next + 2) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("list"), node->as.cmd.name, o,
                                nob_sv_from_cstr("list(TRANSFORM REGEX) expects exactly one regex argument"),
                                nob_sv_from_cstr(""));
@@ -1129,6 +1235,8 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 curr = list_to_case_temp(ctx, curr, true);
             } else if (action == LIST_TRANSFORM_STRIP) {
                 curr = list_strip_ws_view(curr);
+            } else if (action == LIST_TRANSFORM_GENEX_STRIP) {
+                curr = list_genex_strip_temp(ctx, curr);
             } else if (action == LIST_TRANSFORM_REPLACE) {
                 if (!list_regex_replace_one_temp(ctx, &replace_re, action_arg2, curr, &curr)) {
                     if (replace_ready) regfree(&replace_re);
@@ -1143,6 +1251,10 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         if (replace_ready) regfree(&replace_re);
+        if (has_output_var) {
+            (void)list_set_var_from_items(ctx, out_var, items.items, items.count);
+            return !eval_should_stop(ctx);
+        }
         if (items.count == 0 && !var_defined) return !eval_should_stop(ctx);
         (void)list_set_var_from_items(ctx, var, items.items, items.count);
         return !eval_should_stop(ctx);

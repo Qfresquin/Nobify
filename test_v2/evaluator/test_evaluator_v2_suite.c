@@ -977,6 +977,241 @@ TEST(evaluator_flow_commands_reject_extra_arguments) {
     TEST_PASS();
 }
 
+TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(MAC_RET start)\n"
+        "macro(mc_ret)\n"
+        "  set(MAC_RET before)\n"
+        "  return()\n"
+        "  set(MAC_RET after)\n"
+        "endmacro()\n"
+        "mc_ret()\n"
+        "add_executable(ret_macro main.c)\n"
+        "target_compile_definitions(ret_macro PRIVATE MAC_RET=${MAC_RET})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_macro_return_error = false;
+    bool saw_macro_ret_after = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("return() cannot be used inside macro()"))) {
+            saw_macro_return_error = true;
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ret_macro")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MAC_RET=after"))) {
+            saw_macro_ret_after = true;
+        }
+    }
+
+    ASSERT(saw_macro_return_error);
+    ASSERT(saw_macro_ret_after);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(RET_OLD root_old)\n"
+        "set(RET_NEW root_new)\n"
+        "cmake_policy(SET CMP0140 OLD)\n"
+        "function(ret_old)\n"
+        "  set(RET_OLD changed_old)\n"
+        "  return(PROPAGATE RET_OLD)\n"
+        "endfunction()\n"
+        "ret_old()\n"
+        "cmake_policy(SET CMP0140 NEW)\n"
+        "function(ret_new)\n"
+        "  set(RET_NEW changed_new)\n"
+        "  return(PROPAGATE RET_NEW)\n"
+        "endfunction()\n"
+        "ret_new()\n"
+        "add_executable(ret_cmp0140 main.c)\n"
+        "target_compile_definitions(ret_cmp0140 PRIVATE RET_OLD=${RET_OLD} RET_NEW=${RET_NEW})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_ret_old_root = false;
+    bool saw_ret_new_changed = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ret_cmp0140")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("RET_OLD=root_old"))) {
+            saw_ret_old_root = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ret_cmp0140")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("RET_NEW=changed_new"))) {
+            saw_ret_new_changed = true;
+        }
+    }
+
+    ASSERT(saw_ret_old_root);
+    ASSERT(saw_ret_new_changed);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_list_transform_genex_strip_and_output_variable) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(L \"$<CONFIG:Debug>;a$<IF:$<BOOL:1>,b,c>;x\")\n"
+        "list(TRANSFORM L GENEX_STRIP OUTPUT_VARIABLE L_STRIPPED)\n"
+        "list(TRANSFORM L APPEND \"_S\" AT 0 OUTPUT_VARIABLE L_APPENDED)\n"
+        "add_executable(list_transform_ov main.c)\n"
+        "target_compile_definitions(list_transform_ov PRIVATE \"L=${L}\" \"L_STRIPPED=${L_STRIPPED}\" \"L_APPENDED=${L_APPENDED}\")\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_original = false;
+    bool saw_stripped = false;
+    bool saw_appended = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item,
+                      nob_sv_from_cstr("L=$<CONFIG:Debug>;a$<IF:$<BOOL:1>,b,c>;x"))) {
+            saw_original = true;
+        } else if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("L_STRIPPED=;a;x"))) {
+            saw_stripped = true;
+        } else if (nob_sv_eq(ev->as.target_compile_definitions.item,
+                             nob_sv_from_cstr("L_APPENDED=$<CONFIG:Debug>_S;a$<IF:$<BOOL:1>,b,c>;x"))) {
+            saw_appended = true;
+        }
+    }
+
+    ASSERT(saw_original);
+    ASSERT(saw_stripped);
+    ASSERT(saw_appended);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_list_transform_output_variable_requires_single_output_var) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(L \"a;b\")\n"
+        "list(TRANSFORM L TOUPPER OUTPUT_VARIABLE)\n"
+        "list(TRANSFORM L TOUPPER AT 0 OUTPUT_VARIABLE OUT EXTRA)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    size_t output_arity_errors = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.cause,
+                       nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"))) {
+            continue;
+        }
+        output_arity_errors++;
+    }
+    ASSERT(output_arity_errors == 2);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_math_rejects_empty_and_incomplete_invocations) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1958,6 +2193,403 @@ TEST(evaluator_set_cache_policy_version_defaults_cmp0126_to_new) {
     TEST_PASS();
 }
 
+TEST(evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY fp_cfg_root/sfx)\n"
+        "file(WRITE fp_cfg_root/sfx/AltCfg.cmake [=[set(DemoFP_FOUND 1)\n"
+        "set(DemoFP_SOURCE config)\n"
+        "]=])\n"
+        "find_package(DemoFP NO_MODULE NAMES AltName CONFIGS AltCfg.cmake PATH_SUFFIXES sfx PATHS fp_cfg_root REGISTRY_VIEW HOST QUIET)\n"
+        "add_executable(fp_cfg_probe main.c)\n"
+        "target_compile_definitions(fp_cfg_probe PRIVATE FOUND=${DemoFP_FOUND} SRC=${DemoFP_SOURCE} RV=${DemoFP_FIND_REGISTRY_VIEW})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_find_event = false;
+    bool saw_found = false;
+    bool saw_src_config = false;
+    bool saw_rv_host = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_FIND_PACKAGE &&
+            nob_sv_eq(ev->as.find_package.package_name, nob_sv_from_cstr("DemoFP"))) {
+            saw_find_event = true;
+            ASSERT(ev->as.find_package.found);
+            ASSERT(nob_sv_eq(ev->as.find_package.mode, nob_sv_from_cstr("CONFIG")));
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("fp_cfg_probe"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("FOUND=1"))) saw_found = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SRC=config"))) saw_src_config = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("RV=HOST"))) saw_rv_host = true;
+        }
+    }
+
+    ASSERT(saw_find_event);
+    ASSERT(saw_found);
+    ASSERT(saw_src_config);
+    ASSERT(saw_rv_host);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_find_package_auto_prefers_config_when_requested) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY fp_pref/mod)\n"
+        "file(MAKE_DIRECTORY fp_pref/cfg)\n"
+        "file(WRITE fp_pref/mod/FindPrefPkg.cmake [=[set(PrefPkg_FOUND 1)\n"
+        "set(PrefPkg_FROM module)\n"
+        "]=])\n"
+        "file(WRITE fp_pref/cfg/PrefPkgConfig.cmake [=[set(PrefPkg_FOUND 1)\n"
+        "set(PrefPkg_FROM config)\n"
+        "]=])\n"
+        "set(CMAKE_MODULE_PATH fp_pref/mod)\n"
+        "set(CMAKE_PREFIX_PATH fp_pref/cfg)\n"
+        "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
+        "find_package(PrefPkg QUIET)\n"
+        "add_executable(fp_pref_probe main.c)\n"
+        "target_compile_definitions(fp_pref_probe PRIVATE FROM=${PrefPkg_FROM})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_config_location = false;
+    bool saw_from_config = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_FIND_PACKAGE &&
+            nob_sv_eq(ev->as.find_package.package_name, nob_sv_from_cstr("PrefPkg"))) {
+            saw_config_location =
+                nob_sv_eq(ev->as.find_package.location, nob_sv_from_cstr("./fp_pref/cfg/PrefPkgConfig.cmake"));
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("fp_pref_probe")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("FROM=config"))) {
+            saw_from_config = true;
+        }
+    }
+
+    ASSERT(saw_config_location);
+    ASSERT(saw_from_config);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_project_full_signature_and_variable_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("subproj"));
+    const char *sub_cmake =
+        "project(SubProj DESCRIPTION subdesc HOMEPAGE_URL https://sub LANGUAGES NONE)\n"
+        "add_executable(sub_probe sub.c)\n"
+        "target_compile_definitions(sub_probe PRIVATE SUB_TOP=${PROJECT_IS_TOP_LEVEL} SUB_NAMED_TOP=${SubProj_IS_TOP_LEVEL} ROOT_NAME=${CMAKE_PROJECT_NAME} SUB_HOME=${PROJECT_HOMEPAGE_URL})\n";
+    ASSERT(nob_write_entire_file("subproj/CMakeLists.txt", sub_cmake, strlen(sub_cmake)));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(MainProj VERSION 1.2.3.4 DESCRIPTION rootdesc HOMEPAGE_URL https://root LANGUAGES C)\n"
+        "add_executable(root_probe main.c)\n"
+        "target_compile_definitions(root_probe PRIVATE ROOT_TOP=${PROJECT_IS_TOP_LEVEL} ROOT_NAMED_TOP=${MainProj_IS_TOP_LEVEL} ROOT_MAJOR=${PROJECT_VERSION_MAJOR} ROOT_MINOR=${PROJECT_VERSION_MINOR} ROOT_PATCH=${PROJECT_VERSION_PATCH} ROOT_TWEAK=${PROJECT_VERSION_TWEAK} ROOT_CMAKE_VER=${CMAKE_PROJECT_VERSION} ROOT_HOME=${PROJECT_HOMEPAGE_URL})\n"
+        "add_subdirectory(subproj)\n"
+        "target_compile_definitions(root_probe PRIVATE ROOT_NAME_AFTER=${CMAKE_PROJECT_NAME} ROOT_HOME_AFTER=${CMAKE_PROJECT_HOMEPAGE_URL})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_main_project_event = false;
+    bool saw_sub_project_event = false;
+    bool saw_root_top = false;
+    bool saw_root_named_top = false;
+    bool saw_root_major = false;
+    bool saw_root_minor = false;
+    bool saw_root_patch = false;
+    bool saw_root_tweak = false;
+    bool saw_root_cmake_ver = false;
+    bool saw_root_home = false;
+    bool saw_root_name_after = false;
+    bool saw_root_home_after = false;
+    bool saw_sub_top_false = false;
+    bool saw_sub_named_top_false = false;
+    bool saw_sub_root_name = false;
+    bool saw_sub_home = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_PROJECT_DECLARE) {
+            if (nob_sv_eq(ev->as.project_declare.name, nob_sv_from_cstr("MainProj")) &&
+                nob_sv_eq(ev->as.project_declare.version, nob_sv_from_cstr("1.2.3.4")) &&
+                nob_sv_eq(ev->as.project_declare.description, nob_sv_from_cstr("rootdesc")) &&
+                nob_sv_eq(ev->as.project_declare.languages, nob_sv_from_cstr("C"))) {
+                saw_main_project_event = true;
+            } else if (nob_sv_eq(ev->as.project_declare.name, nob_sv_from_cstr("SubProj")) &&
+                       nob_sv_eq(ev->as.project_declare.version, nob_sv_from_cstr("")) &&
+                       nob_sv_eq(ev->as.project_declare.description, nob_sv_from_cstr("subdesc")) &&
+                       nob_sv_eq(ev->as.project_declare.languages, nob_sv_from_cstr(""))) {
+                saw_sub_project_event = true;
+            }
+        }
+
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("root_probe"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_TOP=TRUE"))) saw_root_top = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_NAMED_TOP=TRUE"))) saw_root_named_top = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_MAJOR=1"))) saw_root_major = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_MINOR=2"))) saw_root_minor = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_PATCH=3"))) saw_root_patch = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_TWEAK=4"))) saw_root_tweak = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_CMAKE_VER=1.2.3.4"))) saw_root_cmake_ver = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_HOME=https://root"))) saw_root_home = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_NAME_AFTER=MainProj"))) saw_root_name_after = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_HOME_AFTER=https://root"))) saw_root_home_after = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("sub_probe"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_TOP=FALSE")) ||
+                nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_TOP=0")) ||
+                nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_TOP=OFF"))) {
+                saw_sub_top_false = true;
+            }
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_NAMED_TOP=FALSE")) ||
+                nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_NAMED_TOP=0")) ||
+                nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_NAMED_TOP=OFF"))) {
+                saw_sub_named_top_false = true;
+            }
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_NAME=MainProj"))) saw_sub_root_name = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("SUB_HOME=https://sub"))) saw_sub_home = true;
+        }
+    }
+
+    ASSERT(saw_main_project_event);
+    ASSERT(saw_sub_project_event);
+    ASSERT(saw_root_top);
+    ASSERT(saw_root_named_top);
+    ASSERT(saw_root_major);
+    ASSERT(saw_root_minor);
+    ASSERT(saw_root_patch);
+    ASSERT(saw_root_tweak);
+    ASSERT(saw_root_cmake_ver);
+    ASSERT(saw_root_home);
+    ASSERT(saw_root_name_after);
+    ASSERT(saw_root_home_after);
+    ASSERT(saw_sub_top_false);
+    ASSERT(saw_sub_named_top_false);
+    ASSERT(saw_sub_root_name);
+    ASSERT(saw_sub_home);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(SET CMP0048 NEW)\n"
+        "set(PROJECT_VERSION stale)\n"
+        "set(PROJECT_VERSION_MAJOR stale_major)\n"
+        "project(NewNoVer LANGUAGES NONE)\n"
+        "add_executable(project_new_nover main.c)\n"
+        "target_compile_definitions(project_new_nover PRIVATE NEW_VER=${PROJECT_VERSION} NEW_MAJ=${PROJECT_VERSION_MAJOR})\n"
+        "cmake_policy(SET CMP0048 OLD)\n"
+        "set(PROJECT_VERSION keep)\n"
+        "set(PROJECT_VERSION_MAJOR keep_major)\n"
+        "project(OldNoVer LANGUAGES NONE)\n"
+        "add_executable(project_old_nover main.c)\n"
+        "target_compile_definitions(project_old_nover PRIVATE OLD_VER=${PROJECT_VERSION} OLD_MAJ=${PROJECT_VERSION_MAJOR})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_new_ver_empty = false;
+    bool saw_new_maj_empty = false;
+    bool saw_old_ver_keep = false;
+    bool saw_old_maj_keep = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("project_new_nover"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("NEW_VER="))) saw_new_ver_empty = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("NEW_MAJ="))) saw_new_maj_empty = true;
+        } else if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("project_old_nover"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OLD_VER=keep"))) saw_old_ver_keep = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OLD_MAJ=keep_major"))) saw_old_maj_keep = true;
+        }
+    }
+
+    ASSERT(saw_new_ver_empty);
+    ASSERT(saw_new_maj_empty);
+    ASSERT(saw_old_ver_keep);
+    ASSERT(saw_old_maj_keep);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_project_rejects_invalid_signature_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(BadVer VERSION 1.a)\n"
+        "project(BadLang LANGUAGES NONE C)\n"
+        "project(BadMissingVersion VERSION)\n"
+        "project(BadDesc DESCRIPTION)\n"
+        "project(BadHome HOMEPAGE_URL)\n"
+        "project(BadUnexpected VERSION 1.0 C)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 6);
+
+    bool saw_bad_version = false;
+    bool saw_none_mix = false;
+    bool saw_missing_version = false;
+    bool saw_missing_desc = false;
+    bool saw_missing_home = false;
+    bool saw_unexpected = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("project(VERSION ...) expects numeric components"))) {
+            saw_bad_version = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("project() LANGUAGES NONE cannot be combined with other languages"))) {
+            saw_none_mix = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("project(VERSION ...) requires a version value"))) {
+            saw_missing_version = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("project(DESCRIPTION ...) requires a value"))) {
+            saw_missing_desc = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("project(HOMEPAGE_URL ...) requires a value"))) {
+            saw_missing_home = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("project() received unexpected argument in keyword signature"))) {
+            saw_unexpected = true;
+        }
+    }
+
+    ASSERT(saw_bad_version);
+    ASSERT(saw_none_mix);
+    ASSERT(saw_missing_version);
+    ASSERT(saw_missing_desc);
+    ASSERT(saw_missing_home);
+    ASSERT(saw_unexpected);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_policy_known_unknown_and_if_predicate) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2192,6 +2824,10 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
+    test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
+    test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
+    test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);
+    test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);
     test_evaluator_set_target_properties_rejects_alias_target(passed, failed);
     test_evaluator_add_executable_imported_and_alias_signatures(passed, failed);
@@ -2208,6 +2844,11 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
+    test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);
+    test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed);
+    test_evaluator_project_full_signature_and_variable_surface(passed, failed);
+    test_evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg(passed, failed);
+    test_evaluator_project_rejects_invalid_signature_forms(passed, failed);
     test_evaluator_policy_known_unknown_and_if_predicate(passed, failed);
     test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
