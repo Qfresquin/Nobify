@@ -105,17 +105,8 @@ Current dispatcher-backed surface is documented in `evaluator_v2_coverage_status
 
 Audit outcome for that surface:
 
-- `43` dispatcher-backed commands remain consistent with their current documented `FULL` status in this pass.
-- `2` dispatcher-backed commands have confirmed result-affecting divergences and must be `PARTIAL`:
-  - `file`
-  - `find_package`
-
-Confirmed partials:
-
-| Command | Audit result | Confirmed divergence | Why it is result-affecting |
-|---|---|---|---|
-| `file` | `PARTIAL` | `file(REAL_PATH)` does not consult `CMP0152`. The implementation in `src_v2/evaluator/eval_file_fsops.c` always follows its local path resolution path instead of honoring policy-driven `OLD` vs `NEW` behavior. | Valid policy-controlled `file(REAL_PATH)` inputs can resolve to different paths. |
-| `find_package` | `PARTIAL` | `src_v2/evaluator/eval_package.c` always honors `<Pkg>_ROOT` / environment-root prefixes unless `NO_PACKAGE_ROOT_PATH` is set, but it does not consult `CMP0074`. | `cmake_policy(SET CMP0074 OLD)` cannot suppress package-root search paths, changing package resolution. |
+- All `45` dispatcher-backed commands remain consistent with documented `FULL` status after this audit update.
+- The previously confirmed policy gaps in `find_package` (`CMP0074`) and `file(REAL_PATH)` (`CMP0152`) are now explicitly modeled in the implementation and covered by targeted evaluator tests.
 
 Test coverage check:
 
@@ -181,18 +172,15 @@ Confirmed live policy hooks in evaluator behavior:
 |---|---|---|
 | `CMP0017` | `src_v2/evaluator/eval_include.c` | Modeled for `include()` search-order behavior |
 | `CMP0048` | `src_v2/evaluator/eval_project.c` | Modeled for `project()` version-variable handling |
+| `CMP0074` | `src_v2/evaluator/eval_package.c` | Modeled for `find_package()` package-root handling |
 | `CMP0124` | `src_v2/evaluator/evaluator.c` | Modeled for `foreach()` loop variable scoping |
 | `CMP0126` | `src_v2/evaluator/eval_vars.c` | Modeled for `set(CACHE)` interaction with normal variables |
 | `CMP0140` | `src_v2/evaluator/eval_flow.c` | Modeled for `return()` argument handling |
+| `CMP0152` | `src_v2/evaluator/eval_file_fsops.c` | Modeled for `file(REAL_PATH)` path-resolution ordering |
 
-### 6.3 Confirmed missing policy hooks on supported commands
+### 6.3 Supported-command policy gaps in this pass
 
-Confirmed gaps:
-
-| Policy | Affected command | Evidence | Impact |
-|---|---|---|---|
-| `CMP0074` | `find_package` | `src_v2/evaluator/eval_package.c` always consumes `<Pkg>_ROOT`-style roots but has no policy check. | Result-affecting, command must be `PARTIAL`. |
-| `CMP0152` | `file(REAL_PATH)` | `src_v2/evaluator/eval_file_fsops.c` has no policy check around `REAL_PATH`. | Result-affecting, parent `file` command must be `PARTIAL`. |
+No result-affecting missing policy hooks were confirmed in the dispatcher-backed command surface during this pass.
 
 Important clarification:
 
@@ -229,13 +217,14 @@ These are strong candidates for deletion unless they are intentionally retained 
 
 Most evaluator-owned allocations use `EVAL_OOM_RETURN_IF_NULL(...)`, `arena_da_try_append(...)`, or `ctx_oom(...)` correctly.
 
-Confirmed exception:
+The previously confirmed archive fallback exception is now closed:
 
-- `src_v2/evaluator/eval_file_generate_lock_archive.c` builds fallback `tar` / `zip` / `unzip` command lines using `nob_da_append(...)`.
-- `nob_da_append(...)` in `vendor/nob.h` grows its backing storage with `NOB_REALLOC(...)` and enforces success with `NOB_ASSERT(...)`.
-- If allocation fails, this path aborts the process instead of marking evaluator OOM through `ctx_oom(...)`.
+- `src_v2/evaluator/eval_file_generate_lock_archive.c` no longer uses `nob_da_append(...)` to build fallback `tar` / `zip` / `unzip` command lines.
+- The fallback path now uses evaluator-owned checked append helpers that route allocation failure through `ctx_oom(...)`.
 
-This is not just stylistic inconsistency; it bypasses the evaluator's documented fatal-OOM contract and can terminate the process outside normal diagnostic handling.
+Residual note:
+
+- This audit did not find any remaining direct `nob_da_append(...)` use in evaluator runtime code after that change.
 
 ### 7.4 Portability
 
@@ -250,7 +239,7 @@ Classification:
 
 - Linux + Windows baseline: mostly acceptable because most high-risk paths are guarded with `_WIN32` branches.
 - Non-baseline hosts: elevated risk, especially for POSIX subprocess assumptions and path-size assumptions.
-- One baseline-specific asymmetry remains noteworthy: `file(REAL_PATH)` uses different underlying host APIs on Windows vs POSIX, which already contributes to the policy gap around `CMP0152`.
+- One baseline-specific asymmetry remains noteworthy: `file(REAL_PATH)` uses different underlying host APIs on Windows vs POSIX, even though the evaluator now explicitly switches behavior on `CMP0152`.
 
 ### 7.5 Simplification / code reduction
 
@@ -278,33 +267,6 @@ These are refactor candidates, not current correctness defects.
 
 ### Finding 2
 
-- Severity: `High`
-- Type: `Policy`, `Compatibility`
-- Evidence: `src_v2/evaluator/eval_package.c`, `https://cmake.org/cmake/help/v3.28/policy/CMP0074.html`, `https://cmake.org/cmake/help/v3.28/command/find_package.html`
-- Finding: `find_package` does not model `CMP0074`.
-- Impact: valid policy-controlled package searches can resolve differently from CMake.
-- Recommended action: document as `PARTIAL` now; later add explicit policy check around package-root lookup.
-
-### Finding 3
-
-- Severity: `Medium`
-- Type: `Policy`, `Compatibility`
-- Evidence: `src_v2/evaluator/eval_file_fsops.c`, `https://cmake.org/cmake/help/v3.28/policy/CMP0152.html`, `https://cmake.org/cmake/help/v3.28/command/file.html`
-- Finding: `file(REAL_PATH)` does not model `CMP0152`.
-- Impact: valid policy-controlled path resolution can diverge from CMake.
-- Recommended action: document `file` as `PARTIAL`; later thread policy-aware behavior into `handle_file_real_path(...)`.
-
-### Finding 4
-
-- Severity: `High`
-- Type: `OOM`
-- Evidence: `src_v2/evaluator/eval_file_generate_lock_archive.c`, `vendor/nob.h`
-- Finding: fallback archive command assembly uses `nob_da_append(...)`, which can abort through `NOB_ASSERT(...)` instead of propagating evaluator OOM.
-- Impact: crash / abort risk under allocation failure.
-- Recommended action: replace `nob_da_append(...)` in evaluator runtime code with checked append helpers that call `ctx_oom(...)`.
-
-### Finding 5
-
 - Severity: `Low`
 - Type: `Dead code`, `Duplication`
 - Evidence: `src_v2/evaluator/eval_hash.c`, `src_v2/evaluator/eval_string.c`
@@ -312,14 +274,23 @@ These are refactor candidates, not current correctness defects.
 - Impact: maintainability risk only.
 - Recommended action: delete it or move to one shared helper once a caller exists.
 
-### Finding 6
+### Finding 3
 
-- Severity: `Low`
+- Severity: `Medium`
 - Type: `Compatibility`
 - Evidence: `src_v2/evaluator/evaluator.c`, `https://cmake.org/cmake/help/v3.28/command/while.html`
 - Finding: `while()` has a hard evaluator-specific iteration cap (`10000`).
 - Impact: valid long-running loops can terminate differently from CMake.
 - Recommended action: keep documented as a structural divergence until the loop guard is made configurable or semantics are revisited.
+
+### Finding 4
+
+- Severity: `Low`
+- Type: `Portability`
+- Evidence: `src_v2/evaluator/eval_file_extra.c`, `src_v2/evaluator/eval_file_transfer.c`, `src_v2/evaluator/eval_file_generate_lock_archive.c`, `src_v2/evaluator/eval_file_fsops.c`
+- Finding: subprocess backends, host tool dependencies, and `PATH_MAX`-style assumptions still constrain portability outside the Linux + Windows validation baseline.
+- Impact: maintainability and portability risk outside the supported host scope.
+- Recommended action: keep these paths under explicit platform guards and continue preferring library-backed implementations where available.
 
 ## 9. Confidence and unresolved items
 
@@ -330,16 +301,16 @@ High-confidence statements in this audit:
 - Full scoped command counts (`131` total, `57` implemented, `74` missing).
 - Registry alignment between `eval_command_caps.c` and `eval_dispatcher.c`.
 - Policy registry alignment for `CMP0000..CMP0155`.
-- Confirmed policy gaps for `CMP0074` and `CMP0152`.
-- Confirmed OOM propagation hazard around `nob_da_append(...)`.
+- Confirmed implementation and targeted test coverage for `CMP0074` and `CMP0152`.
+- Confirmed removal of direct `nob_da_append(...)` usage from evaluator runtime code.
 
 Known limits:
 
 - No installed `cmake` binary was available for runtime side-by-side execution.
 - Structural language commands were verified for presence and obvious divergences, but not exhaustively re-matrixed against every edge case in the official manuals.
-- Additional policy-sensitive gaps may exist beyond the ones confirmed here; this audit records the confirmed set, not a proof of absence.
+- Additional policy-sensitive gaps may exist beyond the ones explicitly validated here; this audit records the confirmed set, not a proof of absence.
 
 Next follow-up after this document:
 
-- keep `evaluator_v2_coverage_status.md` aligned with the confirmed partials and the clarified command-surface scope
-- use this audit as the backlog input for a later code-fix pass
+- keep `evaluator_v2_coverage_status.md` aligned with the clarified command-surface scope
+- use this audit as the backlog input for remaining structural and cleanup work (`while()` loop cap, dead code, and portability hardening)

@@ -53,8 +53,8 @@ Status snapshot sources:
 | `cpack_add_install_type` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, with availability gated by `include(CPackComponent)`. | - |
 | `enable_testing` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`enable_testing()`). | - |
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
-| `file` | `PARTIAL` | `ERROR_CONTINUE` | Broad subcommand coverage remains in place, but `file(REAL_PATH)` does not model `CMP0152`, so policy-controlled `OLD` vs `NEW` path resolution can diverge from CMake 3.28. | `Medium` |
-| `find_package` | `PARTIAL` | `NOOP_WARN` | Broad subset coverage remains in place, but `<Pkg>_ROOT` package-root lookup is always honored and does not model `CMP0074`, so `cmake_policy(SET CMP0074 OLD)` cannot suppress those search roots. | `Medium` |
+| `file` | `FULL` | `ERROR_CONTINUE` | No result-affecting divergence found in validated Linux+Windows scope for CMake 3.28 surface implemented by evaluator, including deferred `GENERATE`, transfer/archive backends, lock semantics, and `CMP0152`-aware `REAL_PATH` behavior in covered flow. | - |
+| `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, `CMAKE_FIND_PACKAGE_PREFER_CONFIG`, and `CMP0074`-aware package-root handling in covered flow). | - |
 | `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including `CMAKE_MODULE_PATH`/`CMAKE_ROOT/Modules` lookup and `CMP0017` search-order behavior (`NEW` vs `OLD`). | - |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
 | `include_guard` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include_guard([DIRECTORY|GLOBAL])`), including default variable-like scope (no-arg form), strict argument validation, and `DIRECTORY`/`GLOBAL` behavior. | - |
@@ -100,7 +100,7 @@ Status snapshot sources:
 | `CREATE_LINK` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
 | `CHMOD` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
 | `CHMOD_RECURSE` | `FULL` | Implemented for documented CMake 3.28 usage in validated Linux+Windows scope. | Error diagnostic on invalid usage/IO failure. |
-| `REAL_PATH` | `PARTIAL` | Real-path resolution with options is implemented, but the evaluator does not currently switch behavior on `CMP0152` (`OLD` vs `NEW` ordering of symlink resolution vs `..` collapse). | Error on failure. |
+| `REAL_PATH` | `FULL` | Real-path resolution with options is implemented, including `CMP0152` (`OLD` vs `NEW`) behavior in the covered Linux+Windows flow. | Error on failure. |
 | `RELATIVE_PATH` | `FULL` | Relative path computation implemented. | Error on invalid usage. |
 | `TO_CMAKE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
 | `TO_NATIVE_PATH` | `FULL` | Path conversion implemented. | Error on invalid usage. |
@@ -155,7 +155,7 @@ Status snapshot sources:
 | Config search shaping (`HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles) | Supported | Supported in local filesystem resolver | None for covered forms |
 | Version checks (`[version]`, `EXACT`, config-version file evaluation) | Supported | Supported | None for covered forms |
 | Find-context variables used by package scripts | Supported | Supported for covered subset (including `<Pkg>_FIND_REGISTRY_VIEW` when requested) | None for covered forms |
-| Package-root policy (`CMP0074`) | Supported | Package-root lookup is implemented, but `<Pkg>_ROOT` / environment-root handling does not switch on `CMP0074` (`OLD` is not modeled) | `Medium` |
+| Package-root policy (`CMP0074`) | Supported | Supported, including `OLD` vs `NEW` behavior for `<Pkg>_ROOT` / environment-root handling in the covered flow | None |
 
 ## 5. Coverage details: `math()`
 
@@ -239,9 +239,9 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_path`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
+`add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_path`, `cmake_policy`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `enable_testing`, `endblock`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
 
-Commands currently documented as `PARTIAL`: `file`, `find_package`.
+Commands currently documented as `PARTIAL`: none.
 
 ## 11.1 Full-scope summary
 

@@ -7,6 +7,7 @@ String_View eval_file_current_src_dir(Evaluator_Context *ctx);
 String_View eval_file_current_bin_dir(Evaluator_Context *ctx);
 bool eval_file_parse_size_sv(String_View sv, size_t *out);
 String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
+bool eval_file_canonicalize_existing_path_temp(Evaluator_Context *ctx, String_View path, String_View *out_path);
 typedef enum {
     EVAL_FILE_PATH_MODE_CMAKE = 0,
     EVAL_FILE_PATH_MODE_PROJECT_SCOPED,

@@ -25,6 +25,30 @@ enum {
     EVAL_FILE_LOCK_GUARD_FUNCTION = 2,
 };
 
+static bool file_cmd_append_checked(Evaluator_Context *ctx, Nob_Cmd *cmd, const char *arg) {
+    if (!ctx || !cmd || !arg) return false;
+    if (cmd->count == cmd->capacity) {
+        size_t new_cap = cmd->capacity > 0 ? cmd->capacity * 2 : 8;
+        if (new_cap < cmd->count + 1) new_cap = cmd->count + 1;
+        if (new_cap > (SIZE_MAX / sizeof(cmd->items[0]))) return ctx_oom(ctx);
+
+        const char **grown = (const char**)realloc((void*)cmd->items, new_cap * sizeof(cmd->items[0]));
+        EVAL_OOM_RETURN_IF_NULL(ctx, grown, false);
+        cmd->items = grown;
+        cmd->capacity = new_cap;
+    }
+    cmd->items[cmd->count++] = arg;
+    return true;
+}
+
+static void file_cmd_reset(Nob_Cmd *cmd) {
+    if (!cmd) return;
+    free((void*)cmd->items);
+    cmd->items = NULL;
+    cmd->count = 0;
+    cmd->capacity = 0;
+}
+
 static ssize_t eval_file_lock_find(Evaluator_Context *ctx, String_View path) {
     if (!ctx) return -1;
     for (size_t i = 0; i < ctx->file_locks.count; i++) {
@@ -821,41 +845,88 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
 
     Nob_Cmd cmd = {0};
     if (format_zip) {
-        nob_da_append(&cmd, "zip");
-        nob_da_append(&cmd, "-r");
-        nob_da_append(&cmd, out_c);
+        if (!file_cmd_append_checked(ctx, &cmd, "zip")) return true;
+        if (!file_cmd_append_checked(ctx, &cmd, "-r")) {
+            file_cmd_reset(&cmd);
+            return true;
+        }
+        if (!file_cmd_append_checked(ctx, &cmd, out_c)) {
+            file_cmd_reset(&cmd);
+            return true;
+        }
         for (size_t i = 0; i < mapped_paths.count; i++) {
             char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths.items[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
-            nob_da_append(&cmd, pc);
+            if (!file_cmd_append_checked(ctx, &cmd, pc)) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         }
     } else {
-        nob_da_append(&cmd, "tar");
+        if (!file_cmd_append_checked(ctx, &cmd, "tar")) return true;
         if (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) {
-            nob_da_append(&cmd, "-cf");
+            if (!file_cmd_append_checked(ctx, &cmd, "-cf")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         } else if (eval_sv_eq_ci_lit(compression, "GZIP")) {
-            nob_da_append(&cmd, "-czf");
+            if (!file_cmd_append_checked(ctx, &cmd, "-czf")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         } else if (eval_sv_eq_ci_lit(compression, "BZIP2")) {
-            nob_da_append(&cmd, "-cjf");
+            if (!file_cmd_append_checked(ctx, &cmd, "-cjf")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         } else if (eval_sv_eq_ci_lit(compression, "XZ")) {
-            nob_da_append(&cmd, "-cJf");
+            if (!file_cmd_append_checked(ctx, &cmd, "-cJf")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         } else if (eval_sv_eq_ci_lit(compression, "ZSTD")) {
-            nob_da_append(&cmd, "--zstd");
-            nob_da_append(&cmd, "-cf");
+            if (!file_cmd_append_checked(ctx, &cmd, "--zstd") ||
+                !file_cmd_append_checked(ctx, &cmd, "-cf")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         } else {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                            nob_sv_from_cstr("file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend"), compression);
+            file_cmd_reset(&cmd);
             return true;
         }
-        nob_da_append(&cmd, out_c);
-        if (eval_sv_eq_ci_lit(format, "PAXR")) nob_da_append(&cmd, "--format=pax");
-        else if (eval_sv_eq_ci_lit(format, "PAX")) nob_da_append(&cmd, "--format=pax");
-        else if (eval_sv_eq_ci_lit(format, "GNUTAR")) nob_da_append(&cmd, "--format=gnu");
-        nob_da_append(&cmd, "--");
+        if (!file_cmd_append_checked(ctx, &cmd, out_c)) {
+            file_cmd_reset(&cmd);
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(format, "PAXR")) {
+            if (!file_cmd_append_checked(ctx, &cmd, "--format=pax")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
+        } else if (eval_sv_eq_ci_lit(format, "PAX")) {
+            if (!file_cmd_append_checked(ctx, &cmd, "--format=pax")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
+        } else if (eval_sv_eq_ci_lit(format, "GNUTAR")) {
+            if (!file_cmd_append_checked(ctx, &cmd, "--format=gnu")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
+        }
+        if (!file_cmd_append_checked(ctx, &cmd, "--")) {
+            file_cmd_reset(&cmd);
+            return true;
+        }
         for (size_t i = 0; i < mapped_paths.count; i++) {
             char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths.items[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
-            nob_da_append(&cmd, pc);
+            if (!file_cmd_append_checked(ctx, &cmd, pc)) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         }
     }
 
@@ -863,6 +934,7 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(ARCHIVE_CREATE) failed to run tar backend"), out_path);
     }
+    file_cmd_reset(&cmd);
     return true;
 }
 
@@ -939,22 +1011,29 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
     Nob_Cmd cmd = {0};
     if (in_path.count >= 4 &&
         (eval_sv_eq_ci_lit(nob_sv_from_parts(in_path.data + in_path.count - 4, 4), ".zip"))) {
-        nob_da_append(&cmd, "unzip");
-        nob_da_append(&cmd, "-o");
-        nob_da_append(&cmd, in_c);
-        nob_da_append(&cmd, "-d");
-        nob_da_append(&cmd, dst_c);
+        if (!file_cmd_append_checked(ctx, &cmd, "unzip") ||
+            !file_cmd_append_checked(ctx, &cmd, "-o") ||
+            !file_cmd_append_checked(ctx, &cmd, in_c) ||
+            !file_cmd_append_checked(ctx, &cmd, "-d") ||
+            !file_cmd_append_checked(ctx, &cmd, dst_c)) {
+            file_cmd_reset(&cmd);
+            return true;
+        }
     } else {
-        nob_da_append(&cmd, "tar");
-        nob_da_append(&cmd, "-xf");
-        nob_da_append(&cmd, in_c);
-        nob_da_append(&cmd, "-C");
-        nob_da_append(&cmd, dst_c);
+        if (!file_cmd_append_checked(ctx, &cmd, "tar") ||
+            !file_cmd_append_checked(ctx, &cmd, "-xf") ||
+            !file_cmd_append_checked(ctx, &cmd, in_c) ||
+            !file_cmd_append_checked(ctx, &cmd, "-C") ||
+            !file_cmd_append_checked(ctx, &cmd, dst_c)) {
+            file_cmd_reset(&cmd);
+            return true;
+        }
     }
     if (!nob_cmd_run_sync(cmd)) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed to run tar backend"), in_path);
     }
+    file_cmd_reset(&cmd);
     return true;
 }
 

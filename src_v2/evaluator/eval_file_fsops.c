@@ -88,6 +88,151 @@ static bool file_leaf_exists(const char *path) {
 #endif
 }
 
+static String_View file_path_join_temp_checked(Evaluator_Context *ctx, String_View a, String_View b) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (a.count == 0) return sv_copy_to_temp_arena(ctx, b);
+    if (b.count == 0) return sv_copy_to_temp_arena(ctx, a);
+
+    bool need_slash = !svu_is_path_sep(a.data[a.count - 1]);
+    size_t total = a.count + (need_slash ? 1u : 0u) + b.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, a.data, a.count);
+    off += a.count;
+    if (need_slash) buf[off++] = '/';
+    memcpy(buf + off, b.data, b.count);
+    off += b.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static bool file_real_path_is_root_cstr(const char *path) {
+    if (!path || path[0] == '\0') return true;
+    size_t len = strlen(path);
+    if (len == 1 && svu_is_path_sep(path[0])) return true;
+    if (len == 2 && svu_is_path_sep(path[0]) && svu_is_path_sep(path[1])) return true;
+    if (len == 3 &&
+        isalpha((unsigned char)path[0]) &&
+        path[1] == ':' &&
+        svu_is_path_sep(path[2])) {
+        return true;
+    }
+    return false;
+}
+
+static bool file_real_path_pop_last_component(Evaluator_Context *ctx, char *path_c, String_View *io_suffix) {
+    if (!ctx || !path_c || !io_suffix) return false;
+
+    size_t len = strlen(path_c);
+    while (len > 0 && svu_is_path_sep(path_c[len - 1])) {
+        if (len == 1) break;
+        if (len == 3 && isalpha((unsigned char)path_c[0]) && path_c[1] == ':') break;
+        path_c[--len] = '\0';
+    }
+
+    if (len == 0 || file_real_path_is_root_cstr(path_c)) return false;
+
+    size_t last_sep = SIZE_MAX;
+    for (size_t i = len; i-- > 0;) {
+        if (svu_is_path_sep(path_c[i])) {
+            last_sep = i;
+            break;
+        }
+    }
+
+    size_t removed_start = 0;
+    size_t new_len = 0;
+    if (last_sep == SIZE_MAX) {
+        removed_start = 0;
+        new_len = 0;
+    } else if (last_sep == 0) {
+        removed_start = 1;
+        new_len = 1;
+    } else if (last_sep == 2 && isalpha((unsigned char)path_c[0]) && path_c[1] == ':') {
+        removed_start = 3;
+        new_len = 3;
+    } else {
+        removed_start = last_sep + 1;
+        new_len = last_sep;
+    }
+
+    String_View removed = nob_sv_from_parts(path_c + removed_start, len - removed_start);
+    if (removed.count == 0) return false;
+
+    String_View suffix = removed;
+    if (io_suffix->count > 0) {
+        suffix = file_path_join_temp_checked(ctx, removed, *io_suffix);
+        if (eval_should_stop(ctx)) return false;
+    }
+    *io_suffix = suffix;
+    path_c[new_len] = '\0';
+    return true;
+}
+
+static bool file_real_path_resolve_temp(Evaluator_Context *ctx,
+                                        String_View path,
+                                        bool cmp0152_new,
+                                        String_View *out_path) {
+    if (!ctx || !out_path) return false;
+    *out_path = nob_sv_from_cstr("");
+
+    String_View seed = cmp0152_new ? eval_file_cmk_path_normalize_temp(ctx, path)
+                                   : eval_sv_path_normalize_temp(ctx, path);
+    if (eval_should_stop(ctx)) return false;
+    if (seed.count == 0) {
+        *out_path = seed;
+        return true;
+    }
+
+    String_View canonical = nob_sv_from_cstr("");
+    if (eval_file_canonicalize_existing_path_temp(ctx, seed, &canonical)) {
+        *out_path = canonical;
+        return true;
+    }
+    if (eval_should_stop(ctx)) return false;
+
+    char *probe = eval_sv_to_cstr_temp(ctx, seed);
+    EVAL_OOM_RETURN_IF_NULL(ctx, probe, false);
+
+    String_View suffix = nob_sv_from_cstr("");
+    while (probe[0] != '\0' && !file_real_path_is_root_cstr(probe)) {
+        if (!file_real_path_pop_last_component(ctx, probe, &suffix)) return false;
+
+        String_View prefix = nob_sv_from_cstr("");
+        if (!eval_file_canonicalize_existing_path_temp(ctx, nob_sv_from_cstr(probe), &prefix)) {
+            if (eval_should_stop(ctx)) return false;
+            continue;
+        }
+
+        String_View combined = prefix;
+        if (suffix.count > 0) {
+            combined = file_path_join_temp_checked(ctx, prefix, suffix);
+            if (eval_should_stop(ctx)) return false;
+        }
+        *out_path = eval_file_cmk_path_normalize_temp(ctx, combined);
+        return !eval_should_stop(ctx);
+    }
+
+    if (probe[0] != '\0') {
+        String_View prefix = nob_sv_from_cstr("");
+        if (eval_file_canonicalize_existing_path_temp(ctx, nob_sv_from_cstr(probe), &prefix)) {
+            String_View combined = prefix;
+            if (suffix.count > 0) {
+                combined = file_path_join_temp_checked(ctx, prefix, suffix);
+                if (eval_should_stop(ctx)) return false;
+            }
+            *out_path = eval_file_cmk_path_normalize_temp(ctx, combined);
+            return !eval_should_stop(ctx);
+        }
+        if (eval_should_stop(ctx)) return false;
+    }
+
+    *out_path = eval_file_cmk_path_normalize_temp(ctx, seed);
+    return !eval_should_stop(ctx);
+}
+
 static bool file_remove_leaf(const char *path, bool is_dir) {
     if (!path) return false;
 #if defined(_WIN32)
@@ -625,27 +770,10 @@ static bool handle_file_real_path(Evaluator_Context *ctx, const Node *node, SV_L
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, input, base_dir, &path)) return true;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
-
-#if defined(_WIN32)
-    char full[MAX_PATH];
-    DWORD n = GetFullPathNameA(path_c, MAX_PATH, full, NULL);
-    if (n == 0 || n >= MAX_PATH) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(REAL_PATH) failed"), path);
-        return true;
-    }
-    (void)eval_var_set(ctx, args.items[2], nob_sv_from_cstr(full));
-#else
-    char real_buf[PATH_MAX];
-    if (realpath(path_c, real_buf)) {
-        (void)eval_var_set(ctx, args.items[2], nob_sv_from_cstr(real_buf));
-    } else {
-        // Pragmatic fallback when path does not exist yet.
-        (void)eval_var_set(ctx, args.items[2], eval_file_cmk_path_normalize_temp(ctx, path));
-    }
-#endif
+    bool cmp0152_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0152")), "NEW");
+    String_View resolved = nob_sv_from_cstr("");
+    if (!file_real_path_resolve_temp(ctx, path, cmp0152_new, &resolved)) return true;
+    (void)eval_var_set(ctx, args.items[2], resolved);
     return true;
 }
 

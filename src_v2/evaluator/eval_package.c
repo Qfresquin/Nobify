@@ -210,6 +210,9 @@ static void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
     if (!ctx || pkg.count == 0 || !items || !io_count) return;
     if (no_default_path || no_package_root_path) return;
 
+    // CMP0074 controls whether find_package() honors <Pkg>_ROOT variables.
+    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0074")), "NEW")) return;
+
     String_View names[16] = {0};
     size_t name_count = 0;
     SV_List name_items = {0};

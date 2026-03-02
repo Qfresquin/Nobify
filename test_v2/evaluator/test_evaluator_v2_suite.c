@@ -116,6 +116,38 @@ static bool evaluator_prepare_symlink_escape_fixture(void) {
 #endif
 }
 
+static bool evaluator_create_directory_link_like(const char *link_path, const char *target_path) {
+    if (!link_path || !target_path) return false;
+    if (!evaluator_remove_link_like_path(link_path)) return false;
+
+#if defined(_WIN32)
+    char link_win[512] = {0};
+    char target_win[512] = {0};
+    int link_n = snprintf(link_win, sizeof(link_win), "%s", link_path);
+    int target_n = snprintf(target_win, sizeof(target_win), "%s", target_path);
+    if (link_n < 0 || link_n >= (int)sizeof(link_win) ||
+        target_n < 0 || target_n >= (int)sizeof(target_win)) {
+        return false;
+    }
+    for (size_t i = 0; link_win[i] != '\0'; i++) if (link_win[i] == '/') link_win[i] = '\\';
+    for (size_t i = 0; target_win[i] != '\0'; i++) if (target_win[i] == '/') target_win[i] = '\\';
+
+    DWORD flags = SYMBOLIC_LINK_FLAG_DIRECTORY;
+    if (CreateSymbolicLinkA(link_win, target_win, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
+        return true;
+    }
+    if (CreateSymbolicLinkA(link_win, target_win, flags) != 0) return true;
+
+    char cmd[1200] = {0};
+    int n = snprintf(cmd, sizeof(cmd), "cmd /C mklink /J %s %s >NUL 2>NUL", link_win, target_win);
+    if (n < 0 || n >= (int)sizeof(cmd)) return false;
+    return system(cmd) == 0;
+#else
+    if (symlink(target_path, link_path) == 0) return true;
+    return errno == EEXIST;
+#endif
+}
+
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
     if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
@@ -3426,6 +3458,98 @@ TEST(evaluator_find_package_auto_prefers_config_when_requested) {
     TEST_PASS();
 }
 
+TEST(evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY fp_cmp0074_old_root)\n"
+        "file(MAKE_DIRECTORY fp_cmp0074_old_prefix)\n"
+        "file(WRITE fp_cmp0074_old_root/Cmp0074OldConfig.cmake [=[set(Cmp0074Old_FOUND 1)\n"
+        "set(Cmp0074Old_FROM root)\n"
+        "]=])\n"
+        "file(WRITE fp_cmp0074_old_prefix/Cmp0074OldConfig.cmake [=[set(Cmp0074Old_FOUND 1)\n"
+        "set(Cmp0074Old_FROM prefix)\n"
+        "]=])\n"
+        "set(Cmp0074Old_ROOT fp_cmp0074_old_root)\n"
+        "set(CMAKE_PREFIX_PATH fp_cmp0074_old_prefix)\n"
+        "cmake_policy(SET CMP0074 OLD)\n"
+        "find_package(Cmp0074Old CONFIG QUIET)\n"
+        "file(MAKE_DIRECTORY fp_cmp0074_new_root)\n"
+        "file(MAKE_DIRECTORY fp_cmp0074_new_prefix)\n"
+        "file(WRITE fp_cmp0074_new_root/Cmp0074NewConfig.cmake [=[set(Cmp0074New_FOUND 1)\n"
+        "set(Cmp0074New_FROM root)\n"
+        "]=])\n"
+        "file(WRITE fp_cmp0074_new_prefix/Cmp0074NewConfig.cmake [=[set(Cmp0074New_FOUND 1)\n"
+        "set(Cmp0074New_FROM prefix)\n"
+        "]=])\n"
+        "set(Cmp0074New_ROOT fp_cmp0074_new_root)\n"
+        "set(CMAKE_PREFIX_PATH fp_cmp0074_new_prefix)\n"
+        "cmake_policy(SET CMP0074 NEW)\n"
+        "find_package(Cmp0074New CONFIG QUIET)\n"
+        "add_executable(fp_cmp0074_probe main.c)\n"
+        "target_compile_definitions(fp_cmp0074_probe PRIVATE OLD_FROM=${Cmp0074Old_FROM} NEW_FROM=${Cmp0074New_FROM})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_old_location = false;
+    bool saw_new_location = false;
+    bool saw_old_from_prefix = false;
+    bool saw_new_from_root = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_FIND_PACKAGE &&
+            nob_sv_eq(ev->as.find_package.package_name, nob_sv_from_cstr("Cmp0074Old"))) {
+            saw_old_location =
+                nob_sv_eq(ev->as.find_package.location, nob_sv_from_cstr("./fp_cmp0074_old_prefix/Cmp0074OldConfig.cmake"));
+        }
+        if (ev->kind == EV_FIND_PACKAGE &&
+            nob_sv_eq(ev->as.find_package.package_name, nob_sv_from_cstr("Cmp0074New"))) {
+            saw_new_location =
+                nob_sv_eq(ev->as.find_package.location, nob_sv_from_cstr("./fp_cmp0074_new_root/Cmp0074NewConfig.cmake"));
+        }
+        if (ev->kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("fp_cmp0074_probe"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OLD_FROM=prefix"))) {
+                saw_old_from_prefix = true;
+            }
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("NEW_FROM=root"))) {
+                saw_new_from_root = true;
+            }
+        }
+    }
+
+    ASSERT(saw_old_location);
+    ASSERT(saw_new_location);
+    ASSERT(saw_old_from_prefix);
+    ASSERT(saw_new_from_root);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_project_full_signature_and_variable_surface) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -4222,6 +4346,84 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_real_path_cmp0152_old_and_new) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("cmp0152_real_target"));
+    ASSERT(nob_mkdir_if_not_exists("cmp0152_real_target/child"));
+    ASSERT(nob_write_entire_file("cmp0152_real_target/cmp0152_result.txt", "target\n", 7));
+    ASSERT(nob_write_entire_file("cmp0152_result.txt", "cwd\n", 4));
+    ASSERT(evaluator_create_directory_link_like("cmp0152_real_link", "cmp0152_real_target/child"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(SET CMP0152 OLD)\n"
+        "file(REAL_PATH cmp0152_real_link/../cmp0152_result.txt OUT_OLD)\n"
+        "cmake_policy(SET CMP0152 NEW)\n"
+        "file(REAL_PATH cmp0152_real_link/../cmp0152_result.txt OUT_NEW)\n"
+        "add_executable(real_path_policy_probe main.c)\n"
+        "target_compile_definitions(real_path_policy_probe PRIVATE OLD=${OUT_OLD} NEW=${OUT_NEW})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+
+    char old_path[1024] = {0};
+    char new_path[1024] = {0};
+    int old_n = snprintf(old_path, sizeof(old_path), "%s/cmp0152_result.txt", cwd);
+    int new_n = snprintf(new_path, sizeof(new_path), "%s/cmp0152_real_target/cmp0152_result.txt", cwd);
+    ASSERT(old_n > 0 && old_n < (int)sizeof(old_path));
+    ASSERT(new_n > 0 && new_n < (int)sizeof(new_path));
+    for (size_t i = 0; old_path[i] != '\0'; i++) if (old_path[i] == '\\') old_path[i] = '/';
+    for (size_t i = 0; new_path[i] != '\0'; i++) if (new_path[i] == '\\') new_path[i] = '/';
+
+    char old_item[1200] = {0};
+    char new_item[1200] = {0};
+    int old_item_n = snprintf(old_item, sizeof(old_item), "OLD=%s", old_path);
+    int new_item_n = snprintf(new_item, sizeof(new_item), "NEW=%s", new_path);
+    ASSERT(old_item_n > 0 && old_item_n < (int)sizeof(old_item));
+    ASSERT(new_item_n > 0 && new_item_n < (int)sizeof(new_item));
+
+    bool saw_old = false;
+    bool saw_new = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("real_path_policy_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr(old_item))) saw_old = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr(new_item))) saw_new = true;
+    }
+
+    ASSERT(saw_old);
+    ASSERT(saw_new);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -4611,6 +4813,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
     test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);
     test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed);
+    test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed);
     test_evaluator_project_full_signature_and_variable_surface(passed, failed);
     test_evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg(passed, failed);
     test_evaluator_project_rejects_invalid_signature_forms(passed, failed);
@@ -4620,6 +4823,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
+    test_evaluator_file_real_path_cmp0152_old_and_new(passed, failed);
     test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed);
     test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed);
     test_evaluator_file_download_probe_mode_without_destination(passed, failed);

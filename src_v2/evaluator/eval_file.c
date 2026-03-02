@@ -565,6 +565,20 @@ String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_Vie
     return nob_sv_from_cstr(buf);
 }
 
+bool eval_file_canonicalize_existing_path_temp(Evaluator_Context *ctx, String_View path, String_View *out_path) {
+    if (!ctx || !out_path || path.count == 0) return false;
+    *out_path = nob_sv_from_cstr("");
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    scope_normalize_slashes_in_place(path_c);
+
+    char *canon = NULL;
+    if (!scope_canonicalize_existing_cstr_temp(ctx, path_c, &canon)) return false;
+    *out_path = nob_sv_from_cstr(canon);
+    return true;
+}
+
 static size_t mkdir_root_prefix_len(const char *path) {
     if (!path) return 0;
     size_t len = strlen(path);
