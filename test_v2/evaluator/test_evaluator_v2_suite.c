@@ -3638,6 +3638,241 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
     TEST_PASS();
 }
 
+TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(real STATIC real.c)\n"
+        "add_library(alias_real ALIAS real)\n"
+        "add_executable(app app.c)\n"
+        "target_sources(real PRIVATE priv.c PUBLIC pub.h INTERFACE iface.h)\n"
+        "target_compile_features(real PRIVATE cxx_std_20 PUBLIC cxx_std_17 INTERFACE c_std_11)\n"
+        "target_precompile_headers(real PRIVATE pch.h PUBLIC pch_pub.h INTERFACE <vector>)\n"
+        "target_precompile_headers(app REUSE_FROM real)\n"
+        "target_sources(real bad.c another.c)\n"
+        "target_sources(real FILE_SET HEADERS FILES bad.h)\n"
+        "target_compile_features(alias_real PRIVATE bad_feature)\n"
+        "target_precompile_headers(missing_pch PRIVATE missing.h)\n"
+        "target_sources(missing_src PRIVATE bad.c)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 5);
+
+    bool saw_priv_source = false;
+    bool saw_pub_source = false;
+    bool saw_iface_prop = false;
+    bool saw_compile_feature_local = false;
+    bool saw_compile_feature_iface = false;
+    bool saw_pch_local = false;
+    bool saw_pch_iface = false;
+    bool saw_reuse_from = false;
+    bool saw_reuse_dep = false;
+    bool saw_visibility_error = false;
+    bool saw_file_set_error = false;
+    bool saw_alias_error = false;
+    bool saw_missing_pch_error = false;
+    bool saw_missing_src_error = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_TARGET_ADD_SOURCE &&
+            nob_sv_eq(ev->as.target_add_source.target_name, nob_sv_from_cstr("real"))) {
+            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("priv.c"))) saw_priv_source = true;
+            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("pub.h"))) saw_pub_source = true;
+            ASSERT(!sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("iface.h")));
+        } else if (ev->kind == EV_TARGET_PROP_SET &&
+                   nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("real"))) {
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_SOURCES")) &&
+                sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("iface.h"))) {
+                saw_iface_prop = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("COMPILE_FEATURES")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("cxx_std_20"))) {
+                saw_compile_feature_local = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("c_std_11"))) {
+                saw_compile_feature_iface = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("PRECOMPILE_HEADERS")) &&
+                sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("pch.h"))) {
+                saw_pch_local = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS")) &&
+                (sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("vector")) ||
+                 sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("pch_pub.h")))) {
+                saw_pch_iface = true;
+            }
+        } else if (ev->kind == EV_TARGET_PROP_SET &&
+                   nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("app")) &&
+                   nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM")) &&
+                   nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("real"))) {
+            saw_reuse_from = true;
+        } else if (ev->kind == EV_TARGET_ADD_DEPENDENCY &&
+                   nob_sv_eq(ev->as.target_add_dependency.target_name, nob_sv_from_cstr("app")) &&
+                   nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("real"))) {
+            saw_reuse_dep = true;
+        } else if (ev->kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause,
+                          nob_sv_from_cstr("target command requires PUBLIC, PRIVATE or INTERFACE before items"))) {
+                saw_visibility_error = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("target_sources(FILE_SET ...) is not implemented yet"))) {
+                saw_file_set_error = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("target_compile_features() cannot be used on ALIAS targets"))) {
+                saw_alias_error = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("target_precompile_headers() target was not declared"))) {
+                saw_missing_pch_error = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("target_sources() target was not declared"))) {
+                saw_missing_src_error = true;
+            }
+        }
+    }
+
+    ASSERT(saw_priv_source);
+    ASSERT(saw_pub_source);
+    ASSERT(saw_iface_prop);
+    ASSERT(saw_compile_feature_local);
+    ASSERT(saw_compile_feature_iface);
+    ASSERT(saw_pch_local);
+    ASSERT(saw_pch_iface);
+    ASSERT(saw_reuse_from);
+    ASSERT(saw_reuse_dep);
+    ASSERT(saw_visibility_error);
+    ASSERT(saw_file_set_error);
+    ASSERT(saw_alias_error);
+    ASSERT(saw_missing_pch_error);
+    ASSERT(saw_missing_src_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_source_group_supports_files_tree_and_regex_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "source_group(\"Root Files\" FILES main.c util.c REGULAR_EXPRESSION [=[.*\\.(c|h)$]=])\n"
+        "source_group(TREE src PREFIX Generated FILES src/a.c src/sub/b.c)\n"
+        "source_group(Texts [=[.*\\.txt$]=])\n"
+        "source_group(TREE src FILES ../outside.c)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_main_group = false;
+    bool saw_util_group = false;
+    bool saw_tree_root = false;
+    bool saw_tree_sub = false;
+    bool saw_c_regex = false;
+    bool saw_c_regex_name = false;
+    bool saw_txt_regex = false;
+    bool saw_txt_regex_name = false;
+    bool saw_tree_outside_error = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_VAR_SET) {
+            if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_FILE::")) &&
+                sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("main.c")) &&
+                nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("Root Files"))) {
+                saw_main_group = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_FILE::")) &&
+                       sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("util.c")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("Root Files"))) {
+                saw_util_group = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_FILE::")) &&
+                       sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("src/a.c")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("Generated"))) {
+                saw_tree_root = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_FILE::")) &&
+                       sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("src/sub/b.c")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("Generated\\sub"))) {
+                saw_tree_sub = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_REGEX::")) &&
+                       !sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("::NAME")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr(".*\\.(c|h)$"))) {
+                saw_c_regex = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_REGEX::")) &&
+                       sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("::NAME")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("Root Files"))) {
+                saw_c_regex_name = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_REGEX::")) &&
+                       !sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("::NAME")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr(".*\\.txt$"))) {
+                saw_txt_regex = true;
+            } else if (sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_REGEX::")) &&
+                       sv_contains_sv(ev->as.var_set.key, nob_sv_from_cstr("::NAME")) &&
+                       nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("Texts"))) {
+                saw_txt_regex_name = true;
+            }
+        } else if (ev->kind == EV_DIAGNOSTIC &&
+                   ev->as.diag.severity == EV_DIAG_ERROR &&
+                   nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("source_group(TREE ...) file is outside the declared tree root"))) {
+            saw_tree_outside_error = true;
+        }
+    }
+
+    ASSERT(saw_main_group);
+    ASSERT(saw_util_group);
+    ASSERT(saw_tree_root);
+    ASSERT(saw_tree_sub);
+    ASSERT(saw_c_regex);
+    ASSERT(saw_c_regex_name);
+    ASSERT(saw_txt_regex);
+    ASSERT(saw_txt_regex_name);
+    ASSERT(saw_tree_outside_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_message_mode_severity_mapping) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5903,6 +6138,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
     test_evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode(passed, failed);
     test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
+    test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
+    test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);

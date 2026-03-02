@@ -47,6 +47,198 @@ static bool emit_target_dependency(Evaluator_Context *ctx,
     return emit_event(ctx, ev);
 }
 
+static bool emit_target_add_source(Evaluator_Context *ctx,
+                                   Cmake_Event_Origin o,
+                                   String_View target_name,
+                                   String_View path) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_TARGET_ADD_SOURCE;
+    ev.origin = o;
+    ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+
+static bool target_usage_validate_target(Evaluator_Context *ctx,
+                                         const Node *node,
+                                         String_View target_name) {
+    if (!ctx || !node) return false;
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    char *cmd_c = eval_sv_to_cstr_temp(ctx, node->as.cmd.name);
+    EVAL_OOM_RETURN_IF_NULL(ctx, cmd_c, false);
+
+    if (!eval_target_known(ctx, target_name)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr(nob_temp_sprintf("%s() target was not declared", cmd_c)),
+                       target_name);
+        return false;
+    }
+    if (eval_target_alias_known(ctx, target_name)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr(nob_temp_sprintf("%s() cannot be used on ALIAS targets", cmd_c)),
+                       target_name);
+        return false;
+    }
+    return true;
+}
+
+static bool target_usage_parse_visibility(String_View tok, Cmake_Visibility *io_vis) {
+    if (!io_vis) return false;
+    if (eval_sv_eq_ci_lit(tok, "PRIVATE")) {
+        *io_vis = EV_VISIBILITY_PRIVATE;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(tok, "PUBLIC")) {
+        *io_vis = EV_VISIBILITY_PUBLIC;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(tok, "INTERFACE")) {
+        *io_vis = EV_VISIBILITY_INTERFACE;
+        return true;
+    }
+    return false;
+}
+
+static bool target_usage_require_visibility(Evaluator_Context *ctx,
+                                            const Node *node) {
+    if (!ctx || !node) return false;
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    eval_emit_diag(ctx,
+                   EV_DIAG_ERROR,
+                   nob_sv_from_cstr("dispatcher"),
+                   node->as.cmd.name,
+                   o,
+                   nob_sv_from_cstr("target command requires PUBLIC, PRIVATE or INTERFACE before items"),
+                   nob_sv_from_cstr("Start each item group with PUBLIC, PRIVATE or INTERFACE"));
+    return false;
+}
+
+static bool source_group_emit_assignment(Evaluator_Context *ctx,
+                                         Cmake_Event_Origin o,
+                                         String_View file_path,
+                                         String_View group_name) {
+    if (!ctx) return false;
+    String_View key_parts[3] = {
+        nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_FILE::"),
+        file_path,
+        nob_sv_from_cstr("")
+    };
+    String_View key = svu_join_no_sep_temp(ctx, key_parts, 3);
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_var_set(ctx, key, group_name)) return false;
+    return emit_var_set(ctx, o, key, group_name);
+}
+
+static String_View source_group_dirname(String_View path) {
+    if (path.count == 0) return nob_sv_from_cstr("");
+    for (size_t i = path.count; i > 0; i--) {
+        if (!svu_is_path_sep(path.data[i - 1])) continue;
+        if (i == 1) return nob_sv_from_cstr("");
+        return nob_sv_from_parts(path.data, i - 1);
+    }
+    return nob_sv_from_cstr("");
+}
+
+static bool source_group_path_relative_to_root(Evaluator_Context *ctx,
+                                               String_View root,
+                                               String_View file_path,
+                                               String_View *out_relative) {
+    if (!out_relative) return false;
+    *out_relative = nob_sv_from_cstr("");
+    if (!ctx) return false;
+
+    String_View root_norm = eval_sv_path_normalize_temp(ctx, root);
+    if (eval_should_stop(ctx)) return false;
+    String_View file_norm = eval_sv_path_normalize_temp(ctx, file_path);
+    if (eval_should_stop(ctx)) return false;
+
+    if (file_norm.count < root_norm.count) return false;
+    if (root_norm.count > 0 && !svu_eq_ci_sv(nob_sv_from_parts(file_norm.data, root_norm.count), root_norm)) {
+        return false;
+    }
+    if (file_norm.count == root_norm.count) {
+        *out_relative = nob_sv_from_cstr("");
+        return true;
+    }
+    if (!svu_is_path_sep(file_norm.data[root_norm.count])) return false;
+    *out_relative = nob_sv_from_parts(file_norm.data + root_norm.count + 1,
+                                      file_norm.count - root_norm.count - 1);
+    return true;
+}
+
+static String_View source_group_join_tree_name_temp(Evaluator_Context *ctx,
+                                                    String_View prefix,
+                                                    String_View relative_dir) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (prefix.count == 0 && relative_dir.count == 0) return nob_sv_from_cstr("");
+    if (relative_dir.count == 0) return prefix;
+    if (prefix.count == 0) return relative_dir;
+
+    size_t total = prefix.count + 1 + relative_dir.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix.data, prefix.count);
+    off += prefix.count;
+    buf[off++] = '\\';
+    memcpy(buf + off, relative_dir.data, relative_dir.count);
+    off += relative_dir.count;
+    buf[off] = '\0';
+
+    for (size_t i = 0; i < off; i++) {
+        if (svu_is_path_sep(buf[i])) buf[i] = '\\';
+    }
+
+    return nob_sv_from_parts(buf, off);
+}
+
+static String_View target_pch_item_normalize_temp(Evaluator_Context *ctx, String_View item) {
+    if (!ctx) return item;
+    if (item.count == 0) return item;
+    if (item.count >= 2 && item.data[0] == '$' && item.data[1] == '<') return item;
+    if (item.data[0] == '<' && item.data[item.count - 1] == '>') return item;
+    return eval_path_resolve_for_cmake_arg(ctx, item, eval_current_source_dir_for_paths(ctx), true);
+}
+
+static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
+                                         Cmake_Event_Origin o,
+                                         String_View group_name,
+                                         String_View regex_value) {
+    if (!ctx) return false;
+    String_View line_sv = nob_sv_from_cstr(nob_temp_sprintf("%zu", o.line));
+    String_View col_sv = nob_sv_from_cstr(nob_temp_sprintf("%zu", o.col));
+    String_View key_parts[5] = {
+        nob_sv_from_cstr("NOBIFY_SOURCE_GROUP_REGEX::"),
+        line_sv,
+        nob_sv_from_cstr(":"),
+        col_sv,
+        nob_sv_from_cstr("")
+    };
+    String_View key = svu_join_no_sep_temp(ctx, key_parts, 5);
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_var_set(ctx, key, regex_value)) return false;
+    if (!emit_var_set(ctx, o, key, regex_value)) return false;
+
+    String_View name_key_parts[3] = {
+        key,
+        nob_sv_from_cstr("::NAME"),
+        nob_sv_from_cstr("")
+    };
+    String_View name_key = svu_join_no_sep_temp(ctx, name_key_parts, 3);
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_var_set(ctx, name_key, group_name)) return false;
+    return emit_var_set(ctx, o, name_key, group_name);
+}
+
 static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
                                                          String_View item,
                                                          String_View cond_prefix) {
@@ -1488,6 +1680,7 @@ bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node)
     if (eval_should_stop(ctx) || a.count < 2) return !eval_should_stop(ctx);
 
     String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     String_View qualifier = nob_sv_from_cstr("");
 
@@ -1561,6 +1754,7 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_before = false;
     for (size_t i = 1; i < a.count; i++) {
@@ -1611,6 +1805,7 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
     }
 
     String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
     for (size_t i = 1; i < a.count; i++) {
@@ -1658,6 +1853,7 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
     }
 
     String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_system = false;
     bool is_before = false;
@@ -1722,6 +1918,7 @@ bool eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *
     }
 
     String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
@@ -1768,6 +1965,7 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
     }
 
     String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_before = false;
     for (size_t i = 1; i < a.count; i++) {
@@ -1797,6 +1995,370 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
         ev.as.target_compile_options.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("target_sources() requires target, visibility and items"),
+                       nob_sv_from_cstr("Usage: target_sources(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
+
+    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    String_View cur_src = eval_current_source_dir_for_paths(ctx);
+    for (size_t i = 1; i < a.count; i++) {
+        if (target_usage_parse_visibility(a.items[i], &vis)) continue;
+        if (eval_sv_eq_ci_lit(a.items[i], "FILE_SET")) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("target_sources(FILE_SET ...) is not implemented yet"),
+                           nob_sv_from_cstr("Supported in this batch: source item groups with PRIVATE, PUBLIC and INTERFACE"));
+            return !eval_should_stop(ctx);
+        }
+        if (vis == EV_VISIBILITY_UNSPECIFIED) {
+            (void)target_usage_require_visibility(ctx, node);
+            return !eval_should_stop(ctx);
+        }
+
+        String_View item = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+        if (vis != EV_VISIBILITY_INTERFACE) {
+            if (!emit_target_add_source(ctx, o, tgt, item)) return !eval_should_stop(ctx);
+        }
+        if (vis != EV_VISIBILITY_PRIVATE) {
+            if (!emit_target_prop_set(ctx,
+                                      o,
+                                      tgt,
+                                      nob_sv_from_cstr("INTERFACE_SOURCES"),
+                                      item,
+                                      EV_PROP_APPEND_LIST)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("target_compile_features() requires target, visibility and features"),
+                       nob_sv_from_cstr("Usage: target_compile_features(<tgt> <PUBLIC|PRIVATE|INTERFACE> <features...>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
+
+    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    for (size_t i = 1; i < a.count; i++) {
+        if (target_usage_parse_visibility(a.items[i], &vis)) continue;
+        if (vis == EV_VISIBILITY_UNSPECIFIED) {
+            (void)target_usage_require_visibility(ctx, node);
+            return !eval_should_stop(ctx);
+        }
+        if (a.items[i].count == 0) continue;
+
+        if (vis != EV_VISIBILITY_INTERFACE) {
+            if (!emit_target_prop_set(ctx,
+                                      o,
+                                      tgt,
+                                      nob_sv_from_cstr("COMPILE_FEATURES"),
+                                      a.items[i],
+                                      EV_PROP_APPEND_LIST)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+        if (vis != EV_VISIBILITY_PRIVATE) {
+            if (!emit_target_prop_set(ctx,
+                                      o,
+                                      tgt,
+                                      nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
+                                      a.items[i],
+                                      EV_PROP_APPEND_LIST)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("target_precompile_headers() requires target and arguments"),
+                       nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> <PUBLIC|PRIVATE|INTERFACE> <headers...>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View tgt = a.items[0];
+    if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
+
+    if (eval_sv_eq_ci_lit(a.items[1], "REUSE_FROM")) {
+        if (a.count != 3) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("target_precompile_headers(REUSE_FROM) expects exactly one donor target"),
+                           nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> REUSE_FROM <other-target>)"));
+            return !eval_should_stop(ctx);
+        }
+        if (!target_usage_validate_target(ctx, node, a.items[2])) return !eval_should_stop(ctx);
+        if (!emit_target_prop_set(ctx,
+                                  o,
+                                  tgt,
+                                  nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"),
+                                  a.items[2],
+                                  EV_PROP_SET)) {
+            return !eval_should_stop(ctx);
+        }
+        if (!eval_sv_key_eq(tgt, a.items[2])) {
+            if (!emit_target_dependency(ctx, o, tgt, a.items[2])) return !eval_should_stop(ctx);
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
+    for (size_t i = 1; i < a.count; i++) {
+        if (target_usage_parse_visibility(a.items[i], &vis)) continue;
+        if (vis == EV_VISIBILITY_UNSPECIFIED) {
+            (void)target_usage_require_visibility(ctx, node);
+            return !eval_should_stop(ctx);
+        }
+
+        String_View item = target_pch_item_normalize_temp(ctx, a.items[i]);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (item.count == 0) continue;
+
+        if (vis != EV_VISIBILITY_INTERFACE) {
+            if (!emit_target_prop_set(ctx,
+                                      o,
+                                      tgt,
+                                      nob_sv_from_cstr("PRECOMPILE_HEADERS"),
+                                      item,
+                                      EV_PROP_APPEND_LIST)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+        if (vis != EV_VISIBILITY_PRIVATE) {
+            if (!emit_target_prop_set(ctx,
+                                      o,
+                                      tgt,
+                                      nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"),
+                                      item,
+                                      EV_PROP_APPEND_LIST)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("source_group() requires a group descriptor and mapping input"),
+                       nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...]) or source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View cur_src = eval_current_source_dir_for_paths(ctx);
+    if (eval_sv_eq_ci_lit(a.items[0], "TREE")) {
+        if (a.count < 4) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("source_group(TREE ...) requires root and FILES list"),
+                           nob_sv_from_cstr("Usage: source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
+            return !eval_should_stop(ctx);
+        }
+
+        String_View root = eval_path_resolve_for_cmake_arg(ctx, a.items[1], cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        String_View prefix = nob_sv_from_cstr("");
+        size_t files_index = 2;
+        if (files_index < a.count && eval_sv_eq_ci_lit(a.items[files_index], "PREFIX")) {
+            if (files_index + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("source_group(TREE ... PREFIX) requires a value"),
+                               nob_sv_from_cstr("Usage: source_group(TREE <root> PREFIX <prefix> FILES <src>...)"));
+                return !eval_should_stop(ctx);
+            }
+            prefix = a.items[files_index + 1];
+            files_index += 2;
+        }
+        if (files_index >= a.count || !eval_sv_eq_ci_lit(a.items[files_index], "FILES") || files_index + 1 >= a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("source_group(TREE ...) requires FILES followed by at least one source"),
+                           nob_sv_from_cstr("Usage: source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
+            return !eval_should_stop(ctx);
+        }
+
+        for (size_t i = files_index + 1; i < a.count; i++) {
+            String_View file_path = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            String_View relative = nob_sv_from_cstr("");
+            if (!source_group_path_relative_to_root(ctx, root, file_path, &relative)) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("source_group(TREE ...) file is outside the declared tree root"),
+                               file_path);
+                return !eval_should_stop(ctx);
+            }
+            String_View group_name = source_group_join_tree_name_temp(ctx, prefix, source_group_dirname(relative));
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (!source_group_emit_assignment(ctx, o, file_path, group_name)) return !eval_should_stop(ctx);
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    String_View group_name = a.items[0];
+    bool have_files = false;
+    bool have_regex = false;
+    String_View regex_value = nob_sv_from_cstr("");
+    SV_List files = {0};
+
+    if (a.count == 2 &&
+        !eval_sv_eq_ci_lit(a.items[1], "FILES") &&
+        !eval_sv_eq_ci_lit(a.items[1], "REGULAR_EXPRESSION")) {
+        have_regex = true;
+        regex_value = a.items[1];
+    } else {
+        size_t i = 1;
+        while (i < a.count) {
+            if (eval_sv_eq_ci_lit(a.items[i], "FILES")) {
+                i++;
+                if (i >= a.count || eval_sv_eq_ci_lit(a.items[i], "REGULAR_EXPRESSION")) {
+                    eval_emit_diag(ctx,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("dispatcher"),
+                                   node->as.cmd.name,
+                                   o,
+                                   nob_sv_from_cstr("source_group(FILES) requires at least one source"),
+                                   nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
+                    return !eval_should_stop(ctx);
+                }
+                while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "REGULAR_EXPRESSION")) {
+                    if (!svu_list_push_temp(ctx, &files, a.items[i])) return !eval_should_stop(ctx);
+                    i++;
+                }
+                have_files = files.count > 0;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "REGULAR_EXPRESSION")) {
+                if (have_regex || i + 1 >= a.count) {
+                    eval_emit_diag(ctx,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("dispatcher"),
+                                   node->as.cmd.name,
+                                   o,
+                                   nob_sv_from_cstr("source_group(REGULAR_EXPRESSION) requires exactly one regex"),
+                                   nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
+                    return !eval_should_stop(ctx);
+                }
+                have_regex = true;
+                regex_value = a.items[i + 1];
+                i += 2;
+                continue;
+            }
+
+            if (have_files) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("source_group() received unexpected argument"),
+                               a.items[i]);
+                return !eval_should_stop(ctx);
+            }
+
+            if (!svu_list_push_temp(ctx, &files, a.items[i])) return !eval_should_stop(ctx);
+            have_files = files.count > 0;
+            i++;
+        }
+    }
+
+    if (!have_files && !have_regex) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("source_group() requires source files and/or a regular expression"),
+                       nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (have_regex) {
+        if (!source_group_emit_regex_rule(ctx, o, group_name, regex_value)) return !eval_should_stop(ctx);
+    }
+
+    for (size_t i = 0; i < files.count; i++) {
+        String_View file_path = eval_path_resolve_for_cmake_arg(ctx, files.items[i], cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (!source_group_emit_assignment(ctx, o, file_path, group_name)) return !eval_should_stop(ctx);
+    }
+
     return !eval_should_stop(ctx);
 }
 

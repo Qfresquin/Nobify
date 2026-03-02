@@ -24,9 +24,9 @@ Status snapshot sources:
 
 ## Scope note
 
-- This matrix is authoritative for the `72` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
+- This matrix is authoritative for the `76` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
 - It does not by itself represent the entire CMake command universe.
-- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `84` are currently implemented (`72` registry-backed + `12` structural parser/evaluator commands) and `47` remain missing.
+- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `88` are currently implemented (`76` registry-backed + `12` structural parser/evaluator commands) and `43` remain missing.
 - Structural language commands such as `if()`/`foreach()`/`while()`/`function()`/`macro()` are implemented outside the dispatcher and are audited in the full report, not in this registry-backed matrix.
 
 ## 1. Command-Level Matrix (Authoritative)
@@ -96,13 +96,17 @@ Status snapshot sources:
 | `set_source_files_properties` | `FULL` | `NOOP_WARN` | The documented bulk source-file-property wrapper is implemented for current-file, `DIRECTORY`, and `TARGET_DIRECTORY` forms by routing into the shared source-property backend. | - |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `set_tests_properties` | `FULL` | `NOOP_WARN` | The documented bulk test-property wrapper is implemented for current-directory and explicit `DIRECTORY` forms by routing into the shared test-property backend with existing scope validation. | - |
+| `source_group` | `PARTIAL` | `NOOP_WARN` | The evaluator models documented `FILES`, `REGULAR_EXPRESSION`, shorthand regex, and `TREE ... PREFIX ... FILES` signatures by recording deterministic source-group metadata in evaluator variables/events, but it does not project those groups into downstream generator backends. | `Medium` |
 | `string` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented string command surface, including full hash family (`MD5/SHA1/SHA224/SHA256/SHA384/SHA512/SHA3_*`), `REPEAT`, and `JSON` modes with `ERROR_VARIABLE`. | - |
+| `target_compile_features` | `PARTIAL` | `NOOP_WARN` | The documented scope parsing (`PRIVATE`/`PUBLIC`/`INTERFACE`) and target validation are implemented, and requested features are persisted in the evaluator property model. The broader CMake compiler-feature validation and transitive resolution surface is not modeled in this batch. | `Medium` |
 | `target_compile_definitions` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented normalization behavior (leading `-D` removal and empty-item ignore). | - |
 | `target_compile_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
 | `target_include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
 | `target_link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling in covered signature surface. | - |
 | `target_link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented item qualifiers (`debug optimized general`). | - |
 | `target_link_options` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature, including `[BEFORE]`. | - |
+| `target_precompile_headers` | `PARTIAL` | `NOOP_WARN` | The evaluator models documented `PRIVATE`/`PUBLIC`/`INTERFACE` usage requirements plus `REUSE_FROM` target linkage in the property/event layer, but it does not perform compiler-specific precompiled-header generation or backend integration. | `Medium` |
+| `target_sources` | `PARTIAL` | `NOOP_WARN` | The evaluator models documented `PRIVATE`/`PUBLIC`/`INTERFACE` source attachment and interface-source publication, including target validation, but `FILE_SET` and the broader source-set/policy surface (such as `CMP0076` path semantics) are not implemented in this batch. | `Medium` |
 | `try_compile` | `FULL` | `NOOP_WARN` | Native evaluator-side `SOURCE`/`PROJECT` execution now performs real toolchain probes, publishes actual compile output, and records configure-log entries without relying on a simulated existence-only shortcut. | - |
 | `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
 
