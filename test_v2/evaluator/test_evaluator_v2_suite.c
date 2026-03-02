@@ -3376,6 +3376,99 @@ TEST(evaluator_set_and_unset_env_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "macro(parse_direct)\n"
+        "  cmake_parse_arguments(ARG \"OPT;FAST\" \"DEST\" \"TARGETS;CONFIGS\" ${ARGN})\n"
+        "  list(GET ARG_TARGETS 0 ARG_T0)\n"
+        "  list(GET ARG_TARGETS 1 ARG_T1)\n"
+        "endmacro()\n"
+        "function(parse_argv)\n"
+        "  cmake_parse_arguments(PARSE_ARGV 1 FN \"FLAG\" \"ONE\" \"MULTI;MULTI\")\n"
+        "  add_executable(parse_argv_t main.c)\n"
+        "  list(GET FN_MULTI 0 FN_M0)\n"
+        "  list(GET FN_MULTI 1 FN_M1)\n"
+        "  if(DEFINED FN_ONE)\n"
+        "    target_compile_definitions(parse_argv_t PRIVATE ONE_DEFINED=1)\n"
+        "  else()\n"
+        "    target_compile_definitions(parse_argv_t PRIVATE ONE_DEFINED=0)\n"
+        "  endif()\n"
+        "  target_compile_definitions(parse_argv_t PRIVATE FLAG=${FN_FLAG} M0=${FN_M0} M1=${FN_M1} UNPARSED=${FN_UNPARSED_ARGUMENTS})\n"
+        "endfunction()\n"
+        "parse_direct(OPT EXTRA DEST bin TARGETS a b CONFIGS)\n"
+        "parse_argv(skip FLAG TAIL ONE \"\" MULTI alpha beta)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 1);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_OPT")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_FAST")), nob_sv_from_cstr("FALSE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_DEST")), nob_sv_from_cstr("bin")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_TARGETS")), nob_sv_from_cstr("a;b")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_T0")), nob_sv_from_cstr("a")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_T1")), nob_sv_from_cstr("b")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_UNPARSED_ARGUMENTS")), nob_sv_from_cstr("EXTRA")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ARG_KEYWORDS_MISSING_VALUES")), nob_sv_from_cstr("CONFIGS")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("ARG_CONFIGS")).count == 0);
+
+    bool saw_dup_warn = false;
+    bool saw_flag = false;
+    bool saw_one_defined_old = false;
+    bool saw_m0 = false;
+    bool saw_m1 = false;
+    bool saw_unparsed = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_WARNING &&
+            nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("cmake_parse_arguments() keyword appears more than once across keyword lists"))) {
+            saw_dup_warn = true;
+        }
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("parse_argv_t"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("FLAG=TRUE"))) saw_flag = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ONE_DEFINED=0"))) saw_one_defined_old = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("M0=alpha"))) saw_m0 = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("M1=beta"))) saw_m1 = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("UNPARSED=TAIL"))) saw_unparsed = true;
+    }
+
+    ASSERT(saw_dup_warn);
+    ASSERT(saw_flag);
+    ASSERT(saw_one_defined_old);
+    ASSERT(saw_m0);
+    ASSERT(saw_m1);
+    ASSERT(saw_unparsed);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_unset_env_rejects_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5034,6 +5127,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);
     test_evaluator_message_configure_log_persists_yaml_file(passed, failed);
     test_evaluator_set_and_unset_env_forms(passed, failed);
+    test_evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms(passed, failed);
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);

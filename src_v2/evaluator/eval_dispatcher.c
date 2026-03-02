@@ -40,6 +40,7 @@ static const Command_Entry DISPATCH[] = {
     {"add_test", eval_handle_add_test},
     {"block", eval_handle_block},
     {"break", eval_handle_break},
+    {"cmake_parse_arguments", eval_handle_cmake_parse_arguments},
     {"cmake_minimum_required", eval_handle_cmake_minimum_required},
     {"cmake_language", eval_handle_cmake_language},
     {"cmake_path", eval_handle_cmake_path},

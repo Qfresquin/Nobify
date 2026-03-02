@@ -1,11 +1,486 @@
 #include "eval_vars.h"
 
 #include "evaluator_internal.h"
+#include "eval_expr.h"
+#include "arena_dyn.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include "stb_ds.h"
+
+typedef enum {
+    PARSE_KEYWORD_OPTION = 0,
+    PARSE_KEYWORD_ONE,
+    PARSE_KEYWORD_MULTI,
+} Parse_Keyword_Kind;
+
+typedef struct {
+    String_View name;
+    Parse_Keyword_Kind kind;
+    bool option_present;
+    bool one_defined;
+    String_View one_value;
+    bool multi_defined;
+    SV_List multi_values;
+} Parse_Keyword_Spec;
+
+static bool parse_sv_eq_exact(String_View a, String_View b) {
+    if (a.count != b.count) return false;
+    if (a.count == 0) return true;
+    return memcmp(a.data, b.data, a.count) == 0;
+}
+
+static bool parse_sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View item) {
+    if (!ctx || !list) return false;
+    if (!arena_da_try_append(eval_temp_arena(ctx), list, item)) return ctx_oom(ctx);
+    return true;
+}
+
+static bool parse_strip_bracket_arg(String_View in, String_View *out) {
+    if (!out) return false;
+    *out = in;
+    if (in.count < 4 || !in.data || in.data[0] != '[') return false;
+
+    size_t eq_count = 0;
+    size_t i = 1;
+    while (i < in.count && in.data[i] == '=') {
+        eq_count++;
+        i++;
+    }
+    if (i >= in.count || in.data[i] != '[') return false;
+    size_t open_len = i + 1;
+    if (in.count < open_len + 2 + eq_count) return false;
+
+    size_t close_pos = in.count - (eq_count + 2);
+    if (in.data[close_pos] != ']') return false;
+    for (size_t k = 0; k < eq_count; k++) {
+        if (in.data[close_pos + 1 + k] != '=') return false;
+    }
+    if (in.data[in.count - 1] != ']') return false;
+    if (close_pos < open_len) return false;
+
+    *out = nob_sv_from_parts(in.data + open_len, close_pos - open_len);
+    return true;
+}
+
+static String_View parse_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
+    if (!ctx || !arg || arg->count == 0) return nob_sv_from_cstr("");
+
+    size_t total = 0;
+    for (size_t i = 0; i < arg->count; i++) total += arg->items[i].text.count;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < arg->count; i++) {
+        String_View text = arg->items[i].text;
+        if (text.count > 0) {
+            memcpy(buf + off, text.data, text.count);
+            off += text.count;
+        }
+    }
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static String_View parse_eval_arg_single(Evaluator_Context *ctx, const Arg *arg) {
+    if (!ctx || !arg) return nob_sv_from_cstr("");
+
+    String_View flat = parse_arg_flat(ctx, arg);
+    String_View value = eval_expand_vars(ctx, flat);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+
+    if (arg->kind == ARG_QUOTED) {
+        if (value.count >= 2 && value.data[0] == '"' && value.data[value.count - 1] == '"') {
+            return nob_sv_from_parts(value.data + 1, value.count - 2);
+        }
+        return value;
+    }
+    if (arg->kind == ARG_BRACKET) {
+        String_View stripped = value;
+        (void)parse_strip_bracket_arg(value, &stripped);
+        return stripped;
+    }
+    return value;
+}
+
+static bool parse_resolve_arg_range(Evaluator_Context *ctx,
+                                    const Args *raw_args,
+                                    size_t begin,
+                                    SV_List *out) {
+    if (!ctx || !raw_args || !out) return false;
+    *out = (SV_List){0};
+
+    for (size_t i = begin; i < raw_args->count; i++) {
+        const Arg *arg = &raw_args->items[i];
+        String_View value = parse_eval_arg_single(ctx, arg);
+        if (eval_should_stop(ctx)) return false;
+
+        if (arg->kind == ARG_QUOTED || arg->kind == ARG_BRACKET) {
+            if (!parse_sv_list_push_temp(ctx, out, value)) return false;
+            continue;
+        }
+
+        if (value.count == 0) continue;
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), value, out)) {
+            return ctx_oom(ctx);
+        }
+    }
+
+    return true;
+}
+
+static bool parse_keyword_name_valid(String_View keyword) {
+    return keyword.count > 0;
+}
+
+static Parse_Keyword_Spec *parse_find_keyword(Parse_Keyword_Spec *specs, size_t count, String_View keyword) {
+    if (!specs || keyword.count == 0) return NULL;
+    for (size_t i = 0; i < count; i++) {
+        if (parse_sv_eq_exact(specs[i].name, keyword)) return &specs[i];
+    }
+    return NULL;
+}
+
+static bool parse_warn_duplicate_keyword(Evaluator_Context *ctx, const Node *node, String_View keyword) {
+    return eval_emit_diag(ctx,
+                          EV_DIAG_WARNING,
+                          nob_sv_from_cstr("cmake_parse_arguments"),
+                          node->as.cmd.name,
+                          eval_origin_from_node(ctx, node),
+                          nob_sv_from_cstr("cmake_parse_arguments() keyword appears more than once across keyword lists"),
+                          keyword);
+}
+
+static bool parse_add_keyword_list(Evaluator_Context *ctx,
+                                   const Node *node,
+                                   const Arg *arg,
+                                   Parse_Keyword_Kind kind,
+                                   Parse_Keyword_Spec *specs,
+                                   size_t *inout_count,
+                                   size_t max_count) {
+    if (!ctx || !node || !arg || !inout_count) return false;
+
+    String_View raw = parse_eval_arg_single(ctx, arg);
+    if (eval_should_stop(ctx)) return false;
+    if (raw.count == 0) return true;
+
+    SV_List items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw, &items)) return ctx_oom(ctx);
+
+    for (size_t i = 0; i < items.count; i++) {
+        String_View keyword = items.items[i];
+        if (!parse_keyword_name_valid(keyword)) continue;
+        if (parse_find_keyword(specs, *inout_count, keyword)) {
+            if (!parse_warn_duplicate_keyword(ctx, node, keyword)) return false;
+            continue;
+        }
+        if (*inout_count >= max_count) return ctx_oom(ctx);
+        specs[*inout_count].name = sv_copy_to_event_arena(ctx, keyword);
+        specs[*inout_count].kind = kind;
+        if (eval_should_stop(ctx)) return false;
+        (*inout_count)++;
+    }
+
+    return true;
+}
+
+static bool parse_nonnegative_index(Evaluator_Context *ctx, String_View token, size_t *out_value) {
+    if (!ctx || !out_value) return false;
+    *out_value = 0;
+    if (token.count == 0) return false;
+
+    char *buf = eval_sv_to_cstr_temp(ctx, token);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    char *end = NULL;
+    unsigned long long v = strtoull(buf, &end, 10);
+    if (!end || *end != '\0') return false;
+    *out_value = (size_t)v;
+    return true;
+}
+
+static bool parse_build_prefix_var_name(Evaluator_Context *ctx,
+                                        String_View prefix,
+                                        const char *suffix,
+                                        String_View *out_name) {
+    if (!ctx || !out_name || !suffix) return false;
+    size_t suffix_len = strlen(suffix);
+    size_t total = prefix.count + suffix_len;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    if (prefix.count > 0) memcpy(buf, prefix.data, prefix.count);
+    memcpy(buf + prefix.count, suffix, suffix_len);
+    buf[total] = '\0';
+    *out_name = nob_sv_from_parts(buf, total);
+    return true;
+}
+
+static bool parse_build_prefixed_var_name(Evaluator_Context *ctx,
+                                          String_View prefix,
+                                          String_View keyword,
+                                          String_View *out_name) {
+    if (!ctx || !out_name) return false;
+    size_t total = prefix.count + 1 + keyword.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    if (prefix.count > 0) memcpy(buf, prefix.data, prefix.count);
+    buf[prefix.count] = '_';
+    if (keyword.count > 0) memcpy(buf + prefix.count + 1, keyword.data, keyword.count);
+    buf[total] = '\0';
+    *out_name = nob_sv_from_parts(buf, total);
+    return true;
+}
+
+static bool parse_single_empty_value_defines_var(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    if (!eval_policy_is_known(nob_sv_from_cstr("CMP0174"))) return false;
+    return eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0174")), "NEW");
+}
+
+static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start_index, SV_List *out) {
+    if (!ctx || !out) return false;
+    *out = (SV_List){0};
+
+    String_View argc_sv = eval_var_get(ctx, nob_sv_from_cstr("ARGC"));
+    size_t argc = 0;
+    if (!parse_nonnegative_index(ctx, argc_sv, &argc)) return false;
+
+    for (size_t i = start_index; i < argc; i++) {
+        char key_buf[64];
+        int n = snprintf(key_buf, sizeof(key_buf), "ARGV%zu", i);
+        if (n <= 0 || (size_t)n >= sizeof(key_buf)) return ctx_oom(ctx);
+        if (!parse_sv_list_push_temp(ctx, out, eval_var_get(ctx, nob_sv_from_cstr(key_buf)))) return false;
+    }
+
+    return true;
+}
+
+static bool parse_assign_results(Evaluator_Context *ctx,
+                                 String_View prefix,
+                                 Parse_Keyword_Spec *specs,
+                                 size_t spec_count,
+                                 const SV_List *unparsed,
+                                 const SV_List *missing) {
+    if (!ctx) return false;
+
+    for (size_t i = 0; i < spec_count; i++) {
+        String_View var = {0};
+        if (!parse_build_prefixed_var_name(ctx, prefix, specs[i].name, &var)) return false;
+
+        switch (specs[i].kind) {
+            case PARSE_KEYWORD_OPTION:
+                if (!eval_var_set(ctx, var, specs[i].option_present ? nob_sv_from_cstr("TRUE")
+                                                                    : nob_sv_from_cstr("FALSE"))) {
+                    return false;
+                }
+                break;
+            case PARSE_KEYWORD_ONE:
+                if (specs[i].one_defined) {
+                    if (!eval_var_set(ctx, var, specs[i].one_value)) return false;
+                } else {
+                    if (!eval_var_unset(ctx, var)) return false;
+                }
+                break;
+            case PARSE_KEYWORD_MULTI:
+                if (specs[i].multi_defined) {
+                    if (!eval_var_set(ctx,
+                                      var,
+                                      eval_sv_join_semi_temp(ctx, specs[i].multi_values.items, specs[i].multi_values.count))) {
+                        return false;
+                    }
+                } else {
+                    if (!eval_var_unset(ctx, var)) return false;
+                }
+                break;
+        }
+    }
+
+    String_View unparsed_var = {0};
+    if (!parse_build_prefix_var_name(ctx, prefix, "_UNPARSED_ARGUMENTS", &unparsed_var)) return false;
+    if (unparsed && unparsed->count > 0) {
+        if (!eval_var_set(ctx, unparsed_var, eval_sv_join_semi_temp(ctx, unparsed->items, unparsed->count))) return false;
+    } else {
+        if (!eval_var_unset(ctx, unparsed_var)) return false;
+    }
+
+    String_View missing_var = {0};
+    if (!parse_build_prefix_var_name(ctx, prefix, "_KEYWORDS_MISSING_VALUES", &missing_var)) return false;
+    if (missing && missing->count > 0) {
+        if (!eval_var_set(ctx, missing_var, eval_sv_join_semi_temp(ctx, missing->items, missing->count))) return false;
+    } else {
+        if (!eval_var_unset(ctx, missing_var)) return false;
+    }
+
+    return true;
+}
+
+bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    const Args *raw = &node->as.cmd.args;
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    if (raw->count < 4) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("cmake_parse_arguments"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("cmake_parse_arguments() requires at least four arguments"),
+                             nob_sv_from_cstr("Usage: cmake_parse_arguments(<prefix> <options> <one_value_keywords> <multi_value_keywords> <args>...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    bool use_parse_argv = false;
+    size_t spec_index = 0;
+    String_View first = parse_eval_arg_single(ctx, &raw->items[0]);
+    if (eval_should_stop(ctx)) return false;
+    if (eval_sv_eq_ci_lit(first, "PARSE_ARGV")) {
+        use_parse_argv = true;
+    }
+
+    String_View prefix = nob_sv_from_cstr("");
+    SV_List source_args = {0};
+    if (use_parse_argv) {
+        if (raw->count < 6) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("cmake_parse_arguments"),
+                                 node->as.cmd.name,
+                                 o,
+                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires index, prefix and three keyword lists"),
+                                 nob_sv_from_cstr("Usage: cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one_value_keywords> <multi_value_keywords>)"));
+            return !eval_should_stop(ctx);
+        }
+        if (ctx->function_eval_depth == 0 || ctx->macro_frames.count > 0) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("cmake_parse_arguments"),
+                                 node->as.cmd.name,
+                                 o,
+                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) may only be used in function() scope"),
+                                 nob_sv_from_cstr("Use the direct signature in macro() or top-level scope"));
+            return !eval_should_stop(ctx);
+        }
+
+        size_t start_index = 0;
+        String_View index_sv = parse_eval_arg_single(ctx, &raw->items[1]);
+        if (!parse_nonnegative_index(ctx, index_sv, &start_index)) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("cmake_parse_arguments"),
+                                 node->as.cmd.name,
+                                 o,
+                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires a non-negative integer index"),
+                                 index_sv);
+            return !eval_should_stop(ctx);
+        }
+
+        prefix = parse_eval_arg_single(ctx, &raw->items[2]);
+        if (eval_should_stop(ctx)) return false;
+        spec_index = 3;
+        if (!parse_collect_parse_argv_source(ctx, start_index, &source_args)) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("cmake_parse_arguments"),
+                                 node->as.cmd.name,
+                                 o,
+                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) could not read ARGV values"),
+                                 nob_sv_from_cstr("Ensure the command is called from function() scope"));
+            return !eval_should_stop(ctx);
+        }
+    } else {
+        prefix = first;
+        spec_index = 1;
+        if (!parse_resolve_arg_range(ctx, raw, 4, &source_args)) return !eval_should_stop(ctx);
+    }
+
+    size_t max_specs = 0;
+    for (size_t i = spec_index; i < spec_index + 3 && i < raw->count; i++) {
+        String_View raw_list = parse_eval_arg_single(ctx, &raw->items[i]);
+        if (eval_should_stop(ctx)) return false;
+        if (raw_list.count == 0) continue;
+
+        SV_List split = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw_list, &split)) return !eval_should_stop(ctx);
+        max_specs += split.count;
+    }
+
+    Parse_Keyword_Spec *specs = NULL;
+    if (max_specs > 0) {
+        specs = arena_alloc_array_zero(eval_temp_arena(ctx), Parse_Keyword_Spec, max_specs);
+        EVAL_OOM_RETURN_IF_NULL(ctx, specs, false);
+    }
+    size_t spec_count = 0;
+
+    if (!parse_add_keyword_list(ctx, node, &raw->items[spec_index + 0], PARSE_KEYWORD_OPTION, specs, &spec_count, max_specs)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!parse_add_keyword_list(ctx, node, &raw->items[spec_index + 1], PARSE_KEYWORD_ONE, specs, &spec_count, max_specs)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!parse_add_keyword_list(ctx, node, &raw->items[spec_index + 2], PARSE_KEYWORD_MULTI, specs, &spec_count, max_specs)) {
+        return !eval_should_stop(ctx);
+    }
+
+    SV_List unparsed = {0};
+    SV_List missing = {0};
+    Parse_Keyword_Spec *active = NULL;
+    bool active_has_value = false;
+    bool single_empty_defines = parse_single_empty_value_defines_var(ctx);
+
+    for (size_t i = 0; i < source_args.count; i++) {
+        String_View token = source_args.items[i];
+        Parse_Keyword_Spec *matched = parse_find_keyword(specs, spec_count, token);
+        if (matched) {
+            if (active && !active_has_value) {
+                if (!parse_sv_list_push_temp(ctx, &missing, active->name)) return false;
+            }
+
+            active = matched;
+            active_has_value = false;
+            if (matched->kind == PARSE_KEYWORD_OPTION) {
+                matched->option_present = true;
+                active = NULL;
+                active_has_value = true;
+            } else if (matched->kind == PARSE_KEYWORD_ONE) {
+                matched->one_defined = false;
+                matched->one_value = nob_sv_from_cstr("");
+            } else {
+                matched->multi_defined = false;
+                matched->multi_values.count = 0;
+            }
+            continue;
+        }
+
+        if (active) {
+            if (active->kind == PARSE_KEYWORD_ONE) {
+                active->one_value = token;
+                active->one_defined = single_empty_defines || token.count > 0;
+                active_has_value = true;
+                active = NULL;
+                continue;
+            }
+            if (active->kind == PARSE_KEYWORD_MULTI) {
+                if (!parse_sv_list_push_temp(ctx, &active->multi_values, token)) return false;
+                active->multi_defined = true;
+                active_has_value = true;
+                continue;
+            }
+        }
+
+        if (!parse_sv_list_push_temp(ctx, &unparsed, token)) return false;
+    }
+
+    if (active && !active_has_value) {
+        if (!parse_sv_list_push_temp(ctx, &missing, active->name)) return false;
+    }
+
+    if (!parse_assign_results(ctx, prefix, specs, spec_count, &unparsed, &missing)) return false;
+    return !eval_should_stop(ctx);
+}
 
 static bool parse_env_var_name(String_View token, String_View *out_name) {
     if (!out_name) return false;

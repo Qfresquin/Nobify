@@ -27,6 +27,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"add_test", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"block", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"break", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
+    {"cmake_parse_arguments", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"cmake_minimum_required", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"cmake_language", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE},
     {"cmake_path", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE},
