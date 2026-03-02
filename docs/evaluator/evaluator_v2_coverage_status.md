@@ -24,9 +24,9 @@ Status snapshot sources:
 
 ## Scope note
 
-- This matrix is authoritative for the `67` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
+- This matrix is authoritative for the `72` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
 - It does not by itself represent the entire CMake command universe.
-- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `79` are currently implemented (`67` registry-backed + `12` structural parser/evaluator commands) and `52` remain missing.
+- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `84` are currently implemented (`72` registry-backed + `12` structural parser/evaluator commands) and `47` remain missing.
 - Structural language commands such as `if()`/`foreach()`/`while()`/`function()`/`macro()` are implemented outside the dispatcher and are audited in the full report, not in this registry-backed matrix.
 
 ## 1. Command-Level Matrix (Authoritative)
@@ -75,16 +75,21 @@ Status snapshot sources:
 | `get_target_property` | `PARTIAL` | `NOOP_WARN` | Wrapper parity is implemented for evaluator-owned target property events and target-property mutations, but CMake built-in target properties not yet projected into the evaluator property model remain incomplete. | `Medium` |
 | `get_test_property` | `PARTIAL` | `NOOP_WARN` | Wrapper parity is implemented for evaluator-owned test properties in current-directory scope, including inherited-property lookup through the local property model, but unmodeled built-in test properties remain outside the covered surface. | `Medium` |
 | `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including `CMAKE_MODULE_PATH`/`CMAKE_ROOT/Modules` lookup and `CMP0017` search-order behavior (`NEW` vs `OLD`). | - |
+| `include_regular_expression` | `FULL` | `NOOP_WARN` | The documented one- and two-argument forms are modeled by updating `CMAKE_INCLUDE_REGULAR_EXPRESSION` and optional `CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN` in evaluator directory state, with no additional filesystem side effects. | - |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
 | `include_guard` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include_guard([DIRECTORY|GLOBAL])`), including default variable-like scope (no-arg form), strict argument validation, and `DIRECTORY`/`GLOBAL` behavior. | - |
 | `install` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator event-model install surface (core + advanced signatures emitted as install rules). | - |
 | `link_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`BEFORE AFTER`, relative canonicalization). | - |
 | `link_libraries` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented global link item handling, including `debug`, `optimized`, and `general` qualifiers emitted as deterministic per-item link payloads. | - |
 | `list` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented subcommand surface, including `FILTER` and `TRANSFORM` actions/selectors (`GENEX_STRIP`, `OUTPUT_VARIABLE`). | - |
+| `mark_as_advanced` | `FULL` | `NOOP_WARN` | Documented cache-entry marking is modeled by writing the cache `ADVANCED` property through the shared property backend, including `CLEAR`/`FORCE` and `CMP0102` behavior (`OLD` may synthesize an uninitialized cache entry; `NEW` ignores missing entries). | - |
 | `math` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`math(EXPR <var> "<expr>" [OUTPUT_FORMAT ...])`). | - |
 | `message` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented modes (`NOTICE/STATUS/VERBOSE/DEBUG/TRACE/WARNING/AUTHOR_WARNING/DEPRECATION/SEND_ERROR/FATAL_ERROR/CHECK_*/CONFIGURE_LOG`). | - |
+| `option` | `FULL` | `NOOP_WARN` | The documented cache-BOOL command is modeled for the CMake 3.28 baseline, including default `OFF`, existing typed-cache no-op behavior, and `CMP0077` (`OLD` clears a visible normal binding so cache semantics win; `NEW` leaves an existing normal variable untouched). | - |
 | `project` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature surface (`VERSION`, `DESCRIPTION`, `HOMEPAGE_URL`, short/long language forms including `LANGUAGES NONE`) and documented project-variable surface (`PROJECT_*`, `<PROJECT-NAME>_*`, top-level `CMAKE_PROJECT_*`, including `CMP0048`-driven no-`VERSION` behavior). | - |
+| `remove_definitions` | `PARTIAL` | `NOOP_WARN` | Directory-state removal of `-D`/`/D` definitions is modeled against the same evaluator-managed compile-definition store used by `add_definitions()`, but already-emitted global-definition events are not retractable in the current event architecture. | `Medium` |
 | `return` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented behavior (`return()`, `return(PROPAGATE ...)`, `CMP0140` argument handling, and macro-context rejection). | - |
+| `separate_arguments` | `PARTIAL` | `NOOP_WARN` | The covered CMake 3.28 parsing surface includes one-argument list form plus `UNIX_COMMAND`, `WINDOWS_COMMAND`, and `NATIVE_COMMAND`. The `PROGRAM [SEPARATE_ARGS]` signature is not implemented in this batch and currently errors explicitly. | `Medium` |
 | `set` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`set(<var> <value>... [PARENT_SCOPE])`, `set(<var> <value>... CACHE <type> <doc> [FORCE])`, `set(ENV{<var>} [<value>])`). | - |
 | `set_directory_properties` | `FULL` | `NOOP_WARN` | The documented `PROPERTIES <k> <v>...` bulk directory-property wrapper is implemented by routing into the same directory-property backend already used by `set_property(DIRECTORY ...)`. | - |
 | `set_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope/signature surface (`GLOBAL DIRECTORY TARGET SOURCE INSTALL TEST CACHE`, `APPEND APPEND_STRING`, `PROPERTY ...`), including zero-object scope handling and target/cache/test validations in covered flow. | - |
@@ -261,16 +266,16 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_definitions`, `add_dependencies`, `add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_parse_arguments`, `cmake_path`, `cmake_policy`, `configure_file`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `define_property`, `enable_language`, `enable_testing`, `endblock`, `execute_process`, `file`, `find_file`, `find_library`, `find_package`, `find_path`, `find_program`, `get_filename_component`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_directory_properties`, `set_property`, `set_source_files_properties`, `set_target_properties`, `set_tests_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
+`add_compile_definitions`, `add_dependencies`, `add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_parse_arguments`, `cmake_path`, `cmake_policy`, `configure_file`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `define_property`, `enable_language`, `enable_testing`, `endblock`, `execute_process`, `file`, `find_file`, `find_library`, `find_package`, `find_path`, `find_program`, `get_filename_component`, `include`, `include_regular_expression`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `mark_as_advanced`, `math`, `message`, `option`, `project`, `return`, `set`, `set_directory_properties`, `set_property`, `set_source_files_properties`, `set_target_properties`, `set_tests_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
 
-Commands currently documented as `PARTIAL`: `cmake_language`, `get_cmake_property`, `get_directory_property`, `get_property`, `get_source_file_property`, `get_target_property`, `get_test_property`.
+Commands currently documented as `PARTIAL`: `cmake_language`, `get_cmake_property`, `get_directory_property`, `get_property`, `get_source_file_property`, `get_target_property`, `get_test_property`, `remove_definitions`, `separate_arguments`.
 
 ## 11.1 Full-scope summary
 
-- Dispatcher-backed built-ins tracked by this document: `67`.
+- Dispatcher-backed built-ins tracked by this document: `72`.
 - Additional structural commands implemented outside the dispatcher: `12` (`if`, `elseif`, `else`, `endif`, `foreach`, `endforeach`, `while`, `endwhile`, `function`, `endfunction`, `macro`, `endmacro`).
 - Full scoped command universe audited in `evaluator_v2_full_audit.md`: `131`.
-- Missing commands from that broader scope: `52`.
+- Missing commands from that broader scope: `47`.
 
 ## 12. Consistency checks required for future updates
 

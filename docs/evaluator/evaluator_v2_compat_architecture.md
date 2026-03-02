@@ -119,7 +119,7 @@ Current policy engine foundation covers CMake 3.28 command-level policy mechanic
 - `cmake_minimum_required(VERSION ...)` implicit policy-version application aligned with the same policy core
 
 Compatibility note:
-- command-level policy framework is complete for baseline 3.28, but behavior changes gated by each policy in other commands remain covered by those commands' own compatibility entries.
+- command-level policy framework is complete for baseline 3.28, and the current live command hooks include `CMP0017`, `CMP0048`, `CMP0074`, `CMP0077`, `CMP0102`, `CMP0124`, `CMP0126`, `CMP0140`, `CMP0144`, and `CMP0152`. Behavior changes gated by other policies remain covered by those commands' own compatibility entries.
 
 ## 10. Fatal vs Recoverable Boundaries
 

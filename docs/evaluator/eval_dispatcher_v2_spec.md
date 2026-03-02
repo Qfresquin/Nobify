@@ -34,9 +34,9 @@ Handlers return `false` only for fatal/internal stop conditions (for example OOM
 
 Current built-ins include (non-exhaustive grouping):
 - Flow/scope: `block`, `endblock`, `break`, `continue`, `return`
-- Variables/stdlib: `set`, `unset`, `list`, `string`, `math`, `message`
+- Variables/stdlib: `set`, `unset`, `option`, `mark_as_advanced`, `separate_arguments`, `list`, `string`, `math`, `message`
 - Project/targets: `project`, `add_executable`, `add_library`, target property/link/include commands, property introspection (`get_property`, `get_*_property`)
-- Directory/include: `add_subdirectory`, `include`, `include_guard`, `include_directories`, `link_directories`, `link_libraries`
+- Directory/include: `add_subdirectory`, `include`, `include_guard`, `include_regular_expression`, `include_directories`, `link_directories`, `link_libraries`, `remove_definitions`
 - Property wrappers: `set_directory_properties`, `set_source_files_properties`, `set_tests_properties`
 - Compatibility/project controls: `cmake_minimum_required`, `cmake_policy`, `cmake_path`
 - Filesystem and packaging: `file`, `find_package`, `install`, CPack subset

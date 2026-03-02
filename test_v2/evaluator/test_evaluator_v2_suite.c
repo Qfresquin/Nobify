@@ -3461,6 +3461,183 @@ TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists
     TEST_PASS();
 }
 
+TEST(evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(OPT_OLD normal_old)\n"
+        "cmake_policy(SET CMP0077 OLD)\n"
+        "option(OPT_OLD \"old doc\" ON)\n"
+        "set(OPT_NEW normal_new)\n"
+        "cmake_policy(SET CMP0077 NEW)\n"
+        "option(OPT_NEW \"new doc\" OFF)\n"
+        "cmake_policy(SET CMP0102 OLD)\n"
+        "mark_as_advanced(FORCE OLD_MISSING)\n"
+        "cmake_policy(SET CMP0102 NEW)\n"
+        "mark_as_advanced(FORCE NEW_MISSING)\n"
+        "mark_as_advanced(FORCE OPT_OLD)\n"
+        "mark_as_advanced(CLEAR OPT_OLD)\n"
+        "include_regular_expression(^keep$ ^warn$)\n"
+        "get_property(OPT_ADV CACHE OPT_OLD PROPERTY ADVANCED)\n"
+        "add_executable(option_probe main.c)\n"
+        "target_compile_definitions(option_probe PRIVATE OPT_OLD=${OPT_OLD} OPT_NEW=${OPT_NEW} OPT_ADV=${OPT_ADV} RX=${CMAKE_INCLUDE_REGULAR_EXPRESSION} RC=${CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OPT_OLD")), nob_sv_from_cstr("ON")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OPT_NEW")), nob_sv_from_cstr("normal_new")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OPT_ADV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION")), nob_sv_from_cstr("^keep$")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN")),
+                     nob_sv_from_cstr("^warn$")));
+
+    bool saw_opt_old_cache = false;
+    bool saw_old_missing_cache = false;
+    bool saw_new_missing_cache = false;
+    bool saw_opt_new_cache = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_SET_CACHE_ENTRY) continue;
+        if (nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("OPT_OLD")) &&
+            nob_sv_eq(ev->as.cache_entry.value, nob_sv_from_cstr("ON"))) {
+            saw_opt_old_cache = true;
+        } else if (nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("OLD_MISSING")) &&
+                   nob_sv_eq(ev->as.cache_entry.value, nob_sv_from_cstr(""))) {
+            saw_old_missing_cache = true;
+        } else if (nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("NEW_MISSING"))) {
+            saw_new_missing_cache = true;
+        } else if (nob_sv_eq(ev->as.cache_entry.key, nob_sv_from_cstr("OPT_NEW"))) {
+            saw_opt_new_cache = true;
+        }
+    }
+
+    ASSERT(saw_opt_old_cache);
+    ASSERT(saw_old_missing_cache);
+    ASSERT(!saw_new_missing_cache);
+    ASSERT(!saw_opt_new_cache);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "separate_arguments(OUT_UNIX UNIX_COMMAND [=[alpha \"two words\" three\\ four]=])\n"
+        "separate_arguments(OUT_WIN WINDOWS_COMMAND [=[alpha \"two words\" C:\\\\tmp\\\\x]=])\n"
+        "set(OUT_NATIVE [=[alpha \"two words\"]=])\n"
+        "separate_arguments(OUT_NATIVE)\n"
+        "separate_arguments(BAD_PROGRAM UNIX_COMMAND PROGRAM alpha)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_UNIX")),
+                     nob_sv_from_cstr("alpha;two words;three four")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_WIN")),
+                     nob_sv_from_cstr("alpha;two words;C:\\\\tmp\\\\x")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_NATIVE")),
+                     nob_sv_from_cstr("alpha;two words")));
+
+    bool saw_program_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_DIAGNOSTIC &&
+            ev->as.diag.severity == EV_DIAG_ERROR &&
+            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"))) {
+            saw_program_diag = true;
+        }
+    }
+    ASSERT(saw_program_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_definitions(-DKEEP=1 -DREMOVE_ME=1 -Wall)\n"
+        "remove_definitions(-DREMOVE_ME=1 -Wall /DUNKNOWN=1)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_GLOBAL_COMPILE_DEFINITIONS")),
+                     nob_sv_from_cstr("KEEP=1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_GLOBAL_COMPILE_OPTIONS")),
+                     nob_sv_from_cstr("-Wall")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_message_mode_severity_mapping) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5723,6 +5900,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed);
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists(passed, failed);
+    test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
+    test_evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode(passed, failed);
+    test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);

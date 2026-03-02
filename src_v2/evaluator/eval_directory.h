@@ -11,6 +11,8 @@ bool eval_handle_add_compile_options(struct Evaluator_Context *ctx, const Node *
 bool eval_handle_add_compile_definitions(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_add_definitions(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_add_link_options(struct Evaluator_Context *ctx, const Node *node);
+bool eval_handle_remove_definitions(struct Evaluator_Context *ctx, const Node *node);
+bool eval_handle_include_regular_expression(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_get_filename_component(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_link_libraries(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_include_directories(struct Evaluator_Context *ctx, const Node *node);

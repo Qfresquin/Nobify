@@ -599,6 +599,161 @@ static bool cache_upsert(Evaluator_Context *ctx,
     return true;
 }
 
+static bool scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
+    if (!ctx || ctx->scope_depth == 0 || key.count == 0) return false;
+    for (size_t depth = ctx->scope_depth; depth-- > 0;) {
+        Var_Scope *scope = &ctx->scopes[depth];
+        if (!scope->vars) continue;
+        if (stbds_shgetp_null(scope->vars, nob_temp_sv_to_cstr(key)) != NULL) return true;
+    }
+    return false;
+}
+
+static bool unset_visible_normal_binding(Evaluator_Context *ctx, String_View key) {
+    if (!ctx || ctx->scope_depth == 0 || key.count == 0) return false;
+    for (size_t depth = ctx->scope_depth; depth-- > 0;) {
+        Var_Scope *scope = &ctx->scopes[depth];
+        if (!scope->vars) continue;
+        if (stbds_shgetp_null(scope->vars, nob_temp_sv_to_cstr(key)) == NULL) continue;
+        (void)stbds_shdel(scope->vars, nob_temp_sv_to_cstr(key));
+        return true;
+    }
+    return true;
+}
+
+static bool emit_cache_entry_write(Evaluator_Context *ctx,
+                                   Cmake_Event_Origin origin,
+                                   String_View key,
+                                   String_View value) {
+    if (!ctx) return false;
+    Cmake_Event ev = {0};
+    ev.kind = EV_SET_CACHE_ENTRY;
+    ev.origin = origin;
+    ev.as.cache_entry.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.cache_entry.value = sv_copy_to_event_arena(ctx, value);
+    return emit_event(ctx, ev);
+}
+
+static bool option_cache_write(Evaluator_Context *ctx,
+                               Cmake_Event_Origin origin,
+                               String_View key,
+                               String_View value,
+                               String_View doc) {
+    if (!cache_upsert(ctx, key, value, nob_sv_from_cstr("BOOL"), doc)) return false;
+    return emit_cache_entry_write(ctx, origin, key, value);
+}
+
+static bool mark_as_advanced_apply(Evaluator_Context *ctx,
+                                   String_View var_name,
+                                   bool clear_mode) {
+    if (!ctx || var_name.count == 0) return false;
+    String_View prop_key = eval_property_store_key_temp(ctx,
+                                                        nob_sv_from_cstr("CACHE"),
+                                                        var_name,
+                                                        nob_sv_from_cstr("ADVANCED"));
+    if (eval_should_stop(ctx)) return false;
+    return eval_var_set(ctx, prop_key, clear_mode ? nob_sv_from_cstr("0")
+                                                  : nob_sv_from_cstr("1"));
+}
+
+static bool join_sv_with_spaces_temp(Evaluator_Context *ctx,
+                                     String_View *items,
+                                     size_t count,
+                                     String_View *out_value) {
+    if (!out_value) return false;
+    *out_value = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (count == 0) return true;
+
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) total += items[i].count;
+    if (count > 1) total += count - 1;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+    size_t off = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) buf[off++] = ' ';
+        if (items[i].count > 0) {
+            memcpy(buf + off, items[i].data, items[i].count);
+            off += items[i].count;
+        }
+    }
+    buf[off] = '\0';
+    *out_value = nob_sv_from_parts(buf, off);
+    return true;
+}
+
+static bool split_windows_command_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+    if (!ctx || !out) return false;
+
+    size_t i = 0;
+    while (i < input.count) {
+        while (i < input.count && isspace((unsigned char)input.data[i])) i++;
+        if (i >= input.count) break;
+
+        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+        size_t off = 0;
+        bool in_quotes = false;
+        while (i < input.count) {
+            char c = input.data[i];
+            if (!in_quotes && isspace((unsigned char)c)) break;
+
+            if (c == '\\') {
+                size_t slash_count = 0;
+                while (i + slash_count < input.count && input.data[i + slash_count] == '\\') slash_count++;
+
+                bool next_is_quote = (i + slash_count < input.count && input.data[i + slash_count] == '"');
+                if (next_is_quote) {
+                    size_t literal_slashes = slash_count / 2;
+                    for (size_t si = 0; si < literal_slashes; si++) buf[off++] = '\\';
+                    if ((slash_count % 2) == 0) {
+                        in_quotes = !in_quotes;
+                    } else {
+                        buf[off++] = '"';
+                    }
+                    i += slash_count + 1;
+                    continue;
+                }
+
+                for (size_t si = 0; si < slash_count; si++) buf[off++] = '\\';
+                i += slash_count;
+                continue;
+            }
+
+            if (c == '"') {
+                if (in_quotes && i + 1 < input.count && input.data[i + 1] == '"') {
+                    buf[off++] = '"';
+                    i += 2;
+                    continue;
+                }
+                in_quotes = !in_quotes;
+                i++;
+                continue;
+            }
+
+            buf[off++] = c;
+            i++;
+        }
+
+        buf[off] = '\0';
+        if (!parse_sv_list_push_temp(ctx, out, nob_sv_from_parts(buf, off))) return false;
+    }
+
+    return true;
+}
+
+static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
+                                            bool windows_mode,
+                                            String_View input,
+                                            SV_List *out) {
+    if (windows_mode) return split_windows_command_temp(ctx, input, out);
+    return eval_split_shell_like_temp(ctx, input, out);
+}
+
 static bool set_process_env(Evaluator_Context *ctx, String_View name, String_View value) {
     if (!ctx) return false;
     char *name_c = eval_sv_to_cstr_temp(ctx, name);
@@ -896,5 +1051,193 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     }
 
     (void)eval_var_unset(ctx, var);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2 || a.count > 3) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("option"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("option() requires <variable> <help_text> [value]"),
+                             nob_sv_from_cstr("Usage: option(<variable> <help_text> [value])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View var = a.items[0];
+    if (var.count == 0) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("option"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("option() requires a non-empty variable name"),
+                             nob_sv_from_cstr("Provide a cache variable identifier"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View doc = a.items[1];
+    String_View value = (a.count >= 3) ? a.items[2] : nob_sv_from_cstr("OFF");
+
+    bool cmp0077_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0077")), "NEW");
+    bool has_normal_binding = scope_has_normal_binding(ctx, var);
+    Eval_Cache_Entry *existing = cache_find(ctx, var);
+    bool has_typed_cache = existing && existing->value.type.count > 0;
+
+    if (cmp0077_new && has_normal_binding) return !eval_should_stop(ctx);
+
+    if (!cmp0077_new && has_normal_binding) {
+        if (!unset_visible_normal_binding(ctx, var)) return false;
+    }
+
+    if (has_typed_cache) return !eval_should_stop(ctx);
+
+    if (!option_cache_write(ctx, o, var, value, doc)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    bool clear_mode = false;
+    size_t start = 0;
+    if (a.count > 0 && eval_sv_eq_ci_lit(a.items[0], "CLEAR")) {
+        clear_mode = true;
+        start = 1;
+    } else if (a.count > 0 && eval_sv_eq_ci_lit(a.items[0], "FORCE")) {
+        start = 1;
+    }
+
+    if (start >= a.count) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("mark_as_advanced"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("mark_as_advanced() requires at least one variable name"),
+                             nob_sv_from_cstr("Usage: mark_as_advanced([CLEAR|FORCE] <var>...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    bool cmp0102_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0102")), "NEW");
+    for (size_t i = start; i < a.count; i++) {
+        String_View var_name = a.items[i];
+        if (var_name.count == 0) continue;
+
+        if (!eval_cache_defined(ctx, var_name)) {
+            if (cmp0102_new) continue;
+            if (!cache_upsert(ctx,
+                              var_name,
+                              nob_sv_from_cstr(""),
+                              nob_sv_from_cstr("UNINITIALIZED"),
+                              nob_sv_from_cstr(""))) {
+                return !eval_should_stop(ctx);
+            }
+            if (!emit_cache_entry_write(ctx, o, var_name, nob_sv_from_cstr(""))) return !eval_should_stop(ctx);
+        }
+
+        if (!mark_as_advanced_apply(ctx, var_name, clear_mode)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count == 0) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("separate_arguments"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("separate_arguments() requires an output variable"),
+                             nob_sv_from_cstr("Usage: separate_arguments(<var> [UNIX_COMMAND|WINDOWS_COMMAND|NATIVE_COMMAND] <args>...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View out_var = a.items[0];
+    bool windows_mode =
+#if defined(_WIN32)
+        true;
+#else
+        false;
+#endif
+    bool explicit_mode = false;
+    size_t input_index = 1;
+
+    if (a.count > 1) {
+        if (eval_sv_eq_ci_lit(a.items[1], "UNIX_COMMAND")) {
+            windows_mode = false;
+            explicit_mode = true;
+            input_index = 2;
+        } else if (eval_sv_eq_ci_lit(a.items[1], "WINDOWS_COMMAND")) {
+            windows_mode = true;
+            explicit_mode = true;
+            input_index = 2;
+        } else if (eval_sv_eq_ci_lit(a.items[1], "NATIVE_COMMAND")) {
+#if defined(_WIN32)
+            windows_mode = true;
+#else
+            windows_mode = false;
+#endif
+            explicit_mode = true;
+            input_index = 2;
+        }
+    }
+
+    if (explicit_mode && input_index >= a.count) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("separate_arguments"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("separate_arguments() mode form requires an input command line"),
+                             nob_sv_from_cstr("Add the command string after the parsing mode"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (explicit_mode && input_index < a.count && eval_sv_eq_ci_lit(a.items[input_index], "PROGRAM")) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("separate_arguments"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"),
+                             nob_sv_from_cstr("Supported in this batch: UNIX_COMMAND, WINDOWS_COMMAND, NATIVE_COMMAND, and one-argument list form"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View input = nob_sv_from_cstr("");
+    if (a.count == 1) {
+        input = eval_var_get(ctx, out_var);
+    } else {
+        if (!join_sv_with_spaces_temp(ctx, &a.items[input_index], a.count - input_index, &input)) {
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    SV_List tokens = {0};
+    if (!separate_arguments_parse_tokens(ctx, windows_mode, input, &tokens)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens.items, tokens.count))) {
+        return !eval_should_stop(ctx);
+    }
+
     return !eval_should_stop(ctx);
 }

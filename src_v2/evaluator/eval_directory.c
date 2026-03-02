@@ -64,6 +64,64 @@ static bool append_list_var_unique(Evaluator_Context *ctx, String_View var, Stri
     return true;
 }
 
+static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, String_View item, bool *out_removed) {
+    if (out_removed) *out_removed = false;
+    if (!ctx || item.count == 0) return false;
+
+    String_View current = eval_var_get(ctx, var);
+    if (current.count == 0) return true;
+
+    size_t kept_count = 0;
+    size_t kept_total = 0;
+    size_t removed_count = 0;
+    const char *p = current.data;
+    const char *end = current.data + current.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != ';') q++;
+        String_View cur = nob_sv_from_parts(p, (size_t)(q - p));
+        if (sv_eq_exact(cur, item)) {
+            removed_count++;
+        } else {
+            kept_total += cur.count;
+            kept_count++;
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
+
+    if (removed_count == 0) return true;
+
+    if (out_removed) *out_removed = true;
+    if (kept_count == 0) return eval_var_set(ctx, var, nob_sv_from_cstr(""));
+
+    size_t total = kept_total + (kept_count - 1);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+    size_t off = 0;
+    size_t written = 0;
+    p = current.data;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != ';') q++;
+        String_View cur = nob_sv_from_parts(p, (size_t)(q - p));
+        if (!sv_eq_exact(cur, item)) {
+            if (written > 0) buf[off++] = ';';
+            if (cur.count > 0) {
+                memcpy(buf + off, cur.data, cur.count);
+                off += cur.count;
+            }
+            written++;
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
+
+    buf[off] = '\0';
+    return eval_var_set(ctx, var, nob_sv_from_parts(buf, off));
+}
+
 static bool split_definition_flag(String_View item, String_View *out_definition) {
     if (!out_definition) return false;
     *out_definition = nob_sv_from_cstr("");
@@ -430,6 +488,56 @@ bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
         ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, item);
         if (!emit_event(ctx, ev)) return false;
     }
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    for (size_t i = 0; i < a.count; i++) {
+        String_View definition = nob_sv_from_cstr("");
+        if (!split_definition_flag(a.items[i], &definition)) continue;
+        if (definition.count == 0) continue;
+        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, NULL)) {
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 1 || a.count > 2) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("include_regular_expression"),
+                             node->as.cmd.name,
+                             o,
+                             nob_sv_from_cstr("include_regular_expression() requires one or two regex arguments"),
+                             nob_sv_from_cstr("Usage: include_regular_expression(<regex_match> [<regex_complain>])"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), a.items[0])) {
+        return !eval_should_stop(ctx);
+    }
+    if (a.count == 2) {
+        if (!eval_var_set(ctx,
+                          nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN"),
+                          a.items[1])) {
+            return !eval_should_stop(ctx);
+        }
+    }
+
     return !eval_should_stop(ctx);
 }
 
