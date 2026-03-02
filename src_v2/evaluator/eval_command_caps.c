@@ -14,6 +14,8 @@ static Command_Capability eval_capability_make(String_View name,
 
 // Central capability registry consumed by dispatcher, API and docs.
 static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
+    {"add_compile_definitions", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
+    {"add_dependencies", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_compile_options", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_custom_command", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"add_custom_target", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
@@ -26,6 +28,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"block", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"break", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"cmake_minimum_required", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
+    {"cmake_language", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE},
     {"cmake_path", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE},
     {"cmake_policy", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"continue", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},

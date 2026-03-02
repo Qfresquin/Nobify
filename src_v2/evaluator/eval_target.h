@@ -8,6 +8,7 @@
 struct Evaluator_Context;
 
 bool eval_handle_target_link_libraries(struct Evaluator_Context *ctx, const Node *node);
+bool eval_handle_add_dependencies(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_target_link_options(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_target_link_directories(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_target_include_directories(struct Evaluator_Context *ctx, const Node *node);

@@ -35,6 +35,18 @@ static bool emit_var_set(Evaluator_Context *ctx, Cmake_Event_Origin o, String_Vi
     return emit_event(ctx, ev);
 }
 
+static bool emit_target_dependency(Evaluator_Context *ctx,
+                                   Cmake_Event_Origin o,
+                                   String_View target_name,
+                                   String_View dependency_name) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_TARGET_ADD_DEPENDENCY;
+    ev.origin = o;
+    ev.as.target_add_dependency.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_add_dependency.dependency_name = sv_copy_to_event_arena(ctx, dependency_name);
+    return emit_event(ctx, ev);
+}
+
 static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
                                                          String_View item,
                                                          String_View cond_prefix) {
@@ -51,13 +63,6 @@ static String_View current_source_dir_for_paths(Evaluator_Context *ctx) {
     String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (cur_src.count == 0 && ctx) cur_src = ctx->source_dir;
     return cur_src;
-}
-
-static String_View normalize_compile_definition_item(String_View item) {
-    if (item.count >= 2 && item.data && item.data[0] == '-' && (item.data[1] == 'D' || item.data[1] == 'd')) {
-        return nob_sv_from_parts(item.data + 2, item.count - 2);
-    }
-    return item;
 }
 
 static String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
@@ -260,6 +265,74 @@ static bool set_non_target_property(Evaluator_Context *ctx,
     }
 
     return true;
+}
+
+bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_dependencies() requires target and at least one dependency"),
+                       nob_sv_from_cstr("Usage: add_dependencies(<target> <target-dependency>...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View target_name = a.items[0];
+    if (!eval_target_known(ctx, target_name)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_dependencies() target was not declared"),
+                       target_name);
+        return !eval_should_stop(ctx);
+    }
+    if (eval_target_alias_known(ctx, target_name)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("add_dependencies() cannot be used on ALIAS targets"),
+                       target_name);
+        return !eval_should_stop(ctx);
+    }
+
+    for (size_t i = 1; i < a.count; i++) {
+        String_View dep = a.items[i];
+        if (dep.count == 0) continue;
+
+        if (!eval_target_known(ctx, dep)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_dependencies() dependency target was not declared"),
+                           dep);
+            return !eval_should_stop(ctx);
+        }
+        if (eval_target_alias_known(ctx, dep)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("add_dependencies() cannot depend on ALIAS targets"),
+                           dep);
+            return !eval_should_stop(ctx);
+        }
+        if (!emit_target_dependency(ctx, o, target_name, dep)) return !eval_should_stop(ctx);
+    }
+
+    return !eval_should_stop(ctx);
 }
 
 bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
@@ -517,7 +590,7 @@ bool eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *
             continue;
         }
 
-        String_View item = normalize_compile_definition_item(a.items[i]);
+        String_View item = eval_normalize_compile_definition_item(a.items[i]);
         if (item.count == 0) continue;
 
         Cmake_Event ev = {0};

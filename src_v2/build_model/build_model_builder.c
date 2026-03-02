@@ -79,6 +79,7 @@ static const char *builder_event_command_name(Cmake_Event_Kind kind) {
         case EV_SET_CACHE_ENTRY: return "set(cache)";
         case EV_TARGET_DECLARE: return "add_target";
         case EV_TARGET_ADD_SOURCE: return "target_sources";
+        case EV_TARGET_ADD_DEPENDENCY: return "add_dependencies";
         case EV_TARGET_PROP_SET: return "set_target_properties";
         case EV_TARGET_INCLUDE_DIRECTORIES: return "target_include_directories";
         case EV_TARGET_COMPILE_DEFINITIONS: return "target_compile_definitions";
@@ -677,6 +678,24 @@ static bool builder_handle_event_target_add_source(Build_Model_Builder *builder,
                                            &ctx);
 }
 
+static bool builder_handle_event_target_add_dependency(Build_Model_Builder *builder, const Cmake_Event *ev) {
+    if (!builder || !ev) return false;
+    Build_Target *target = builder_require_target(builder, ev, ev->as.target_add_dependency.target_name);
+    if (!target) return false;
+
+    Build_Target *dep = build_model_find_target(builder->model, ev->as.target_add_dependency.dependency_name);
+    if (!dep) {
+        return builder_fail(builder,
+                            ev,
+                            nob_temp_sprintf("dependency target '"SV_Fmt"' was not declared",
+                                             SV_Arg(ev->as.target_add_dependency.dependency_name)),
+                            "declare dependency targets before add_dependencies()");
+    }
+
+    build_target_add_dependency(target, builder->arena, dep->name);
+    return true;
+}
+
 static bool builder_handle_event_target_prop_set(Build_Model_Builder *builder, const Cmake_Event *ev) {
     if (!builder || !ev) return false;
     Build_Target *target = builder_require_target(builder, ev, ev->as.target_prop_set.target_name);
@@ -1250,6 +1269,9 @@ bool builder_apply_event(Build_Model_Builder *builder, const Cmake_Event *ev) {
 
         case EV_TARGET_ADD_SOURCE:
             return builder_handle_event_target_add_source(builder, ev);
+
+        case EV_TARGET_ADD_DEPENDENCY:
+            return builder_handle_event_target_add_dependency(builder, ev);
 
         case EV_TARGET_PROP_SET:
             return builder_handle_event_target_prop_set(builder, ev);

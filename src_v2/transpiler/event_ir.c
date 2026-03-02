@@ -75,6 +75,11 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
             if (!ev_copy_sv_inplace(arena, &ev->as.target_add_source.path)) return false;
             break;
 
+        case EV_TARGET_ADD_DEPENDENCY:
+            if (!ev_copy_sv_inplace(arena, &ev->as.target_add_dependency.target_name)) return false;
+            if (!ev_copy_sv_inplace(arena, &ev->as.target_add_dependency.dependency_name)) return false;
+            break;
+
         case EV_TARGET_PROP_SET:
             if (!ev_copy_sv_inplace(arena, &ev->as.target_prop_set.target_name)) return false;
             if (!ev_copy_sv_inplace(arena, &ev->as.target_prop_set.key)) return false;
@@ -262,6 +267,7 @@ static const char *ev_kind_name(Cmake_Event_Kind kind) {
         case EV_SET_CACHE_ENTRY: return "EV_SET_CACHE_ENTRY";
         case EV_TARGET_DECLARE: return "EV_TARGET_DECLARE";
         case EV_TARGET_ADD_SOURCE: return "EV_TARGET_ADD_SOURCE";
+        case EV_TARGET_ADD_DEPENDENCY: return "EV_TARGET_ADD_DEPENDENCY";
         case EV_TARGET_PROP_SET: return "EV_TARGET_PROP_SET";
         case EV_TARGET_INCLUDE_DIRECTORIES: return "EV_TARGET_INCLUDE_DIRECTORIES";
         case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
@@ -350,6 +356,10 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
             case EV_TARGET_ADD_SOURCE:
                 ev_print_sv("target", ev->as.target_add_source.target_name);
                 ev_print_sv("path", ev->as.target_add_source.path);
+                break;
+            case EV_TARGET_ADD_DEPENDENCY:
+                ev_print_sv("target", ev->as.target_add_dependency.target_name);
+                ev_print_sv("dependency", ev->as.target_add_dependency.dependency_name);
                 break;
             case EV_TARGET_PROP_SET:
                 ev_print_sv("target", ev->as.target_prop_set.target_name);

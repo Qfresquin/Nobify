@@ -49,6 +49,13 @@ bool eval_sv_eq_ci_lit(String_View a, const char *lit) {
     return true;
 }
 
+String_View eval_normalize_compile_definition_item(String_View item) {
+    if (item.count >= 2 && item.data && item.data[0] == '-' && (item.data[1] == 'D' || item.data[1] == 'd')) {
+        return nob_sv_from_parts(item.data + 2, item.count - 2);
+    }
+    return item;
+}
+
 static bool eval_semver_parse_component(String_View sv, int *out_value) {
     if (!out_value || sv.count == 0) return false;
     long long acc = 0;

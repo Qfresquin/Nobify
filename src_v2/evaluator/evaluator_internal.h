@@ -296,6 +296,7 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name);
 // ---- utilitários compartilhados ----
 bool eval_sv_key_eq(String_View a, String_View b);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
+String_View eval_normalize_compile_definition_item(String_View item);
 bool eval_semver_parse_strict(String_View version_token, Eval_Semver *out_version);
 int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);
@@ -332,6 +333,7 @@ String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy
 // ---- Execução Externa (Subdiretórios e Includes) ----
 // Retorna false em caso de OOM ou erro fatal.
 bool eval_execute_file(Evaluator_Context *ctx, String_View file_path, bool is_add_subdirectory, String_View explicit_bin_dir);
+bool eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
 
 #ifdef __cplusplus
 }

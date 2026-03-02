@@ -1415,6 +1415,11 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     return ok && !eval_should_stop(ctx);
 }
 
+bool eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast) {
+    if (!ctx || eval_should_stop(ctx)) return false;
+    return eval_node_list(ctx, &ast);
+}
+
 const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx) {
     if (!ctx) return NULL;
     return &ctx->run_report;

@@ -27,6 +27,8 @@ typedef struct {
 } Command_Entry;
 
 static const Command_Entry DISPATCH[] = {
+    {"add_compile_definitions", eval_handle_add_compile_definitions},
+    {"add_dependencies", eval_handle_add_dependencies},
     {"add_compile_options", eval_handle_add_compile_options},
     {"add_custom_command", eval_handle_add_custom_command},
     {"add_custom_target", eval_handle_add_custom_target},
@@ -39,6 +41,7 @@ static const Command_Entry DISPATCH[] = {
     {"block", eval_handle_block},
     {"break", eval_handle_break},
     {"cmake_minimum_required", eval_handle_cmake_minimum_required},
+    {"cmake_language", eval_handle_cmake_language},
     {"cmake_path", eval_handle_cmake_path},
     {"cmake_policy", eval_handle_cmake_policy},
     {"continue", eval_handle_continue},

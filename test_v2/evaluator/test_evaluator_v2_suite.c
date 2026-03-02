@@ -4,6 +4,7 @@
 
 #include "arena.h"
 #include "arena_dyn.h"
+#include "build_model_builder.h"
 #include "diagnostics.h"
 #include "evaluator.h"
 #include "event_ir.h"
@@ -343,6 +344,7 @@ static const char *event_kind_name(Cmake_Event_Kind kind) {
         case EV_SET_CACHE_ENTRY: return "EV_SET_CACHE_ENTRY";
         case EV_TARGET_DECLARE: return "EV_TARGET_DECLARE";
         case EV_TARGET_ADD_SOURCE: return "EV_TARGET_ADD_SOURCE";
+        case EV_TARGET_ADD_DEPENDENCY: return "EV_TARGET_ADD_DEPENDENCY";
         case EV_TARGET_PROP_SET: return "EV_TARGET_PROP_SET";
         case EV_TARGET_INCLUDE_DIRECTORIES: return "EV_TARGET_INCLUDE_DIRECTORIES";
         case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
@@ -468,6 +470,13 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.target_add_source.target_name);
             nob_sb_append_cstr(sb, " path=");
             snapshot_append_escaped_sv(sb, ev->as.target_add_source.path);
+            break;
+
+        case EV_TARGET_ADD_DEPENDENCY:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_add_dependency.target_name);
+            nob_sb_append_cstr(sb, " dependency=");
+            snapshot_append_escaped_sv(sb, ev->as.target_add_dependency.dependency_name);
             break;
 
         case EV_TARGET_PROP_SET:
@@ -1913,6 +1922,199 @@ TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
     ASSERT(saw_target_def_win);
     ASSERT(saw_target_opt_fpic);
     ASSERT(saw_target_opt_eh);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_compile_definitions_updates_existing_and_future_targets) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_executable(defs_before main_before.c)\n"
+        "add_compile_definitions(-DFOO BAR=1 -D)\n"
+        "add_executable(defs_after main_after.c)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_global_foo = false;
+    bool saw_global_bar = false;
+    bool saw_empty_global = false;
+    bool saw_before_foo = false;
+    bool saw_before_bar = false;
+    bool saw_after_foo = false;
+    bool saw_after_bar = false;
+    bool saw_dash_prefixed = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_GLOBAL_COMPILE_DEFINITIONS) {
+            if (nob_sv_eq(ev->as.global_compile_definitions.item, nob_sv_from_cstr("FOO"))) saw_global_foo = true;
+            if (nob_sv_eq(ev->as.global_compile_definitions.item, nob_sv_from_cstr("BAR=1"))) saw_global_bar = true;
+            if (ev->as.global_compile_definitions.item.count == 0) saw_empty_global = true;
+            if (nob_sv_starts_with(ev->as.global_compile_definitions.item, nob_sv_from_cstr("-D"))) saw_dash_prefixed = true;
+            continue;
+        }
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_starts_with(ev->as.target_compile_definitions.item, nob_sv_from_cstr("-D"))) saw_dash_prefixed = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("defs_before"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("FOO"))) saw_before_foo = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("BAR=1"))) saw_before_bar = true;
+        } else if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("defs_after"))) {
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("FOO"))) saw_after_foo = true;
+            if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("BAR=1"))) saw_after_bar = true;
+        }
+    }
+
+    ASSERT(saw_global_foo);
+    ASSERT(saw_global_bar);
+    ASSERT(!saw_empty_global);
+    ASSERT(saw_before_foo);
+    ASSERT(saw_before_bar);
+    ASSERT(saw_after_foo);
+    ASSERT(saw_after_bar);
+    ASSERT(!saw_dash_prefixed);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_dependencies_emits_events_and_updates_build_model) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena && model_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_custom_target(dep_a)\n"
+        "add_custom_target(dep_b)\n"
+        "add_custom_target(root_t)\n"
+        "add_dependencies(root_t dep_a dep_b)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_dep_a_event = false;
+    bool saw_dep_b_event = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_ADD_DEPENDENCY) continue;
+        if (!nob_sv_eq(ev->as.target_add_dependency.target_name, nob_sv_from_cstr("root_t"))) continue;
+        if (nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("dep_a"))) saw_dep_a_event = true;
+        if (nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("dep_b"))) saw_dep_b_event = true;
+    }
+
+    ASSERT(saw_dep_a_event);
+    ASSERT(saw_dep_b_event);
+
+    Build_Model_Builder *builder = builder_create(model_arena, NULL);
+    ASSERT(builder != NULL);
+    ASSERT(builder_apply_stream(builder, stream));
+    Build_Model *model = builder_finish(builder);
+    ASSERT(model != NULL);
+
+    Build_Target *root_target = build_model_find_target(model, nob_sv_from_cstr("root_t"));
+    ASSERT(root_target != NULL);
+    ASSERT(root_target->dependencies.count == 2);
+    ASSERT(nob_sv_eq(root_target->dependencies.items[0], nob_sv_from_cstr("dep_a")));
+    ASSERT(nob_sv_eq(root_target->dependencies.items[1], nob_sv_from_cstr("dep_b")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_language_core_subcommands_work) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_MESSAGE_LOG_LEVEL NOTICE)\n"
+        "cmake_language(CALL set CALL_OUT alpha)\n"
+        "cmake_language(EVAL CODE [[set(EVAL_OUT beta)]])\n"
+        "cmake_language(GET_MESSAGE_LOG_LEVEL LOG_OUT)\n"
+        "add_executable(cml_probe main.c)\n"
+        "target_compile_definitions(cml_probe PRIVATE CALL_OUT=${CALL_OUT} EVAL_OUT=${EVAL_OUT} LOG_OUT=${LOG_OUT})\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_call = false;
+    bool saw_eval = false;
+    bool saw_log = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("cml_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("CALL_OUT=alpha"))) saw_call = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("EVAL_OUT=beta"))) saw_eval = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("LOG_OUT=NOTICE"))) saw_log = true;
+    }
+
+    ASSERT(saw_call);
+    ASSERT(saw_eval);
+    ASSERT(saw_log);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -4788,6 +4990,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed);
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
+    test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed);
+    test_evaluator_add_dependencies_emits_events_and_updates_build_model(passed, failed);
+    test_evaluator_cmake_language_core_subcommands_work(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);

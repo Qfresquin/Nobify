@@ -22,6 +22,7 @@ typedef enum {
     // Targets
     EV_TARGET_DECLARE,
     EV_TARGET_ADD_SOURCE,
+    EV_TARGET_ADD_DEPENDENCY,
     EV_TARGET_PROP_SET,
     EV_TARGET_INCLUDE_DIRECTORIES,
     EV_TARGET_COMPILE_DEFINITIONS,
@@ -140,6 +141,11 @@ typedef struct {
             String_View target_name;
             String_View path;
         } target_add_source;
+
+        struct {
+            String_View target_name;
+            String_View dependency_name;
+        } target_add_dependency;
 
         struct {
             String_View target_name;

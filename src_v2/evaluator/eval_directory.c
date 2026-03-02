@@ -75,6 +75,28 @@ static bool split_definition_flag(String_View item, String_View *out_definition)
     return true;
 }
 
+static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *ctx,
+                                                            Cmake_Event_Origin origin,
+                                                            String_View item) {
+    if (!ctx || !ctx->stream || item.count == 0) return false;
+
+    for (size_t i = 0; i < ctx->stream->count; i++) {
+        const Cmake_Event *existing = &ctx->stream->items[i];
+        if (existing->kind != EV_TARGET_DECLARE) continue;
+        if (!eval_sv_key_eq(existing->origin.file_path, origin.file_path)) continue;
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_TARGET_COMPILE_DEFINITIONS;
+        ev.origin = origin;
+        ev.as.target_compile_definitions.target_name = sv_copy_to_event_arena(ctx, existing->as.target_declare.name);
+        ev.as.target_compile_definitions.visibility = EV_VISIBILITY_UNSPECIFIED;
+        ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
+        if (!emit_event(ctx, ev)) return false;
+    }
+
+    return true;
+}
+
 static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
                                                          String_View item,
                                                          String_View cond_prefix) {
@@ -245,6 +267,35 @@ bool eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
         ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, unique.items[i]);
         if (!emit_event(ctx, ev)) return false;
     }
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    SV_List unique = {0};
+    for (size_t i = 0; i < a.count; i++) {
+        String_View item = eval_normalize_compile_definition_item(a.items[i]);
+        if (item.count == 0) continue;
+        if (sv_list_contains_exact(&unique, item)) continue;
+        if (!svu_list_push_temp(ctx, &unique, item)) return !eval_should_stop(ctx);
+    }
+
+    for (size_t i = 0; i < unique.count; i++) {
+        bool added = false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique.items[i], &added)) return false;
+        if (!added) continue;
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_GLOBAL_COMPILE_DEFINITIONS;
+        ev.origin = o;
+        ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, unique.items[i]);
+        if (!emit_event(ctx, ev)) return false;
+        if (!emit_compile_definition_to_current_file_targets(ctx, o, unique.items[i])) return false;
+    }
+
     return !eval_should_stop(ctx);
 }
 
