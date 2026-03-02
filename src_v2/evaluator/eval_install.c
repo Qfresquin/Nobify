@@ -5,14 +5,6 @@
 
 #include <string.h>
 
-static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
-    if (!ctx) return false;
-    if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
-        return ctx_oom(ctx);
-    }
-    return true;
-}
-
 static bool install_emit_diag(Evaluator_Context *ctx,
                               const Node *node,
                               Cmake_Event_Origin o,

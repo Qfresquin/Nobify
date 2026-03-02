@@ -143,6 +143,13 @@ typedef struct {
     unsigned char states[156];
 } Eval_Policy_Level;
 
+typedef struct {
+    int major;
+    int minor;
+    int patch;
+    int tweak;
+} Eval_Semver;
+
 typedef enum {
     EVAL_RETURN_CTX_TOPLEVEL = 0,
     EVAL_RETURN_CTX_INCLUDE,
@@ -240,6 +247,10 @@ SV_List eval_resolve_args_literal(Evaluator_Context *ctx, const Args *raw_args);
 
 // ---- diagnostics / events ----
 bool event_stream_push(Arena *event_arena, Cmake_Event_Stream *stream, Cmake_Event ev);
+bool eval_emit_event(Evaluator_Context *ctx, Cmake_Event ev);
+static inline bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
+    return eval_emit_event(ctx, ev);
+}
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Cmake_Diag_Severity sev,
                     String_View component,
@@ -285,6 +296,8 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name);
 // ---- utilitários compartilhados ----
 bool eval_sv_key_eq(String_View a, String_View b);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
+bool eval_semver_parse_strict(String_View version_token, Eval_Semver *out_version);
+int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_sv_is_abs_path(String_View p);

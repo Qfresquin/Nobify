@@ -2,6 +2,7 @@
 #include "arena_dyn.h"
 #include "sv_utils.h"
 #include <ctype.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
@@ -25,6 +26,14 @@ char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
     return buf;
 }
 
+bool eval_emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
+    if (!ctx) return false;
+    if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
+        return ctx_oom(ctx);
+    }
+    return true;
+}
+
 bool eval_sv_key_eq(String_View a, String_View b) {
     if (a.count != b.count) return false;
     if (a.count == 0) return true;
@@ -38,6 +47,53 @@ bool eval_sv_eq_ci_lit(String_View a, const char *lit) {
         if (toupper((unsigned char)a.data[i]) != toupper((unsigned char)b.data[i])) return false;
     }
     return true;
+}
+
+static bool eval_semver_parse_component(String_View sv, int *out_value) {
+    if (!out_value || sv.count == 0) return false;
+    long long acc = 0;
+    for (size_t i = 0; i < sv.count; i++) {
+        if (sv.data[i] < '0' || sv.data[i] > '9') return false;
+        acc = (acc * 10) + (long long)(sv.data[i] - '0');
+        if (acc > INT_MAX) return false;
+    }
+    *out_value = (int)acc;
+    return true;
+}
+
+bool eval_semver_parse_strict(String_View version_token, Eval_Semver *out_version) {
+    if (!out_version || version_token.count == 0) return false;
+
+    int values[4] = {0, 0, 0, 0};
+    size_t value_count = 0;
+    size_t pos = 0;
+    while (pos < version_token.count) {
+        size_t start = pos;
+        while (pos < version_token.count && version_token.data[pos] != '.') pos++;
+        if (value_count >= 4) return false;
+        String_View part = nob_sv_from_parts(version_token.data + start, pos - start);
+        if (!eval_semver_parse_component(part, &values[value_count])) return false;
+        value_count++;
+        if (pos == version_token.count) break;
+        pos++;
+        if (pos == version_token.count) return false;
+    }
+
+    if (value_count < 2 || value_count > 4) return false;
+    out_version->major = values[0];
+    out_version->minor = values[1];
+    out_version->patch = values[2];
+    out_version->tweak = values[3];
+    return true;
+}
+
+int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs) {
+    if (!lhs || !rhs) return 0;
+    if (lhs->major != rhs->major) return (lhs->major < rhs->major) ? -1 : 1;
+    if (lhs->minor != rhs->minor) return (lhs->minor < rhs->minor) ? -1 : 1;
+    if (lhs->patch != rhs->patch) return (lhs->patch < rhs->patch) ? -1 : 1;
+    if (lhs->tweak != rhs->tweak) return (lhs->tweak < rhs->tweak) ? -1 : 1;
+    return 0;
 }
 
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count) {

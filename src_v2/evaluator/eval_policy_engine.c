@@ -8,13 +8,6 @@
 #include <string.h>
 
 typedef struct {
-    int major;
-    int minor;
-    int patch;
-    int tweak;
-} Policy_Semver;
-
-typedef struct {
     int first_id;
     int last_id;
     int major;
@@ -141,54 +134,6 @@ int eval_policy_known_min_id(void) { return POLICY_KNOWN_MIN_ID; }
 int eval_policy_known_max_id(void) { return POLICY_KNOWN_MAX_ID; }
 size_t eval_policy_known_count(void) { return POLICY_KNOWN_COUNT; }
 
-static bool policy_parse_int_component(String_View token, int *out_value) {
-    if (!out_value || token.count == 0) return false;
-    long long acc = 0;
-    for (size_t i = 0; i < token.count; i++) {
-        char c = token.data[i];
-        if (c < '0' || c > '9') return false;
-        acc = (acc * 10) + (long long)(c - '0');
-        if (acc > INT_MAX) return false;
-    }
-    *out_value = (int)acc;
-    return true;
-}
-
-static bool policy_parse_semver(String_View sv, Policy_Semver *out_version) {
-    if (!out_version || sv.count == 0) return false;
-
-    int values[4] = {0, 0, 0, 0};
-    size_t value_count = 0;
-    size_t pos = 0;
-    while (pos < sv.count) {
-        size_t start = pos;
-        while (pos < sv.count && sv.data[pos] != '.') pos++;
-        if (value_count >= 4) return false;
-        String_View comp = nob_sv_from_parts(sv.data + start, pos - start);
-        if (!policy_parse_int_component(comp, &values[value_count])) return false;
-        value_count++;
-        if (pos == sv.count) break;
-        pos++;
-        if (pos == sv.count) return false;
-    }
-
-    if (value_count < 2 || value_count > 4) return false;
-    out_version->major = values[0];
-    out_version->minor = values[1];
-    out_version->patch = values[2];
-    out_version->tweak = values[3];
-    return true;
-}
-
-static int policy_compare_semver(const Policy_Semver *lhs, const Policy_Semver *rhs) {
-    if (!lhs || !rhs) return 0;
-    if (lhs->major != rhs->major) return (lhs->major < rhs->major) ? -1 : 1;
-    if (lhs->minor != rhs->minor) return (lhs->minor < rhs->minor) ? -1 : 1;
-    if (lhs->patch != rhs->patch) return (lhs->patch < rhs->patch) ? -1 : 1;
-    if (lhs->tweak != rhs->tweak) return (lhs->tweak < rhs->tweak) ? -1 : 1;
-    return 0;
-}
-
 static bool policy_set_depth_var(Evaluator_Context *ctx) {
     if (!ctx || ctx->policy_depth == 0) return false;
     char depth_buf[32];
@@ -307,8 +252,8 @@ String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy
     }
 
     String_View policy_version = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"));
-    Policy_Semver current = {0};
-    if (!policy_parse_semver(policy_version, &current)) return nob_sv_from_cstr("");
+    Eval_Semver current = {0};
+    if (!eval_semver_parse_strict(policy_version, &current)) return nob_sv_from_cstr("");
 
     int intro_major = 0;
     int intro_minor = 0;
@@ -316,7 +261,7 @@ String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy
     if (!policy_get_intro_for_number(policy_number, &intro_major, &intro_minor, &intro_patch)) {
         return nob_sv_from_cstr("");
     }
-    Policy_Semver intro = {intro_major, intro_minor, intro_patch, 0};
-    if (policy_compare_semver(&current, &intro) >= 0) return nob_sv_from_cstr("NEW");
+    Eval_Semver intro = {intro_major, intro_minor, intro_patch, 0};
+    if (eval_semver_compare(&current, &intro) >= 0) return nob_sv_from_cstr("NEW");
     return nob_sv_from_cstr("");
 }

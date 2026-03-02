@@ -10,14 +10,6 @@
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 
-static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
-    if (!ctx) return false;
-    if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
-        return ctx_oom(ctx);
-    }
-    return true;
-}
-
 static bool emit_target_prop_set(Evaluator_Context *ctx,
                                  Cmake_Event_Origin o,
                                  String_View target_name,

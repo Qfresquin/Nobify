@@ -7,14 +7,6 @@
 #include <ctype.h>
 #include "stb_ds.h"
 
-static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
-    if (!ctx) return false;
-    if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
-        return ctx_oom(ctx);
-    }
-    return true;
-}
-
 static bool parse_env_var_name(String_View token, String_View *out_name) {
     if (!out_name) return false;
     *out_name = (String_View){0};

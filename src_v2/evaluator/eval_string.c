@@ -508,7 +508,8 @@ static void string_sha256_compute_state(const unsigned char *msg,
     for (size_t i = 0; i < 8; i++) out_state[i] = state[i];
 }
 
-static void string_sha256_compute(const unsigned char *msg, size_t len, unsigned char out[32]) {
+static void __attribute__((unused))
+string_sha256_compute(const unsigned char *msg, size_t len, unsigned char out[32]) {
     static const uint32_t k_init[8] = {
         0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
         0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
@@ -518,7 +519,8 @@ static void string_sha256_compute(const unsigned char *msg, size_t len, unsigned
     for (size_t i = 0; i < 8; i++) string_store_be32(out + (i * 4), state[i]);
 }
 
-static void string_sha224_compute(const unsigned char *msg, size_t len, unsigned char out[28]) {
+static void __attribute__((unused))
+string_sha224_compute(const unsigned char *msg, size_t len, unsigned char out[28]) {
     static const uint32_t k_init[8] = {
         0xc1059ed8U, 0x367cd507U, 0x3070dd17U, 0xf70e5939U,
         0xffc00b31U, 0x68581511U, 0x64f98fa7U, 0xbefa4fa4U
@@ -626,7 +628,8 @@ static void string_sha512_compute_state(const unsigned char *msg,
     for (size_t i = 0; i < 8; i++) out_state[i] = state[i];
 }
 
-static void string_sha512_compute(const unsigned char *msg, size_t len, unsigned char out[64]) {
+static void __attribute__((unused))
+string_sha512_compute(const unsigned char *msg, size_t len, unsigned char out[64]) {
     static const uint64_t k_init[8] = {
         0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
         0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
@@ -638,7 +641,8 @@ static void string_sha512_compute(const unsigned char *msg, size_t len, unsigned
     for (size_t i = 0; i < 8; i++) string_store_be64(out + (i * 8), state[i]);
 }
 
-static void string_sha384_compute(const unsigned char *msg, size_t len, unsigned char out[48]) {
+static void __attribute__((unused))
+string_sha384_compute(const unsigned char *msg, size_t len, unsigned char out[48]) {
     static const uint64_t k_init[8] = {
         0xcbbb9d5dc1059ed8ULL, 0x629a292a367cd507ULL,
         0x9159015a3070dd17ULL, 0x152fecd8f70e5939ULL,
@@ -699,10 +703,8 @@ static void string_keccakf1600(uint64_t st[25]) {
     }
 }
 
-static void string_sha3_compute(const unsigned char *msg,
-                                size_t len,
-                                unsigned char *out,
-                                size_t out_len) {
+static void __attribute__((unused))
+string_sha3_compute(const unsigned char *msg, size_t len, unsigned char *out, size_t out_len) {
     size_t rate = 200 - (2 * out_len);
     uint64_t st[25] = {0};
     unsigned char *st_bytes = (unsigned char*)st;
@@ -743,74 +745,6 @@ static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned 
     }
     buf[count * 2] = '\0';
     return nob_sv_from_cstr(buf);
-}
-
-static bool __attribute__((unused))
-string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, String_View input, String_View *out_hash) {
-    if (!ctx || !out_hash) return false;
-    *out_hash = nob_sv_from_cstr("");
-    const unsigned char *msg = (const unsigned char*)input.data;
-    if (eval_sv_eq_ci_lit(algo, "MD5")) {
-        unsigned char d[16];
-        string_md5_compute(msg, input.count, d);
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA1")) {
-        unsigned char d[20];
-        string_sha1_compute(msg, input.count, d);
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA256")) {
-        unsigned char d[32];
-        string_sha256_compute(msg, input.count, d);
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA224")) {
-        unsigned char d[28];
-        string_sha224_compute(msg, input.count, d);
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA384")) {
-        unsigned char d[48];
-        string_sha384_compute(msg, input.count, d);
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA512")) {
-        unsigned char d[64];
-        string_sha512_compute(msg, input.count, d);
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA3_224")) {
-        unsigned char d[28];
-        string_sha3_compute(msg, input.count, d, sizeof(d));
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA3_256")) {
-        unsigned char d[32];
-        string_sha3_compute(msg, input.count, d, sizeof(d));
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA3_384")) {
-        unsigned char d[48];
-        string_sha3_compute(msg, input.count, d, sizeof(d));
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    if (eval_sv_eq_ci_lit(algo, "SHA3_512")) {
-        unsigned char d[64];
-        string_sha3_compute(msg, input.count, d, sizeof(d));
-        *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
-    }
-    return false;
 }
 
 static int string_hex_nibble(char c) {

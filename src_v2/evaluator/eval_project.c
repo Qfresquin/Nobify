@@ -5,19 +5,10 @@
 
 #include <string.h>
 #include <ctype.h>
-#include <limits.h>
 #include <stdio.h>
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
-
-static bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
-    if (!ctx) return false;
-    if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
-        return ctx_oom(ctx);
-    }
-    return true;
-}
 
 static bool emit_target_prop_set(Evaluator_Context *ctx,
                                  Cmake_Event_Origin o,
@@ -167,62 +158,8 @@ static bool add_library_default_shared(Evaluator_Context *ctx) {
     return true;
 }
 
-typedef struct {
-    int major;
-    int minor;
-    int patch;
-    int tweak;
-} Eval_Semver;
-
 static const Eval_Semver k_policy_floor_24 = {2, 4, 0, 0};
 static const Eval_Semver k_running_cmake_328 = {3, 28, 0, 0};
-
-static bool semver_parse_component(String_View sv, int *out_value) {
-    if (!out_value || sv.count == 0) return false;
-    long long acc = 0;
-    for (size_t i = 0; i < sv.count; i++) {
-        if (sv.data[i] < '0' || sv.data[i] > '9') return false;
-        acc = (acc * 10) + (long long)(sv.data[i] - '0');
-        if (acc > INT_MAX) return false;
-    }
-    *out_value = (int)acc;
-    return true;
-}
-
-static bool semver_parse_strict(String_View version_token, Eval_Semver *out_version) {
-    if (!out_version || version_token.count == 0) return false;
-    int values[4] = {0, 0, 0, 0};
-    size_t value_count = 0;
-    size_t pos = 0;
-
-    while (pos < version_token.count) {
-        size_t start = pos;
-        while (pos < version_token.count && version_token.data[pos] != '.') pos++;
-        if (value_count >= 4) return false;
-        String_View part = nob_sv_from_parts(version_token.data + start, pos - start);
-        if (!semver_parse_component(part, &values[value_count])) return false;
-        value_count++;
-        if (pos == version_token.count) break;
-        pos++;
-        if (pos == version_token.count) return false;
-    }
-
-    if (value_count < 2 || value_count > 4) return false;
-    out_version->major = values[0];
-    out_version->minor = values[1];
-    out_version->patch = values[2];
-    out_version->tweak = values[3];
-    return true;
-}
-
-static int semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs) {
-    if (!lhs || !rhs) return 0;
-    if (lhs->major != rhs->major) return (lhs->major < rhs->major) ? -1 : 1;
-    if (lhs->minor != rhs->minor) return (lhs->minor < rhs->minor) ? -1 : 1;
-    if (lhs->patch != rhs->patch) return (lhs->patch < rhs->patch) ? -1 : 1;
-    if (lhs->tweak != rhs->tweak) return (lhs->tweak < rhs->tweak) ? -1 : 1;
-    return 0;
-}
 
 static bool policy_parse_version_range_strict(String_View token,
                                               String_View *out_min_token,
@@ -253,8 +190,8 @@ static bool policy_parse_version_range_strict(String_View token,
     }
 
     if (out_min_token->count == 0 || out_max_token->count == 0) return false;
-    if (!semver_parse_strict(*out_min_token, out_min_version)) return false;
-    if (!semver_parse_strict(*out_max_token, out_max_version)) return false;
+    if (!eval_semver_parse_strict(*out_min_token, out_min_version)) return false;
+    if (!eval_semver_parse_strict(*out_max_token, out_max_version)) return false;
     return true;
 }
 
@@ -273,7 +210,7 @@ static bool policy_apply_version_defaults(Evaluator_Context *ctx, Eval_Semver po
 
         Eval_Semver intro = {intro_major, intro_minor, intro_patch, 0};
         Eval_Policy_Status status =
-            semver_compare(&intro, &policy_version) <= 0 ? POLICY_STATUS_NEW : POLICY_STATUS_UNSET;
+            eval_semver_compare(&intro, &policy_version) <= 0 ? POLICY_STATUS_NEW : POLICY_STATUS_UNSET;
         if (!eval_policy_set_status(ctx, policy_id, status)) return false;
     }
     return true;
@@ -325,7 +262,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        a.items[1]);
         return !eval_should_stop(ctx);
     }
-    if (semver_compare(&min_version, &k_running_cmake_328) > 0) {
+    if (eval_semver_compare(&min_version, &k_running_cmake_328) > 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -335,7 +272,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        min_token);
         return !eval_should_stop(ctx);
     }
-    if (has_max && semver_compare(&max_version, &min_version) < 0) {
+    if (has_max && eval_semver_compare(&max_version, &min_version) < 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -348,7 +285,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
 
     Eval_Semver policy_version = has_max ? max_version : min_version;
     String_View policy_version_token = has_max ? max_token : min_token;
-    if (semver_compare(&policy_version, &k_policy_floor_24) < 0) {
+    if (eval_semver_compare(&policy_version, &k_policy_floor_24) < 0) {
         policy_version = k_policy_floor_24;
         policy_version_token = nob_sv_from_cstr("2.4");
     }
@@ -411,7 +348,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            a.items[1]);
             return !eval_should_stop(ctx);
         }
-        if (semver_compare(&min_version, &k_policy_floor_24) < 0) {
+        if (eval_semver_compare(&min_version, &k_policy_floor_24) < 0) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -421,7 +358,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            min_token);
             return !eval_should_stop(ctx);
         }
-        if (semver_compare(&min_version, &k_running_cmake_328) > 0) {
+        if (eval_semver_compare(&min_version, &k_running_cmake_328) > 0) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -431,7 +368,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            min_token);
             return !eval_should_stop(ctx);
         }
-        if (has_max && semver_compare(&max_version, &min_version) < 0) {
+        if (has_max && eval_semver_compare(&max_version, &min_version) < 0) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
