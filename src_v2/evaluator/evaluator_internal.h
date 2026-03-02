@@ -352,6 +352,21 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name);
 bool eval_sv_key_eq(String_View a, String_View b);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
 String_View eval_normalize_compile_definition_item(String_View item);
+String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx);
+String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name);
+bool eval_property_scope_upper_temp(Evaluator_Context *ctx, String_View raw_scope, String_View *out_scope_upper);
+String_View eval_property_store_key_temp(Evaluator_Context *ctx,
+                                         String_View scope_upper,
+                                         String_View object_id,
+                                         String_View prop_upper);
+String_View eval_property_scoped_object_id_temp(Evaluator_Context *ctx,
+                                                const char *prefix,
+                                                String_View scope_object,
+                                                String_View item_object);
+const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context *ctx,
+                                                              String_View scope_upper,
+                                                              String_View property_name);
+bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir);
 bool eval_semver_parse_strict(String_View version_token, Eval_Semver *out_version);
 int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);

@@ -3307,6 +3307,160 @@ TEST(evaluator_set_property_cache_requires_existing_entry) {
     TEST_PASS();
 }
 
+TEST(evaluator_get_property_core_queries_and_directory_wrappers) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "define_property(GLOBAL PROPERTY BATCH_DOC BRIEF_DOCS short_doc FULL_DOCS long_doc)\n"
+        "define_property(DIRECTORY PROPERTY INHERITED_DIR INHERITED BRIEF_DOCS dir_short FULL_DOCS dir_long)\n"
+        "set_property(GLOBAL PROPERTY INHERITED_DIR inherited_global)\n"
+        "set_directory_properties(PROPERTIES BATCH_DIR_PROP dir_value)\n"
+        "set(SCOPE_VAR scope_value)\n"
+        "get_property(GP_SET GLOBAL PROPERTY BATCH_DOC SET)\n"
+        "get_property(GP_DEF GLOBAL PROPERTY BATCH_DOC DEFINED)\n"
+        "get_property(GP_BRIEF GLOBAL PROPERTY BATCH_DOC BRIEF_DOCS)\n"
+        "get_property(GP_FULL GLOBAL PROPERTY BATCH_DOC FULL_DOCS)\n"
+        "get_property(GP_INH DIRECTORY PROPERTY INHERITED_DIR)\n"
+        "get_directory_property(GP_DIR BATCH_DIR_PROP)\n"
+        "get_directory_property(GP_DEFVAR DEFINITION SCOPE_VAR)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_SET")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_DEF")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_BRIEF")), nob_sv_from_cstr("short_doc")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_FULL")), nob_sv_from_cstr("long_doc")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_INH")), nob_sv_from_cstr("inherited_global")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_DIR")), nob_sv_from_cstr("dir_value")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GP_DEFVAR")), nob_sv_from_cstr("scope_value")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_get_property_target_source_and_test_wrappers) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_executable(batch_target main.c)\n"
+        "set_target_properties(batch_target PROPERTIES CUSTOM_TGT hello)\n"
+        "set_source_files_properties(main.c PROPERTIES SRC_FLAG yes)\n"
+        "add_test(NAME batch_test COMMAND cmd)\n"
+        "set_tests_properties(batch_test DIRECTORY . PROPERTIES LABELS fast)\n"
+        "get_target_property(TGT_OK batch_target CUSTOM_TGT)\n"
+        "get_target_property(TGT_MISS batch_target UNKNOWN_TGT)\n"
+        "get_source_file_property(SRC_OK main.c SRC_FLAG)\n"
+        "get_source_file_property(SRC_MISS main.c UNKNOWN_SRC)\n"
+        "get_property(TEST_OK TEST batch_test DIRECTORY . PROPERTY LABELS)\n"
+        "get_test_property(TEST_MISS batch_test UNKNOWN_TEST)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TGT_OK")), nob_sv_from_cstr("hello")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TGT_MISS")), nob_sv_from_cstr("TGT_MISS-NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SRC_OK")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SRC_MISS")), nob_sv_from_cstr("SRC_MISS-NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TEST_OK")), nob_sv_from_cstr("fast")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TEST_MISS")), nob_sv_from_cstr("TEST_MISS-NOTFOUND")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "macro(batch_macro)\n"
+        "endmacro()\n"
+        "set(NORMAL_A one)\n"
+        "set(CACHED_A two CACHE STRING \"doc\")\n"
+        "set_source_files_properties(main.c DIRECTORY . PROPERTIES SCOPED_SRC local)\n"
+        "get_property(SRC_SCOPED SOURCE main.c DIRECTORY . PROPERTY SCOPED_SRC)\n"
+        "get_cmake_property(ALL_VARS VARIABLES)\n"
+        "get_cmake_property(CACHE_VARS CACHE_VARIABLES)\n"
+        "get_cmake_property(ALL_MACROS MACROS)\n"
+        "list(FIND ALL_VARS NORMAL_A IDX_VAR)\n"
+        "list(FIND CACHE_VARS CACHED_A IDX_CACHE)\n"
+        "list(FIND ALL_MACROS batch_macro IDX_MACRO)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SRC_SCOPED")), nob_sv_from_cstr("local")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_VAR")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_CACHE")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_MACRO")), nob_sv_from_cstr("-1")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_message_mode_severity_mapping) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5566,6 +5720,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_set_property_source_test_directory_clauses_parse_and_apply(passed, failed);
     test_evaluator_set_property_cache_requires_existing_entry(passed, failed);
     test_evaluator_set_property_allows_zero_objects_and_validates_test_lookup(passed, failed);
+    test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed);
+    test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
+    test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);

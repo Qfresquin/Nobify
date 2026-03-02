@@ -1,6 +1,7 @@
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
 #include "sv_utils.h"
+#include "stb_ds.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -54,6 +55,175 @@ String_View eval_normalize_compile_definition_item(String_View item) {
         return nob_sv_from_parts(item.data + 2, item.count - 2);
     }
     return item;
+}
+
+String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx) {
+    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (cur_src.count == 0 && ctx) cur_src = ctx->source_dir;
+    return cur_src;
+}
+
+String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < name.count; i++) {
+        buf[i] = (char)toupper((unsigned char)name.data[i]);
+    }
+    buf[name.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+bool eval_property_scope_upper_temp(Evaluator_Context *ctx, String_View raw_scope, String_View *out_scope_upper) {
+    (void)ctx;
+    if (!out_scope_upper) return false;
+    *out_scope_upper = nob_sv_from_cstr("");
+
+    if (eval_sv_eq_ci_lit(raw_scope, "GLOBAL")) *out_scope_upper = nob_sv_from_cstr("GLOBAL");
+    else if (eval_sv_eq_ci_lit(raw_scope, "DIRECTORY")) *out_scope_upper = nob_sv_from_cstr("DIRECTORY");
+    else if (eval_sv_eq_ci_lit(raw_scope, "TARGET")) *out_scope_upper = nob_sv_from_cstr("TARGET");
+    else if (eval_sv_eq_ci_lit(raw_scope, "SOURCE")) *out_scope_upper = nob_sv_from_cstr("SOURCE");
+    else if (eval_sv_eq_ci_lit(raw_scope, "INSTALL")) *out_scope_upper = nob_sv_from_cstr("INSTALL");
+    else if (eval_sv_eq_ci_lit(raw_scope, "TEST")) *out_scope_upper = nob_sv_from_cstr("TEST");
+    else if (eval_sv_eq_ci_lit(raw_scope, "VARIABLE")) *out_scope_upper = nob_sv_from_cstr("VARIABLE");
+    else if (eval_sv_eq_ci_lit(raw_scope, "CACHE")) *out_scope_upper = nob_sv_from_cstr("CACHE");
+    else if (eval_sv_eq_ci_lit(raw_scope, "CACHED_VARIABLE")) *out_scope_upper = nob_sv_from_cstr("CACHED_VARIABLE");
+
+    return out_scope_upper->count > 0;
+}
+
+String_View eval_property_store_key_temp(Evaluator_Context *ctx,
+                                         String_View scope_upper,
+                                         String_View object_id,
+                                         String_View prop_upper) {
+    static const char prefix[] = "NOBIFY_PROPERTY_";
+    if (!ctx) return nob_sv_from_cstr("");
+
+    bool has_obj = object_id.count > 0;
+    size_t total = (sizeof(prefix) - 1) + scope_upper.count + 2 + prop_upper.count;
+    if (has_obj) total += 2 + object_id.count;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix, sizeof(prefix) - 1);
+    off += sizeof(prefix) - 1;
+    memcpy(buf + off, scope_upper.data, scope_upper.count);
+    off += scope_upper.count;
+    buf[off++] = ':';
+    buf[off++] = ':';
+    if (has_obj) {
+        memcpy(buf + off, object_id.data, object_id.count);
+        off += object_id.count;
+        buf[off++] = ':';
+        buf[off++] = ':';
+    }
+    memcpy(buf + off, prop_upper.data, prop_upper.count);
+    off += prop_upper.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+String_View eval_property_scoped_object_id_temp(Evaluator_Context *ctx,
+                                                const char *prefix,
+                                                String_View scope_object,
+                                                String_View item_object) {
+    if (!ctx || !prefix) return nob_sv_from_cstr("");
+    String_View pfx = nob_sv_from_cstr(prefix);
+    size_t total = pfx.count + 2 + scope_object.count + 2 + item_object.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, pfx.data, pfx.count);
+    off += pfx.count;
+    buf[off++] = ':';
+    buf[off++] = ':';
+    if (scope_object.count > 0) {
+        memcpy(buf + off, scope_object.data, scope_object.count);
+        off += scope_object.count;
+    }
+    buf[off++] = ':';
+    buf[off++] = ':';
+    if (item_object.count > 0) {
+        memcpy(buf + off, item_object.data, item_object.count);
+        off += item_object.count;
+    }
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context *ctx,
+                                                              String_View scope_upper,
+                                                              String_View property_name) {
+    if (!ctx) return NULL;
+    String_View property_upper = eval_property_upper_name_temp(ctx, property_name);
+    if (eval_should_stop(ctx)) return NULL;
+
+    for (size_t i = 0; i < ctx->property_definitions.count; i++) {
+        const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+        if (!eval_sv_key_eq(def->scope_upper, scope_upper)) continue;
+        if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
+        return def;
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
+        String_View cached_scope = nob_sv_from_cstr("CACHED_VARIABLE");
+        for (size_t i = 0; i < ctx->property_definitions.count; i++) {
+            const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+            if (!eval_sv_key_eq(def->scope_upper, cached_scope)) continue;
+            if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
+            return def;
+        }
+    }
+
+    return NULL;
+}
+
+static String_View eval_file_parent_dir_view(String_View file_path) {
+    if (file_path.count == 0 || !file_path.data) return nob_sv_from_cstr(".");
+
+    size_t end = file_path.count;
+    while (end > 0) {
+        char c = file_path.data[end - 1];
+        if (c != '/' && c != '\\') break;
+        end--;
+    }
+    if (end == 0) return nob_sv_from_cstr("/");
+
+    size_t slash = SIZE_MAX;
+    for (size_t i = 0; i < end; i++) {
+        char c = file_path.data[i];
+        if (c == '/' || c == '\\') slash = i;
+    }
+    if (slash == SIZE_MAX) return nob_sv_from_cstr(".");
+    if (slash == 0) return nob_sv_from_cstr("/");
+    if (file_path.data[slash - 1] == ':') {
+        return nob_sv_from_parts(file_path.data, slash + 1);
+    }
+    return nob_sv_from_parts(file_path.data, slash);
+}
+
+static bool eval_path_norm_eq_temp(Evaluator_Context *ctx, String_View a, String_View b) {
+    String_View an = eval_sv_path_normalize_temp(ctx, a);
+    if (eval_should_stop(ctx)) return false;
+    String_View bn = eval_sv_path_normalize_temp(ctx, b);
+    if (eval_should_stop(ctx)) return false;
+    return svu_eq_ci_sv(an, bn);
+}
+
+bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
+    if (!ctx || !ctx->stream || test_name.count == 0) return false;
+    for (size_t ei = 0; ei < ctx->stream->count; ei++) {
+        const Cmake_Event *ev = &ctx->stream->items[ei];
+        if (ev->kind != EV_TEST_ADD) continue;
+        if (!nob_sv_eq(ev->as.test_add.name, test_name)) continue;
+        String_View ev_dir = eval_file_parent_dir_view(ev->origin.file_path);
+        if (eval_path_norm_eq_temp(ctx, ev_dir, scope_dir)) return true;
+        if (eval_should_stop(ctx)) return false;
+    }
+    return false;
 }
 
 static bool eval_semver_parse_component(String_View sv, int *out_value) {

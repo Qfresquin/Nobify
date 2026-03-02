@@ -247,16 +247,6 @@ bool eval_cache_set(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name) {
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name.count + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    for (size_t i = 0; i < name.count; i++) {
-        buf[i] = (char)toupper((unsigned char)name.data[i]);
-    }
-    buf[name.count] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
 static const Eval_Property_Definition *eval_property_definition_find_impl(Evaluator_Context *ctx,
                                                                           String_View scope_upper,
                                                                           String_View property_upper) {

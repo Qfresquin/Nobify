@@ -3,8 +3,8 @@
 #include "evaluator_internal.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
+#include "stb_ds.h"
 
-#include <ctype.h>
 #include <string.h>
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
@@ -59,22 +59,6 @@ static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
     return svu_join_no_sep_temp(ctx, parts, 3);
 }
 
-static String_View current_source_dir_for_paths(Evaluator_Context *ctx) {
-    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
-    if (cur_src.count == 0 && ctx) cur_src = ctx->source_dir;
-    return cur_src;
-}
-
-static String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    for (size_t i = 0; i < in.count; i++) {
-        buf[i] = (char)toupper((unsigned char)in.data[i]);
-    }
-    buf[in.count] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
 static String_View merge_property_value_temp(Evaluator_Context *ctx,
                                              String_View current,
                                              String_View incoming,
@@ -98,66 +82,6 @@ static String_View merge_property_value_temp(Evaluator_Context *ctx,
     return nob_sv_from_cstr(buf);
 }
 
-static String_View make_property_store_key_temp(Evaluator_Context *ctx,
-                                                String_View scope_upper,
-                                                String_View object_id,
-                                                String_View prop_upper) {
-    static const char prefix[] = "NOBIFY_PROPERTY_";
-    bool has_obj = object_id.count > 0;
-    size_t total = (sizeof(prefix) - 1) + scope_upper.count + 2 + prop_upper.count;
-    if (has_obj) total += 2 + object_id.count;
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    memcpy(buf + off, prefix, sizeof(prefix) - 1);
-    off += sizeof(prefix) - 1;
-    memcpy(buf + off, scope_upper.data, scope_upper.count);
-    off += scope_upper.count;
-    buf[off++] = ':';
-    buf[off++] = ':';
-    if (has_obj) {
-        memcpy(buf + off, object_id.data, object_id.count);
-        off += object_id.count;
-        buf[off++] = ':';
-        buf[off++] = ':';
-    }
-    memcpy(buf + off, prop_upper.data, prop_upper.count);
-    off += prop_upper.count;
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
-static String_View make_scoped_object_id_temp(Evaluator_Context *ctx,
-                                              const char *prefix,
-                                              String_View scope_object,
-                                              String_View item_object) {
-    if (!ctx || !prefix) return nob_sv_from_cstr("");
-    String_View pfx = nob_sv_from_cstr(prefix);
-    size_t total = pfx.count + 2 + scope_object.count + 2 + item_object.count;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    memcpy(buf + off, pfx.data, pfx.count);
-    off += pfx.count;
-    buf[off++] = ':';
-    buf[off++] = ':';
-    if (scope_object.count > 0) {
-        memcpy(buf + off, scope_object.data, scope_object.count);
-        off += scope_object.count;
-    }
-    buf[off++] = ':';
-    buf[off++] = ':';
-    if (item_object.count > 0) {
-        memcpy(buf + off, item_object.data, item_object.count);
-        off += item_object.count;
-    }
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
 static bool is_current_directory_object(Evaluator_Context *ctx, String_View object_id) {
     if (!ctx) return false;
     if (object_id.count == 0) return true;
@@ -170,76 +94,12 @@ static bool is_current_directory_object(Evaluator_Context *ctx, String_View obje
     return false;
 }
 
-static bool define_property_scope_upper_temp(Evaluator_Context *ctx,
-                                             String_View raw_scope,
-                                             String_View *out_scope_upper) {
-    if (!ctx || !out_scope_upper) return false;
-    *out_scope_upper = nob_sv_from_cstr("");
-
-    if (eval_sv_eq_ci_lit(raw_scope, "GLOBAL")) *out_scope_upper = nob_sv_from_cstr("GLOBAL");
-    else if (eval_sv_eq_ci_lit(raw_scope, "DIRECTORY")) *out_scope_upper = nob_sv_from_cstr("DIRECTORY");
-    else if (eval_sv_eq_ci_lit(raw_scope, "TARGET")) *out_scope_upper = nob_sv_from_cstr("TARGET");
-    else if (eval_sv_eq_ci_lit(raw_scope, "SOURCE")) *out_scope_upper = nob_sv_from_cstr("SOURCE");
-    else if (eval_sv_eq_ci_lit(raw_scope, "TEST")) *out_scope_upper = nob_sv_from_cstr("TEST");
-    else if (eval_sv_eq_ci_lit(raw_scope, "VARIABLE")) *out_scope_upper = nob_sv_from_cstr("VARIABLE");
-    else if (eval_sv_eq_ci_lit(raw_scope, "CACHED_VARIABLE")) *out_scope_upper = nob_sv_from_cstr("CACHED_VARIABLE");
-
-    return out_scope_upper->count > 0;
-}
-
 static bool define_property_keyword(String_View tok) {
     return eval_sv_eq_ci_lit(tok, "PROPERTY") ||
            eval_sv_eq_ci_lit(tok, "INHERITED") ||
            eval_sv_eq_ci_lit(tok, "BRIEF_DOCS") ||
            eval_sv_eq_ci_lit(tok, "FULL_DOCS") ||
            eval_sv_eq_ci_lit(tok, "INITIALIZE_FROM_VARIABLE");
-}
-
-static String_View file_parent_dir_view(String_View file_path) {
-    if (file_path.count == 0 || !file_path.data) return nob_sv_from_cstr(".");
-
-    size_t end = file_path.count;
-    while (end > 0) {
-        char c = file_path.data[end - 1];
-        if (c != '/' && c != '\\') break;
-        end--;
-    }
-    if (end == 0) return nob_sv_from_cstr("/");
-
-    size_t slash = SIZE_MAX;
-    for (size_t i = 0; i < end; i++) {
-        char c = file_path.data[i];
-        if (c == '/' || c == '\\') slash = i;
-    }
-    if (slash == SIZE_MAX) return nob_sv_from_cstr(".");
-    if (slash == 0) return nob_sv_from_cstr("/");
-    if (file_path.data[slash - 1] == ':') {
-        return nob_sv_from_parts(file_path.data, slash + 1);
-    }
-    return nob_sv_from_parts(file_path.data, slash);
-}
-
-static bool path_norm_eq_temp(Evaluator_Context *ctx, String_View a, String_View b) {
-    String_View an = eval_sv_path_normalize_temp(ctx, a);
-    if (eval_should_stop(ctx)) return false;
-    String_View bn = eval_sv_path_normalize_temp(ctx, b);
-    if (eval_should_stop(ctx)) return false;
-    return svu_eq_ci_sv(an, bn);
-}
-
-static bool test_exists_in_directory_scope(Evaluator_Context *ctx,
-                                           String_View test_name,
-                                           String_View scope_dir) {
-    if (!ctx || !ctx->stream || test_name.count == 0) return false;
-    for (size_t ei = 0; ei < ctx->stream->count; ei++) {
-        const Cmake_Event *ev = &ctx->stream->items[ei];
-        if (ev->kind != EV_TEST_ADD) continue;
-        if (!nob_sv_eq(ev->as.test_add.name, test_name)) continue;
-        String_View ev_dir = file_parent_dir_view(ev->origin.file_path);
-        if (path_norm_eq_temp(ctx, ev_dir, scope_dir)) return true;
-        if (eval_should_stop(ctx)) return false;
-    }
-    return false;
 }
 
 static bool set_non_target_property(Evaluator_Context *ctx,
@@ -249,10 +109,10 @@ static bool set_non_target_property(Evaluator_Context *ctx,
                                     String_View prop_key,
                                     String_View value,
                                     Cmake_Target_Property_Op op) {
-    String_View prop_upper = sv_to_upper_temp(ctx, prop_key);
+    String_View prop_upper = eval_property_upper_name_temp(ctx, prop_key);
     if (eval_should_stop(ctx)) return false;
 
-    String_View store_key = make_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
+    String_View store_key = eval_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
     if (eval_should_stop(ctx)) return false;
 
     String_View current = eval_var_get(ctx, store_key);
@@ -290,6 +150,1268 @@ static bool set_non_target_property(Evaluator_Context *ctx,
     }
 
     return true;
+}
+
+typedef enum {
+    PROP_QUERY_VALUE = 0,
+    PROP_QUERY_SET,
+    PROP_QUERY_DEFINED,
+    PROP_QUERY_BRIEF_DOCS,
+    PROP_QUERY_FULL_DOCS,
+} Eval_Property_Query_Mode;
+
+static bool set_output_var_value(Evaluator_Context *ctx, String_View out_var, String_View value) {
+    return eval_var_set(ctx, out_var, value);
+}
+
+static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var) {
+    String_View suffix = nob_sv_from_cstr("-NOTFOUND");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), out_var.count + suffix.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    memcpy(buf, out_var.data, out_var.count);
+    memcpy(buf + out_var.count, suffix.data, suffix.count);
+    buf[out_var.count + suffix.count] = '\0';
+    return eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+}
+
+static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View target_name, String_View *out_dir) {
+    if (!ctx || !out_dir) return false;
+    *out_dir = nob_sv_from_cstr("");
+    if (!ctx->stream) return true;
+
+    for (size_t i = 0; i < ctx->stream->count; i++) {
+        const Cmake_Event *ev = &ctx->stream->items[i];
+        if (ev->kind != EV_TARGET_DECLARE) continue;
+        if (!nob_sv_eq(ev->as.target_declare.name, target_name)) continue;
+        String_View file_path = ev->origin.file_path;
+        if (file_path.count == 0) return true;
+
+        size_t end = file_path.count;
+        while (end > 0) {
+            char c = file_path.data[end - 1];
+            if (c != '/' && c != '\\') break;
+            end--;
+        }
+        size_t slash = SIZE_MAX;
+        for (size_t si = 0; si < end; si++) {
+            char c = file_path.data[si];
+            if (c == '/' || c == '\\') slash = si;
+        }
+        if (slash == SIZE_MAX) *out_dir = nob_sv_from_cstr(".");
+        else if (slash == 0) *out_dir = nob_sv_from_cstr("/");
+        else if (file_path.data[slash - 1] == ':') *out_dir = nob_sv_from_parts(file_path.data, slash + 1);
+        else *out_dir = nob_sv_from_parts(file_path.data, slash);
+        return true;
+    }
+
+    return true;
+}
+
+static bool property_append_unique_temp(Evaluator_Context *ctx, SV_List *list, String_View value) {
+    if (!ctx || !list) return false;
+    if (value.count == 0) return true;
+    for (size_t i = 0; i < list->count; i++) {
+        if (eval_sv_key_eq(list->items[i], value)) return true;
+    }
+    return svu_list_push_temp(ctx, list, value);
+}
+
+static String_View target_property_from_events_temp(Evaluator_Context *ctx,
+                                                    String_View target_name,
+                                                    String_View prop_upper,
+                                                    bool *out_set) {
+    if (out_set) *out_set = false;
+    if (!ctx || !ctx->stream) return nob_sv_from_cstr("");
+
+    String_View current = nob_sv_from_cstr("");
+    bool have = false;
+
+    for (size_t i = 0; i < ctx->stream->count; i++) {
+        const Cmake_Event *ev = &ctx->stream->items[i];
+        String_View incoming = nob_sv_from_cstr("");
+        Cmake_Target_Property_Op op = EV_PROP_APPEND_LIST;
+        bool matches = false;
+
+        switch (ev->kind) {
+            case EV_TARGET_PROP_SET:
+                if (!nob_sv_eq(ev->as.target_prop_set.target_name, target_name)) break;
+                if (!svu_eq_ci_sv(ev->as.target_prop_set.key, prop_upper)) break;
+                incoming = ev->as.target_prop_set.value;
+                op = ev->as.target_prop_set.op;
+                matches = true;
+                break;
+            case EV_TARGET_ADD_SOURCE:
+                if (!eval_sv_eq_ci_lit(prop_upper, "SOURCES")) break;
+                if (!nob_sv_eq(ev->as.target_add_source.target_name, target_name)) break;
+                incoming = ev->as.target_add_source.path;
+                matches = true;
+                break;
+            case EV_TARGET_INCLUDE_DIRECTORIES:
+                if (!eval_sv_eq_ci_lit(prop_upper, "INCLUDE_DIRECTORIES")) break;
+                if (!nob_sv_eq(ev->as.target_include_directories.target_name, target_name)) break;
+                incoming = ev->as.target_include_directories.path;
+                matches = true;
+                break;
+            case EV_TARGET_COMPILE_DEFINITIONS:
+                if (!eval_sv_eq_ci_lit(prop_upper, "COMPILE_DEFINITIONS")) break;
+                if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, target_name)) break;
+                incoming = ev->as.target_compile_definitions.item;
+                matches = true;
+                break;
+            case EV_TARGET_COMPILE_OPTIONS:
+                if (!eval_sv_eq_ci_lit(prop_upper, "COMPILE_OPTIONS")) break;
+                if (!nob_sv_eq(ev->as.target_compile_options.target_name, target_name)) break;
+                incoming = ev->as.target_compile_options.item;
+                matches = true;
+                break;
+            case EV_TARGET_LINK_LIBRARIES:
+                if (!eval_sv_eq_ci_lit(prop_upper, "LINK_LIBRARIES")) break;
+                if (!nob_sv_eq(ev->as.target_link_libraries.target_name, target_name)) break;
+                incoming = ev->as.target_link_libraries.item;
+                matches = true;
+                break;
+            case EV_TARGET_LINK_OPTIONS:
+                if (!eval_sv_eq_ci_lit(prop_upper, "LINK_OPTIONS")) break;
+                if (!nob_sv_eq(ev->as.target_link_options.target_name, target_name)) break;
+                incoming = ev->as.target_link_options.item;
+                matches = true;
+                break;
+            case EV_TARGET_LINK_DIRECTORIES:
+                if (!eval_sv_eq_ci_lit(prop_upper, "LINK_DIRECTORIES")) break;
+                if (!nob_sv_eq(ev->as.target_link_directories.target_name, target_name)) break;
+                incoming = ev->as.target_link_directories.path;
+                matches = true;
+                break;
+            default:
+                break;
+        }
+
+        if (!matches) continue;
+        if (!have) {
+            current = incoming;
+            have = true;
+            continue;
+        }
+
+        current = merge_property_value_temp(ctx, current, incoming, op);
+        if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    }
+
+    if (out_set) *out_set = have;
+    return current;
+}
+
+static bool property_parent_directory_temp(Evaluator_Context *ctx, String_View dir, String_View *out_parent) {
+    if (!ctx || !out_parent) return false;
+    *out_parent = nob_sv_from_cstr("");
+
+    String_View norm = eval_sv_path_normalize_temp(ctx, dir);
+    if (eval_should_stop(ctx)) return false;
+    if (norm.count == 0) return true;
+    if (nob_sv_eq(norm, nob_sv_from_cstr("/"))) return true;
+    if (norm.count == 3 && norm.data[1] == ':' &&
+        (norm.data[2] == '/' || norm.data[2] == '\\')) return true;
+
+    size_t end = norm.count;
+    while (end > 0) {
+        char c = norm.data[end - 1];
+        if (c != '/' && c != '\\') break;
+        end--;
+    }
+    if (end == 0) return true;
+
+    size_t slash = SIZE_MAX;
+    for (size_t i = 0; i < end; i++) {
+        char c = norm.data[i];
+        if (c == '/' || c == '\\') slash = i;
+    }
+    if (slash == SIZE_MAX) return true;
+    if (slash == 0) {
+        *out_parent = nob_sv_from_cstr("/");
+        return true;
+    }
+    if (norm.data[slash - 1] == ':') {
+        *out_parent = nob_sv_from_parts(norm.data, slash + 1);
+        return true;
+    }
+    *out_parent = nob_sv_from_parts(norm.data, slash);
+    return true;
+}
+
+static String_View property_value_from_store_temp(Evaluator_Context *ctx,
+                                                  String_View scope_upper,
+                                                  String_View object_id,
+                                                  String_View prop_upper,
+                                                  bool *out_set) {
+    if (out_set) *out_set = false;
+    if (!ctx) return nob_sv_from_cstr("");
+
+    if (eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
+        return target_property_from_events_temp(ctx, object_id, prop_upper, out_set);
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "CACHE") &&
+        eval_sv_eq_ci_lit(prop_upper, "VALUE") &&
+        eval_cache_defined(ctx, object_id)) {
+        if (out_set) *out_set = true;
+        return eval_var_get(ctx, object_id);
+    }
+
+    String_View store_key = eval_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (!eval_var_defined(ctx, store_key)) return nob_sv_from_cstr("");
+    if (out_set) *out_set = true;
+    return eval_var_get(ctx, store_key);
+}
+
+static String_View property_value_from_directory_chain_temp(Evaluator_Context *ctx,
+                                                            String_View start_dir,
+                                                            String_View prop_upper,
+                                                            bool *out_set) {
+    if (out_set) *out_set = false;
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View cur = start_dir;
+    while (cur.count > 0) {
+        bool have = false;
+        String_View value = property_value_from_store_temp(ctx,
+                                                           nob_sv_from_cstr("DIRECTORY"),
+                                                           cur,
+                                                           prop_upper,
+                                                           &have);
+        if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+        if (have) {
+            if (out_set) *out_set = true;
+            return value;
+        }
+
+        String_View parent = nob_sv_from_cstr("");
+        if (!property_parent_directory_temp(ctx, cur, &parent)) return nob_sv_from_cstr("");
+        if (parent.count == 0 || eval_sv_key_eq(parent, cur)) break;
+        cur = parent;
+    }
+
+    bool have_global = false;
+    String_View value = property_value_from_store_temp(ctx,
+                                                       nob_sv_from_cstr("GLOBAL"),
+                                                       nob_sv_from_cstr(""),
+                                                       prop_upper,
+                                                       &have_global);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (have_global && out_set) *out_set = true;
+    return have_global ? value : nob_sv_from_cstr("");
+}
+
+static String_View resolve_property_value_temp(Evaluator_Context *ctx,
+                                               String_View scope_upper,
+                                               String_View object_id,
+                                               String_View prop_name,
+                                               bool allow_inherit,
+                                               String_View inherit_directory,
+                                               bool *out_set) {
+    if (out_set) *out_set = false;
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View prop_upper = eval_property_upper_name_temp(ctx, prop_name);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+
+    bool have = false;
+    String_View value = property_value_from_store_temp(ctx, scope_upper, object_id, prop_upper, &have);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (have) {
+        if (out_set) *out_set = true;
+        return value;
+    }
+    if (!allow_inherit) return nob_sv_from_cstr("");
+
+    if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY")) {
+        return property_value_from_directory_chain_temp(ctx, object_id, prop_upper, out_set);
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "TARGET") ||
+        eval_sv_eq_ci_lit(scope_upper, "SOURCE") ||
+        eval_sv_eq_ci_lit(scope_upper, "TEST")) {
+        String_View base_dir = inherit_directory;
+        if (base_dir.count == 0 && eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
+            if (!target_get_declared_dir_temp(ctx, object_id, &base_dir)) return nob_sv_from_cstr("");
+            if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+        }
+        if (base_dir.count > 0) {
+            return property_value_from_directory_chain_temp(ctx, base_dir, prop_upper, out_set);
+        }
+    }
+
+    return nob_sv_from_cstr("");
+}
+
+static bool property_known_for_scope(Evaluator_Context *ctx,
+                                     String_View scope_upper,
+                                     String_View object_id,
+                                     String_View prop_name,
+                                     String_View inherit_directory) {
+    if (!ctx) return false;
+    if (eval_property_definition_find(ctx, scope_upper, prop_name)) {
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+    if (eval_should_stop(ctx)) return false;
+
+    bool have = false;
+    (void)resolve_property_value_temp(ctx,
+                                      scope_upper,
+                                      object_id,
+                                      prop_name,
+                                      false,
+                                      inherit_directory,
+                                      &have);
+    if (eval_should_stop(ctx)) return false;
+    return have;
+}
+
+static bool parse_property_query_mode(Evaluator_Context *ctx,
+                                      const Node *node,
+                                      Cmake_Event_Origin o,
+                                      String_View token,
+                                      Eval_Property_Query_Mode *out_mode) {
+    if (!ctx || !node || !out_mode) return false;
+    if (eval_sv_eq_ci_lit(token, "SET")) {
+        *out_mode = PROP_QUERY_SET;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(token, "DEFINED")) {
+        *out_mode = PROP_QUERY_DEFINED;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(token, "BRIEF_DOCS")) {
+        *out_mode = PROP_QUERY_BRIEF_DOCS;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(token, "FULL_DOCS")) {
+        *out_mode = PROP_QUERY_FULL_DOCS;
+        return true;
+    }
+
+    eval_emit_diag(ctx,
+                   EV_DIAG_ERROR,
+                   nob_sv_from_cstr("dispatcher"),
+                   node->as.cmd.name,
+                   o,
+                   nob_sv_from_cstr("get_property() received unsupported query mode"),
+                   token);
+    return false;
+}
+
+static bool get_property_impl(Evaluator_Context *ctx,
+                              const Node *node,
+                              Cmake_Event_Origin o,
+                              String_View out_var,
+                              String_View scope_upper,
+                              String_View object_id,
+                              String_View prop_name,
+                              Eval_Property_Query_Mode mode,
+                              String_View inherit_directory,
+                              bool validate_object) {
+    if (!ctx || !node) return false;
+
+    const Eval_Property_Definition *def = eval_property_definition_find(ctx, scope_upper, prop_name);
+    if (eval_should_stop(ctx)) return false;
+    bool allow_inherit = def && def->inherited;
+
+    if (mode == PROP_QUERY_DEFINED) {
+        return set_output_var_value(ctx,
+                                    out_var,
+                                    property_known_for_scope(ctx,
+                                                             scope_upper,
+                                                             object_id,
+                                                             prop_name,
+                                                             inherit_directory)
+                                        ? nob_sv_from_cstr("1")
+                                        : nob_sv_from_cstr("0"));
+    }
+
+    if (mode == PROP_QUERY_BRIEF_DOCS || mode == PROP_QUERY_FULL_DOCS) {
+        if (!def) return set_output_var_notfound(ctx, out_var);
+        if (mode == PROP_QUERY_BRIEF_DOCS) {
+            return set_output_var_value(ctx,
+                                        out_var,
+                                        def->has_brief_docs ? def->brief_docs : nob_sv_from_cstr(""));
+        }
+        return set_output_var_value(ctx,
+                                    out_var,
+                                    def->has_full_docs ? def->full_docs : nob_sv_from_cstr(""));
+    }
+
+    if (validate_object) {
+        if (eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
+            if (!eval_target_known(ctx, object_id)) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("get_property(TARGET ...) target was not declared"),
+                               object_id);
+                return !eval_should_stop(ctx);
+            }
+        } else if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
+            if (!eval_cache_defined(ctx, object_id)) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("get_property(CACHE ...) cache entry does not exist"),
+                               object_id);
+                return !eval_should_stop(ctx);
+            }
+        } else if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
+            String_View test_dir = inherit_directory.count > 0 ? inherit_directory : eval_current_source_dir_for_paths(ctx);
+            if (!eval_test_exists_in_directory_scope(ctx, object_id, test_dir)) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("get_property(TEST ...) test was not declared in selected directory scope"),
+                               object_id);
+                return !eval_should_stop(ctx);
+            }
+        }
+    }
+
+    bool have = false;
+    String_View value = resolve_property_value_temp(ctx,
+                                                    scope_upper,
+                                                    object_id,
+                                                    prop_name,
+                                                    allow_inherit,
+                                                    inherit_directory,
+                                                    &have);
+    if (eval_should_stop(ctx)) return false;
+
+    if (mode == PROP_QUERY_SET) {
+        return set_output_var_value(ctx, out_var, have ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+    }
+
+    if (!have) return eval_var_unset(ctx, out_var);
+    return set_output_var_value(ctx, out_var, value);
+}
+
+bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 4) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property() requires output variable, scope, PROPERTY and property name"),
+                       nob_sv_from_cstr("Usage: get_property(<var> <GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE|VARIABLE> ... PROPERTY <name> [SET|DEFINED|BRIEF_DOCS|FULL_DOCS])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View out_var = a.items[0];
+    String_View scope_upper = nob_sv_from_cstr("");
+    if (!eval_property_scope_upper_temp(ctx, a.items[1], &scope_upper)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property() unknown scope"),
+                       a.items[1]);
+        return !eval_should_stop(ctx);
+    }
+
+    size_t i = 2;
+    String_View object_token = nob_sv_from_cstr("");
+    String_View object_id = nob_sv_from_cstr("");
+    String_View inherit_dir = nob_sv_from_cstr("");
+    bool saw_source_dir_clause = false;
+    bool saw_source_target_dir_clause = false;
+    bool saw_test_dir_clause = false;
+
+    if (!(eval_sv_eq_ci_lit(scope_upper, "GLOBAL") || eval_sv_eq_ci_lit(scope_upper, "VARIABLE"))) {
+        if (i >= a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("get_property() missing scope object"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+
+        if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY")) {
+            if (!eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+                object_token = a.items[i++];
+            }
+        } else {
+            object_token = a.items[i++];
+        }
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY")) {
+        String_View cur_src = eval_current_source_dir_for_paths(ctx);
+        if (object_token.count == 0) object_id = cur_src;
+        else object_id = eval_path_resolve_for_cmake_arg(ctx, object_token, cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        inherit_dir = object_id;
+    } else if (eval_sv_eq_ci_lit(scope_upper, "SOURCE")) {
+        String_View cur_src = eval_current_source_dir_for_paths(ctx);
+        while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+            if (eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+                if (saw_source_dir_clause || saw_source_target_dir_clause || i + 1 >= a.count) {
+                    eval_emit_diag(ctx,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("dispatcher"),
+                                   node->as.cmd.name,
+                                   o,
+                                   nob_sv_from_cstr("get_property(SOURCE DIRECTORY ...) requires exactly one directory"),
+                                   nob_sv_from_cstr(""));
+                    return !eval_should_stop(ctx);
+                }
+                inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[++i], cur_src, true);
+                if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+                saw_source_dir_clause = true;
+                i++;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "TARGET_DIRECTORY")) {
+                if (saw_source_dir_clause || saw_source_target_dir_clause || i + 1 >= a.count) {
+                    eval_emit_diag(ctx,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("dispatcher"),
+                                   node->as.cmd.name,
+                                   o,
+                                   nob_sv_from_cstr("get_property(SOURCE TARGET_DIRECTORY ...) requires exactly one target"),
+                                   nob_sv_from_cstr(""));
+                    return !eval_should_stop(ctx);
+                }
+                String_View target_name = a.items[++i];
+                if (!eval_target_known(ctx, target_name)) {
+                    eval_emit_diag(ctx,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("dispatcher"),
+                                   node->as.cmd.name,
+                                   o,
+                                   nob_sv_from_cstr("get_property(SOURCE TARGET_DIRECTORY ...) target was not declared"),
+                                   target_name);
+                    return !eval_should_stop(ctx);
+                }
+                if (!target_get_declared_dir_temp(ctx, target_name, &inherit_dir)) return !eval_should_stop(ctx);
+                if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+                object_id = eval_property_scoped_object_id_temp(ctx, "TARGET_DIRECTORY", target_name, object_token);
+                if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+                saw_source_target_dir_clause = true;
+                i++;
+                continue;
+            }
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("get_property(SOURCE ...) received unexpected argument before PROPERTY"),
+                           a.items[i]);
+            return !eval_should_stop(ctx);
+        }
+        if (!saw_source_target_dir_clause) {
+            if (saw_source_dir_clause) object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", inherit_dir, object_token);
+            else {
+                object_id = object_token;
+                inherit_dir = cur_src;
+            }
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        }
+    } else if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
+        String_View cur_src = eval_current_source_dir_for_paths(ctx);
+        while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+            if (!eval_sv_eq_ci_lit(a.items[i], "DIRECTORY") || saw_test_dir_clause || i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("get_property(TEST ...) received invalid DIRECTORY clause"),
+                               nob_sv_from_cstr(""));
+                return !eval_should_stop(ctx);
+            }
+            inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[++i], cur_src, true);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            saw_test_dir_clause = true;
+            i++;
+        }
+        if (saw_test_dir_clause) object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", inherit_dir, object_token);
+        else {
+            object_id = object_token;
+            inherit_dir = cur_src;
+        }
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    } else if (eval_sv_eq_ci_lit(scope_upper, "TARGET") ||
+               eval_sv_eq_ci_lit(scope_upper, "INSTALL") ||
+               eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
+        object_id = object_token;
+    }
+
+    if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property() missing PROPERTY keyword"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+    i++;
+    if (i >= a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property() missing property name"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+    String_View prop_name = a.items[i++];
+
+    Eval_Property_Query_Mode mode = PROP_QUERY_VALUE;
+    if (i < a.count) {
+        if (!parse_property_query_mode(ctx, node, o, a.items[i++], &mode)) return !eval_should_stop(ctx);
+    }
+    if (i != a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property() received unexpected trailing arguments"),
+                       a.items[i]);
+        return !eval_should_stop(ctx);
+    }
+
+    if ((mode == PROP_QUERY_VALUE || mode == PROP_QUERY_SET) &&
+        eval_sv_eq_ci_lit(scope_upper, "TARGET") &&
+        !eval_target_known(ctx, object_token)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property(TARGET ...) target was not declared"),
+                       object_token);
+        return !eval_should_stop(ctx);
+    }
+    if ((mode == PROP_QUERY_VALUE || mode == PROP_QUERY_SET) &&
+        eval_sv_eq_ci_lit(scope_upper, "CACHE") &&
+        !eval_cache_defined(ctx, object_token)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_property(CACHE ...) cache entry does not exist"),
+                       object_token);
+        return !eval_should_stop(ctx);
+    }
+    if ((mode == PROP_QUERY_VALUE || mode == PROP_QUERY_SET) &&
+        eval_sv_eq_ci_lit(scope_upper, "TEST")) {
+        String_View test_dir = inherit_dir.count > 0 ? inherit_dir : eval_current_source_dir_for_paths(ctx);
+        if (!eval_test_exists_in_directory_scope(ctx, object_token, test_dir)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("get_property(TEST ...) test was not declared in selected directory scope"),
+                           object_token);
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    if (!get_property_impl(ctx,
+                           node,
+                           o,
+                           out_var,
+                           scope_upper,
+                           object_id,
+                           prop_name,
+                           mode,
+                           inherit_dir,
+                           false)) {
+        return !eval_should_stop(ctx);
+    }
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count != 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_cmake_property() expects output variable and property name"),
+                       nob_sv_from_cstr("Usage: get_cmake_property(<var> <property>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View out_var = a.items[0];
+    String_View prop = a.items[1];
+    SV_List values = {0};
+
+    if (eval_sv_eq_ci_lit(prop, "VARIABLES")) {
+        for (size_t depth = 0; depth < ctx->scope_depth; depth++) {
+            Var_Scope *scope = &ctx->scopes[depth];
+            ptrdiff_t n = stbds_shlen(scope->vars);
+            for (ptrdiff_t i = 0; i < n; i++) {
+                if (!scope->vars[i].key) continue;
+                if (!property_append_unique_temp(ctx, &values, nob_sv_from_cstr(scope->vars[i].key))) {
+                    return !eval_should_stop(ctx);
+                }
+            }
+        }
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+    }
+
+    if (eval_sv_eq_ci_lit(prop, "CACHE_VARIABLES")) {
+        ptrdiff_t n = stbds_shlen(ctx->cache_entries);
+        for (ptrdiff_t i = 0; i < n; i++) {
+            if (!ctx->cache_entries[i].key) continue;
+            if (!property_append_unique_temp(ctx, &values, nob_sv_from_cstr(ctx->cache_entries[i].key))) {
+                return !eval_should_stop(ctx);
+            }
+        }
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+    }
+
+    if (eval_sv_eq_ci_lit(prop, "MACROS")) {
+        for (size_t i = 0; i < ctx->user_commands.count; i++) {
+            const User_Command *cmd = &ctx->user_commands.items[i];
+            if (cmd->kind != USER_CMD_MACRO) continue;
+            if (!property_append_unique_temp(ctx, &values, cmd->name)) return !eval_should_stop(ctx);
+        }
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+    }
+
+    if (eval_sv_eq_ci_lit(prop, "COMPONENTS")) {
+        if (ctx->stream) {
+            for (size_t i = 0; i < ctx->stream->count; i++) {
+                const Cmake_Event *ev = &ctx->stream->items[i];
+                if (ev->kind != EV_CPACK_ADD_COMPONENT) continue;
+                if (!property_append_unique_temp(ctx, &values, ev->as.cpack_add_component.name)) {
+                    return !eval_should_stop(ctx);
+                }
+            }
+        }
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+    }
+
+    if (!get_property_impl(ctx,
+                           node,
+                           o,
+                           out_var,
+                           nob_sv_from_cstr("GLOBAL"),
+                           nob_sv_from_cstr(""),
+                           prop,
+                           PROP_QUERY_VALUE,
+                           nob_sv_from_cstr(""),
+                           false)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_var_defined(ctx, out_var)) return set_output_var_notfound(ctx, out_var);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_directory_property() requires output variable and query"),
+                       nob_sv_from_cstr("Usage: get_directory_property(<var> [DIRECTORY <dir>] <prop-name>|DEFINITION <var-name>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View out_var = a.items[0];
+    size_t i = 1;
+    String_View dir = eval_current_source_dir_for_paths(ctx);
+    if (eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+        if (i + 1 >= a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("get_directory_property(DIRECTORY ...) requires a directory"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        dir = eval_path_resolve_for_cmake_arg(ctx, a.items[i + 1], dir, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        i += 2;
+    }
+    if (i >= a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_directory_property() missing property query"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(a.items[i], "DEFINITION")) {
+        if (i + 1 >= a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("get_directory_property(DEFINITION ...) requires a variable name"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        if (i + 2 != a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("get_directory_property(DEFINITION ...) expects exactly one variable name"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        String_View value = eval_var_get(ctx, a.items[i + 1]);
+        return set_output_var_value(ctx, out_var, value);
+    }
+
+    if (i + 1 != a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_directory_property() received unexpected trailing arguments"),
+                       a.items[i + 1]);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!get_property_impl(ctx,
+                           node,
+                           o,
+                           out_var,
+                           nob_sv_from_cstr("DIRECTORY"),
+                           dir,
+                           a.items[i],
+                           PROP_QUERY_VALUE,
+                           dir,
+                           false)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_var_defined(ctx, out_var)) return set_output_var_value(ctx, out_var, nob_sv_from_cstr(""));
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_get_source_file_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count != 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_source_file_property() expects output variable, source and property"),
+                       nob_sv_from_cstr("Usage: get_source_file_property(<var> <source> <property>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View inherit_dir = eval_current_source_dir_for_paths(ctx);
+    if (!get_property_impl(ctx,
+                           node,
+                           o,
+                           a.items[0],
+                           nob_sv_from_cstr("SOURCE"),
+                           a.items[1],
+                           a.items[2],
+                           PROP_QUERY_VALUE,
+                           inherit_dir,
+                           false)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_var_defined(ctx, a.items[0])) return set_output_var_notfound(ctx, a.items[0]);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_get_target_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count != 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_target_property() expects output variable, target and property"),
+                       nob_sv_from_cstr("Usage: get_target_property(<var> <target> <property>)"));
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_target_known(ctx, a.items[1])) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_target_property() target was not declared"),
+                       a.items[1]);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!get_property_impl(ctx,
+                           node,
+                           o,
+                           a.items[0],
+                           nob_sv_from_cstr("TARGET"),
+                           a.items[1],
+                           a.items[2],
+                           PROP_QUERY_VALUE,
+                           nob_sv_from_cstr(""),
+                           false)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_var_defined(ctx, a.items[0])) return set_output_var_notfound(ctx, a.items[0]);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_get_test_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count != 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_test_property() expects output variable, test and property"),
+                       nob_sv_from_cstr("Usage: get_test_property(<var> <test> <property>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View test_dir = eval_current_source_dir_for_paths(ctx);
+    if (!eval_test_exists_in_directory_scope(ctx, a.items[1], test_dir)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("get_test_property() test was not declared in current directory scope"),
+                       a.items[1]);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!get_property_impl(ctx,
+                           node,
+                           o,
+                           a.items[0],
+                           nob_sv_from_cstr("TEST"),
+                           a.items[1],
+                           a.items[2],
+                           PROP_QUERY_VALUE,
+                           test_dir,
+                           false)) {
+        return !eval_should_stop(ctx);
+    }
+    if (!eval_var_defined(ctx, a.items[0])) return set_output_var_notfound(ctx, a.items[0]);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_set_directory_properties(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 3 || !eval_sv_eq_ci_lit(a.items[0], "PROPERTIES")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_directory_properties() requires PROPERTIES key/value pairs"),
+                       nob_sv_from_cstr("Usage: set_directory_properties(PROPERTIES <k> <v> [<k> <v>...])"));
+        return !eval_should_stop(ctx);
+    }
+    if (((a.count - 1) % 2) != 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_directory_properties() has dangling property key without value"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View current_dir = eval_current_source_dir_for_paths(ctx);
+    String_View scope_upper = nob_sv_from_cstr("DIRECTORY");
+    for (size_t i = 1; i + 1 < a.count; i += 2) {
+        if (!set_non_target_property(ctx, o, scope_upper, current_dir, a.items[i], a.items[i + 1], EV_PROP_SET)) {
+            return !eval_should_stop(ctx);
+        }
+    }
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 4) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_source_files_properties() requires files and PROPERTIES pairs"),
+                       nob_sv_from_cstr("Usage: set_source_files_properties(<file>... [DIRECTORY <dir>...] [TARGET_DIRECTORY <target>...] PROPERTIES <k> <v> [<k> <v>...])"));
+        return !eval_should_stop(ctx);
+    }
+
+    SV_List files = {0};
+    SV_List dirs = {0};
+    SV_List target_dirs = {0};
+    enum {
+        SF_PARSE_FILES = 0,
+        SF_PARSE_DIRS,
+        SF_PARSE_TARGET_DIRS,
+    } mode = SF_PARSE_FILES;
+
+    size_t i = 0;
+    for (; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) break;
+        if (eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+            mode = SF_PARSE_DIRS;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "TARGET_DIRECTORY")) {
+            mode = SF_PARSE_TARGET_DIRS;
+            continue;
+        }
+
+        if (mode == SF_PARSE_FILES) {
+            if (!svu_list_push_temp(ctx, &files, a.items[i])) return !eval_should_stop(ctx);
+        } else if (mode == SF_PARSE_DIRS) {
+            if (!svu_list_push_temp(ctx, &dirs, a.items[i])) return !eval_should_stop(ctx);
+        } else {
+            if (!svu_list_push_temp(ctx, &target_dirs, a.items[i])) return !eval_should_stop(ctx);
+        }
+    }
+
+    if (files.count == 0 || i >= a.count) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_source_files_properties() requires at least one source file and PROPERTIES"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+    i++;
+    if (i >= a.count || ((a.count - i) % 2) != 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_source_files_properties() has invalid PROPERTIES key/value pairs"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View cur_src = eval_current_source_dir_for_paths(ctx);
+    for (size_t di = 0; di < dirs.count; di++) {
+        dirs.items[di] = eval_path_resolve_for_cmake_arg(ctx, dirs.items[di], cur_src, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    }
+    for (size_t ti = 0; ti < target_dirs.count; ti++) {
+        if (!eval_target_known(ctx, target_dirs.items[ti])) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("set_source_files_properties(TARGET_DIRECTORY ...) target was not declared"),
+                           target_dirs.items[ti]);
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    String_View scope_upper = nob_sv_from_cstr("SOURCE");
+    for (size_t fi = 0; fi < files.count; fi++) {
+        if (dirs.count == 0 && target_dirs.count == 0) {
+            for (size_t pi = i; pi + 1 < a.count; pi += 2) {
+                if (!set_non_target_property(ctx, o, scope_upper, files.items[fi], a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+                    return !eval_should_stop(ctx);
+                }
+            }
+            continue;
+        }
+
+        for (size_t di = 0; di < dirs.count; di++) {
+            String_View object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", dirs.items[di], files.items[fi]);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            for (size_t pi = i; pi + 1 < a.count; pi += 2) {
+                if (!set_non_target_property(ctx, o, scope_upper, object_id, a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+                    return !eval_should_stop(ctx);
+                }
+            }
+        }
+
+        for (size_t ti = 0; ti < target_dirs.count; ti++) {
+            String_View object_id = eval_property_scoped_object_id_temp(ctx,
+                                                                        "TARGET_DIRECTORY",
+                                                                        target_dirs.items[ti],
+                                                                        files.items[fi]);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            for (size_t pi = i; pi + 1 < a.count; pi += 2) {
+                if (!set_non_target_property(ctx, o, scope_upper, object_id, a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+                    return !eval_should_stop(ctx);
+                }
+            }
+        }
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 4) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_tests_properties() requires tests and PROPERTIES pairs"),
+                       nob_sv_from_cstr("Usage: set_tests_properties(<test>... [DIRECTORY <dir>] PROPERTIES <k> <v> [<k> <v>...])"));
+        return !eval_should_stop(ctx);
+    }
+
+    SV_List tests = {0};
+    size_t i = 0;
+    while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "DIRECTORY") && !eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) {
+        if (!svu_list_push_temp(ctx, &tests, a.items[i])) return !eval_should_stop(ctx);
+        i++;
+    }
+
+    if (tests.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_tests_properties() requires at least one test name"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View test_dir = eval_current_source_dir_for_paths(ctx);
+    bool saw_directory_clause = false;
+    if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+        if (i + 1 >= a.count) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("set_tests_properties(DIRECTORY ...) requires a directory"),
+                           nob_sv_from_cstr(""));
+            return !eval_should_stop(ctx);
+        }
+        test_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[i + 1], test_dir, true);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        saw_directory_clause = true;
+        i += 2;
+    }
+
+    if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_tests_properties() missing PROPERTIES keyword"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+    i++;
+    if (i >= a.count || ((a.count - i) % 2) != 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_tests_properties() has invalid PROPERTIES key/value pairs"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    for (size_t ti = 0; ti < tests.count; ti++) {
+        if (eval_test_exists_in_directory_scope(ctx, tests.items[ti], test_dir)) continue;
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("set_tests_properties() test was not declared in selected directory scope"),
+                       tests.items[ti]);
+        return !eval_should_stop(ctx);
+    }
+
+    String_View scope_upper = nob_sv_from_cstr("TEST");
+    for (size_t ti = 0; ti < tests.count; ti++) {
+        String_View object_id = tests.items[ti];
+        if (saw_directory_clause) {
+            object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", test_dir, tests.items[ti]);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        }
+
+        for (size_t pi = i; pi + 1 < a.count; pi += 2) {
+            if (!set_non_target_property(ctx, o, scope_upper, object_id, a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+                return !eval_should_stop(ctx);
+            }
+        }
+    }
+
+    return !eval_should_stop(ctx);
 }
 
 bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
@@ -490,7 +1612,7 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
 
     String_View tgt = a.items[0];
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    String_View cur_src = current_source_dir_for_paths(ctx);
+    String_View cur_src = eval_current_source_dir_for_paths(ctx);
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
@@ -539,7 +1661,7 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_system = false;
     bool is_before = false;
-    String_View cur_src = current_source_dir_for_paths(ctx);
+    String_View cur_src = eval_current_source_dir_for_paths(ctx);
 
     for (size_t i = 1; i < a.count; i++) {
         if (eval_sv_eq_ci_lit(a.items[i], "SYSTEM")) {
@@ -695,7 +1817,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View scope_upper = nob_sv_from_cstr("");
-    if (!define_property_scope_upper_temp(ctx, a.items[0], &scope_upper)) {
+    if (!eval_property_scope_upper_temp(ctx, a.items[0], &scope_upper)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -719,7 +1841,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
 
     Eval_Property_Definition def = {0};
     def.scope_upper = scope_upper;
-    def.property_upper = sv_to_upper_temp(ctx, a.items[2]);
+    def.property_upper = eval_property_upper_name_temp(ctx, a.items[2]);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (def.property_upper.count == 0) {
         eval_emit_diag(ctx,
@@ -1047,7 +2169,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     {
-        String_View cur_src = current_source_dir_for_paths(ctx);
+        String_View cur_src = eval_current_source_dir_for_paths(ctx);
         for (size_t di = 0; di < source_dirs.count; di++) {
             source_dirs.items[di] = eval_path_resolve_for_cmake_arg(ctx, source_dirs.items[di], cur_src, true);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
@@ -1131,7 +2253,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View scope_upper = sv_to_upper_temp(ctx, scope);
+    String_View scope_upper = eval_property_upper_name_temp(ctx, scope);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (is_global_scope) {
@@ -1173,20 +2295,20 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                 }
 
                 for (size_t di = 0; di < source_dirs.count; di++) {
-                    String_View object_id = make_scoped_object_id_temp(ctx,
-                                                                       "DIRECTORY",
-                                                                       source_dirs.items[di],
-                                                                       objects.items[oi]);
+                    String_View object_id = eval_property_scoped_object_id_temp(ctx,
+                                                                                "DIRECTORY",
+                                                                                source_dirs.items[di],
+                                                                                objects.items[oi]);
                     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                     if (!set_non_target_property(ctx, o, scope_upper, object_id, key, value, op)) {
                         return !eval_should_stop(ctx);
                     }
                 }
                 for (size_t ti = 0; ti < source_target_dirs.count; ti++) {
-                    String_View object_id = make_scoped_object_id_temp(ctx,
-                                                                       "TARGET_DIRECTORY",
-                                                                       source_target_dirs.items[ti],
-                                                                       objects.items[oi]);
+                    String_View object_id = eval_property_scoped_object_id_temp(ctx,
+                                                                                "TARGET_DIRECTORY",
+                                                                                source_target_dirs.items[ti],
+                                                                                objects.items[oi]);
                     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                     if (!set_non_target_property(ctx, o, scope_upper, object_id, key, value, op)) {
                         return !eval_should_stop(ctx);
@@ -1198,11 +2320,11 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (is_test_scope) {
-        String_View test_scope_dir = current_source_dir_for_paths(ctx);
+        String_View test_scope_dir = eval_current_source_dir_for_paths(ctx);
         if (saw_test_directory_clause) test_scope_dir = test_dirs.items[0];
 
         for (size_t oi = 0; oi < objects.count; oi++) {
-            if (test_exists_in_directory_scope(ctx, objects.items[oi], test_scope_dir)) continue;
+            if (eval_test_exists_in_directory_scope(ctx, objects.items[oi], test_scope_dir)) continue;
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1215,10 +2337,10 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
 
         if (saw_test_directory_clause) {
             for (size_t oi = 0; oi < objects.count; oi++) {
-                String_View object_id = make_scoped_object_id_temp(ctx,
-                                                                   "DIRECTORY",
-                                                                   test_scope_dir,
-                                                                   objects.items[oi]);
+                String_View object_id = eval_property_scoped_object_id_temp(ctx,
+                                                                            "DIRECTORY",
+                                                                            test_scope_dir,
+                                                                            objects.items[oi]);
                 if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                 if (!set_non_target_property(ctx, o, scope_upper, object_id, key, value, op)) {
                     return !eval_should_stop(ctx);
