@@ -170,6 +170,31 @@ static bool is_current_directory_object(Evaluator_Context *ctx, String_View obje
     return false;
 }
 
+static bool define_property_scope_upper_temp(Evaluator_Context *ctx,
+                                             String_View raw_scope,
+                                             String_View *out_scope_upper) {
+    if (!ctx || !out_scope_upper) return false;
+    *out_scope_upper = nob_sv_from_cstr("");
+
+    if (eval_sv_eq_ci_lit(raw_scope, "GLOBAL")) *out_scope_upper = nob_sv_from_cstr("GLOBAL");
+    else if (eval_sv_eq_ci_lit(raw_scope, "DIRECTORY")) *out_scope_upper = nob_sv_from_cstr("DIRECTORY");
+    else if (eval_sv_eq_ci_lit(raw_scope, "TARGET")) *out_scope_upper = nob_sv_from_cstr("TARGET");
+    else if (eval_sv_eq_ci_lit(raw_scope, "SOURCE")) *out_scope_upper = nob_sv_from_cstr("SOURCE");
+    else if (eval_sv_eq_ci_lit(raw_scope, "TEST")) *out_scope_upper = nob_sv_from_cstr("TEST");
+    else if (eval_sv_eq_ci_lit(raw_scope, "VARIABLE")) *out_scope_upper = nob_sv_from_cstr("VARIABLE");
+    else if (eval_sv_eq_ci_lit(raw_scope, "CACHED_VARIABLE")) *out_scope_upper = nob_sv_from_cstr("CACHED_VARIABLE");
+
+    return out_scope_upper->count > 0;
+}
+
+static bool define_property_keyword(String_View tok) {
+    return eval_sv_eq_ci_lit(tok, "PROPERTY") ||
+           eval_sv_eq_ci_lit(tok, "INHERITED") ||
+           eval_sv_eq_ci_lit(tok, "BRIEF_DOCS") ||
+           eval_sv_eq_ci_lit(tok, "FULL_DOCS") ||
+           eval_sv_eq_ci_lit(tok, "INITIALIZE_FROM_VARIABLE");
+}
+
 static String_View file_parent_dir_view(String_View file_path) {
     if (file_path.count == 0 || !file_path.data) return nob_sv_from_cstr(".");
 
@@ -650,6 +675,138 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
         ev.as.target_compile_options.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("define_property() requires scope and PROPERTY name"),
+                       nob_sv_from_cstr("Usage: define_property(<GLOBAL|DIRECTORY|TARGET|SOURCE|TEST|VARIABLE|CACHED_VARIABLE> PROPERTY <name> [INHERITED] [BRIEF_DOCS <docs>...] [FULL_DOCS <docs>...] [INITIALIZE_FROM_VARIABLE <var>])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View scope_upper = nob_sv_from_cstr("");
+    if (!define_property_scope_upper_temp(ctx, a.items[0], &scope_upper)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("define_property() unknown scope"),
+                       a.items[0]);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_sv_eq_ci_lit(a.items[1], "PROPERTY")) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("define_property() missing PROPERTY keyword"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    Eval_Property_Definition def = {0};
+    def.scope_upper = scope_upper;
+    def.property_upper = sv_to_upper_temp(ctx, a.items[2]);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (def.property_upper.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("define_property() missing property name"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    size_t i = 3;
+    while (i < a.count) {
+        if (eval_sv_eq_ci_lit(a.items[i], "INHERITED")) {
+            def.inherited = true;
+            i++;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "BRIEF_DOCS")) {
+            size_t start = ++i;
+            while (i < a.count && !define_property_keyword(a.items[i])) i++;
+            def.has_brief_docs = true;
+            if (i > start) {
+                def.brief_docs = eval_sv_join_semi_temp(ctx, &a.items[start], i - start);
+                if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            }
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "FULL_DOCS")) {
+            size_t start = ++i;
+            while (i < a.count && !define_property_keyword(a.items[i])) i++;
+            def.has_full_docs = true;
+            if (i > start) {
+                def.full_docs = eval_sv_join_semi_temp(ctx, &a.items[start], i - start);
+                if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            }
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "INITIALIZE_FROM_VARIABLE")) {
+            if (!eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("define_property(INITIALIZE_FROM_VARIABLE) is only valid for TARGET scope"),
+                               scope_upper);
+                return !eval_should_stop(ctx);
+            }
+            if (def.has_initialize_from_variable) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("define_property() received duplicate INITIALIZE_FROM_VARIABLE"),
+                               nob_sv_from_cstr(""));
+                return !eval_should_stop(ctx);
+            }
+            if (i + 1 >= a.count || define_property_keyword(a.items[i + 1])) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("dispatcher"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("define_property(INITIALIZE_FROM_VARIABLE) requires a variable name"),
+                               nob_sv_from_cstr(""));
+                return !eval_should_stop(ctx);
+            }
+            def.has_initialize_from_variable = true;
+            def.initialize_from_variable = a.items[i + 1];
+            i += 2;
+            continue;
+        }
+
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("define_property() received unexpected argument"),
+                       a.items[i]);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_property_define(ctx, &def)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
 

@@ -14,6 +14,7 @@ bool eval_handle_target_link_directories(struct Evaluator_Context *ctx, const No
 bool eval_handle_target_include_directories(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_target_compile_definitions(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_target_compile_options(struct Evaluator_Context *ctx, const Node *node);
+bool eval_handle_define_property(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_set_target_properties(struct Evaluator_Context *ctx, const Node *node);
 bool eval_handle_set_property(struct Evaluator_Context *ctx, const Node *node);
 

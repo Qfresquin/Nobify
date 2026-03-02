@@ -215,6 +215,29 @@ bool eval_cache_defined(Evaluator_Context *ctx, String_View key) {
     return eval_cache_var_find(ctx->cache_entries, key) != NULL;
 }
 
+static String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name) {
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < name.count; i++) {
+        buf[i] = (char)toupper((unsigned char)name.data[i]);
+    }
+    buf[name.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static const Eval_Property_Definition *eval_property_definition_find_impl(Evaluator_Context *ctx,
+                                                                          String_View scope_upper,
+                                                                          String_View property_upper) {
+    if (!ctx) return NULL;
+    for (size_t i = 0; i < ctx->property_definitions.count; i++) {
+        const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+        if (!eval_sv_key_eq(def->scope_upper, scope_upper)) continue;
+        if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
+        return def;
+    }
+    return NULL;
+}
+
 bool eval_macro_frame_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};
@@ -293,6 +316,55 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     if (eval_should_stop(ctx)) return false;
     if (!arena_da_try_append(ctx->known_targets_arena, &ctx->alias_targets, name)) return ctx_oom(ctx);
     return true;
+}
+
+bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition) {
+    if (!ctx || !definition) return false;
+    if (eval_property_definition_find_impl(ctx, definition->scope_upper, definition->property_upper)) {
+        return true;
+    }
+
+    Eval_Property_Definition stored = *definition;
+    stored.scope_upper = sv_copy_to_event_arena(ctx, definition->scope_upper);
+    stored.property_upper = sv_copy_to_event_arena(ctx, definition->property_upper);
+    if (definition->has_brief_docs) stored.brief_docs = sv_copy_to_event_arena(ctx, definition->brief_docs);
+    if (definition->has_full_docs) stored.full_docs = sv_copy_to_event_arena(ctx, definition->full_docs);
+    if (definition->has_initialize_from_variable) {
+        stored.initialize_from_variable = sv_copy_to_event_arena(ctx, definition->initialize_from_variable);
+    }
+    if (eval_should_stop(ctx)) return false;
+
+    if (!arena_da_try_append(ctx->event_arena, &ctx->property_definitions, stored)) return ctx_oom(ctx);
+    return true;
+}
+
+bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name) {
+    if (!ctx) return false;
+    String_View property_upper = eval_property_upper_name_temp(ctx, property_name);
+    if (eval_should_stop(ctx)) return false;
+    return eval_property_definition_find_impl(ctx, scope_upper, property_upper) != NULL;
+}
+
+bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_Origin origin, String_View target_name) {
+    if (!ctx || eval_should_stop(ctx)) return false;
+
+    for (size_t i = 0; i < ctx->property_definitions.count; i++) {
+        const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+        if (!eval_sv_eq_ci_lit(def->scope_upper, "TARGET")) continue;
+        if (!def->has_initialize_from_variable) continue;
+        if (!eval_var_defined(ctx, def->initialize_from_variable)) continue;
+
+        Cmake_Event ev = {0};
+        ev.kind = EV_TARGET_PROP_SET;
+        ev.origin = origin;
+        ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
+        ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, def->property_upper);
+        ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, eval_var_get(ctx, def->initialize_from_variable));
+        ev.as.target_prop_set.op = EV_PROP_SET;
+        if (!event_stream_push(ctx->event_arena, ctx->stream, ev)) return ctx_oom(ctx);
+    }
+
+    return !eval_should_stop(ctx);
 }
 
 // -----------------------------------------------------------------------------
@@ -1374,6 +1446,8 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_ERROR_BUDGET"), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"), nob_sv_from_cstr("WARN"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_FILE_GLOB_STRICT"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
 
     {
         const char *cc = getenv("CC");

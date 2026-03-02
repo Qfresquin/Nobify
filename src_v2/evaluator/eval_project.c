@@ -547,6 +547,163 @@ static bool project_set_prefixed_var(Evaluator_Context *ctx,
     return eval_var_set(ctx, key, value);
 }
 
+static bool language_token_is_known(String_View lang) {
+    return eval_sv_eq_ci_lit(lang, "C") ||
+           eval_sv_eq_ci_lit(lang, "CXX") ||
+           eval_sv_eq_ci_lit(lang, "OBJC") ||
+           eval_sv_eq_ci_lit(lang, "OBJCXX") ||
+           eval_sv_eq_ci_lit(lang, "CUDA") ||
+           eval_sv_eq_ci_lit(lang, "HIP") ||
+           eval_sv_eq_ci_lit(lang, "ISPC") ||
+           eval_sv_eq_ci_lit(lang, "Fortran") ||
+           eval_sv_eq_ci_lit(lang, "Swift") ||
+           eval_sv_eq_ci_lit(lang, "CSharp") ||
+           eval_sv_eq_ci_lit(lang, "ASM") ||
+           eval_sv_eq_ci_lit(lang, "ASM_NASM") ||
+           eval_sv_eq_ci_lit(lang, "ASM_MASM") ||
+           eval_sv_eq_ci_lit(lang, "ASM_MARMASM") ||
+           eval_sv_eq_ci_lit(lang, "ASM-ATT");
+}
+
+static bool enabled_languages_contains(SV_List langs, String_View candidate) {
+    for (size_t i = 0; i < langs.count; i++) {
+        if (eval_sv_key_eq(langs.items[i], candidate)) return true;
+    }
+    return false;
+}
+
+static String_View language_compiler_loaded_var_temp(Evaluator_Context *ctx, String_View lang) {
+    static const char prefix[] = "CMAKE_";
+    static const char suffix[] = "_COMPILER_LOADED";
+    size_t total = (sizeof(prefix) - 1) + lang.count + (sizeof(suffix) - 1);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix, sizeof(prefix) - 1);
+    off += sizeof(prefix) - 1;
+    memcpy(buf + off, lang.data, lang.count);
+    off += lang.count;
+    memcpy(buf + off, suffix, sizeof(suffix) - 1);
+    off += sizeof(suffix) - 1;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static bool apply_enabled_languages(Evaluator_Context *ctx,
+                                    Cmake_Event_Origin o,
+                                    String_View cmd_name,
+                                    const SV_List *requested) {
+    if (!ctx || !requested) return false;
+
+    String_View existing_text = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"));
+    SV_List enabled = {0};
+    if (existing_text.count > 0) {
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing_text, &enabled)) return false;
+        if (eval_should_stop(ctx)) return false;
+    }
+
+    for (size_t i = 0; i < requested->count; i++) {
+        String_View lang = requested->items[i];
+        if (!language_token_is_known(lang)) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           cmd_name,
+                           o,
+                           nob_sv_from_cstr("Unknown language in language-enabling command"),
+                           lang);
+            return !eval_should_stop(ctx);
+        }
+        if (!enabled_languages_contains(enabled, lang)) {
+            if (!svu_list_push_temp(ctx, &enabled, lang)) return false;
+        }
+
+        String_View loaded_var = language_compiler_loaded_var_temp(ctx, lang);
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_var_set(ctx, loaded_var, nob_sv_from_cstr("1"))) return false;
+    }
+
+    String_View merged = eval_sv_join_semi_temp(ctx, enabled.items, enabled.count);
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), merged)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), merged)) return false;
+    return true;
+}
+
+bool eval_handle_enable_language(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    if (a.count < 1) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("enable_language() requires at least one language"),
+                       nob_sv_from_cstr("Usage: enable_language(<lang>... [OPTIONAL])"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (ctx->function_eval_depth > 0 || ctx->block_frames.count > 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("enable_language() must be called at file scope"),
+                       nob_sv_from_cstr("Do not call enable_language() from inside function() or block() scopes"));
+        return !eval_should_stop(ctx);
+    }
+
+    SV_List requested = {0};
+    bool saw_optional = false;
+    for (size_t i = 0; i < a.count; i++) {
+        if (eval_sv_eq_ci_lit(a.items[i], "OPTIONAL")) {
+            saw_optional = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "NONE")) {
+            eval_emit_diag(ctx,
+                           EV_DIAG_ERROR,
+                           nob_sv_from_cstr("dispatcher"),
+                           node->as.cmd.name,
+                           o,
+                           nob_sv_from_cstr("enable_language() does not accept NONE"),
+                           nob_sv_from_cstr("Use project(... LANGUAGES NONE) to leave all languages disabled"));
+            return !eval_should_stop(ctx);
+        }
+        if (!svu_list_push_temp(ctx, &requested, a.items[i])) return !eval_should_stop(ctx);
+    }
+
+    if (requested.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("enable_language() requires at least one real language"),
+                       nob_sv_from_cstr("Usage: enable_language(<lang>... [OPTIONAL])"));
+        return !eval_should_stop(ctx);
+    }
+
+    if (saw_optional) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("dispatcher"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("enable_language(OPTIONAL) is not supported"),
+                       nob_sv_from_cstr("CMake documents OPTIONAL as a placeholder; use CheckLanguage instead"));
+        return !eval_should_stop(ctx);
+    }
+
+    (void)apply_enabled_languages(ctx, o, node->as.cmd.name, &requested);
+    return !eval_should_stop(ctx);
+}
+
 bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -729,6 +886,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         }
         lang_items.count = 0;
     }
+    if (!apply_enabled_languages(ctx, o, node->as.cmd.name, &lang_items)) return !eval_should_stop(ctx);
 
     String_View version = has_version_arg ? version_info.raw : nob_sv_from_cstr("");
     String_View version_major = has_version_arg ? version_info.major : nob_sv_from_cstr("");
@@ -887,6 +1045,7 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     ev.as.target_declare.type = EV_TARGET_EXECUTABLE;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_target_apply_defined_initializers(ctx, o, name)) return !eval_should_stop(ctx);
     if (is_imported) {
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return !eval_should_stop(ctx);
         if (is_global) {
@@ -1034,6 +1193,7 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     ev.as.target_declare.type = ty;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_target_apply_defined_initializers(ctx, o, name)) return !eval_should_stop(ctx);
     if (is_imported) {
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return !eval_should_stop(ctx);
         if (is_global) {

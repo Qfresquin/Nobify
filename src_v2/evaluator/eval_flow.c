@@ -3,9 +3,19 @@
 #include "evaluator_internal.h"
 #include "eval_expr.h"
 #include "arena_dyn.h"
+#include "subprocess.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+#if defined(_WIN32)
+#include <direct.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 static bool block_frame_push(Evaluator_Context *ctx, Block_Frame frame) {
     if (!ctx) return false;
@@ -259,6 +269,69 @@ static bool flow_append_sv(Nob_String_Builder *sb, String_View sv) {
     return true;
 }
 
+typedef struct {
+    SV_List args;
+} Flow_Exec_Command;
+
+typedef struct {
+    Flow_Exec_Command *items;
+    size_t count;
+    size_t capacity;
+} Flow_Exec_Command_List;
+
+typedef enum {
+    FLOW_EXEC_ECHO_NONE = 0,
+    FLOW_EXEC_ECHO_STDOUT,
+    FLOW_EXEC_ECHO_STDERR,
+} Flow_Exec_Command_Echo;
+
+typedef enum {
+    FLOW_EXEC_FATAL_NONE = 0,
+    FLOW_EXEC_FATAL_ANY,
+    FLOW_EXEC_FATAL_LAST,
+} Flow_Exec_Command_Error_Mode;
+
+typedef struct {
+    Flow_Exec_Command_List commands;
+    bool has_working_directory;
+    String_View working_directory;
+    bool has_timeout;
+    double timeout_seconds;
+    bool has_result_variable;
+    String_View result_variable;
+    bool has_results_variable;
+    String_View results_variable;
+    bool has_output_variable;
+    String_View output_variable;
+    bool has_error_variable;
+    String_View error_variable;
+    bool has_input_file;
+    String_View input_file;
+    bool has_output_file;
+    String_View output_file;
+    bool has_error_file;
+    String_View error_file;
+    bool output_quiet;
+    bool error_quiet;
+    bool output_strip_trailing_whitespace;
+    bool error_strip_trailing_whitespace;
+    bool echo_output_variable;
+    bool echo_error_variable;
+    Flow_Exec_Command_Echo command_echo;
+    bool has_command_error_is_fatal;
+    Flow_Exec_Command_Error_Mode command_error_is_fatal;
+    bool has_encoding;
+    String_View encoding;
+} Flow_Exec_Options;
+
+typedef struct {
+    bool timed_out;
+    int exit_code;
+    String_View stdout_text;
+    String_View stderr_text;
+    String_View result_text;
+} Flow_Exec_Result;
+
 static bool flow_build_call_script(Evaluator_Context *ctx,
                                    String_View command_name,
                                    const SV_List *args,
@@ -299,6 +372,810 @@ static bool flow_sv_eq_exact(String_View a, String_View b) {
     if (a.count != b.count) return false;
     if (a.count == 0) return true;
     return memcmp(a.data, b.data, a.count) == 0;
+}
+
+static bool flow_arg_exact_ci(String_View value, const char *lit) {
+    return eval_sv_eq_ci_lit(value, lit);
+}
+
+static String_View flow_current_binary_dir(Evaluator_Context *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    String_View dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    if (dir.count == 0) dir = ctx->binary_dir;
+    return dir;
+}
+
+static String_View flow_resolve_binary_relative_path(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return nob_sv_from_cstr("");
+    return eval_path_resolve_for_cmake_arg(ctx, path, flow_current_binary_dir(ctx), false);
+}
+
+static double flow_now_seconds(void) {
+    struct timespec ts = {0};
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) return 0.0;
+    return (double)ts.tv_sec + ((double)ts.tv_nsec / 1000000000.0);
+}
+
+static void flow_sleep_millis(unsigned millis) {
+#if defined(_WIN32)
+    Sleep(millis);
+#else
+    usleep((useconds_t)millis * 1000u);
+#endif
+}
+
+static String_View flow_sb_to_temp_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+    if (!ctx || !sb) return nob_sv_from_cstr("");
+    if (sb->count == 0) return nob_sv_from_cstr("");
+    char *copy = arena_strndup(ctx->arena, sb->items, sb->count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, nob_sv_from_cstr(""));
+    return nob_sv_from_parts(copy, sb->count);
+}
+
+static String_View flow_trim_trailing_ascii_ws(String_View sv) {
+    while (sv.count > 0) {
+        unsigned char c = (unsigned char)sv.data[sv.count - 1];
+        if (!(c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v')) break;
+        sv.count--;
+    }
+    return sv;
+}
+
+static bool flow_exec_result_is_success(String_View result) {
+    return flow_sv_eq_exact(result, nob_sv_from_cstr("0"));
+}
+
+static bool flow_exec_append_bytes(Nob_String_Builder *sb, const char *buf, size_t count) {
+    if (!sb || (!buf && count > 0)) return false;
+    if (count == 0) return true;
+    nob_sb_append_buf(sb, buf, count);
+    return true;
+}
+
+static bool flow_exec_emit_command_echo(const Flow_Exec_Command *cmd, Flow_Exec_Command_Echo where) {
+    if (!cmd || where == FLOW_EXEC_ECHO_NONE) return true;
+
+    FILE *out = (where == FLOW_EXEC_ECHO_STDERR) ? stderr : stdout;
+    if (fprintf(out, "execute_process:") < 0) return false;
+    for (size_t i = 0; i < cmd->args.count; i++) {
+        if (fprintf(out, " %.*s", (int)cmd->args.items[i].count, cmd->args.items[i].data ? cmd->args.items[i].data : "") < 0) {
+            return false;
+        }
+    }
+    if (fputc('\n', out) == EOF) return false;
+    return fflush(out) == 0;
+}
+
+static Flow_Exec_Command_Echo flow_exec_default_command_echo(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_EXECUTE_PROCESS_COMMAND_ECHO"));
+    if (eval_sv_eq_ci_lit(v, "STDOUT")) return FLOW_EXEC_ECHO_STDOUT;
+    if (eval_sv_eq_ci_lit(v, "STDERR")) return FLOW_EXEC_ECHO_STDERR;
+    return FLOW_EXEC_ECHO_NONE;
+}
+
+static bool flow_exec_is_keyword(String_View token) {
+    return flow_arg_exact_ci(token, "COMMAND") ||
+           flow_arg_exact_ci(token, "WORKING_DIRECTORY") ||
+           flow_arg_exact_ci(token, "TIMEOUT") ||
+           flow_arg_exact_ci(token, "RESULT_VARIABLE") ||
+           flow_arg_exact_ci(token, "RESULTS_VARIABLE") ||
+           flow_arg_exact_ci(token, "OUTPUT_VARIABLE") ||
+           flow_arg_exact_ci(token, "ERROR_VARIABLE") ||
+           flow_arg_exact_ci(token, "INPUT_FILE") ||
+           flow_arg_exact_ci(token, "OUTPUT_FILE") ||
+           flow_arg_exact_ci(token, "ERROR_FILE") ||
+           flow_arg_exact_ci(token, "OUTPUT_QUIET") ||
+           flow_arg_exact_ci(token, "ERROR_QUIET") ||
+           flow_arg_exact_ci(token, "OUTPUT_STRIP_TRAILING_WHITESPACE") ||
+           flow_arg_exact_ci(token, "ERROR_STRIP_TRAILING_WHITESPACE") ||
+           flow_arg_exact_ci(token, "COMMAND_ECHO") ||
+           flow_arg_exact_ci(token, "ECHO_OUTPUT_VARIABLE") ||
+           flow_arg_exact_ci(token, "ECHO_ERROR_VARIABLE") ||
+           flow_arg_exact_ci(token, "COMMAND_ERROR_IS_FATAL") ||
+           flow_arg_exact_ci(token, "ENCODING");
+}
+
+static bool flow_exec_append_command_arg(Evaluator_Context *ctx, Flow_Exec_Command *cmd, String_View arg) {
+    if (!ctx || !cmd) return false;
+    if (!arena_da_try_append(ctx->arena, &cmd->args, arg)) return ctx_oom(ctx);
+    return true;
+}
+
+static bool flow_exec_append_command(Evaluator_Context *ctx,
+                                     Flow_Exec_Command_List *commands,
+                                     Flow_Exec_Command cmd) {
+    if (!ctx || !commands) return false;
+    if (!arena_da_try_append(ctx->arena, commands, cmd)) return ctx_oom(ctx);
+    return true;
+}
+
+static bool flow_exec_parse_timeout(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    String_View value,
+                                    double *out_seconds) {
+    if (!ctx || !node || !out_seconds) return false;
+
+    char *text = eval_sv_to_cstr_temp(ctx, value);
+    EVAL_OOM_RETURN_IF_NULL(ctx, text, false);
+
+    errno = 0;
+    char *end = NULL;
+    double timeout = strtod(text, &end);
+    if (errno != 0 || !end || *end != '\0' || timeout < 0.0) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("execute_process(TIMEOUT) requires a non-negative numeric value"),
+                             value);
+        return !eval_should_stop(ctx);
+    }
+
+    *out_seconds = timeout;
+    return true;
+}
+
+static bool flow_exec_parse_options(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    SV_List args,
+                                    Flow_Exec_Options *out_opt) {
+    if (!ctx || !node || !out_opt) return false;
+    memset(out_opt, 0, sizeof(*out_opt));
+    out_opt->command_echo = flow_exec_default_command_echo(ctx);
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    for (size_t i = 0; i < args.count; i++) {
+        String_View token = args.items[i];
+
+        if (flow_arg_exact_ci(token, "COMMAND")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx,
+                                     EV_DIAG_ERROR,
+                                     nob_sv_from_cstr("flow"),
+                                     node->as.cmd.name,
+                                     origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND) requires at least one argument"),
+                                     nob_sv_from_cstr("Usage: execute_process(COMMAND <cmd> [<arg>...] ...)"));
+                return !eval_should_stop(ctx);
+            }
+
+            Flow_Exec_Command cmd = {0};
+            i++;
+            for (; i < args.count; i++) {
+                if (flow_exec_is_keyword(args.items[i])) {
+                    i--;
+                    break;
+                }
+                if (!flow_exec_append_command_arg(ctx, &cmd, args.items[i])) return false;
+            }
+
+            if (cmd.args.count == 0) {
+                (void)eval_emit_diag(ctx,
+                                     EV_DIAG_ERROR,
+                                     nob_sv_from_cstr("flow"),
+                                     node->as.cmd.name,
+                                     origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND) requires at least one argument"),
+                                     nob_sv_from_cstr("Usage: execute_process(COMMAND <cmd> [<arg>...] ...)"));
+                return !eval_should_stop(ctx);
+            }
+            if (!flow_exec_append_command(ctx, &out_opt->commands, cmd)) return false;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "WORKING_DIRECTORY")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(WORKING_DIRECTORY) requires a path"),
+                                     nob_sv_from_cstr("Usage: execute_process(... WORKING_DIRECTORY <dir>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_working_directory = true;
+            out_opt->working_directory = flow_resolve_binary_relative_path(ctx, args.items[++i]);
+            if (eval_should_stop(ctx)) return false;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "TIMEOUT")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(TIMEOUT) requires a value"),
+                                     nob_sv_from_cstr("Usage: execute_process(... TIMEOUT <seconds>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_timeout = true;
+            if (!flow_exec_parse_timeout(ctx, node, args.items[++i], &out_opt->timeout_seconds)) return false;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "RESULT_VARIABLE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(RESULT_VARIABLE) requires an output variable"),
+                                     nob_sv_from_cstr("Usage: execute_process(... RESULT_VARIABLE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_result_variable = true;
+            out_opt->result_variable = args.items[++i];
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "RESULTS_VARIABLE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(RESULTS_VARIABLE) requires an output variable"),
+                                     nob_sv_from_cstr("Usage: execute_process(... RESULTS_VARIABLE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_results_variable = true;
+            out_opt->results_variable = args.items[++i];
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "OUTPUT_VARIABLE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(OUTPUT_VARIABLE) requires an output variable"),
+                                     nob_sv_from_cstr("Usage: execute_process(... OUTPUT_VARIABLE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_output_variable = true;
+            out_opt->output_variable = args.items[++i];
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ERROR_VARIABLE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(ERROR_VARIABLE) requires an output variable"),
+                                     nob_sv_from_cstr("Usage: execute_process(... ERROR_VARIABLE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_error_variable = true;
+            out_opt->error_variable = args.items[++i];
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "INPUT_FILE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(INPUT_FILE) requires a path"),
+                                     nob_sv_from_cstr("Usage: execute_process(... INPUT_FILE <path>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_input_file = true;
+            out_opt->input_file = flow_resolve_binary_relative_path(ctx, args.items[++i]);
+            if (eval_should_stop(ctx)) return false;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "OUTPUT_FILE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(OUTPUT_FILE) requires a path"),
+                                     nob_sv_from_cstr("Usage: execute_process(... OUTPUT_FILE <path>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_output_file = true;
+            out_opt->output_file = flow_resolve_binary_relative_path(ctx, args.items[++i]);
+            if (eval_should_stop(ctx)) return false;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ERROR_FILE")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(ERROR_FILE) requires a path"),
+                                     nob_sv_from_cstr("Usage: execute_process(... ERROR_FILE <path>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_error_file = true;
+            out_opt->error_file = flow_resolve_binary_relative_path(ctx, args.items[++i]);
+            if (eval_should_stop(ctx)) return false;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "OUTPUT_QUIET")) {
+            out_opt->output_quiet = true;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ERROR_QUIET")) {
+            out_opt->error_quiet = true;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "OUTPUT_STRIP_TRAILING_WHITESPACE")) {
+            out_opt->output_strip_trailing_whitespace = true;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ERROR_STRIP_TRAILING_WHITESPACE")) {
+            out_opt->error_strip_trailing_whitespace = true;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "COMMAND_ECHO")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND_ECHO) requires a value"),
+                                     nob_sv_from_cstr("Usage: execute_process(... COMMAND_ECHO <STDOUT|STDERR|NONE>)"));
+                return !eval_should_stop(ctx);
+            }
+            String_View value = args.items[++i];
+            if (eval_sv_eq_ci_lit(value, "STDOUT")) {
+                out_opt->command_echo = FLOW_EXEC_ECHO_STDOUT;
+            } else if (eval_sv_eq_ci_lit(value, "STDERR")) {
+                out_opt->command_echo = FLOW_EXEC_ECHO_STDERR;
+            } else if (eval_sv_eq_ci_lit(value, "NONE")) {
+                out_opt->command_echo = FLOW_EXEC_ECHO_NONE;
+            } else {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND_ECHO) received an invalid value"),
+                                     value);
+                return !eval_should_stop(ctx);
+            }
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ECHO_OUTPUT_VARIABLE")) {
+            out_opt->echo_output_variable = true;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ECHO_ERROR_VARIABLE")) {
+            out_opt->echo_error_variable = true;
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "COMMAND_ERROR_IS_FATAL")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL) requires a value"),
+                                     nob_sv_from_cstr("Usage: execute_process(... COMMAND_ERROR_IS_FATAL <ANY|LAST>)"));
+                return !eval_should_stop(ctx);
+            }
+            String_View value = args.items[++i];
+            out_opt->has_command_error_is_fatal = true;
+            if (eval_sv_eq_ci_lit(value, "ANY")) {
+                out_opt->command_error_is_fatal = FLOW_EXEC_FATAL_ANY;
+            } else if (eval_sv_eq_ci_lit(value, "LAST")) {
+                out_opt->command_error_is_fatal = FLOW_EXEC_FATAL_LAST;
+            } else if (eval_sv_eq_ci_lit(value, "NONE")) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL NONE) is not part of the CMake 3.28 baseline"),
+                                     nob_sv_from_cstr("Use ANY or LAST for the 3.28 command surface"));
+                return !eval_should_stop(ctx);
+            } else {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL) received an invalid value"),
+                                     value);
+                return !eval_should_stop(ctx);
+            }
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "ENCODING")) {
+            if (i + 1 >= args.count) {
+                (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
+                                     nob_sv_from_cstr("execute_process(ENCODING) requires a value"),
+                                     nob_sv_from_cstr("Usage: execute_process(... ENCODING <name>)"));
+                return !eval_should_stop(ctx);
+            }
+            out_opt->has_encoding = true;
+            out_opt->encoding = args.items[++i];
+            continue;
+        }
+
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("execute_process() received an unsupported argument"),
+                             token);
+        return !eval_should_stop(ctx);
+    }
+
+    if (out_opt->commands.count == 0) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("execute_process() requires at least one COMMAND clause"),
+                             nob_sv_from_cstr("Usage: execute_process(COMMAND <cmd> [<arg>...] ...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    return true;
+}
+
+static bool flow_exec_read_file(Evaluator_Context *ctx, String_View path, String_View *out_text) {
+    if (!ctx || !out_text) return false;
+    *out_text = nob_sv_from_cstr("");
+    if (path.count == 0) return true;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path_c, &sb)) {
+        nob_sb_free(sb);
+        return false;
+    }
+    *out_text = flow_sb_to_temp_sv(ctx, &sb);
+    nob_sb_free(sb);
+    return !eval_should_stop(ctx);
+}
+
+static bool flow_exec_write_file(Evaluator_Context *ctx, String_View path, String_View content) {
+    if (!ctx) return false;
+    if (path.count == 0) return true;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    return nob_write_entire_file(path_c, content.data ? content.data : "", content.count);
+}
+
+static bool flow_exec_run_command(Evaluator_Context *ctx,
+                                  const Flow_Exec_Command *cmd,
+                                  String_View working_directory,
+                                  String_View stdin_data,
+                                  double deadline_seconds,
+                                  Flow_Exec_Result *out_result) {
+    if (!ctx || !cmd || !out_result || cmd->args.count == 0) return false;
+
+    *out_result = (Flow_Exec_Result){0};
+    out_result->result_text = nob_sv_from_cstr("1");
+
+    const char **argv = arena_alloc_array(ctx->arena, const char *, cmd->args.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, argv, false);
+    for (size_t i = 0; i < cmd->args.count; i++) {
+        argv[i] = eval_sv_to_cstr_temp(ctx, cmd->args.items[i]);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[i], false);
+    }
+    argv[cmd->args.count] = NULL;
+
+    bool changed_cwd = false;
+    char old_cwd[4096] = {0};
+    const char *cwd_c = NULL;
+    if (working_directory.count > 0) {
+        cwd_c = eval_sv_to_cstr_temp(ctx, working_directory);
+        EVAL_OOM_RETURN_IF_NULL(ctx, cwd_c, false);
+#if defined(_WIN32)
+        if (!_getcwd(old_cwd, sizeof(old_cwd))) {
+            out_result->result_text = nob_sv_from_cstr("failed to capture working directory");
+            return true;
+        }
+        if (_chdir(cwd_c) != 0) {
+            out_result->result_text = nob_sv_from_cstr("failed to enter WORKING_DIRECTORY");
+            return true;
+        }
+#else
+        if (!getcwd(old_cwd, sizeof(old_cwd))) {
+            out_result->result_text = nob_sv_from_cstr("failed to capture working directory");
+            return true;
+        }
+        if (chdir(cwd_c) != 0) {
+            out_result->result_text = nob_sv_from_cstr("failed to enter WORKING_DIRECTORY");
+            return true;
+        }
+#endif
+        changed_cwd = true;
+    }
+
+    struct subprocess_s proc = {0};
+    int options = subprocess_option_inherit_environment |
+                  subprocess_option_search_user_path |
+                  subprocess_option_enable_async;
+#if defined(_WIN32)
+    options |= subprocess_option_no_window;
+#endif
+    if (subprocess_create(argv, options, &proc) != 0) {
+        if (changed_cwd) {
+#if defined(_WIN32)
+            if (_chdir(old_cwd) != 0) {
+                out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
+                return true;
+            }
+#else
+            if (chdir(old_cwd) != 0) {
+                out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
+                return true;
+            }
+#endif
+        }
+        out_result->result_text = nob_sv_from_cstr("process failed to start");
+        return true;
+    }
+    if (changed_cwd) {
+#if defined(_WIN32)
+        if (_chdir(old_cwd) != 0) {
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
+            return true;
+        }
+#else
+        if (chdir(old_cwd) != 0) {
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
+            return true;
+        }
+#endif
+    }
+
+    FILE *child_stdin = subprocess_stdin(&proc);
+    if (child_stdin) {
+        if (stdin_data.count > 0) {
+            size_t written = fwrite(stdin_data.data, 1, stdin_data.count, child_stdin);
+            if (written != stdin_data.count) {
+                fclose(child_stdin);
+                proc.stdin_file = NULL;
+                (void)subprocess_terminate(&proc);
+                (void)subprocess_join(&proc, NULL);
+                (void)subprocess_destroy(&proc);
+                out_result->result_text = nob_sv_from_cstr("failed to write process input");
+                return true;
+            }
+        }
+        fclose(child_stdin);
+        proc.stdin_file = NULL;
+    }
+
+    Nob_String_Builder out_sb = {0};
+    Nob_String_Builder err_sb = {0};
+    for (;;) {
+        char buf[512];
+        unsigned n_out = subprocess_read_stdout(&proc, buf, sizeof(buf));
+        if (n_out > 0 && !flow_exec_append_bytes(&out_sb, buf, (size_t)n_out)) {
+            nob_sb_free(out_sb);
+            nob_sb_free(err_sb);
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            return ctx_oom(ctx);
+        }
+
+        unsigned n_err = subprocess_read_stderr(&proc, buf, sizeof(buf));
+        if (n_err > 0 && !flow_exec_append_bytes(&err_sb, buf, (size_t)n_err)) {
+            nob_sb_free(out_sb);
+            nob_sb_free(err_sb);
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            return ctx_oom(ctx);
+        }
+
+        int alive = subprocess_alive(&proc);
+        if (deadline_seconds > 0.0 && alive && flow_now_seconds() >= deadline_seconds) {
+            out_result->timed_out = true;
+            (void)subprocess_terminate(&proc);
+            alive = subprocess_alive(&proc);
+        }
+
+        if (!alive && n_out == 0 && n_err == 0) break;
+        if (n_out == 0 && n_err == 0) flow_sleep_millis(10);
+    }
+
+    int exit_code = 1;
+    if (subprocess_join(&proc, &exit_code) != 0) {
+        nob_sb_free(out_sb);
+        nob_sb_free(err_sb);
+        (void)subprocess_destroy(&proc);
+        out_result->result_text = nob_sv_from_cstr("failed to wait for process");
+        return true;
+    }
+    (void)subprocess_destroy(&proc);
+
+    out_result->exit_code = exit_code;
+    out_result->stdout_text = flow_sb_to_temp_sv(ctx, &out_sb);
+    out_result->stderr_text = flow_sb_to_temp_sv(ctx, &err_sb);
+    nob_sb_free(out_sb);
+    nob_sb_free(err_sb);
+    if (eval_should_stop(ctx)) return false;
+
+    if (out_result->timed_out) {
+        out_result->result_text = nob_sv_from_cstr("Process terminated due to timeout");
+    } else {
+        char *result_buf = arena_alloc(ctx->arena, 32);
+        EVAL_OOM_RETURN_IF_NULL(ctx, result_buf, false);
+        int n = snprintf(result_buf, 32, "%d", exit_code);
+        if (n < 0 || n >= 32) return ctx_oom(ctx);
+        out_result->result_text = nob_sv_from_parts(result_buf, (size_t)n);
+    }
+
+    return true;
+}
+
+static bool flow_exec_collect_results(Evaluator_Context *ctx,
+                                      const Flow_Exec_Options *opt,
+                                      String_View *out_stdout,
+                                      String_View *out_stderr,
+                                      String_View *out_last_result,
+                                      String_View *out_results_joined,
+                                      bool *out_had_error) {
+    if (!ctx || !opt || !out_stdout || !out_stderr || !out_last_result || !out_results_joined || !out_had_error) {
+        return false;
+    }
+
+    *out_stdout = nob_sv_from_cstr("");
+    *out_stderr = nob_sv_from_cstr("");
+    *out_last_result = nob_sv_from_cstr("0");
+    *out_results_joined = nob_sv_from_cstr("");
+    *out_had_error = false;
+
+    String_View stdin_payload = nob_sv_from_cstr("");
+    if (opt->has_input_file && !flow_exec_read_file(ctx, opt->input_file, &stdin_payload)) {
+        *out_last_result = nob_sv_from_cstr("failed to read INPUT_FILE");
+        *out_results_joined = *out_last_result;
+        *out_had_error = true;
+        return true;
+    }
+
+    String_View *results = arena_alloc_array(ctx->arena, String_View, opt->commands.count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, results, false);
+
+    Nob_String_Builder stderr_sb = {0};
+    String_View final_stdout = nob_sv_from_cstr("");
+    double deadline = 0.0;
+    if (opt->has_timeout && opt->timeout_seconds > 0.0) {
+        deadline = flow_now_seconds() + opt->timeout_seconds;
+    }
+
+    size_t executed = 0;
+    for (size_t i = 0; i < opt->commands.count; i++) {
+        const Flow_Exec_Command *cmd = &opt->commands.items[i];
+        if (!flow_exec_emit_command_echo(cmd, opt->command_echo)) {
+            nob_sb_free(stderr_sb);
+            return ctx_oom(ctx);
+        }
+
+        Flow_Exec_Result step = {0};
+        if (!flow_exec_run_command(ctx, cmd, opt->working_directory, stdin_payload, deadline, &step)) {
+            nob_sb_free(stderr_sb);
+            return false;
+        }
+
+        if (step.stderr_text.count > 0 && !flow_exec_append_bytes(&stderr_sb, step.stderr_text.data, step.stderr_text.count)) {
+            nob_sb_free(stderr_sb);
+            return ctx_oom(ctx);
+        }
+
+        results[executed++] = step.result_text;
+        *out_last_result = step.result_text;
+        final_stdout = step.stdout_text;
+        stdin_payload = step.stdout_text;
+
+        if (!flow_exec_result_is_success(step.result_text)) {
+            *out_had_error = true;
+            if (step.timed_out) break;
+        }
+    }
+
+    *out_stdout = final_stdout;
+    *out_stderr = flow_sb_to_temp_sv(ctx, &stderr_sb);
+    nob_sb_free(stderr_sb);
+    if (eval_should_stop(ctx)) return false;
+
+    *out_results_joined = eval_sv_join_semi_temp(ctx, results, executed);
+    return !eval_should_stop(ctx);
+}
+
+static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    const Flow_Exec_Options *opt,
+                                    String_View stdout_text,
+                                    String_View stderr_text,
+                                    String_View last_result,
+                                    String_View results_joined,
+                                    bool had_error) {
+    if (!ctx || !node || !opt) return false;
+
+    String_View output_value = opt->output_strip_trailing_whitespace ? flow_trim_trailing_ascii_ws(stdout_text)
+                                                                     : stdout_text;
+    String_View error_value = opt->error_strip_trailing_whitespace ? flow_trim_trailing_ascii_ws(stderr_text)
+                                                                   : stderr_text;
+
+    bool share_var = opt->has_output_variable &&
+                     opt->has_error_variable &&
+                     flow_sv_eq_exact(opt->output_variable, opt->error_variable);
+    bool share_file = opt->has_output_file &&
+                      opt->has_error_file &&
+                      flow_sv_eq_exact(opt->output_file, opt->error_file);
+
+    String_View merged_value = nob_sv_from_cstr("");
+    if (share_var || share_file) {
+        Nob_String_Builder merged_sb = {0};
+        if (!opt->error_quiet && error_value.count > 0 && !flow_exec_append_bytes(&merged_sb, error_value.data, error_value.count)) {
+            nob_sb_free(merged_sb);
+            return ctx_oom(ctx);
+        }
+        if (!opt->output_quiet && output_value.count > 0 && !flow_exec_append_bytes(&merged_sb, output_value.data, output_value.count)) {
+            nob_sb_free(merged_sb);
+            return ctx_oom(ctx);
+        }
+        merged_value = flow_sb_to_temp_sv(ctx, &merged_sb);
+        nob_sb_free(merged_sb);
+        if (eval_should_stop(ctx)) return false;
+    }
+
+    if (opt->has_result_variable && !eval_var_set(ctx, opt->result_variable, last_result)) return false;
+    if (opt->has_results_variable && !eval_var_set(ctx, opt->results_variable, results_joined)) return false;
+
+    if (opt->has_output_variable) {
+        String_View to_set = opt->output_quiet ? nob_sv_from_cstr("")
+                                               : (share_var ? merged_value : output_value);
+        if (!eval_var_set(ctx, opt->output_variable, to_set)) return false;
+    }
+    if (opt->has_error_variable) {
+        String_View to_set = opt->error_quiet ? nob_sv_from_cstr("")
+                                              : (share_var ? merged_value : error_value);
+        if (!eval_var_set(ctx, opt->error_variable, to_set)) return false;
+    }
+
+    if (opt->has_output_file && !opt->output_quiet) {
+        String_View file_value = share_file ? merged_value : output_value;
+        if (!flow_exec_write_file(ctx, opt->output_file, file_value)) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("execute_process() failed to write OUTPUT_FILE"),
+                                 opt->output_file);
+            return !eval_should_stop(ctx);
+        }
+    }
+    if (opt->has_error_file && !opt->error_quiet && !share_file) {
+        if (!flow_exec_write_file(ctx, opt->error_file, error_value)) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("execute_process() failed to write ERROR_FILE"),
+                                 opt->error_file);
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    if (opt->echo_output_variable && !opt->output_quiet && output_value.count > 0) {
+        (void)fwrite(output_value.data, 1, output_value.count, stdout);
+        (void)fflush(stdout);
+    }
+    if (opt->echo_error_variable && !opt->error_quiet && error_value.count > 0) {
+        (void)fwrite(error_value.data, 1, error_value.count, stderr);
+        (void)fflush(stderr);
+    }
+
+    if (opt->has_command_error_is_fatal) {
+        bool fatal_hit = false;
+        if (opt->command_error_is_fatal == FLOW_EXEC_FATAL_ANY) {
+            fatal_hit = had_error;
+        } else if (opt->command_error_is_fatal == FLOW_EXEC_FATAL_LAST) {
+            fatal_hit = !flow_exec_result_is_success(last_result);
+        }
+
+        if (fatal_hit) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("execute_process() child process failed"),
+                                 last_result);
+            eval_request_stop(ctx);
+        }
+    }
+
+    return !eval_should_stop(ctx);
 }
 
 static bool flow_strip_bracket_arg(String_View in, String_View *out) {
@@ -976,6 +1853,33 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
                          nob_sv_from_cstr("Unsupported cmake_language() subcommand"),
                          args.items[0]);
     return !eval_should_stop(ctx);
+}
+
+bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    Flow_Exec_Options opt = {0};
+    if (!flow_exec_parse_options(ctx, node, args, &opt)) return !eval_should_stop(ctx);
+
+    String_View stdout_text = nob_sv_from_cstr("");
+    String_View stderr_text = nob_sv_from_cstr("");
+    String_View last_result = nob_sv_from_cstr("0");
+    String_View results_joined = nob_sv_from_cstr("");
+    bool had_error = false;
+    if (!flow_exec_collect_results(ctx,
+                                   &opt,
+                                   &stdout_text,
+                                   &stderr_text,
+                                   &last_result,
+                                   &results_joined,
+                                   &had_error)) {
+        return !eval_should_stop(ctx);
+    }
+
+    return flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error);
 }
 
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {

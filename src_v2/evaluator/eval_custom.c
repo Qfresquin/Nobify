@@ -429,6 +429,7 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
     decl.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
     decl.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
     if (!emit_event(ctx, decl)) return !eval_should_stop(ctx);
+    if (!eval_target_apply_defined_initializers(ctx, o, name)) return !eval_should_stop(ctx);
     if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
 
     if (!emit_target_prop_set(ctx,

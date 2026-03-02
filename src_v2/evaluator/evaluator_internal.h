@@ -151,6 +151,24 @@ typedef struct {
 } Eval_Semver;
 
 typedef struct {
+    String_View scope_upper;
+    String_View property_upper;
+    bool inherited;
+    bool has_brief_docs;
+    String_View brief_docs;
+    bool has_full_docs;
+    String_View full_docs;
+    bool has_initialize_from_variable;
+    String_View initialize_from_variable;
+} Eval_Property_Definition;
+
+typedef struct {
+    Eval_Property_Definition *items;
+    size_t count;
+    size_t capacity;
+} Eval_Property_Definition_List;
+
+typedef struct {
     Cmake_Event_Origin origin;
     String_View id;
     String_View command_name;
@@ -207,6 +225,7 @@ struct Evaluator_Context {
     Block_Frame_Stack block_frames;
     Eval_File_Lock_List file_locks;
     Eval_File_Generate_Job_List file_generate_jobs;
+    Eval_Property_Definition_List property_definitions;
     Eval_Deferred_Dir_Frame_Stack deferred_dirs;
     size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
@@ -314,6 +333,9 @@ bool eval_target_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_register(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
+bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
+bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name);
+bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_Origin origin, String_View target_name);
 
 // ---- user commands ----
 bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node);

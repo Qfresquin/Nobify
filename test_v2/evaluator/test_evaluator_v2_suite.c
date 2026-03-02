@@ -1741,6 +1741,72 @@ TEST(evaluator_include_guard_rejects_invalid_arguments) {
     TEST_PASS();
 }
 
+TEST(evaluator_enable_language_updates_enabled_language_state_and_validates_scope) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "enable_language(C)\n"
+        "enable_language(CXX)\n"
+        "function(bad_scope)\n"
+        "  enable_language(Fortran)\n"
+        "endfunction()\n"
+        "bad_scope()\n"
+        "enable_language(HIP OPTIONAL)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES")),
+                     nob_sv_from_cstr("C;CXX")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES")),
+                     nob_sv_from_cstr("C;CXX")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_LOADED")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_LOADED")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_Fortran_COMPILER_LOADED")),
+                     nob_sv_from_cstr("")));
+
+    bool saw_scope_error = false;
+    bool saw_optional_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("enable_language() must be called at file scope"))) {
+            saw_scope_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("enable_language(OPTIONAL) is not supported"))) {
+            saw_optional_error = true;
+        }
+    }
+
+    ASSERT(saw_scope_error);
+    ASSERT(saw_optional_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_add_test_name_signature_parses_supported_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2065,6 +2131,84 @@ TEST(evaluator_add_dependencies_emits_events_and_updates_build_model) {
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_execute_process_captures_output_and_models_3_28_fatal_mode) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+#if defined(_WIN32)
+    const char *script =
+        "execute_process(COMMAND cmd /C \"echo out&& echo err 1>&2\" "
+        "OUTPUT_VARIABLE OUT ERROR_VARIABLE ERR RESULT_VARIABLE RES "
+        "OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)\n"
+        "execute_process(COMMAND cmd /C \"echo file-copy\" OUTPUT_FILE ep_out.txt)\n"
+        "execute_process(COMMAND cmd /C exit 3 COMMAND_ERROR_IS_FATAL LAST RESULT_VARIABLE BAD)\n";
+#else
+    const char *script =
+        "execute_process(COMMAND /bin/sh -c \"printf 'out\\n'; printf 'err\\n' >&2\" "
+        "OUTPUT_VARIABLE OUT ERROR_VARIABLE ERR RESULT_VARIABLE RES "
+        "OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)\n"
+        "execute_process(COMMAND /bin/sh -c \"printf 'abc'\" "
+        "COMMAND /bin/sh -c \"tr a-z A-Z\" "
+        "OUTPUT_VARIABLE PIPE RESULTS_VARIABLE PIPE_RESULTS "
+        "OUTPUT_STRIP_TRAILING_WHITESPACE)\n"
+        "execute_process(COMMAND /bin/sh -c \"printf 'file-copy'\" OUTPUT_FILE ep_out.txt)\n"
+        "execute_process(COMMAND /bin/sh -c \"exit 3\" COMMAND_ERROR_IS_FATAL LAST RESULT_VARIABLE BAD)\n";
+#endif
+
+    Ast_Root root = parse_cmake(temp_arena, script);
+    ASSERT(!evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT")), nob_sv_from_cstr("out")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ERR")), nob_sv_from_cstr("err")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RES")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BAD")), nob_sv_from_cstr("3")));
+
+#if !defined(_WIN32)
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PIPE")), nob_sv_from_cstr("ABC")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PIPE_RESULTS")), nob_sv_from_cstr("0;0")));
+#endif
+
+    String_View file_text = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "ep_out.txt", &file_text));
+    String_View file_norm = evaluator_normalize_newlines_to_arena(temp_arena, file_text);
+    ASSERT(sv_contains_sv(file_norm, nob_sv_from_cstr("file-copy")));
+
+    bool saw_fatal = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process() child process failed"))) {
+            saw_fatal = true;
+            break;
+        }
+    }
+    ASSERT(saw_fatal);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
     TEST_PASS();
 }
 
@@ -2913,6 +3057,68 @@ TEST(evaluator_set_property_target_rejects_alias_and_unknown_target) {
     ASSERT(saw_missing_error);
     ASSERT(!emitted_for_alias);
     ASSERT(!emitted_for_missing);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_define_property_initializes_target_properties_from_variable) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(MY_INIT seeded)\n"
+        "define_property(GLOBAL PROPERTY NOB_G)\n"
+        "define_property(TARGET PROPERTY CUSTOM_FLAG INITIALIZE_FROM_VARIABLE MY_INIT)\n"
+        "define_property(TARGET PROPERTY CUSTOM_FLAG BRIEF_DOCS ignored)\n"
+        "add_library(real STATIC real.c)\n"
+        "set(MY_INIT second)\n"
+        "add_executable(app main.c)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    size_t custom_flag_prop_sets = 0;
+    bool saw_real_seeded = false;
+    bool saw_app_second = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_TARGET_PROP_SET) continue;
+        if (!nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("CUSTOM_FLAG"))) continue;
+        custom_flag_prop_sets++;
+        if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("real")) &&
+            nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("seeded"))) {
+            saw_real_seeded = true;
+        }
+        if (nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("app")) &&
+            nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("second"))) {
+            saw_app_second = true;
+        }
+    }
+
+    ASSERT(custom_flag_prop_sets == 2);
+    ASSERT(saw_real_seeded);
+    ASSERT(saw_app_second);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -4662,6 +4868,73 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     TEST_PASS();
 }
 
+TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    const char *cfg_template =
+        "NAME=@NAME@\n"
+        "LITERAL=${NAME}\n"
+        "QUOTE=@QUOTE@\n"
+        "#cmakedefine ENABLE_FEATURE\n"
+        "#cmakedefine DISABLE_FEATURE\n"
+        "#cmakedefine01 ENABLE_FEATURE\n"
+        "#cmakedefine01 DISABLE_FEATURE\n";
+    const char *cfg_copy = "@NAME@\n${NAME}\n";
+    ASSERT(nob_write_entire_file("cfg_template.in", cfg_template, strlen(cfg_template)));
+    ASSERT(nob_write_entire_file("cfg_copy.in", cfg_copy, strlen(cfg_copy)));
+    ASSERT(nob_mkdir_if_not_exists("cfg_out_dir"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(NAME Demo)\n"
+        "set(QUOTE one\\\"two)\n"
+        "set(ENABLE_FEATURE ON)\n"
+        "set(DISABLE_FEATURE 0)\n"
+        "configure_file(cfg_template.in cfg_configured.txt @ONLY ESCAPE_QUOTES NEWLINE_STYLE DOS)\n"
+        "configure_file(cfg_copy.in cfg_out_dir COPYONLY)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    String_View configured = {0};
+    String_View copied = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "cfg_configured.txt", &configured));
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "cfg_out_dir/cfg_copy.in", &copied));
+
+    ASSERT(nob_sv_eq(configured,
+                     nob_sv_from_cstr("NAME=Demo\r\n"
+                                      "LITERAL=${NAME}\r\n"
+                                      "QUOTE=one\\\\\"two\r\n"
+                                      "#define ENABLE_FEATURE\r\n"
+                                      "/* #undef DISABLE_FEATURE */\r\n"
+                                      "#define ENABLE_FEATURE 1\r\n"
+                                      "#define DISABLE_FEATURE 0\r\n")));
+    ASSERT(nob_sv_eq(copied, nob_sv_from_cstr("@NAME@\n${NAME}\n")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_file_real_path_cmp0152_old_and_new) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5094,6 +5367,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
     test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed);
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
+    test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed);
     test_evaluator_include_supports_result_variable_optional_and_module_search(passed, failed);
     test_evaluator_include_validates_options_strictly(passed, failed);
     test_evaluator_include_cmp0017_search_order_from_builtin_modules(passed, failed);
@@ -5106,6 +5380,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
     test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed);
     test_evaluator_add_dependencies_emits_events_and_updates_build_model(passed, failed);
+    test_evaluator_execute_process_captures_output_and_models_3_28_fatal_mode(passed, failed);
     test_evaluator_cmake_language_core_subcommands_work(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
@@ -5119,6 +5394,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_add_executable_imported_and_alias_signatures(passed, failed);
     test_evaluator_add_library_imported_alias_and_default_type(passed, failed);
     test_evaluator_set_property_target_rejects_alias_and_unknown_target(passed, failed);
+    test_evaluator_define_property_initializes_target_properties_from_variable(passed, failed);
     test_evaluator_set_property_source_test_directory_clauses_parse_and_apply(passed, failed);
     test_evaluator_set_property_cache_requires_existing_entry(passed, failed);
     test_evaluator_set_property_allows_zero_objects_and_validates_test_lookup(passed, failed);
@@ -5143,6 +5419,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
+    test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed);
     test_evaluator_file_real_path_cmp0152_old_and_new(passed, failed);
     test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed);
     test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed);
