@@ -1191,11 +1191,25 @@ bool eval_execute_file(Evaluator_Context *ctx,
         eval_pop_external_context(ctx, &state);
         goto cleanup;
     }
+    if (is_add_subdirectory) {
+        String_View current_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+        String_View current_bin_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+        if (!eval_defer_push_directory(ctx, current_src_dir, current_bin_dir)) {
+            eval_pop_external_context(ctx, &state);
+            goto cleanup;
+        }
+    }
 
     ok = eval_node_list(ctx, &new_ast);
+    if (ok && !eval_should_stop(ctx)) {
+        ok = eval_defer_flush_current_directory(ctx);
+    }
     if (ctx->return_requested) ctx->return_requested = false;
     ctx->return_propagate_vars = NULL;
     ctx->return_propagate_count = 0;
+    if (is_add_subdirectory) {
+        if (!eval_defer_pop_directory(ctx)) ok = false;
+    }
     eval_pop_external_context(ctx, &state);
 
 cleanup:
@@ -1313,6 +1327,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr("1"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_defer_push_directory(ctx, ctx->source_dir, ctx->binary_dir)) return NULL;
 
     // Inject host/platform built-ins commonly used by scripts in if() conditions.
 #if defined(_WIN32)
@@ -1401,6 +1416,9 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     size_t entered_file_depth = ++ctx->file_eval_depth;
     eval_report_reset(ctx);
     bool ok = eval_node_list(ctx, &ast);
+    if (ok && !eval_should_stop(ctx)) {
+        ok = eval_defer_flush_current_directory(ctx);
+    }
     if (ok && !eval_should_stop(ctx)) {
         ok = eval_file_generate_flush(ctx);
     }

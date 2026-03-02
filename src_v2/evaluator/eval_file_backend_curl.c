@@ -5,7 +5,6 @@
 
 #if defined(EVAL_HAVE_LIBCURL)
 #include <curl/curl.h>
-#endif
 
 static void curl_append_log_line(Nob_String_Builder *sb, const char *text) {
     if (!sb || !text || text[0] == '\0') return;
@@ -24,7 +23,6 @@ static bool curl_finalize_log(Evaluator_Context *ctx, Nob_String_Builder *sb, St
     return !ctx->oom;
 }
 
-#if defined(EVAL_HAVE_LIBCURL)
 typedef struct {
     Nob_String_Builder *log_sb;
     FILE *dst_file;

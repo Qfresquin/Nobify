@@ -16,7 +16,6 @@
 #if defined(EVAL_HAVE_LIBARCHIVE)
 #include <archive.h>
 #include <archive_entry.h>
-#endif
 
 static void archive_log_line(Nob_String_Builder *sb, const char *text) {
     if (!sb || !text || text[0] == '\0') return;
@@ -102,7 +101,6 @@ static bool archive_glob_match(String_View pat, String_View text) {
     return pi == pat.count;
 }
 
-#if defined(EVAL_HAVE_LIBARCHIVE)
 static bool archive_set_create_format(struct archive *a,
                                       String_View format,
                                       int *out_status,

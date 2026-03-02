@@ -150,6 +150,31 @@ typedef struct {
     int tweak;
 } Eval_Semver;
 
+typedef struct {
+    Cmake_Event_Origin origin;
+    String_View id;
+    String_View command_name;
+    Args args;
+} Eval_Deferred_Call;
+
+typedef struct {
+    Eval_Deferred_Call *items;
+    size_t count;
+    size_t capacity;
+} Eval_Deferred_Call_List;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+    Eval_Deferred_Call_List calls;
+} Eval_Deferred_Dir_Frame;
+
+typedef struct {
+    Eval_Deferred_Dir_Frame *items;
+    size_t count;
+    size_t capacity;
+} Eval_Deferred_Dir_Frame_Stack;
+
 typedef enum {
     EVAL_RETURN_CTX_TOPLEVEL = 0,
     EVAL_RETURN_CTX_INCLUDE,
@@ -182,6 +207,8 @@ struct Evaluator_Context {
     Block_Frame_Stack block_frames;
     Eval_File_Lock_List file_locks;
     Eval_File_Generate_Job_List file_generate_jobs;
+    Eval_Deferred_Dir_Frame_Stack deferred_dirs;
+    size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
     size_t policy_depth;
     size_t policy_capacity;
@@ -320,6 +347,10 @@ bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *o
 // ---- Gerenciamento de Escopo ----
 bool eval_scope_push(Evaluator_Context *ctx);
 void eval_scope_pop(Evaluator_Context *ctx);
+
+bool eval_defer_push_directory(Evaluator_Context *ctx, String_View source_dir, String_View binary_dir);
+bool eval_defer_pop_directory(Evaluator_Context *ctx);
+bool eval_defer_flush_current_directory(Evaluator_Context *ctx);
 
 bool eval_policy_is_id(String_View policy_id);
 bool eval_policy_is_known(String_View policy_id);

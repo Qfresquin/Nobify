@@ -1,8 +1,10 @@
 #include "eval_flow.h"
 
 #include "evaluator_internal.h"
+#include "eval_expr.h"
 #include "arena_dyn.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static bool block_frame_push(Evaluator_Context *ctx, Block_Frame frame) {
@@ -293,6 +295,254 @@ static bool flow_build_call_script(Evaluator_Context *ctx,
     return true;
 }
 
+static bool flow_sv_eq_exact(String_View a, String_View b) {
+    if (a.count != b.count) return false;
+    if (a.count == 0) return true;
+    return memcmp(a.data, b.data, a.count) == 0;
+}
+
+static bool flow_strip_bracket_arg(String_View in, String_View *out) {
+    if (!out) return false;
+    *out = in;
+    if (in.count < 4 || !in.data || in.data[0] != '[') return false;
+
+    size_t eq_count = 0;
+    size_t i = 1;
+    while (i < in.count && in.data[i] == '=') {
+        eq_count++;
+        i++;
+    }
+    if (i >= in.count || in.data[i] != '[') return false;
+    size_t open_len = i + 1;
+    if (in.count < open_len + 2 + eq_count) return false;
+
+    size_t close_pos = in.count - (eq_count + 2);
+    if (in.data[close_pos] != ']') return false;
+    for (size_t k = 0; k < eq_count; k++) {
+        if (in.data[close_pos + 1 + k] != '=') return false;
+    }
+    if (in.data[in.count - 1] != ']') return false;
+    if (close_pos < open_len) return false;
+
+    *out = nob_sv_from_parts(in.data + open_len, close_pos - open_len);
+    return true;
+}
+
+static String_View flow_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
+    if (!ctx || !arg || arg->count == 0) return nob_sv_from_cstr("");
+
+    size_t total = 0;
+    for (size_t i = 0; i < arg->count; i++) total += arg->items[i].text.count;
+
+    char *buf = (char*)arena_alloc(ctx->arena, total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < arg->count; i++) {
+        String_View text = arg->items[i].text;
+        if (text.count > 0) {
+            memcpy(buf + off, text.data, text.count);
+            off += text.count;
+        }
+    }
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static String_View flow_eval_arg_single(Evaluator_Context *ctx, const Arg *arg, bool expand_vars) {
+    if (!ctx || !arg) return nob_sv_from_cstr("");
+
+    String_View flat = flow_arg_flat(ctx, arg);
+    String_View value = expand_vars ? eval_expand_vars(ctx, flat) : flat;
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+
+    if (arg->kind == ARG_QUOTED) {
+        if (value.count >= 2 && value.data[0] == '"' && value.data[value.count - 1] == '"') {
+            return nob_sv_from_parts(value.data + 1, value.count - 2);
+        }
+        return value;
+    }
+    if (arg->kind == ARG_BRACKET) {
+        String_View stripped = value;
+        (void)flow_strip_bracket_arg(value, &stripped);
+        return stripped;
+    }
+    return value;
+}
+
+static bool flow_clone_args_to_event_range(Evaluator_Context *ctx,
+                                           const Args *src,
+                                           size_t begin,
+                                           Args *dst) {
+    if (!ctx || !src || !dst) return false;
+    memset(dst, 0, sizeof(*dst));
+    if (begin >= src->count) return true;
+
+    size_t count = src->count - begin;
+    dst->items = arena_alloc_array(ctx->event_arena, Arg, count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
+    dst->count = count;
+    dst->capacity = count;
+
+    for (size_t i = 0; i < count; i++) {
+        const Arg *in = &src->items[begin + i];
+        Arg *out = &dst->items[i];
+        out->kind = in->kind;
+        out->count = in->count;
+        out->capacity = in->count;
+        if (in->count == 0) continue;
+
+        out->items = arena_alloc_array(ctx->event_arena, Token, in->count);
+        EVAL_OOM_RETURN_IF_NULL(ctx, out->items, false);
+        for (size_t k = 0; k < in->count; k++) {
+            out->items[k] = in->items[k];
+            out->items[k].text = sv_copy_to_event_arena(ctx, in->items[k].text);
+            if (eval_should_stop(ctx)) return false;
+        }
+    }
+    return true;
+}
+
+static Eval_Deferred_Dir_Frame *flow_current_defer_dir(Evaluator_Context *ctx) {
+    if (!ctx || ctx->deferred_dirs.count == 0) return NULL;
+    return &ctx->deferred_dirs.items[ctx->deferred_dirs.count - 1];
+}
+
+static Eval_Deferred_Dir_Frame *flow_find_defer_dir(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return NULL;
+    for (size_t i = ctx->deferred_dirs.count; i-- > 0;) {
+        Eval_Deferred_Dir_Frame *frame = &ctx->deferred_dirs.items[i];
+        if (flow_sv_eq_exact(frame->source_dir, path) || flow_sv_eq_exact(frame->binary_dir, path)) {
+            return frame;
+        }
+    }
+    return NULL;
+}
+
+static Eval_Deferred_Call *flow_find_deferred_call(Eval_Deferred_Dir_Frame *frame, String_View id, size_t *out_index) {
+    if (!frame || id.count == 0) return NULL;
+    for (size_t i = 0; i < frame->calls.count; i++) {
+        if (!flow_sv_eq_exact(frame->calls.items[i].id, id)) continue;
+        if (out_index) *out_index = i;
+        return &frame->calls.items[i];
+    }
+    return NULL;
+}
+
+static bool flow_deferred_id_is_valid(String_View id) {
+    if (id.count == 0 || !id.data) return false;
+    char c0 = id.data[0];
+    if (c0 >= 'A' && c0 <= 'Z') return false;
+    return true;
+}
+
+static String_View flow_make_deferred_id(Evaluator_Context *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char buf[64];
+    ctx->next_deferred_call_id++;
+    int n = snprintf(buf, sizeof(buf), "_defer_call_%zu", ctx->next_deferred_call_id);
+    if (n <= 0 || (size_t)n >= sizeof(buf)) {
+        ctx_oom(ctx);
+        return nob_sv_from_cstr("");
+    }
+    return sv_copy_to_event_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+}
+
+static String_View flow_current_source_dir(Evaluator_Context *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    String_View dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (dir.count == 0) dir = ctx->source_dir;
+    return dir;
+}
+
+static Eval_Deferred_Dir_Frame *flow_resolve_defer_directory(Evaluator_Context *ctx,
+                                                             const Node *node,
+                                                             bool has_directory,
+                                                             String_View raw_directory) {
+    if (!ctx) return NULL;
+    if (!has_directory) return flow_current_defer_dir(ctx);
+
+    String_View directory = raw_directory;
+    if (!eval_sv_is_abs_path(directory)) {
+        directory = eval_path_resolve_for_cmake_arg(ctx, directory, flow_current_source_dir(ctx), false);
+        if (eval_should_stop(ctx)) return NULL;
+    } else {
+        directory = eval_sv_path_normalize_temp(ctx, directory);
+    }
+
+    Eval_Deferred_Dir_Frame *frame = flow_find_defer_dir(ctx, directory);
+    if (frame) return frame;
+
+    (void)eval_emit_diag(ctx,
+                         EV_DIAG_ERROR,
+                         nob_sv_from_cstr("flow"),
+                         node->as.cmd.name,
+                         eval_origin_from_node(ctx, node),
+                         nob_sv_from_cstr("cmake_language(DEFER DIRECTORY ...) must name the current or an unfinished parent directory"),
+                         raw_directory);
+    return NULL;
+}
+
+static bool flow_append_defer_queue(Evaluator_Context *ctx,
+                                    Eval_Deferred_Dir_Frame *frame,
+                                    Eval_Deferred_Call call) {
+    if (!ctx || !frame) return false;
+    if (!arena_da_try_append(ctx->event_arena, &frame->calls, call)) return ctx_oom(ctx);
+    return true;
+}
+
+bool eval_defer_push_directory(Evaluator_Context *ctx, String_View source_dir, String_View binary_dir) {
+    if (!ctx) return false;
+    Eval_Deferred_Dir_Frame frame = {0};
+    frame.source_dir = sv_copy_to_event_arena(ctx, source_dir);
+    frame.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
+    if (eval_should_stop(ctx)) return false;
+    if (!arena_da_try_append(ctx->event_arena, &ctx->deferred_dirs, frame)) return ctx_oom(ctx);
+    return true;
+}
+
+bool eval_defer_pop_directory(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    if (ctx->deferred_dirs.count == 0) return true;
+    ctx->deferred_dirs.count--;
+    return true;
+}
+
+bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
+    Eval_Deferred_Dir_Frame *frame = flow_current_defer_dir(ctx);
+    if (!ctx || !frame) return true;
+
+    while (frame->calls.count > 0) {
+        Eval_Deferred_Call call = frame->calls.items[0];
+        if (frame->calls.count > 1) {
+            memmove(frame->calls.items, frame->calls.items + 1, (frame->calls.count - 1) * sizeof(frame->calls.items[0]));
+        }
+        frame->calls.count--;
+
+        Node deferred = {0};
+        deferred.kind = NODE_COMMAND;
+        deferred.line = call.origin.line;
+        deferred.col = call.origin.col;
+        deferred.as.cmd.name = call.command_name;
+        deferred.as.cmd.args = call.args;
+
+        Ast_Root ast = {0};
+        ast.items = &deferred;
+        ast.count = 1;
+        ast.capacity = 1;
+        if (!eval_run_ast_inline(ctx, ast)) return false;
+
+        if (ctx->return_requested) ctx->return_requested = false;
+        ctx->return_propagate_vars = NULL;
+        ctx->return_propagate_count = 0;
+        if (eval_should_stop(ctx)) return false;
+        frame = flow_current_defer_dir(ctx);
+        if (!frame) return true;
+    }
+
+    return true;
+}
+
 static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_List *args) {
     if (!ctx || !node || !args || args->count < 2) {
         return false;
@@ -366,6 +616,281 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
     return !eval_should_stop(ctx);
 }
 
+static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
+                                         Eval_Deferred_Dir_Frame *frame,
+                                         String_View out_var) {
+    if (!ctx || !frame) return false;
+
+    String_View *ids = NULL;
+    if (frame->calls.count > 0) {
+        ids = arena_alloc_array(ctx->arena, String_View, frame->calls.count);
+        EVAL_OOM_RETURN_IF_NULL(ctx, ids, false);
+        for (size_t i = 0; i < frame->calls.count; i++) ids[i] = frame->calls.items[i].id;
+    }
+    return eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, ids, frame->calls.count));
+}
+
+static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
+                                          Eval_Deferred_Call *call,
+                                          String_View out_var) {
+    if (!ctx || !call) return false;
+
+    Nob_String_Builder sb = {0};
+    if (!flow_append_sv(&sb, call->command_name)) {
+        nob_sb_free(sb);
+        return ctx_oom(ctx);
+    }
+    for (size_t i = 0; i < call->args.count; i++) {
+        nob_sb_append(&sb, ';');
+        String_View item = flow_eval_arg_single(ctx, &call->args.items[i], false);
+        if (eval_should_stop(ctx) || !flow_append_sv(&sb, item)) {
+            nob_sb_free(sb);
+            return ctx_oom(ctx);
+        }
+    }
+
+    char *copy = arena_strndup(ctx->arena, sb.items, sb.count);
+    nob_sb_free(sb);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
+    return eval_var_set(ctx, out_var, nob_sv_from_parts(copy, strlen(copy)));
+}
+
+static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node) return false;
+
+    const Args *raw = &node->as.cmd.args;
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (raw->count < 2) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("cmake_language(DEFER) requires a subcommand"),
+                             nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] <subcommand> ...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    size_t i = 1;
+    bool has_directory = false;
+    String_View directory = nob_sv_from_cstr("");
+    String_View tok = flow_eval_arg_single(ctx, &raw->items[i], true);
+    if (eval_should_stop(ctx)) return false;
+    if (eval_sv_eq_ci_lit(tok, "DIRECTORY")) {
+        if (i + 1 >= raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER DIRECTORY) requires a directory argument"),
+                                 nob_sv_from_cstr("Usage: cmake_language(DEFER DIRECTORY <dir> ...)"));
+            return !eval_should_stop(ctx);
+        }
+        has_directory = true;
+        directory = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        if (eval_should_stop(ctx)) return false;
+        i += 2;
+        if (i >= raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER) requires a subcommand"),
+                                 nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] <subcommand> ...)"));
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    String_View subcmd = flow_eval_arg_single(ctx, &raw->items[i], true);
+    if (eval_should_stop(ctx)) return false;
+    Eval_Deferred_Dir_Frame *frame = flow_resolve_defer_directory(ctx, node, has_directory, directory);
+    if (!frame) return !eval_should_stop(ctx);
+
+    if (eval_sv_eq_ci_lit(subcmd, "GET_CALL_IDS")) {
+        if (i + 2 != raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER GET_CALL_IDS) expects one output variable"),
+                                 nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL_IDS <out-var>)"));
+            return !eval_should_stop(ctx);
+        }
+        String_View out_var = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        if (eval_should_stop(ctx)) return false;
+        (void)flow_set_var_to_deferred_ids(ctx, frame, out_var);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(subcmd, "GET_CALL")) {
+        if (i + 3 != raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER GET_CALL) expects an id and one output variable"),
+                                 nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL <id> <out-var>)"));
+            return !eval_should_stop(ctx);
+        }
+        String_View id = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        String_View out_var = flow_eval_arg_single(ctx, &raw->items[i + 2], true);
+        if (eval_should_stop(ctx)) return false;
+        Eval_Deferred_Call *call = flow_find_deferred_call(frame, id, NULL);
+        if (!call) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER GET_CALL) requires a known deferred call id"),
+                                 id);
+            return !eval_should_stop(ctx);
+        }
+        (void)flow_set_var_to_deferred_call(ctx, call, out_var);
+        return !eval_should_stop(ctx);
+    }
+
+    if (eval_sv_eq_ci_lit(subcmd, "CANCEL_CALL")) {
+        if (i + 1 >= raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER CANCEL_CALL) requires at least one id"),
+                                 nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] CANCEL_CALL <id>...)"));
+            return !eval_should_stop(ctx);
+        }
+        for (size_t k = i + 1; k < raw->count; k++) {
+            String_View id = flow_eval_arg_single(ctx, &raw->items[k], true);
+            if (eval_should_stop(ctx)) return false;
+            size_t idx = 0;
+            if (!flow_find_deferred_call(frame, id, &idx)) continue;
+            if (idx + 1 < frame->calls.count) {
+                memmove(frame->calls.items + idx, frame->calls.items + idx + 1, (frame->calls.count - idx - 1) * sizeof(frame->calls.items[0]));
+            }
+            frame->calls.count--;
+        }
+        return !eval_should_stop(ctx);
+    }
+
+    String_View explicit_id = nob_sv_from_cstr("");
+    String_View id_var = nob_sv_from_cstr("");
+    while (eval_sv_eq_ci_lit(subcmd, "ID") || eval_sv_eq_ci_lit(subcmd, "ID_VAR")) {
+        if (i + 1 >= raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER) option requires a value"),
+                                 subcmd);
+            return !eval_should_stop(ctx);
+        }
+        String_View value = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        if (eval_should_stop(ctx)) return false;
+        if (eval_sv_eq_ci_lit(subcmd, "ID")) {
+            explicit_id = value;
+        } else {
+            id_var = value;
+        }
+        i += 2;
+        if (i >= raw->count) {
+            (void)eval_emit_diag(ctx,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(DEFER) missing CALL subcommand"),
+                                 nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
+            return !eval_should_stop(ctx);
+        }
+        subcmd = flow_eval_arg_single(ctx, &raw->items[i], true);
+        if (eval_should_stop(ctx)) return false;
+    }
+
+    if (!eval_sv_eq_ci_lit(subcmd, "CALL")) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("Unsupported cmake_language(DEFER) subcommand"),
+                             subcmd);
+        return !eval_should_stop(ctx);
+    }
+    if (i + 1 >= raw->count) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("cmake_language(DEFER CALL) requires a command name"),
+                             nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View command_name = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+    if (eval_should_stop(ctx)) return false;
+    if (!flow_is_valid_command_name(command_name)) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("cmake_language(DEFER CALL) requires a valid command name"),
+                             command_name);
+        return !eval_should_stop(ctx);
+    }
+    if (flow_is_call_disallowed(command_name)) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("cmake_language(DEFER CALL) does not allow structural commands"),
+                             command_name);
+        return !eval_should_stop(ctx);
+    }
+
+    String_View id = explicit_id.count > 0 ? explicit_id : flow_make_deferred_id(ctx);
+    if (eval_should_stop(ctx)) return false;
+    if (!flow_deferred_id_is_valid(id)) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("cmake_language(DEFER ID) requires an id that does not start with A-Z"),
+                             id);
+        return !eval_should_stop(ctx);
+    }
+    if (flow_find_deferred_call(frame, id, NULL)) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("cmake_language(DEFER ID) requires a unique id in the target directory"),
+                             id);
+        return !eval_should_stop(ctx);
+    }
+
+    Eval_Deferred_Call call = {0};
+    call.origin = origin;
+    call.id = sv_copy_to_event_arena(ctx, id);
+    call.command_name = sv_copy_to_event_arena(ctx, command_name);
+    if (eval_should_stop(ctx)) return false;
+    if (!flow_clone_args_to_event_range(ctx, raw, i + 2, &call.args)) return false;
+    if (!flow_append_defer_queue(ctx, frame, call)) return false;
+    if (id_var.count > 0 && !eval_var_set(ctx, id_var, call.id)) return false;
+    return !eval_should_stop(ctx);
+}
+
 bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
 
@@ -380,7 +905,7 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
                              node->as.cmd.name,
                              o,
                              nob_sv_from_cstr("cmake_language() requires a subcommand"),
-                             nob_sv_from_cstr("Supported here: CALL, EVAL CODE, GET_MESSAGE_LOG_LEVEL"));
+                             nob_sv_from_cstr("Supported here: CALL, EVAL CODE, DEFER, GET_MESSAGE_LOG_LEVEL"));
         return !eval_should_stop(ctx);
     }
 
@@ -428,8 +953,11 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(args.items[0], "DEFER") ||
-        eval_sv_eq_ci_lit(args.items[0], "SET_DEPENDENCY_PROVIDER")) {
+    if (eval_sv_eq_ci_lit(args.items[0], "DEFER")) {
+        return flow_handle_defer(ctx, node);
+    }
+
+    if (eval_sv_eq_ci_lit(args.items[0], "SET_DEPENDENCY_PROVIDER")) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("flow"),

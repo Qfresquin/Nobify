@@ -7,6 +7,7 @@
 #include "build_model_builder.h"
 #include "diagnostics.h"
 #include "evaluator.h"
+#include "evaluator_internal.h"
 #include "event_ir.h"
 #include "lexer.h"
 #include "parser.h"
@@ -2093,7 +2094,16 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
         "cmake_language(EVAL CODE [[set(EVAL_OUT beta)]])\n"
         "cmake_language(GET_MESSAGE_LOG_LEVEL LOG_OUT)\n"
         "add_executable(cml_probe main.c)\n"
-        "target_compile_definitions(cml_probe PRIVATE CALL_OUT=${CALL_OUT} EVAL_OUT=${EVAL_OUT} LOG_OUT=${LOG_OUT})\n");
+        "target_compile_definitions(cml_probe PRIVATE CALL_OUT=${CALL_OUT} EVAL_OUT=${EVAL_OUT} LOG_OUT=${LOG_OUT})\n"
+        "set(DEFER_VALUE before)\n"
+        "cmake_language(DEFER ID later CALL target_compile_definitions cml_probe PRIVATE DEFER_VALUE=${DEFER_VALUE})\n"
+        "cmake_language(DEFER ID cancel_me CALL set CANCELLED yes)\n"
+        "cmake_language(DEFER ID_VAR AUTO_ID CALL set AUTO_HIT yes)\n"
+        "cmake_language(DEFER CANCEL_CALL cancel_me ${AUTO_ID})\n"
+        "cmake_language(DEFER GET_CALL_IDS IDS_OUT)\n"
+        "cmake_language(DEFER GET_CALL later CALL_INFO)\n"
+        "set(DEFER_VALUE after)\n"
+        "return()\n");
     ASSERT(evaluator_run(ctx, root));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
@@ -2103,6 +2113,7 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     bool saw_call = false;
     bool saw_eval = false;
     bool saw_log = false;
+    bool saw_defer = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
@@ -2110,11 +2121,21 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
         if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("CALL_OUT=alpha"))) saw_call = true;
         if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("EVAL_OUT=beta"))) saw_eval = true;
         if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("LOG_OUT=NOTICE"))) saw_log = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DEFER_VALUE=after"))) saw_defer = true;
     }
 
     ASSERT(saw_call);
     ASSERT(saw_eval);
     ASSERT(saw_log);
+    ASSERT(saw_defer);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDS_OUT")), nob_sv_from_cstr("later")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CALL_INFO")),
+                     nob_sv_from_cstr("target_compile_definitions;cml_probe;PRIVATE;DEFER_VALUE=${DEFER_VALUE}")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("CANCELLED")).count == 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("AUTO_HIT")).count == 0);
+    String_View auto_id = eval_var_get(ctx, nob_sv_from_cstr("AUTO_ID"));
+    ASSERT(auto_id.count > 0);
+    ASSERT(auto_id.data[0] == '_');
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);

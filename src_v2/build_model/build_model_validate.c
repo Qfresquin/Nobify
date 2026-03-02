@@ -23,7 +23,7 @@ static void bm_validate_report(Build_Model_Validate_Ctx *ctx,
     else ctx->has_warnings = true;
 
     const char *target_suffix = "";
-    if (target && target->name.count > 0) {
+    if (target && target->name.count > 0 && target->name.data) {
         target_suffix = nob_temp_sprintf(" [target=%.*s]", SV_Arg(target->name));
     }
 
