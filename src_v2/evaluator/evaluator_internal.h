@@ -227,6 +227,7 @@ struct Evaluator_Context {
     Eval_File_Generate_Job_List file_generate_jobs;
     Eval_Property_Definition_List property_definitions;
     Eval_Deferred_Dir_Frame_Stack deferred_dirs;
+    SV_List active_find_packages;
     size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
     size_t policy_depth;
@@ -327,6 +328,11 @@ bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value);
 bool eval_var_unset(Evaluator_Context *ctx, String_View key);
 bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key);
 bool eval_cache_defined(Evaluator_Context *ctx, String_View key);
+bool eval_cache_set(Evaluator_Context *ctx,
+                    String_View key,
+                    String_View value,
+                    String_View type,
+                    String_View doc);
 
 // ---- targets ----
 bool eval_target_known(Evaluator_Context *ctx, String_View name);
@@ -350,6 +356,7 @@ bool eval_semver_parse_strict(String_View version_token, Eval_Semver *out_versio
 int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
+bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out);
 bool eval_sv_is_abs_path(String_View p);
 String_View eval_sv_path_join(Arena *arena, String_View a, String_View b);
 String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input);
@@ -359,6 +366,10 @@ String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
                                             bool preserve_generator_expressions);
 const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name);
 bool eval_has_env(Evaluator_Context *ctx, const char *name);
+bool eval_real_path_resolve_temp(Evaluator_Context *ctx,
+                                 String_View path,
+                                 bool cmp0152_new,
+                                 String_View *out_path);
 
 // ---- macro argument substitution (textual) ----
 bool eval_macro_frame_push(Evaluator_Context *ctx);

@@ -233,6 +233,13 @@ static bool file_real_path_resolve_temp(Evaluator_Context *ctx,
     return !eval_should_stop(ctx);
 }
 
+bool eval_real_path_resolve_temp(Evaluator_Context *ctx,
+                                 String_View path,
+                                 bool cmp0152_new,
+                                 String_View *out_path) {
+    return file_real_path_resolve_temp(ctx, path, cmp0152_new, out_path);
+}
+
 static bool file_remove_leaf(const char *path, bool is_dir) {
     if (!path) return false;
 #if defined(_WIN32)

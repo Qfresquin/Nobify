@@ -24,9 +24,9 @@ Status snapshot sources:
 
 ## Scope note
 
-- This matrix is authoritative for the `53` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
+- This matrix is authoritative for the `58` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
 - It does not by itself represent the entire CMake command universe.
-- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `65` are currently implemented (`53` registry-backed + `12` structural parser/evaluator commands) and `66` remain missing.
+- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `70` are currently implemented (`58` registry-backed + `12` structural parser/evaluator commands) and `61` remain missing.
 - Structural language commands such as `if()`/`foreach()`/`while()`/`function()`/`macro()` are implemented outside the dispatcher and are audited in the full report, not in this registry-backed matrix.
 
 ## 1. Command-Level Matrix (Authoritative)
@@ -62,7 +62,12 @@ Status snapshot sources:
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
 | `execute_process` | `FULL` | `NOOP_WARN` | Documented CMake 3.28 surface is modeled in the evaluator for `COMMAND` pipelines, working-directory selection, timeout/result capture variables, output/error redirection, `COMMAND_ECHO`, `ECHO_*_VARIABLE`, and the baseline `COMMAND_ERROR_IS_FATAL` values (`ANY`/`LAST`). There is no dedicated `CMP` policy for this command in the 3.28 baseline, so behavior is fixed directly to the baseline surface and newer `NONE` mode is rejected. | - |
 | `file` | `FULL` | `ERROR_CONTINUE` | No result-affecting divergence found in validated Linux+Windows scope for CMake 3.28 surface implemented by evaluator, including deferred `GENERATE`, transfer/archive backends, lock semantics, and `CMP0152`-aware `REAL_PATH` behavior in covered flow. | - |
-| `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, `CMAKE_FIND_PACKAGE_PREFER_CONFIG`, and `CMP0074`-aware package-root handling in covered flow). | - |
+| `find_file` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 search surface used by evaluator: `NAMES`, legacy name positionals, `HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles, root-path modes, cached-result reuse, and `VALIDATOR` in covered flow. When executed from an active `find_package()` config/module context, the package-root stack is modeled with `CMP0074` and `CMP0144`. | - |
+| `find_library` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 search surface used by evaluator: library-name variant probing, `NAMES`, `HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles, root-path modes, cached-result reuse, and `VALIDATOR` in covered flow. When executed from an active `find_package()` config/module context, the package-root stack is modeled with `CMP0074` and `CMP0144`. | - |
+| `find_package` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented evaluator subset (`AUTO MODULE CONFIG NO_MODULE`, `REQUIRED QUIET`, version/`EXACT`, components, `NAMES CONFIGS HINTS PATHS PATH_SUFFIXES`, `NO_*` path toggles, `CMAKE_FIND_PACKAGE_PREFER_CONFIG`, and package-root handling in covered flow). `CMP0074` and `CMP0144` are modeled both for direct package-prefix resolution and for the active package-root stack seen by nested `find_*` calls. | - |
+| `find_path` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 search surface used by evaluator: `NAMES`, `HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles, root-path modes, cached-result reuse, and `VALIDATOR` in covered flow. The evaluator returns the directory containing the matched entry, including directory-name matches, and models the active package-root stack with `CMP0074` and `CMP0144`. | - |
+| `find_program` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 search surface used by evaluator: executable-name probing, `NAMES`, `HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles, root-path modes, cached-result reuse, and `VALIDATOR` in covered flow. When executed from an active `find_package()` config/module context, the package-root stack is modeled with `CMP0074` and `CMP0144`. | - |
+| `get_filename_component` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 surface implemented in evaluator: `DIRECTORY`/`PATH`, `NAME`, `EXT`, `NAME_WE`, `LAST_EXT`, `NAME_WLE`, `ABSOLUTE` with `BASE_DIR`, `REALPATH`, `PROGRAM`, `PROGRAM_ARGS`, and optional `CACHE` result storage. There is no dedicated `CMP` policy for this command in the 3.28 baseline, so behavior is fixed directly to the baseline surface. | - |
 | `include` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])`), including `CMAKE_MODULE_PATH`/`CMAKE_ROOT/Modules` lookup and `CMP0017` search-order behavior (`NEW` vs `OLD`). | - |
 | `include_directories` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented path handling (`SYSTEM`, `BEFORE AFTER`, relative canonicalization). | - |
 | `include_guard` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`include_guard([DIRECTORY|GLOBAL])`), including default variable-like scope (no-arg form), strict argument validation, and `DIRECTORY`/`GLOBAL` behavior. | - |
@@ -163,7 +168,7 @@ Status snapshot sources:
 | Config search shaping (`HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles) | Supported | Supported in local filesystem resolver | None for covered forms |
 | Version checks (`[version]`, `EXACT`, config-version file evaluation) | Supported | Supported | None for covered forms |
 | Find-context variables used by package scripts | Supported | Supported for covered subset (including `<Pkg>_FIND_REGISTRY_VIEW` when requested) | None for covered forms |
-| Package-root policy (`CMP0074`) | Supported | Supported, including `OLD` vs `NEW` behavior for `<Pkg>_ROOT` / environment-root handling in the covered flow | None |
+| Package-root policy (`CMP0074`, `CMP0144`) | Supported | Supported, including `OLD` vs `NEW` behavior for mixed-case and upper-case package-root variables / environment-root handling in the covered flow, plus the active package-root stack exposed to nested `find_*` calls | None |
 
 ## 5. Coverage details: `math()`
 
@@ -247,16 +252,16 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_definitions`, `add_dependencies`, `add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_parse_arguments`, `cmake_path`, `cmake_policy`, `configure_file`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `define_property`, `enable_language`, `enable_testing`, `endblock`, `execute_process`, `file`, `find_package`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
+`add_compile_definitions`, `add_dependencies`, `add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_parse_arguments`, `cmake_path`, `cmake_policy`, `configure_file`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `define_property`, `enable_language`, `enable_testing`, `endblock`, `execute_process`, `file`, `find_file`, `find_library`, `find_package`, `find_path`, `find_program`, `get_filename_component`, `include`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `math`, `message`, `project`, `return`, `set`, `set_property`, `set_target_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
 
 Commands currently documented as `PARTIAL`: `cmake_language`.
 
 ## 11.1 Full-scope summary
 
-- Dispatcher-backed built-ins tracked by this document: `53`.
+- Dispatcher-backed built-ins tracked by this document: `58`.
 - Additional structural commands implemented outside the dispatcher: `12` (`if`, `elseif`, `else`, `endif`, `foreach`, `endforeach`, `while`, `endwhile`, `function`, `endfunction`, `macro`, `endmacro`).
 - Full scoped command universe audited in `evaluator_v2_full_audit.md`: `131`.
-- Missing commands from that broader scope: `66`.
+- Missing commands from that broader scope: `61`.
 
 ## 12. Consistency checks required for future updates
 

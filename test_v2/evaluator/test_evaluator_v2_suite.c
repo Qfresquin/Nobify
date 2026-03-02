@@ -3847,6 +3847,174 @@ TEST(evaluator_set_cache_policy_version_defaults_cmp0126_to_new) {
     TEST_PASS();
 }
 
+TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("find_items"));
+    ASSERT(nob_mkdir_if_not_exists("find_items/nested"));
+    ASSERT(nob_mkdir_if_not_exists("find_items/include"));
+    ASSERT(nob_mkdir_if_not_exists("find_items/bin"));
+    ASSERT(nob_mkdir_if_not_exists("find_items/lib"));
+    ASSERT(nob_write_entire_file("find_items/nested/marker.txt", "x", 1));
+    ASSERT(nob_write_entire_file("find_items/include/marker.hpp", "x", 1));
+#if defined(_WIN32)
+    ASSERT(nob_write_entire_file("find_items/lib/sample.lib", "x", 1));
+#else
+    ASSERT(nob_write_entire_file("find_items/lib/libsample.a", "x", 1));
+#endif
+
+    ASSERT(nob_mkdir_if_not_exists("foo_root"));
+    ASSERT(nob_mkdir_if_not_exists("foo_root/include"));
+    ASSERT(nob_mkdir_if_not_exists("foo_root/lib"));
+    ASSERT(nob_mkdir_if_not_exists("foo_root/lib/cmake"));
+    ASSERT(nob_mkdir_if_not_exists("foo_root/lib/cmake/Foo"));
+    ASSERT(nob_write_entire_file("foo_root/include/foo-marker.h", "x", 1));
+    ASSERT(nob_write_entire_file("foo_root/lib/cmake/Foo/FooConfig.cmake",
+                                 "find_path(FOO_INCLUDE_DIR NAMES foo-marker.h)\n",
+                                 strlen("find_path(FOO_INCLUDE_DIR NAMES foo-marker.h)\n")));
+
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    const char *foo_root_abs = nob_temp_sprintf("%s/foo_root", cwd);
+    ASSERT(foo_root_abs != NULL);
+
+    char script[4096];
+    int n = snprintf(
+        script,
+        sizeof(script),
+        "find_file(MY_FILE NAMES marker.txt PATHS find_items PATH_SUFFIXES nested NO_DEFAULT_PATH)\n"
+        "find_path(MY_PATH NAMES marker.hpp PATHS find_items PATH_SUFFIXES include NO_DEFAULT_PATH)\n"
+#if defined(_WIN32)
+        "find_program(MY_TOOL NAMES cmd PATHS C:/Windows/System32 NO_DEFAULT_PATH)\n"
+#else
+        "find_program(MY_TOOL NAMES sh PATHS /bin NO_DEFAULT_PATH)\n"
+#endif
+        "find_library(MY_LIB NAMES sample PATHS find_items/lib NO_DEFAULT_PATH)\n"
+        "set(FOO_ROOT \"%s\")\n"
+        "cmake_policy(SET CMP0074 NEW)\n"
+        "cmake_policy(SET CMP0144 NEW)\n"
+        "find_package(Foo CONFIG PATHS foo_root/lib/cmake NO_DEFAULT_PATH)\n",
+        foo_root_abs);
+    ASSERT(n > 0 && n < (int)sizeof(script));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, script);
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("MY_FILE")),
+                           "find_items/nested/marker.txt"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("MY_PATH")),
+                           "find_items/include"));
+#if defined(_WIN32)
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("MY_TOOL")),
+                           "System32/cmd.exe"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("MY_LIB")),
+                           "find_items/lib/sample.lib"));
+#else
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("MY_TOOL")),
+                           "/bin/sh"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("MY_LIB")),
+                           "find_items/lib/libsample.a"));
+#endif
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("FOO_INCLUDE_DIR")),
+                           "foo_root/include"));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_get_filename_component_covers_documented_modes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("gfc_real"));
+    ASSERT(nob_mkdir_if_not_exists("gfc_real/sub"));
+    ASSERT(nob_write_entire_file("gfc_real/sub/file.txt", "x", 1));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "get_filename_component(GFC_DIR \"a/b/c.tar.gz\" DIRECTORY)\n"
+        "get_filename_component(GFC_PATH \"a/b/\" PATH)\n"
+        "get_filename_component(GFC_NAME \"a/b/c.tar.gz\" NAME)\n"
+        "get_filename_component(GFC_EXT \"a/b/c.tar.gz\" EXT)\n"
+        "get_filename_component(GFC_LAST_EXT \"a/b/c.tar.gz\" LAST_EXT)\n"
+        "get_filename_component(GFC_NAME_WE \"a/b/c.tar.gz\" NAME_WE)\n"
+        "get_filename_component(GFC_NAME_WLE \"a/b/c.tar.gz\" NAME_WLE CACHE)\n"
+        "get_filename_component(GFC_ABS sub/file.txt ABSOLUTE BASE_DIR gfc_real)\n"
+        "get_filename_component(GFC_REAL \"gfc_real/./sub/../sub/file.txt\" REALPATH)\n"
+#if defined(_WIN32)
+        "get_filename_component(GFC_PROG \"cmd /C echo\" PROGRAM PROGRAM_ARGS GFC_PROG_ARGS)\n"
+#else
+        "get_filename_component(GFC_PROG \"sh -c echo\" PROGRAM PROGRAM_ARGS GFC_PROG_ARGS)\n"
+#endif
+    );
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_DIR")), nob_sv_from_cstr("a/b")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PATH")), nob_sv_from_cstr("a")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_NAME")), nob_sv_from_cstr("c.tar.gz")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_EXT")), nob_sv_from_cstr(".tar.gz")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_LAST_EXT")), nob_sv_from_cstr(".gz")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_NAME_WE")), nob_sv_from_cstr("c")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_NAME_WLE")), nob_sv_from_cstr("c.tar")));
+    ASSERT(eval_cache_defined(ctx, nob_sv_from_cstr("GFC_NAME_WLE")));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_ABS")), "gfc_real/sub/file.txt"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_REAL")), "gfc_real/sub/file.txt"));
+#if defined(_WIN32)
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG")), "cmd.exe"));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG_ARGS")), nob_sv_from_cstr("/C;echo")));
+#else
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG")), "/sh"));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG_ARGS")), nob_sv_from_cstr("-c;echo")));
+#endif
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5407,6 +5575,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
+    test_evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies(passed, failed);
+    test_evaluator_get_filename_component_covers_documented_modes(passed, failed);
     test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);
     test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed);
     test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed);

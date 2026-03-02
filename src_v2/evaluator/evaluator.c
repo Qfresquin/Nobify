@@ -215,6 +215,38 @@ bool eval_cache_defined(Evaluator_Context *ctx, String_View key) {
     return eval_cache_var_find(ctx->cache_entries, key) != NULL;
 }
 
+bool eval_cache_set(Evaluator_Context *ctx,
+                    String_View key,
+                    String_View value,
+                    String_View type,
+                    String_View doc) {
+    if (!ctx || key.count == 0 || eval_should_stop(ctx)) return false;
+
+    Eval_Cache_Entry *entry = eval_cache_var_find(ctx->cache_entries, key);
+    if (entry) {
+        entry->value.data = sv_copy_to_event_arena(ctx, value);
+        if (eval_should_stop(ctx)) return false;
+        entry->value.type = sv_copy_to_event_arena(ctx, type);
+        if (eval_should_stop(ctx)) return false;
+        entry->value.doc = sv_copy_to_event_arena(ctx, doc);
+        return !eval_should_stop(ctx);
+    }
+
+    char *stable_key = eval_copy_key_cstr_event(ctx, key);
+    if (!stable_key) return false;
+
+    Eval_Cache_Entry *entries = ctx->cache_entries;
+    Eval_Cache_Value cache_value = {
+        .data = sv_copy_to_event_arena(ctx, value),
+        .type = sv_copy_to_event_arena(ctx, type),
+        .doc = sv_copy_to_event_arena(ctx, doc),
+    };
+    if (eval_should_stop(ctx)) return false;
+    stbds_shput(entries, stable_key, cache_value);
+    ctx->cache_entries = entries;
+    return true;
+}
+
 static String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name) {
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));

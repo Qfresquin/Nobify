@@ -161,6 +161,68 @@ bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_Lis
     return true;
 }
 
+bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+    if (!ctx || !out) return false;
+
+    size_t i = 0;
+    while (i < input.count) {
+        while (i < input.count && isspace((unsigned char)input.data[i])) i++;
+        if (i >= input.count) break;
+
+        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+        size_t off = 0;
+        bool touched = false;
+        char quote = '\0';
+        while (i < input.count) {
+            char c = input.data[i];
+            if (quote != '\0') {
+                if (c == quote) {
+                    quote = '\0';
+                    touched = true;
+                    i++;
+                    continue;
+                }
+                if (c == '\\' && quote == '"' && i + 1 < input.count) {
+                    buf[off++] = input.data[i + 1];
+                    touched = true;
+                    i += 2;
+                    continue;
+                }
+                buf[off++] = c;
+                touched = true;
+                i++;
+                continue;
+            }
+
+            if (isspace((unsigned char)c)) break;
+            if (c == '"' || c == '\'') {
+                quote = c;
+                touched = true;
+                i++;
+                continue;
+            }
+            if (c == '\\' && i + 1 < input.count) {
+                buf[off++] = input.data[i + 1];
+                touched = true;
+                i += 2;
+                continue;
+            }
+            buf[off++] = c;
+            touched = true;
+            i++;
+        }
+
+        buf[off] = '\0';
+        if (touched) {
+            if (!svu_list_push_temp(ctx, out, nob_sv_from_cstr(buf))) return false;
+        }
+    }
+
+    return true;
+}
+
 bool eval_sv_is_abs_path(String_View p) {
     if (p.count == 0) return false;
     if ((p.count >= 2) &&
