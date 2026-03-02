@@ -151,6 +151,13 @@ typedef struct {
 } Eval_Semver;
 
 typedef struct {
+    unsigned long long total_virtual_mib;
+    unsigned long long available_virtual_mib;
+    unsigned long long total_physical_mib;
+    unsigned long long available_physical_mib;
+} Eval_Host_Memory_Info;
+
+typedef struct {
     String_View scope_upper;
     String_View property_upper;
     bool inherited;
@@ -369,6 +376,13 @@ const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context 
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir);
 bool eval_semver_parse_strict(String_View version_token, Eval_Semver *out_version);
 int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs);
+String_View eval_detect_host_system_name(void);
+String_View eval_detect_host_processor(void);
+bool eval_host_hostname_temp(Evaluator_Context *ctx, String_View *out_hostname);
+bool eval_host_memory_info(Eval_Host_Memory_Info *out_info);
+bool eval_host_logical_cores(size_t *out_count);
+String_View eval_host_os_release_temp(Evaluator_Context *ctx);
+String_View eval_host_os_version_temp(Evaluator_Context *ctx);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out);

@@ -24,9 +24,9 @@ Status snapshot sources:
 
 ## Scope note
 
-- This matrix is authoritative for the `76` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
+- This matrix is authoritative for the `80` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
 - It does not by itself represent the entire CMake command universe.
-- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `88` are currently implemented (`76` registry-backed + `12` structural parser/evaluator commands) and `43` remain missing.
+- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `92` are currently implemented (`80` registry-backed + `12` structural parser/evaluator commands) and `39` remain missing.
 - Structural language commands such as `if()`/`foreach()`/`while()`/`function()`/`macro()` are implemented outside the dispatcher and are audited in the full report, not in this registry-backed matrix.
 
 ## 1. Command-Level Matrix (Authoritative)
@@ -46,6 +46,9 @@ Status snapshot sources:
 | `add_test` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`add_test(NAME ... COMMAND ... [CONFIGURATIONS ...] [WORKING_DIRECTORY ...] [COMMAND_EXPAND_LISTS])` and legacy `add_test(<name> <command> [<arg>...])`) with strict unexpected-argument validation in NAME form. | - |
 | `block` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set (`SCOPE_FOR`, `PROPAGATE`). | - |
 | `break` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`break()`). | - |
+| `build_command` | `PARTIAL` | `NOOP_WARN` | The evaluator models the modern `cmake --build .` composition path rooted on `CMAKE_COMMAND`, including `TARGET`, `CONFIGURATION`, `PARALLEL_LEVEL`, and `CMP0061` (`OLD` may append legacy `-- -i` for makefile generators; `NEW` omits it). Legacy positionals are accepted only as a narrow compatibility parse path, and `PROJECT_NAME` is parsed but ignored. | `Medium` |
+| `build_name` | `PARTIAL` | `NOOP_WARN` | `CMP0036` is modeled: `NEW` hard-errors because the command is disallowed, while `OLD` publishes a deterministic synthetic legacy-compatible value (`<CMAKE_HOST_SYSTEM_NAME>-<CMAKE_CXX_COMPILER_ID>`) instead of reproducing byte-for-byte historical formatting. | `Medium` |
+| `cmake_host_system_information` | `PARTIAL` | `NOOP_WARN` | The evaluator implements a deterministic local subset (`NUMBER_OF_LOGICAL_CORES`, `HOSTNAME`, memory totals/available values, `IS_64BIT`, `OS_NAME`, `OS_RELEASE`, `OS_VERSION`, `OS_PLATFORM`, and `MSYSTEM_PREFIX` on Windows). Unsupported query keys emit explicit diagnostics and are returned as empty slots in the ordered result list. | `Medium` |
 | `cmake_language` | `PARTIAL` | `ERROR_CONTINUE` | Core `CALL`, `EVAL CODE`, `GET_MESSAGE_LOG_LEVEL`, and documented `DEFER` queueing surface are implemented, but subcommands outside the baseline queue flow (notably dependency-provider integration) remain incomplete. | `Medium` |
 | `cmake_minimum_required` | `FULL` | `NOOP_WARN` | Signature/validation parity implemented for `VERSION <min>[...<max>] [FATAL_ERROR]`; implicit policy-version application matches evaluator CMake 3.28 baseline model. | - |
 | `cmake_parse_arguments` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented direct and `PARSE_ARGV` signatures, including keyword collision warnings, `UNPARSED_ARGUMENTS`, `KEYWORDS_MISSING_VALUES`, and pre-`CMP0174` empty-string handling appropriate for the 3.28 baseline. | - |
@@ -96,6 +99,7 @@ Status snapshot sources:
 | `set_source_files_properties` | `FULL` | `NOOP_WARN` | The documented bulk source-file-property wrapper is implemented for current-file, `DIRECTORY`, and `TARGET_DIRECTORY` forms by routing into the shared source-property backend. | - |
 | `set_target_properties` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`set_target_properties(<targets>... PROPERTIES <k> <v>...)`). | - |
 | `set_tests_properties` | `FULL` | `NOOP_WARN` | The documented bulk test-property wrapper is implemented for current-directory and explicit `DIRECTORY` forms by routing into the shared test-property backend with existing scope validation. | - |
+| `site_name` | `FULL` | `NOOP_WARN` | The documented single-variable signature is implemented with local hostname fallback and the legacy `HOSTNAME` command override path, trimming one trailing newline from command output in the covered flow. | - |
 | `source_group` | `PARTIAL` | `NOOP_WARN` | The evaluator models documented `FILES`, `REGULAR_EXPRESSION`, shorthand regex, and `TREE ... PREFIX ... FILES` signatures by recording deterministic source-group metadata in evaluator variables/events, but it does not project those groups into downstream generator backends. | `Medium` |
 | `string` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented string command surface, including full hash family (`MD5/SHA1/SHA224/SHA256/SHA384/SHA512/SHA3_*`), `REPEAT`, and `JSON` modes with `ERROR_VARIABLE`. | - |
 | `target_compile_features` | `PARTIAL` | `NOOP_WARN` | The documented scope parsing (`PRIVATE`/`PUBLIC`/`INTERFACE`) and target validation are implemented, and requested features are persisted in the evaluator property model. The broader CMake compiler-feature validation and transitive resolution surface is not modeled in this batch. | `Medium` |

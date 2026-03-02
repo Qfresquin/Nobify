@@ -12,6 +12,7 @@
 #include "lexer.h"
 #include "parser.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
@@ -147,6 +148,21 @@ static bool evaluator_create_directory_link_like(const char *link_path, const ch
 #else
     if (symlink(target_path, link_path) == 0) return true;
     return errno == EEXIST;
+#endif
+}
+
+static bool evaluator_prepare_site_name_command(char *out_path, size_t out_path_size) {
+    if (!out_path || out_path_size == 0) return false;
+#if defined(_WIN32)
+    int n = snprintf(out_path, out_path_size, "%s", "hostname");
+    return n > 0 && (size_t)n < out_path_size;
+#else
+    const char *path = "./temp_site_name_cmd.sh";
+    const char *script = "#!/bin/sh\nprintf 'mock-site\\n'\n";
+    if (!nob_write_entire_file(path, script, strlen(script))) return false;
+    if (chmod(path, 0755) != 0) return false;
+    int n = snprintf(out_path, out_path_size, "%s", path);
+    return n > 0 && (size_t)n < out_path_size;
 #endif
 }
 
@@ -3638,6 +3654,152 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
     TEST_PASS();
 }
 
+TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    char site_cmd[256] = {0};
+    ASSERT(evaluator_prepare_site_name_command(site_cmd, sizeof(site_cmd)));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        nob_temp_sprintf(
+            "site_name(SITE_FALLBACK)\n"
+            "cmake_host_system_information(RESULT HOST_MULTI QUERY OS_NAME HOSTNAME IS_64BIT)\n"
+            "cmake_host_system_information(RESULT HOST_BAD QUERY OS_NAME FQDN)\n"
+            "set(HOSTNAME \"%s\")\n"
+            "site_name(SITE_CMD)\n",
+            site_cmd));
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    String_View system_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
+    String_View host_multi = eval_var_get(ctx, nob_sv_from_cstr("HOST_MULTI"));
+    String_View host_bad = eval_var_get(ctx, nob_sv_from_cstr("HOST_BAD"));
+    String_View site_fallback = eval_var_get(ctx, nob_sv_from_cstr("SITE_FALLBACK"));
+    String_View site_cmd_out = eval_var_get(ctx, nob_sv_from_cstr("SITE_CMD"));
+
+    ASSERT(system_name.count > 0);
+    ASSERT(site_fallback.count > 0);
+    ASSERT(host_multi.count > system_name.count);
+    ASSERT(memcmp(host_multi.data, system_name.data, system_name.count) == 0);
+    ASSERT(host_multi.data[system_name.count] == ';');
+    ASSERT(host_bad.count == system_name.count + 1);
+    ASSERT(memcmp(host_bad.data, system_name.data, system_name.count) == 0);
+    ASSERT(host_bad.data[system_name.count] == ';');
+#if defined(_WIN32)
+    ASSERT(site_cmd_out.count > 0);
+#else
+    ASSERT(nob_sv_eq(site_cmd_out, nob_sv_from_cstr("mock-site")));
+#endif
+
+    bool saw_unsupported_query_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.cause,
+                       nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"))) {
+            continue;
+        }
+        if (nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("FQDN"))) {
+            saw_unsupported_query_diag = true;
+            break;
+        }
+    }
+    ASSERT(saw_unsupported_query_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(SET CMP0036 OLD)\n"
+        "build_name(BN_OLD)\n"
+        "cmake_policy(SET CMP0036 NEW)\n"
+        "build_name(BN_NEW)\n"
+        "set(CMAKE_GENERATOR \"Unix Makefiles\")\n"
+        "cmake_policy(SET CMP0061 OLD)\n"
+        "build_command(BC_OLD CONFIGURATION Debug TARGET demo PARALLEL_LEVEL 3)\n"
+        "cmake_policy(SET CMP0061 NEW)\n"
+        "build_command(BC_NEW legacy_make legacy_file legacy_target)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    String_View host_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
+    String_View compiler_id = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"));
+    String_View build_name = eval_var_get(ctx, nob_sv_from_cstr("BN_OLD"));
+    ASSERT(build_name.count == host_name.count + 1 + compiler_id.count);
+    ASSERT(memcmp(build_name.data, host_name.data, host_name.count) == 0);
+    ASSERT(build_name.data[host_name.count] == '-');
+    ASSERT(memcmp(build_name.data + host_name.count + 1, compiler_id.data, compiler_id.count) == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BC_OLD")),
+                     nob_sv_from_cstr("cmake --build . --target demo --config Debug --parallel 3 -- -i")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BC_NEW")),
+                     nob_sv_from_cstr("cmake --build . --target legacy_target")));
+
+    bool saw_cmp0036_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("build_name() is disallowed by CMP0036"))) {
+            saw_cmp0036_diag = true;
+            break;
+        }
+    }
+    ASSERT(saw_cmp0036_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -6138,6 +6300,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
     test_evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode(passed, failed);
     test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
+    test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
+    test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);

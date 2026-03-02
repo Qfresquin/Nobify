@@ -4,10 +4,20 @@
 #include "stb_ds.h"
 #include <ctype.h>
 #include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <unistd.h>
+#if defined(__linux__)
+#include <sys/sysinfo.h>
+#endif
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#include <sys/utsname.h>
+#endif
 #endif
 
 String_View sv_copy_to_arena(Arena *arena, String_View sv) {
@@ -61,6 +71,154 @@ String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx) {
     String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (cur_src.count == 0 && ctx) cur_src = ctx->source_dir;
     return cur_src;
+}
+
+String_View eval_detect_host_system_name(void) {
+#if defined(_WIN32)
+    return nob_sv_from_cstr("Windows");
+#elif defined(__APPLE__)
+    return nob_sv_from_cstr("Darwin");
+#elif defined(__linux__)
+    return nob_sv_from_cstr("Linux");
+#elif defined(__unix__)
+    return nob_sv_from_cstr("Unix");
+#else
+    return nob_sv_from_cstr("Unknown");
+#endif
+}
+
+String_View eval_detect_host_processor(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return nob_sv_from_cstr("x86_64");
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return nob_sv_from_cstr("aarch64");
+#elif defined(__i386__) || defined(_M_IX86)
+    return nob_sv_from_cstr("x86");
+#elif defined(__arm__) || defined(_M_ARM)
+    return nob_sv_from_cstr("arm");
+#else
+    return nob_sv_from_cstr("unknown");
+#endif
+}
+
+#if defined(_WIN32)
+static String_View host_copy_printf_temp(Evaluator_Context *ctx, const char *fmt, ...) {
+    if (!ctx || !fmt) return nob_sv_from_cstr("");
+
+    va_list ap;
+    va_start(ap, fmt);
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    int needed = vsnprintf(NULL, 0, fmt, ap_copy);
+    va_end(ap_copy);
+    if (needed < 0) {
+        va_end(ap);
+        return nob_sv_from_cstr("");
+    }
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)needed + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    (void)vsnprintf(buf, (size_t)needed + 1, fmt, ap);
+    va_end(ap);
+    return nob_sv_from_parts(buf, (size_t)needed);
+}
+#endif
+
+bool eval_host_hostname_temp(Evaluator_Context *ctx, String_View *out_hostname) {
+    if (!out_hostname) return false;
+    *out_hostname = nob_sv_from_cstr("");
+
+#if defined(_WIN32)
+    char buf[256] = {0};
+    DWORD size = (DWORD)(sizeof(buf) - 1);
+    if (!GetComputerNameA(buf, &size)) return true;
+    *out_hostname = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)size));
+    return !eval_should_stop(ctx);
+#else
+    char buf[256] = {0};
+    if (gethostname(buf, sizeof(buf) - 1) != 0) return true;
+    buf[sizeof(buf) - 1] = '\0';
+    *out_hostname = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(buf));
+    return !eval_should_stop(ctx);
+#endif
+}
+
+bool eval_host_logical_cores(size_t *out_count) {
+    if (!out_count) return false;
+    int raw = nob_nprocs();
+    if (raw <= 0) return false;
+    *out_count = (size_t)raw;
+    return true;
+}
+
+bool eval_host_memory_info(Eval_Host_Memory_Info *out_info) {
+    if (!out_info) return false;
+    memset(out_info, 0, sizeof(*out_info));
+
+#if defined(_WIN32)
+    MEMORYSTATUSEX status = {0};
+    status.dwLength = sizeof(status);
+    if (!GlobalMemoryStatusEx(&status)) return false;
+
+    const unsigned long long mib = 1024ull * 1024ull;
+    out_info->total_virtual_mib = status.ullTotalPageFile / mib;
+    out_info->available_virtual_mib = status.ullAvailPageFile / mib;
+    out_info->total_physical_mib = status.ullTotalPhys / mib;
+    out_info->available_physical_mib = status.ullAvailPhys / mib;
+    return true;
+#elif defined(__linux__)
+    struct sysinfo info = {0};
+    if (sysinfo(&info) != 0) return false;
+
+    unsigned long long unit = info.mem_unit > 0 ? (unsigned long long)info.mem_unit : 1ull;
+    unsigned long long total_phys = (unsigned long long)info.totalram * unit;
+    unsigned long long avail_phys = (unsigned long long)info.freeram * unit;
+    unsigned long long total_swap = (unsigned long long)info.totalswap * unit;
+    unsigned long long avail_swap = (unsigned long long)info.freeswap * unit;
+    const unsigned long long mib = 1024ull * 1024ull;
+
+    out_info->total_physical_mib = total_phys / mib;
+    out_info->available_physical_mib = avail_phys / mib;
+    out_info->total_virtual_mib = (total_phys + total_swap) / mib;
+    out_info->available_virtual_mib = (avail_phys + avail_swap) / mib;
+    return true;
+#else
+    return false;
+#endif
+}
+
+String_View eval_host_os_release_temp(Evaluator_Context *ctx) {
+#if defined(_WIN32)
+    OSVERSIONINFOA info = {0};
+    info.dwOSVersionInfoSize = sizeof(info);
+    if (!GetVersionExA(&info)) return nob_sv_from_cstr("");
+    return host_copy_printf_temp(ctx, "%lu.%lu", (unsigned long)info.dwMajorVersion, (unsigned long)info.dwMinorVersion);
+#elif defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+    struct utsname info = {0};
+    if (uname(&info) != 0) return nob_sv_from_cstr("");
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(info.release));
+#else
+    return nob_sv_from_cstr("");
+#endif
+}
+
+String_View eval_host_os_version_temp(Evaluator_Context *ctx) {
+#if defined(_WIN32)
+    OSVERSIONINFOA info = {0};
+    info.dwOSVersionInfoSize = sizeof(info);
+    if (!GetVersionExA(&info)) return nob_sv_from_cstr("");
+    return host_copy_printf_temp(ctx,
+                                 "%lu.%lu.%lu",
+                                 (unsigned long)info.dwMajorVersion,
+                                 (unsigned long)info.dwMinorVersion,
+                                 (unsigned long)info.dwBuildNumber);
+#elif defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+    struct utsname info = {0};
+    if (uname(&info) != 0) return nob_sv_from_cstr("");
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(info.version));
+#else
+    return nob_sv_from_cstr("");
+#endif
 }
 
 String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name) {

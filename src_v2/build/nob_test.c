@@ -122,6 +122,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_file_transfer.c",
         "src_v2/evaluator/eval_file_generate_lock_archive.c",
         "src_v2/evaluator/eval_flow.c",
+        "src_v2/evaluator/eval_host.c",
         "src_v2/evaluator/eval_include.c",
         "src_v2/evaluator/eval_install.c",
         "src_v2/evaluator/eval_opt_parser.c",

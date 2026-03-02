@@ -8,6 +8,7 @@
 #include "eval_directory.h"
 #include "eval_file.h"
 #include "eval_flow.h"
+#include "eval_host.h"
 #include "eval_include.h"
 #include "eval_install.h"
 #include "eval_package.h"
@@ -40,6 +41,9 @@ static const Command_Entry DISPATCH[] = {
     {"add_test", eval_handle_add_test},
     {"block", eval_handle_block},
     {"break", eval_handle_break},
+    {"build_command", eval_handle_build_command},
+    {"build_name", eval_handle_build_name},
+    {"cmake_host_system_information", eval_handle_cmake_host_system_information},
     {"cmake_parse_arguments", eval_handle_cmake_parse_arguments},
     {"cmake_minimum_required", eval_handle_cmake_minimum_required},
     {"cmake_language", eval_handle_cmake_language},
@@ -90,6 +94,7 @@ static const Command_Entry DISPATCH[] = {
     {"set_source_files_properties", eval_handle_set_source_files_properties},
     {"set_target_properties", eval_handle_set_target_properties},
     {"set_tests_properties", eval_handle_set_tests_properties},
+    {"site_name", eval_handle_site_name},
     {"string", eval_handle_string},
     {"source_group", eval_handle_source_group},
     {"target_compile_features", eval_handle_target_compile_features},

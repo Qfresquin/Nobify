@@ -1314,20 +1314,6 @@ cleanup:
     return ok;
 }
 
-static String_View detect_host_system_name(void) {
-#if defined(_WIN32)
-    return nob_sv_from_cstr("Windows");
-#elif defined(__APPLE__)
-    return nob_sv_from_cstr("Darwin");
-#elif defined(__linux__)
-    return nob_sv_from_cstr("Linux");
-#elif defined(__unix__)
-    return nob_sv_from_cstr("Unix");
-#else
-    return nob_sv_from_cstr("Unknown");
-#endif
-}
-
 static String_View detect_compiler_id(void) {
 #if defined(__clang__)
     return nob_sv_from_cstr("Clang");
@@ -1337,20 +1323,6 @@ static String_View detect_compiler_id(void) {
     return nob_sv_from_cstr("GNU");
 #else
     return nob_sv_from_cstr("Unknown");
-#endif
-}
-
-static String_View detect_host_processor(void) {
-#if defined(__x86_64__) || defined(_M_X64)
-    return nob_sv_from_cstr("x86_64");
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    return nob_sv_from_cstr("aarch64");
-#elif defined(__i386__) || defined(_M_IX86)
-    return nob_sv_from_cstr("x86");
-#elif defined(__arm__) || defined(_M_ARM)
-    return nob_sv_from_cstr("arm");
-#else
-    return nob_sv_from_cstr("unknown");
 #endif
 }
 
@@ -1455,9 +1427,18 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MAJOR_VERSION"), nob_sv_from_cstr("3"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINOR_VERSION"), nob_sv_from_cstr("28"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PATCH_VERSION"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), detect_host_system_name())) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), detect_host_system_name())) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), detect_host_processor())) return NULL;
+    String_View host_system_name = eval_detect_host_system_name();
+    String_View host_processor = eval_detect_host_processor();
+    String_View host_system_version = eval_host_os_version_temp(ctx);
+    if (eval_should_stop(ctx)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), host_system_name)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), host_processor)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), host_system_name)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake"))) return NULL;
 
     // Project built-ins default to empty and are updated by project().
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
