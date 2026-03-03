@@ -503,6 +503,26 @@ bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_nam
     return true;
 }
 
+bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, const SV_List *argv) {
+    if (!ctx || command_name.count == 0 || !argv) return false;
+
+    String_View joined = eval_sv_join_semi_temp(ctx, argv->items, argv->count);
+    if (eval_should_stop(ctx)) return false;
+
+    size_t key_len = sizeof("NOBIFY_LEGACY::") - 1 + command_name.count + sizeof("::ARGS") - 1;
+    char *key = (char*)arena_alloc(eval_temp_arena(ctx), key_len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, key, false);
+
+    int n = snprintf(key,
+                     key_len + 1,
+                     "NOBIFY_LEGACY::%.*s::ARGS",
+                     (int)command_name.count,
+                     command_name.data ? command_name.data : "");
+    if (n < 0) return ctx_oom(ctx);
+
+    return eval_var_set(ctx, nob_sv_from_cstr(key), joined);
+}
+
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
     if (!ctx || !ctx->stream || test_name.count == 0) return false;
     for (size_t ei = 0; ei < ctx->stream->count; ei++) {

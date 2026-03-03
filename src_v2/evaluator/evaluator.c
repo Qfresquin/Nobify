@@ -161,13 +161,53 @@ String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
     return nob_sv_from_cstr("");
 }
 
+static bool eval_variable_watch_notify(Evaluator_Context *ctx,
+                                       String_View key,
+                                       String_View action,
+                                       String_View value) {
+    if (!ctx || ctx->in_variable_watch_notification || key.count == 0) return true;
+    if (nob_sv_starts_with(key, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_"))) return true;
+
+    bool watched = false;
+    String_View command = nob_sv_from_cstr("");
+    for (size_t i = 0; i < ctx->watched_variables.count; i++) {
+        if (!eval_sv_key_eq(ctx->watched_variables.items[i], key)) continue;
+        watched = true;
+        if (i < ctx->watched_variable_commands.count) command = ctx->watched_variable_commands.items[i];
+        break;
+    }
+    if (!watched) return true;
+
+    ctx->in_variable_watch_notification = true;
+    bool ok = true;
+    ok = ok && eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VAR"), key);
+    ok = ok && eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_ACTION"), action);
+    ok = ok && eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VALUE"), value);
+    if (ok && command.count > 0) {
+        ok = eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_COMMAND"), command);
+    }
+    if (ok) {
+        Cmake_Event_Origin origin = {0};
+        ok = eval_emit_diag(ctx,
+                            EV_DIAG_WARNING,
+                            nob_sv_from_cstr("eval_legacy"),
+                            nob_sv_from_cstr("variable_watch"),
+                            origin,
+                            nob_sv_from_cstr("variable_watch() observed a watched variable mutation"),
+                            key);
+    }
+    ctx->in_variable_watch_notification = false;
+    return ok;
+}
+
 bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
     if (!ctx || ctx->scope_depth == 0 || eval_should_stop(ctx)) return false;
     Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     if (b) {
         b->value = sv_copy_to_event_arena(ctx, value);
-        return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return false;
+        return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("SET"), value);
     }
 
     char *stable_key = eval_copy_key_cstr_event(ctx, key);
@@ -178,16 +218,17 @@ bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
     Eval_Var_Entry *vars = s->vars;
     stbds_shput(vars, stable_key, stable_value);
     s->vars = vars;
-    return true;
+    return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("SET"), value);
 }
 
 bool eval_var_unset(Evaluator_Context *ctx, String_View key) {
     if (!ctx || ctx->scope_depth == 0 || eval_should_stop(ctx)) return false;
     Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+    String_View old_value = eval_var_get(ctx, key);
     if (s->vars) {
         (void)stbds_shdel(s->vars, nob_temp_sv_to_cstr(key));
     }
-    return true;
+    return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("UNSET"), old_value);
 }
 
 bool eval_var_defined(Evaluator_Context *ctx, String_View key) {

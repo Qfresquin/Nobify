@@ -4259,6 +4259,144 @@ TEST(evaluator_ctest_family_rejects_invalid_and_unsupported_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_batch8_legacy_commands_register_and_model_compat_paths) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(legacy_iface INTERFACE)\n"
+        "export_library_dependencies(legacy_deps.cmake)\n"
+        "make_directory(legacy_dir/sub)\n"
+        "write_file(legacy_dir/sub/out.txt alpha beta)\n"
+        "install_files(share .txt first.txt second.txt)\n"
+        "install_programs(bin tool.sh)\n"
+        "install_targets(lib legacy_iface)\n"
+        "load_command(legacy_cmd ./module)\n"
+        "output_required_files(input.c output.txt)\n"
+        "set(LEGACY_LIST a;b;c;b)\n"
+        "remove(LEGACY_LIST b)\n"
+        "qt_wrap_cpp(LegacyLib LEGACY_MOCS foo.hpp bar.hpp)\n"
+        "qt_wrap_ui(LegacyLib LEGACY_UI_HDRS LEGACY_UI_SRCS dialog.ui)\n"
+        "subdir_depends(src dep1 dep2)\n"
+        "subdirs(dir_a dir_b)\n"
+        "use_mangled_mesa(mesa out prefix)\n"
+        "utility_source(CACHE_EXE /bin/tool generated.c)\n"
+        "variable_requires(TESTVAR OUTVAR NEED1 NEED2)\n"
+        "variable_watch(WATCH_ME watch-cmd)\n"
+        "set(WATCH_ME touched)\n"
+        "unset(WATCH_ME)\n"
+        "fltk_wrap_ui(FltkLib main.fl)\n"
+        "write_file(legacy_dir/sub/appended.txt one)\n"
+        "write_file(legacy_dir/sub/appended.txt two APPEND)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_file_exists("legacy_dir/sub"));
+    ASSERT(nob_file_exists("legacy_dir/sub/out.txt"));
+    String_View out_txt = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "legacy_dir/sub/out.txt", &out_txt));
+    ASSERT(nob_sv_eq(out_txt, nob_sv_from_cstr("alphabeta")));
+
+    String_View appended_txt = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "legacy_dir/sub/appended.txt", &appended_txt));
+    ASSERT(nob_sv_eq(appended_txt, nob_sv_from_cstr("onetwo")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LEGACY_MOCS")), nob_sv_from_cstr("moc_foo.cxx;moc_bar.cxx")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LEGACY_UI_HDRS")), nob_sv_from_cstr("ui_dialog.h")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LEGACY_UI_SRCS")), nob_sv_from_cstr("ui_dialog.cxx")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("FltkLib_FLTK_UI_SRCS")),
+                     nob_sv_from_cstr("fluid_main.cxx;fluid_main.h")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_LEGACY::export_library_dependencies::ARGS")),
+                     nob_sv_from_cstr("legacy_deps.cmake")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_LEGACY::load_command::ARGS")),
+                     nob_sv_from_cstr("legacy_cmd;./module")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_LEGACY::subdirs::ARGS")),
+                     nob_sv_from_cstr("dir_a;dir_b")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VAR")),
+                     nob_sv_from_cstr("WATCH_ME")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_ACTION")),
+                     nob_sv_from_cstr("UNSET")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VALUE")),
+                     nob_sv_from_cstr("touched")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_COMMAND")),
+                     nob_sv_from_cstr("watch-cmd")));
+
+    size_t install_rule_count = 0;
+    bool saw_unknown_command = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind == EV_INSTALL_ADD_RULE) install_rule_count++;
+        if (ev->kind == EV_DIAGNOSTIC && nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Unknown command"))) {
+            saw_unknown_command = true;
+        }
+    }
+    ASSERT(install_rule_count >= 4);
+    ASSERT(!saw_unknown_command);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_batch8_legacy_commands_reject_invalid_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "make_directory()\n"
+        "write_file()\n"
+        "remove(ONLY_VAR)\n"
+        "variable_watch(A B C)\n"
+        "qt_wrap_cpp(LegacyLib ONLY_OUT)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 5);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -6767,6 +6905,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
     test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
+    test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed);
+    test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);

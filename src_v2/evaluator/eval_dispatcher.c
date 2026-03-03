@@ -12,6 +12,7 @@
 #include "eval_host.h"
 #include "eval_include.h"
 #include "eval_install.h"
+#include "eval_legacy.h"
 #include "eval_meta.h"
 #include "eval_package.h"
 #include "eval_project.h"
@@ -77,6 +78,7 @@ static const Command_Entry DISPATCH[] = {
     {"endblock", eval_handle_endblock},
     {"exec_program", eval_handle_exec_program},
     {"execute_process", eval_handle_execute_process},
+    {"export_library_dependencies", eval_handle_export_library_dependencies},
     {"file", eval_handle_file},
     {"export", eval_handle_export},
     {"get_cmake_property", eval_handle_get_cmake_property},
@@ -97,15 +99,24 @@ static const Command_Entry DISPATCH[] = {
     {"include_directories", eval_handle_include_directories},
     {"include_guard", eval_handle_include_guard},
     {"install", eval_handle_install},
+    {"install_files", eval_handle_install_files},
+    {"install_programs", eval_handle_install_programs},
+    {"install_targets", eval_handle_install_targets},
     {"link_directories", eval_handle_link_directories},
     {"link_libraries", eval_handle_link_libraries},
     {"list", eval_handle_list},
+    {"load_command", eval_handle_load_command},
     {"load_cache", eval_handle_load_cache},
+    {"make_directory", eval_handle_make_directory},
     {"mark_as_advanced", eval_handle_mark_as_advanced},
     {"math", eval_handle_math},
     {"message", eval_handle_message},
     {"option", eval_handle_option},
+    {"output_required_files", eval_handle_output_required_files},
     {"project", eval_handle_project},
+    {"qt_wrap_cpp", eval_handle_qt_wrap_cpp},
+    {"qt_wrap_ui", eval_handle_qt_wrap_ui},
+    {"remove", eval_handle_remove},
     {"remove_definitions", eval_handle_remove_definitions},
     {"return", eval_handle_return},
     {"separate_arguments", eval_handle_separate_arguments},
@@ -118,6 +129,8 @@ static const Command_Entry DISPATCH[] = {
     {"site_name", eval_handle_site_name},
     {"string", eval_handle_string},
     {"source_group", eval_handle_source_group},
+    {"subdir_depends", eval_handle_subdir_depends},
+    {"subdirs", eval_handle_subdirs},
     {"aux_source_directory", eval_handle_aux_source_directory},
     {"target_compile_features", eval_handle_target_compile_features},
     {"target_compile_definitions", eval_handle_target_compile_definitions},
@@ -131,6 +144,12 @@ static const Command_Entry DISPATCH[] = {
     {"try_compile", eval_handle_try_compile},
     {"try_run", eval_handle_try_run},
     {"unset", eval_handle_unset},
+    {"use_mangled_mesa", eval_handle_use_mangled_mesa},
+    {"utility_source", eval_handle_utility_source},
+    {"variable_requires", eval_handle_variable_requires},
+    {"variable_watch", eval_handle_variable_watch},
+    {"fltk_wrap_ui", eval_handle_fltk_wrap_ui},
+    {"write_file", eval_handle_write_file},
 };
 static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
 

@@ -258,6 +258,8 @@ struct Evaluator_Context {
     Eval_Property_Definition_List property_definitions;
     Eval_Deferred_Dir_Frame_Stack deferred_dirs;
     SV_List active_find_packages;
+    SV_List watched_variables;
+    SV_List watched_variable_commands;
     size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
     size_t policy_depth;
@@ -280,6 +282,7 @@ struct Evaluator_Context {
 
     bool oom;
     bool stop_requested;
+    bool in_variable_watch_notification;
 };
 
 // ---- controle e memória ----
@@ -418,6 +421,7 @@ bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, 
 bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path);
 bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View contents, bool append);
 bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_name, const SV_List *argv, String_View status);
+bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, const SV_List *argv);
 String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
                                             String_View raw_path,
                                             String_View base_dir,

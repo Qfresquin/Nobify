@@ -71,6 +71,7 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_host.c",
         "src_v2/evaluator/eval_include.c",
         "src_v2/evaluator/eval_install.c",
+        "src_v2/evaluator/eval_legacy.c",
         "src_v2/evaluator/eval_meta.c",
         "src_v2/evaluator/eval_opt_parser.c",
         "src_v2/evaluator/eval_package.c",
