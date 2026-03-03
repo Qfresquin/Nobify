@@ -779,7 +779,7 @@ static bool handle_file_real_path(Evaluator_Context *ctx, const Node *node, SV_L
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, input, base_dir, &path)) return true;
-    bool cmp0152_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0152")), "NEW");
+    bool cmp0152_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0152)), "NEW");
     String_View resolved = nob_sv_from_cstr("");
     if (!file_real_path_resolve_temp(ctx, path, cmp0152_new, &resolved)) return true;
     (void)eval_var_set(ctx, args[2], resolved);

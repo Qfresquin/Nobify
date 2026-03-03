@@ -60,7 +60,7 @@ bool ctx_oom(Evaluator_Context *ctx) {
 
 bool eval_continue_on_error(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"));
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR));
     if (v.count == 0) return false;
     return eval_truthy(ctx, v);
 }
@@ -602,7 +602,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
     SV_List items = NULL;
     String_View *items_ptr = NULL;
     size_t items_count = 0;
-    bool cmp0124_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0124")), "NEW");
+    bool cmp0124_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0124)), "NEW");
 
     if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "RANGE")) {
         idx++;
@@ -1218,10 +1218,10 @@ static bool eval_push_external_context(Evaluator_Context *ctx,
     memset(state, 0, sizeof(*state));
 
     state->old_file = ctx->current_file;
-    state->old_list_file = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"));
-    state->old_list_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
-    state->old_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
-    state->old_bin_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    state->old_list_file = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
+    state->old_list_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
+    state->old_src_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+    state->old_bin_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
     state->is_add_subdirectory = is_add_subdirectory;
     state->restore_needed = true;
 
@@ -1230,20 +1230,20 @@ static bool eval_push_external_context(Evaluator_Context *ctx,
     EVAL_OOM_RETURN_IF_NULL(ctx, new_current_file, false);
     ctx->current_file = new_current_file;
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"), file_path)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"), new_list_dir)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), file_path)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), new_list_dir)) return false;
 
     if (!is_add_subdirectory) return true;
 
     if (!eval_scope_push(ctx)) return false;
     state->scope_pushed = true;
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"), new_list_dir)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), new_list_dir)) return false;
     if (explicit_bin_dir.count > 0) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"), explicit_bin_dir)) return false;
+        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), explicit_bin_dir)) return false;
     } else {
         String_View bin_path = sv_copy_to_event_arena(ctx, new_list_dir);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"), bin_path)) return false;
+        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), bin_path)) return false;
     }
     return true;
 }
@@ -1256,11 +1256,11 @@ static void eval_pop_external_context(Evaluator_Context *ctx, const External_Eva
     }
 
     ctx->current_file = state->old_file;
-    (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"), state->old_list_file);
-    (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"), state->old_list_dir);
+    (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), state->old_list_file);
+    (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), state->old_list_dir);
     if (state->is_add_subdirectory) {
-        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"), state->old_src_dir);
-        (void)eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"), state->old_bin_dir);
+        (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), state->old_src_dir);
+        (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), state->old_bin_dir);
     }
 }
 
@@ -1288,8 +1288,8 @@ bool eval_execute_file(Evaluator_Context *ctx,
         goto cleanup;
     }
     if (is_add_subdirectory) {
-        String_View current_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
-        String_View current_bin_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+        String_View current_src_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+        String_View current_bin_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
         if (!eval_defer_push_directory(ctx, current_src_dir, current_bin_dir)) {
             eval_pop_external_context(ctx, &state);
             goto cleanup;
@@ -1381,16 +1381,16 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     // Bootstrap canonical CMAKE_* variables.
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"), ctx->source_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"), ctx->binary_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"), ctx->source_dir)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return NULL;
     if (ctx->current_file) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"), nob_sv_from_cstr(ctx->current_file))) return NULL;
+        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(ctx->current_file))) return NULL;
     } else {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"), nob_sv_from_cstr(""))) return NULL;
+        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(""))) return NULL;
     }
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr("1"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_defer_push_directory(ctx, ctx->source_dir, ctx->binary_dir)) return NULL;
 
@@ -1442,12 +1442,12 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     // Project built-ins default to empty and are updated by project().
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"),
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
                       ctx->compat_profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"), eval_compat_profile_to_sv(ctx->compat_profile))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_ERROR_BUDGET"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"), nob_sv_from_cstr("WARN"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_FILE_GLOB_STRICT"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(ctx->compat_profile))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY), nob_sv_from_cstr("WARN"))) return NULL;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
 

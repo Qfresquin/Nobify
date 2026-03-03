@@ -152,7 +152,7 @@ static String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View i
 }
 
 static String_View cmk_path_current_source_dir(Evaluator_Context *ctx) {
-    String_View cur = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View cur = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
     if (cur.count == 0) cur = ctx->source_dir;
     return cur;
 }

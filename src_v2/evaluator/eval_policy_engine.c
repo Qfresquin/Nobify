@@ -139,7 +139,7 @@ static bool policy_set_depth_var(Evaluator_Context *ctx) {
     char depth_buf[32];
     int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", eval_policy_visible_depth(ctx));
     if (n < 0 || (size_t)n >= sizeof(depth_buf)) return ctx_oom(ctx);
-    return eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr(depth_buf));
+    return eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr(depth_buf));
 }
 
 static bool policy_ensure_capacity(Evaluator_Context *ctx, size_t min_capacity) {

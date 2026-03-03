@@ -72,7 +72,7 @@ String_View eval_normalize_compile_definition_item(String_View item) {
 }
 
 String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx) {
-    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
     if (cur_src.count == 0 && ctx) cur_src = ctx->source_dir;
     return cur_src;
 }

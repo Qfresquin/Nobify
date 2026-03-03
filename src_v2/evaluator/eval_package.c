@@ -87,7 +87,7 @@ static bool find_package_try_module(Evaluator_Context *ctx,
                                     bool no_cmake_path,
                                     bool no_cmake_environment_path,
                                     String_View *out_path) {
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
     if (current_src.count == 0) current_src = ctx->source_dir;
     String_View module_paths[64] = {0};
     size_t module_count = 0;
@@ -204,7 +204,7 @@ static void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
     if (no_default_path || no_package_root_path) return;
 
     // CMP0074 controls whether find_package() honors <Pkg>_ROOT variables.
-    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0074")), "NEW")) return;
+    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0074)), "NEW")) return;
 
     String_View names[16] = {0};
     size_t name_count = 0;
@@ -565,11 +565,11 @@ static bool find_item_append_package_roots(Evaluator_Context *ctx,
                                            SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs) return false;
     if (opt->no_default_path || opt->no_package_root_path || arena_arr_len(ctx->active_find_packages) == 0) return true;
-    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0074")), "NEW")) return true;
+    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0074)), "NEW")) return true;
 
     String_View pkg = ctx->active_find_packages[arena_arr_len(ctx->active_find_packages) - 1];
     String_View mixed_root = svu_concat_suffix_temp(ctx, pkg, "_ROOT");
-    bool cmp0144_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0144")), "NEW");
+    bool cmp0144_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0144)), "NEW");
     String_View upper_root = cmp0144_new ? svu_concat_suffix_temp(ctx, sv_to_upper_temp(ctx, pkg), "_ROOT") : nob_sv_from_cstr("");
 
     String_View roots[4] = {0};
@@ -905,7 +905,7 @@ static bool find_item_search(Evaluator_Context *ctx,
             if (dir.count == 0 || name.count == 0) continue;
 
             if (!eval_sv_is_abs_path(dir)) {
-                dir = eval_path_resolve_for_cmake_arg(ctx, dir, eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR")), false);
+                dir = eval_path_resolve_for_cmake_arg(ctx, dir, eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR)), false);
                 if (eval_should_stop(ctx)) return false;
             }
 
@@ -1069,7 +1069,7 @@ static bool find_package_try_config(Evaluator_Context *ctx,
                                     bool no_cmake_system_path,
                                     bool no_cmake_install_prefix,
                                     String_View *out_path) {
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
     if (current_src.count == 0) current_src = ctx->source_dir;
 
     String_View names[16] = {0};

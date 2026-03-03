@@ -279,8 +279,8 @@ static bool is_current_directory_object(Evaluator_Context *ctx, String_View obje
     if (object_id.count == 0) return true;
     if (eval_sv_eq_ci_lit(object_id, ".")) return true;
 
-    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
-    String_View cur_bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+    String_View cur_bin = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
     if (svu_eq_ci_sv(object_id, cur_src)) return true;
     if (svu_eq_ci_sv(object_id, cur_bin)) return true;
     return false;
@@ -2826,7 +2826,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (is_dir_scope && arena_arr_len(objects) == 0) {
-        String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+        String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
         if (current_dir.count == 0) current_dir = ctx->source_dir;
         if (!set_non_target_property(ctx, o, scope_upper, current_dir, key, value, op)) {
             return !eval_should_stop(ctx);

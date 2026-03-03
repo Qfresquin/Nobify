@@ -24,7 +24,7 @@ static bool host_capture_command_stdout(Evaluator_Context *ctx, String_View comm
     static size_t s_capture_counter = 0;
     s_capture_counter++;
 
-    String_View current_bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    String_View current_bin = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
     if (current_bin.count == 0) current_bin = ctx->binary_dir;
 
     String_View file_name = sv_copy_to_temp_arena(
@@ -415,7 +415,7 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0036")), "NEW")) {
+    if (eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0036)), "NEW")) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("host"),
@@ -464,7 +464,7 @@ bool eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
                              opt.project_name);
     }
 
-    bool cmp0061_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0061")), "NEW");
+    bool cmp0061_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0061)), "NEW");
     String_View generator = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_GENERATOR"));
     bool append_make_i = !cmp0061_new && host_is_makefile_generator(generator);
 

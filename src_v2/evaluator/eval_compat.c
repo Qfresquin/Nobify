@@ -48,23 +48,23 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
     ctx->compat_profile = profile;
 
     if (eval_scope_visible_depth(ctx) == 0) return true;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"), eval_compat_profile_to_sv(profile))) {
+    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(profile))) {
         return false;
     }
     return eval_var_set(ctx,
-                        nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"),
+                        nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
                         profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
 }
 
 void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
     if (eval_scope_visible_depth(ctx) == 0) return;
-    String_View profile = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"));
+    String_View profile = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE));
     if (profile.count > 0) ctx->compat_profile = eval_profile_from_sv(profile);
 
-    String_View policy = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"));
+    String_View policy = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY));
     if (policy.count > 0) ctx->unsupported_policy = eval_unsupported_policy_from_sv(policy);
 
-    String_View budget_sv = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_ERROR_BUDGET"));
+    String_View budget_sv = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET));
     size_t parsed = 0;
     if (eval_parse_size_t_sv(budget_sv, &parsed)) ctx->error_budget = parsed;
 }
