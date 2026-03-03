@@ -47,7 +47,7 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
     }
     ctx->compat_profile = profile;
 
-    if (ctx->scope_depth == 0) return true;
+    if (eval_scope_visible_depth(ctx) == 0) return true;
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"), eval_compat_profile_to_sv(profile))) {
         return false;
     }
@@ -57,7 +57,7 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
 }
 
 void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
-    if (!ctx || ctx->scope_depth == 0) return;
+    if (eval_scope_visible_depth(ctx) == 0) return;
     String_View profile = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"));
     if (profile.count > 0) ctx->compat_profile = eval_profile_from_sv(profile);
 

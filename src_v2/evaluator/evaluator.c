@@ -150,8 +150,8 @@ static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
 }
 
 String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || ctx->scope_depth == 0) return nob_sv_from_cstr("");
-    for (size_t d = ctx->scope_depth; d-- > 0;) {
+    if (!ctx || eval_scope_visible_depth(ctx) == 0) return nob_sv_from_cstr("");
+    for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
         Var_Scope *s = &ctx->scopes[d];
         Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return b->value;
@@ -201,8 +201,8 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
 }
 
 bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
-    if (!ctx || ctx->scope_depth == 0 || eval_should_stop(ctx)) return false;
-    Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+    if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
+    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     if (b) {
         b->value = sv_copy_to_event_arena(ctx, value);
@@ -222,8 +222,8 @@ bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
 }
 
 bool eval_var_unset(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || ctx->scope_depth == 0 || eval_should_stop(ctx)) return false;
-    Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+    if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
+    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
     String_View old_value = eval_var_get(ctx, key);
     if (s->vars) {
         (void)stbds_shdel(s->vars, nob_temp_sv_to_cstr(key));
@@ -233,8 +233,8 @@ bool eval_var_unset(Evaluator_Context *ctx, String_View key) {
 
 bool eval_var_defined(Evaluator_Context *ctx, String_View key) {
     // True only if binding exists in any visible scope.
-    if (!ctx || ctx->scope_depth == 0) return false;
-    for (size_t d = ctx->scope_depth; d-- > 0;) {
+    if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
+    for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
         Var_Scope *s = &ctx->scopes[d];
         Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return true;
@@ -245,8 +245,8 @@ bool eval_var_defined(Evaluator_Context *ctx, String_View key) {
 
 bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key) {
     // Used by commands that need local-scope semantics only.
-    if (!ctx || ctx->scope_depth == 0) return false;
-    Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+    if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
+    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     return b != NULL;
 }
@@ -932,20 +932,15 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     String_View name = sv_copy_to_event_arena(ctx, node->as.func_def.name);
     if (eval_should_stop(ctx)) return false;
 
-    size_t param_count = arena_arr_len(node->as.func_def.params);
     String_View *params = NULL;
-    if (param_count > 0) {
-        params = (String_View*)arena_alloc(ctx->event_arena, param_count * sizeof(String_View));
-        EVAL_OOM_RETURN_IF_NULL(ctx, params, false);
-        for (size_t i = 0; i < param_count; i++) {
-            const Arg *param = &node->as.func_def.params[i];
-            if (arena_arr_len(param->items) == 0) {
-                params[i] = nob_sv_from_cstr("");
-                continue;
-            }
-            params[i] = sv_copy_to_event_arena(ctx, param->items[0].text);
+    for (size_t i = 0; i < arena_arr_len(node->as.func_def.params); i++) {
+        const Arg *param = &node->as.func_def.params[i];
+        String_View value = nob_sv_from_cstr("");
+        if (arena_arr_len(param->items) > 0) {
+            value = sv_copy_to_event_arena(ctx, param->items[0].text);
             if (eval_should_stop(ctx)) return false;
         }
+        if (!arena_arr_push(ctx->event_arena, params, value)) return ctx_oom(ctx);
     }
 
     Node_List body = NULL;
@@ -1058,15 +1053,15 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
 
     ok = eval_node_list(ctx, &cmd->body);
 cleanup:
-    if (ctx->return_requested && ctx->return_propagate_count > 0 && is_function && ctx->scope_depth > 1) {
-        for (size_t i = 0; i < ctx->return_propagate_count; i++) {
+    if (ctx->return_requested && arena_arr_len(ctx->return_propagate_vars) > 0 && is_function && eval_scope_visible_depth(ctx) > 1) {
+        for (size_t i = 0; i < arena_arr_len(ctx->return_propagate_vars); i++) {
             String_View key = ctx->return_propagate_vars[i];
             if (!eval_var_defined_in_current_scope(ctx, key)) continue;
             String_View value = eval_var_get(ctx, key);
-            size_t saved_depth = ctx->scope_depth;
-            ctx->scope_depth = saved_depth - 1;
+            size_t saved_depth = ctx->visible_scope_depth;
+            ctx->visible_scope_depth = saved_depth - 1;
             bool ok_set = eval_var_set(ctx, key, value);
-            ctx->scope_depth = saved_depth;
+            ctx->visible_scope_depth = saved_depth;
             if (!ok_set) ok = false;
         }
     }
@@ -1074,7 +1069,6 @@ cleanup:
         ctx->return_requested = false;
     }
     ctx->return_propagate_vars = NULL;
-    ctx->return_propagate_count = 0;
     ctx->return_context = saved_return_ctx;
     if (entered_function_depth > 0) {
         eval_file_lock_release_function_scope(ctx, entered_function_depth);
@@ -1093,29 +1087,32 @@ cleanup:
 // Scope stack management
 // -----------------------------------------------------------------------------
 
-static bool ensure_scope_capacity(Evaluator_Context *ctx, size_t min_cap) {
-    if (!ctx || !ctx->event_arena) return false;
-    if (!arena_arr_reserve(ctx->event_arena, ctx->scopes, min_cap)) return ctx_oom(ctx);
-    return true;
-}
-
 bool eval_scope_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    if (!ensure_scope_capacity(ctx, ctx->scope_depth + 1)) return ctx_oom(ctx);
-    ctx->scope_depth++;
-    Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+    size_t depth = eval_scope_visible_depth(ctx);
+    if (depth < arena_arr_len(ctx->scopes)) {
+        Var_Scope *s = &ctx->scopes[depth];
+        if (s->vars) {
+            stbds_shfree(s->vars);
+            s->vars = NULL;
+        }
+    } else {
+        if (!arena_arr_push(ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return ctx_oom(ctx);
+    }
+    ctx->visible_scope_depth = depth + 1;
+    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
     s->vars = NULL;
     return true;
 }
 
 void eval_scope_pop(Evaluator_Context *ctx) {
-    if (ctx && ctx->scope_depth > 1) {
-        Var_Scope *s = &ctx->scopes[ctx->scope_depth - 1];
+    if (ctx && eval_scope_visible_depth(ctx) > 1) {
+        Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
         if (s->vars) {
             stbds_shfree(s->vars);
             s->vars = NULL;
         }
-        ctx->scope_depth--;
+        ctx->visible_scope_depth--;
     }
 }
 
@@ -1311,7 +1308,6 @@ bool eval_execute_file(Evaluator_Context *ctx,
     }
     if (ctx->return_requested) ctx->return_requested = false;
     ctx->return_propagate_vars = NULL;
-    ctx->return_propagate_count = 0;
     if (is_add_subdirectory) {
         if (!eval_defer_pop_directory(ctx)) ok = false;
     }
@@ -1354,7 +1350,6 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->binary_dir = init->binary_dir;
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
     ctx->return_propagate_vars = NULL;
-    ctx->return_propagate_count = 0;
     ctx->compat_profile = EVAL_PROFILE_PERMISSIVE;
     if (init->compat_profile == EVAL_PROFILE_STRICT || init->compat_profile == EVAL_PROFILE_CI_STRICT) {
         ctx->compat_profile = init->compat_profile;
@@ -1386,9 +1381,9 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
         ctx->current_file = NULL;
     }
 
-    // Global scope always exists at depth 1.
-    if (!ensure_scope_capacity(ctx, 1)) return NULL;
-    ctx->scope_depth = 1;
+    // Global scope always exists at visible depth 1.
+    if (!arena_arr_push(ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return NULL;
+    ctx->visible_scope_depth = 1;
 
     // Bootstrap canonical CMAKE_* variables.
     if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
@@ -1483,15 +1478,11 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 void evaluator_destroy(Evaluator_Context *ctx) {
     if (!ctx) return;
     eval_file_lock_cleanup(ctx);
-    if (ctx->policy_levels) {
-        free(ctx->policy_levels);
-        ctx->policy_levels = NULL;
-    }
     if (ctx->cache_entries) {
         stbds_shfree(ctx->cache_entries);
         ctx->cache_entries = NULL;
     }
-    for (size_t i = 0; i < ctx->scope_depth; i++) {
+    for (size_t i = 0; i < arena_arr_len(ctx->scopes); i++) {
         if (ctx->scopes[i].vars) {
             stbds_shfree(ctx->scopes[i].vars);
             ctx->scopes[i].vars = NULL;
@@ -1514,7 +1505,6 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
         ctx->return_requested = false;
     }
     ctx->return_propagate_vars = NULL;
-    ctx->return_propagate_count = 0;
     eval_file_lock_release_file_scope(ctx, entered_file_depth);
     if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
     eval_report_finalize(ctx);

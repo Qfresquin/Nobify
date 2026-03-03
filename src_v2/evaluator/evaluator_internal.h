@@ -202,7 +202,8 @@ struct Evaluator_Context {
     const char *current_file;
 
     Var_Scope *scopes;
-    size_t scope_depth;
+    // Invariant: visible_scope_depth <= arena_arr_len(scopes)
+    size_t visible_scope_depth;
     Eval_Cache_Entry *cache_entries;
 
     SV_List known_targets; 
@@ -220,7 +221,8 @@ struct Evaluator_Context {
     SV_List watched_variable_commands;
     size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
-    size_t policy_depth;
+    // Invariant: visible_policy_depth <= arena_arr_len(policy_levels)
+    size_t visible_policy_depth;
     bool cpack_component_module_loaded;
     size_t file_eval_depth;
     size_t function_eval_depth;
@@ -231,7 +233,6 @@ struct Evaluator_Context {
     bool return_requested;
     Eval_Return_Context return_context;
     String_View *return_propagate_vars;
-    size_t return_propagate_count;
     Eval_Compat_Profile compat_profile;
     Eval_Unsupported_Policy unsupported_policy;
     size_t error_budget;
@@ -253,6 +254,14 @@ Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx,
 bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effective_sev);
 String_View eval_compat_profile_to_sv(Eval_Compat_Profile profile);
 bool ctx_oom(Evaluator_Context *ctx);
+
+static inline size_t eval_scope_visible_depth(const Evaluator_Context *ctx) {
+    return ctx ? ctx->visible_scope_depth : 0;
+}
+
+static inline size_t eval_policy_visible_depth(const Evaluator_Context *ctx) {
+    return ctx ? ctx->visible_policy_depth : 0;
+}
 
 static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr) {
     if (ptr) return false;

@@ -669,8 +669,8 @@ static bool cache_upsert(Evaluator_Context *ctx,
 }
 
 static bool scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || ctx->scope_depth == 0 || key.count == 0) return false;
-    for (size_t depth = ctx->scope_depth; depth-- > 0;) {
+    if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
+    for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
         Var_Scope *scope = &ctx->scopes[depth];
         if (!scope->vars) continue;
         if (stbds_shgetp_null(scope->vars, nob_temp_sv_to_cstr(key)) != NULL) return true;
@@ -679,8 +679,8 @@ static bool scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
 }
 
 static bool unset_visible_normal_binding(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || ctx->scope_depth == 0 || key.count == 0) return false;
-    for (size_t depth = ctx->scope_depth; depth-- > 0;) {
+    if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
+    for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
         Var_Scope *scope = &ctx->scopes[depth];
         if (!scope->vars) continue;
         if (stbds_shgetp_null(scope->vars, nob_temp_sv_to_cstr(key)) == NULL) continue;
@@ -927,11 +927,11 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (val_end > 1) value = eval_sv_join_semi_temp(ctx, &a[1], val_end - 1);
 
     if (parent_scope) {
-        if (ctx->scope_depth > 1) {
-            size_t saved_depth = ctx->scope_depth;
-            ctx->scope_depth = saved_depth - 1;
+        if (eval_scope_visible_depth(ctx) > 1) {
+            size_t saved_depth = eval_scope_visible_depth(ctx);
+            ctx->visible_scope_depth = saved_depth - 1;
             bool ok = eval_var_set(ctx, var, value);
-            ctx->scope_depth = saved_depth;
+            ctx->visible_scope_depth = saved_depth;
             if (!ok) return false;
         }
         else {
@@ -1040,7 +1040,7 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (parent_scope) {
-        if (ctx->scope_depth <= 1) {
+        if (eval_scope_visible_depth(ctx) <= 1) {
             Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
@@ -1052,10 +1052,10 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        size_t saved_depth = ctx->scope_depth;
-        ctx->scope_depth = saved_depth - 1;
+        size_t saved_depth = eval_scope_visible_depth(ctx);
+        ctx->visible_scope_depth = saved_depth - 1;
         bool ok = eval_var_unset(ctx, var);
-        ctx->scope_depth = saved_depth;
+        ctx->visible_scope_depth = saved_depth;
         if (!ok) return false;
         return !eval_should_stop(ctx);
     }

@@ -200,29 +200,29 @@ typedef enum {
 } Include_Guard_Mode;
 
 static bool include_guard_var_defined_global(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || ctx->scope_depth == 0) return false;
-    size_t saved_depth = ctx->scope_depth;
-    ctx->scope_depth = 1;
+    if (eval_scope_visible_depth(ctx) == 0) return false;
+    size_t saved_depth = eval_scope_visible_depth(ctx);
+    ctx->visible_scope_depth = 1;
     bool defined = eval_var_defined(ctx, key);
-    ctx->scope_depth = saved_depth;
+    ctx->visible_scope_depth = saved_depth;
     return defined;
 }
 
 static String_View include_guard_var_get_global(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || ctx->scope_depth == 0) return nob_sv_from_cstr("");
-    size_t saved_depth = ctx->scope_depth;
-    ctx->scope_depth = 1;
+    if (eval_scope_visible_depth(ctx) == 0) return nob_sv_from_cstr("");
+    size_t saved_depth = eval_scope_visible_depth(ctx);
+    ctx->visible_scope_depth = 1;
     String_View value = eval_var_get(ctx, key);
-    ctx->scope_depth = saved_depth;
+    ctx->visible_scope_depth = saved_depth;
     return value;
 }
 
 static bool include_guard_var_set_global(Evaluator_Context *ctx, String_View key, String_View value) {
-    if (!ctx || ctx->scope_depth == 0) return false;
-    size_t saved_depth = ctx->scope_depth;
-    ctx->scope_depth = 1;
+    if (eval_scope_visible_depth(ctx) == 0) return false;
+    size_t saved_depth = eval_scope_visible_depth(ctx);
+    ctx->visible_scope_depth = 1;
     bool ok = eval_var_set(ctx, key, value);
-    ctx->scope_depth = saved_depth;
+    ctx->visible_scope_depth = saved_depth;
     return ok;
 }
 

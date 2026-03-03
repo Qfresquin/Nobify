@@ -135,9 +135,9 @@ int eval_policy_known_max_id(void) { return POLICY_KNOWN_MAX_ID; }
 size_t eval_policy_known_count(void) { return POLICY_KNOWN_COUNT; }
 
 static bool policy_set_depth_var(Evaluator_Context *ctx) {
-    if (!ctx || ctx->policy_depth == 0) return false;
+    if (eval_policy_visible_depth(ctx) == 0) return false;
     char depth_buf[32];
-    int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", ctx->policy_depth);
+    int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", eval_policy_visible_depth(ctx));
     if (n < 0 || (size_t)n >= sizeof(depth_buf)) return ctx_oom(ctx);
     return eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_POLICY_STACK_DEPTH"), nob_sv_from_cstr(depth_buf));
 }
@@ -155,31 +155,39 @@ static bool policy_ensure_capacity(Evaluator_Context *ctx, size_t min_capacity) 
 
 static bool policy_stack_bootstrap(Evaluator_Context *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
-    if (ctx->policy_depth == 0) {
-        ctx->policy_depth = 1;
-        if (!policy_ensure_capacity(ctx, 1)) return false;
+    if (ctx->visible_policy_depth == 0) {
+        if (arena_arr_len(ctx->policy_levels) == 0) {
+            if (!arena_arr_push(ctx->event_arena, ctx->policy_levels, ((Eval_Policy_Level){0}))) return ctx_oom(ctx);
+        } else {
+            memset(&ctx->policy_levels[0], 0, sizeof(Eval_Policy_Level));
+        }
+        ctx->visible_policy_depth = 1;
         if (!policy_set_depth_var(ctx)) return false;
         return true;
     }
-    if (!policy_ensure_capacity(ctx, ctx->policy_depth)) return false;
+    if (!policy_ensure_capacity(ctx, eval_policy_visible_depth(ctx))) return false;
     return true;
 }
 
 bool eval_policy_push(Evaluator_Context *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (!policy_stack_bootstrap(ctx)) return false;
-    if (!policy_ensure_capacity(ctx, ctx->policy_depth + 1)) return false;
-    memset(&ctx->policy_levels[ctx->policy_depth], 0, sizeof(Eval_Policy_Level));
-    ctx->policy_depth += 1;
+    size_t depth = eval_policy_visible_depth(ctx);
+    if (depth < arena_arr_len(ctx->policy_levels)) {
+        memset(&ctx->policy_levels[depth], 0, sizeof(Eval_Policy_Level));
+    } else {
+        if (!arena_arr_push(ctx->event_arena, ctx->policy_levels, ((Eval_Policy_Level){0}))) return ctx_oom(ctx);
+    }
+    ctx->visible_policy_depth += 1;
     return policy_set_depth_var(ctx);
 }
 
 bool eval_policy_pop(Evaluator_Context *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (!policy_stack_bootstrap(ctx)) return false;
-    if (ctx->policy_depth <= 1) return false;
-    memset(&ctx->policy_levels[ctx->policy_depth - 1], 0, sizeof(Eval_Policy_Level));
-    ctx->policy_depth -= 1;
+    if (eval_policy_visible_depth(ctx) <= 1) return false;
+    memset(&ctx->policy_levels[eval_policy_visible_depth(ctx) - 1], 0, sizeof(Eval_Policy_Level));
+    ctx->visible_policy_depth -= 1;
     return policy_set_depth_var(ctx);
 }
 
@@ -194,7 +202,7 @@ bool eval_policy_set_status(Evaluator_Context *ctx, String_View policy_id, Eval_
     if (policy_number < POLICY_KNOWN_MIN_ID || policy_number > POLICY_KNOWN_MAX_ID) return false;
 
     Policy_Slot_State slot = policy_slot_from_status(status);
-    ctx->policy_levels[ctx->policy_depth - 1].states[policy_number] = (unsigned char)slot;
+    ctx->policy_levels[eval_policy_visible_depth(ctx) - 1].states[policy_number] = (unsigned char)slot;
 
     char id_buf[8];
     if (snprintf(id_buf, sizeof(id_buf), "CMP%04d", policy_number) != 7) return ctx_oom(ctx);
@@ -218,7 +226,7 @@ String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy
     if (!policy_parse_id_number(policy_id, &policy_number)) return nob_sv_from_cstr("");
     if (policy_number < POLICY_KNOWN_MIN_ID || policy_number > POLICY_KNOWN_MAX_ID) return nob_sv_from_cstr("");
 
-    for (size_t depth = ctx->policy_depth; depth > 0; depth--) {
+    for (size_t depth = eval_policy_visible_depth(ctx); depth > 0; depth--) {
         unsigned char raw = ctx->policy_levels[depth - 1].states[policy_number];
         Policy_Slot_State slot = (Policy_Slot_State)raw;
         if (slot == POLICY_SLOT_INHERIT) continue;

@@ -84,15 +84,14 @@ static bool block_parse_options(Evaluator_Context *ctx,
             return !eval_should_stop(ctx);
         }
 
-        size_t propagate_count = arena_arr_len(args) - i;
-        frame.propagate_vars = arena_alloc_array(ctx->event_arena, String_View, propagate_count);
-        EVAL_OOM_RETURN_IF_NULL(ctx, frame.propagate_vars, false);
-
-        for (size_t pi = 0; pi < propagate_count; pi++) {
-            frame.propagate_vars[pi] = sv_copy_to_event_arena(ctx, args[i + pi]);
-            if (eval_should_stop(ctx)) return false;
+        if (!arena_arr_reserve(ctx->event_arena, frame.propagate_vars, arena_arr_len(args) - i)) {
+            return ctx_oom(ctx);
         }
-        i = arena_arr_len(args);
+        for (; i < arena_arr_len(args); i++) {
+            String_View copied = sv_copy_to_event_arena(ctx, args[i]);
+            if (eval_should_stop(ctx)) return false;
+            if (!arena_arr_push(ctx->event_arena, frame.propagate_vars, copied)) return ctx_oom(ctx);
+        }
     }
 
     if (i < arena_arr_len(args) && !eval_sv_eq_ci_lit(args[i], "PROPAGATE")) {
@@ -124,17 +123,17 @@ static bool block_parse_options(Evaluator_Context *ctx,
 static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_Frame *frame) {
     if (!ctx || !frame || !frame->propagate_vars) return true;
     if (!frame->variable_scope_pushed) return true;
-    if (ctx->scope_depth <= 1) return true;
+    if (eval_scope_visible_depth(ctx) <= 1) return true;
 
     for (size_t i = 0; i < arena_arr_len(frame->propagate_vars); i++) {
         String_View key = frame->propagate_vars[i];
         if (!eval_var_defined_in_current_scope(ctx, key)) continue;
 
         String_View value = eval_var_get(ctx, key);
-        size_t saved_depth = ctx->scope_depth;
-        ctx->scope_depth = saved_depth - 1;
+        size_t saved_depth = eval_scope_visible_depth(ctx);
+        ctx->visible_scope_depth = saved_depth - 1;
         bool ok = eval_var_set(ctx, key, value);
-        ctx->scope_depth = saved_depth;
+        ctx->visible_scope_depth = saved_depth;
         if (!ok) return false;
     }
 
@@ -149,7 +148,7 @@ static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_r
 
     bool should_propagate = !for_return || frame.propagate_on_return;
     if (should_propagate) {
-        if (for_return && ctx->return_propagate_count > 0) {
+        if (for_return && arena_arr_len(ctx->return_propagate_vars) > 0) {
             Block_Frame ret_frame = frame;
             ret_frame.propagate_vars = ctx->return_propagate_vars;
             if (!block_propagate_to_parent_scope(ctx, &ret_frame)) return false;
@@ -1246,7 +1245,6 @@ bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
 
         if (ctx->return_requested) ctx->return_requested = false;
         ctx->return_propagate_vars = NULL;
-        ctx->return_propagate_count = 0;
         if (eval_should_stop(ctx)) return false;
         frame = flow_current_defer_dir(ctx);
         if (!frame) return true;
@@ -1951,7 +1949,6 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
     }
 
     ctx->return_propagate_vars = NULL;
-    ctx->return_propagate_count = 0;
 
     String_View cmp0140 = eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0140"));
     bool cmp0140_new = eval_sv_eq_ci_lit(cmp0140, "NEW");
@@ -1976,16 +1973,17 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: return(PROPAGATE <var1> <var2> ...)"));
             return !eval_should_stop(ctx);
         }
-        ctx->return_propagate_count = arena_arr_len(args) - 1;
-        ctx->return_propagate_vars = arena_alloc_array(ctx->event_arena, String_View, ctx->return_propagate_count);
-        EVAL_OOM_RETURN_IF_NULL(ctx, ctx->return_propagate_vars, false);
-        for (size_t i = 0; i < ctx->return_propagate_count; i++) {
-            ctx->return_propagate_vars[i] = sv_copy_to_event_arena(ctx, args[i + 1]);
+        if (!arena_arr_reserve(ctx->event_arena, ctx->return_propagate_vars, arena_arr_len(args) - 1)) {
+            return ctx_oom(ctx);
+        }
+        for (size_t i = 1; i < arena_arr_len(args); i++) {
+            String_View copied = sv_copy_to_event_arena(ctx, args[i]);
             if (eval_should_stop(ctx)) return false;
+            if (!arena_arr_push(ctx->event_arena, ctx->return_propagate_vars, copied)) return ctx_oom(ctx);
         }
     }
 
-    if (ctx->return_propagate_count > 0) {
+    if (arena_arr_len(ctx->return_propagate_vars) > 0) {
         for (size_t bi = arena_arr_len(ctx->block_frames); bi-- > 0;) ctx->block_frames[bi].propagate_on_return = true;
     }
     ctx->return_requested = true;

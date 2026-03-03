@@ -1063,7 +1063,7 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
     SV_List values = NULL;
 
     if (eval_sv_eq_ci_lit(prop, "VARIABLES")) {
-        for (size_t depth = 0; depth < ctx->scope_depth; depth++) {
+        for (size_t depth = 0; depth < eval_scope_visible_depth(ctx); depth++) {
             Var_Scope *scope = &ctx->scopes[depth];
             ptrdiff_t n = stbds_shlen(scope->vars);
             for (ptrdiff_t i = 0; i < n; i++) {

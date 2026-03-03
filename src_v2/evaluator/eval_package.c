@@ -773,7 +773,7 @@ static bool find_item_invoke_validator(Evaluator_Context *ctx,
     }
 
     char key_buf[64];
-    int n = snprintf(key_buf, sizeof(key_buf), "_NOBIFY_FIND_VALID_%zu", arena_arr_len(ctx->active_find_packages) + ctx->scope_depth);
+    int n = snprintf(key_buf, sizeof(key_buf), "_NOBIFY_FIND_VALID_%zu", arena_arr_len(ctx->active_find_packages) + eval_scope_visible_depth(ctx));
     if (n <= 0 || (size_t)n >= sizeof(key_buf)) return ctx_oom(ctx);
     String_View result_var = nob_sv_from_cstr(key_buf);
     if (!eval_var_set(ctx, result_var, nob_sv_from_cstr("TRUE"))) return false;
