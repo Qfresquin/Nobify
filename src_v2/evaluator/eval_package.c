@@ -1723,7 +1723,7 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
         bool pushed_pkg = false;
         String_View active_pkg = sv_copy_to_event_arena(ctx, opt->pkg);
         if (!eval_should_stop(ctx)) {
-            pushed_pkg = arena_da_try_append(ctx->event_arena, &ctx->active_find_packages, active_pkg);
+            pushed_pkg = arena_arr_push(ctx->event_arena, ctx->active_find_packages, active_pkg);
             if (!pushed_pkg) ctx_oom(ctx);
         }
 

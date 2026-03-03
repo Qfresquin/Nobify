@@ -57,10 +57,7 @@ static inline String_View svu_concat_suffix_temp(Evaluator_Context *ctx, String_
 
 static inline bool svu_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
     if (!ctx || !list) return false;
-    if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return ctx_oom(ctx);
-    }
-    list->items[list->count++] = sv;
+    if (!arena_arr_push(eval_temp_arena(ctx), *list, sv)) return ctx_oom(ctx);
     return true;
 }
 

@@ -203,7 +203,7 @@ static bool try_compile_is_false(String_View v) {
 
 static bool try_compile_sv_push(Evaluator_Context *ctx, SV_List *list, String_View item) {
     if (!ctx || !list) return false;
-    if (!arena_da_try_append(eval_temp_arena(ctx), list, item)) return ctx_oom(ctx);
+    if (!arena_arr_push(eval_temp_arena(ctx), *list, item)) return ctx_oom(ctx);
     return true;
 }
 
@@ -211,7 +211,9 @@ static bool try_compile_source_push(Evaluator_Context *ctx,
                                     Try_Compile_Source_List *list,
                                     Try_Compile_Source_Item item) {
     if (!ctx || !list) return false;
-    if (!arena_da_try_append(eval_temp_arena(ctx), list, item)) return ctx_oom(ctx);
+    if (!arena_arr_push(eval_temp_arena(ctx), list->items, item)) return ctx_oom(ctx);
+    list->count = arena_arr_len(list->items);
+    list->capacity = arena_arr_cap(list->items);
     return true;
 }
 
@@ -394,9 +396,9 @@ static bool try_compile_collect_until_keyword(Evaluator_Context *ctx,
                                               size_t *io_index,
                                               SV_List *out) {
     if (!ctx || !args || !io_index || !out) return false;
-    while (*io_index + 1 < args->count && !try_compile_is_keyword(args->items[*io_index + 1])) {
+    while (*io_index + 1 < arena_arr_len(*args) && !try_compile_is_keyword((*args)[*io_index + 1])) {
         (*io_index)++;
-        if (!try_compile_sv_push(ctx, out, args->items[*io_index])) return false;
+        if (!try_compile_sv_push(ctx, out, (*args)[*io_index])) return false;
     }
     return true;
 }
@@ -540,25 +542,25 @@ static bool try_compile_append_required_compile_settings(Evaluator_Context *ctx,
                                                          bool msvc) {
     if (!ctx || !cmd || !req) return false;
 
-    for (size_t i = 0; i < req->compile_definitions.count; i++) {
-        if (!try_compile_append_define_arg(ctx, cmd, req->compile_definitions.items[i], msvc)) return false;
+    for (size_t i = 0; i < arena_arr_len(req->compile_definitions); i++) {
+        if (!try_compile_append_define_arg(ctx, cmd, req->compile_definitions[i], msvc)) return false;
     }
 
     String_View required_defs = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS"));
     if (required_defs.count > 0) {
-        SV_List parts = {0};
+        SV_List parts = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_defs, &parts)) return false;
-        for (size_t i = 0; i < parts.count; i++) {
-            if (!try_compile_append_define_arg(ctx, cmd, parts.items[i], msvc)) return false;
+        for (size_t i = 0; i < arena_arr_len(parts); i++) {
+            if (!try_compile_append_define_arg(ctx, cmd, parts[i], msvc)) return false;
         }
     }
 
     String_View required_includes = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_INCLUDES"));
     if (required_includes.count > 0) {
-        SV_List incs = {0};
+        SV_List incs = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_includes, &incs)) return false;
-        for (size_t i = 0; i < incs.count; i++) {
-            if (!try_compile_append_include_arg(ctx, cmd, incs.items[i], msvc)) return false;
+        for (size_t i = 0; i < arena_arr_len(incs); i++) {
+            if (!try_compile_append_include_arg(ctx, cmd, incs[i], msvc)) return false;
         }
     }
 
@@ -641,18 +643,18 @@ static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
                                                       bool msvc) {
     if (!ctx || !cmd || !req) return false;
 
-    for (size_t i = 0; i < req->link_options.count; i++) {
-        char *arg = eval_sv_to_cstr_temp(ctx, req->link_options.items[i]);
+    for (size_t i = 0; i < arena_arr_len(req->link_options); i++) {
+        char *arg = eval_sv_to_cstr_temp(ctx, req->link_options[i]);
         EVAL_OOM_RETURN_IF_NULL(ctx, arg, false);
         nob_cmd_append(cmd, arg);
     }
 
     String_View required_link_options = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LINK_OPTIONS"));
     if (required_link_options.count > 0) {
-        SV_List opts = {0};
+        SV_List opts = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_link_options, &opts)) return false;
-        for (size_t i = 0; i < opts.count; i++) {
-            char *arg = eval_sv_to_cstr_temp(ctx, opts.items[i]);
+        for (size_t i = 0; i < arena_arr_len(opts); i++) {
+            char *arg = eval_sv_to_cstr_temp(ctx, opts[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, arg, false);
             nob_cmd_append(cmd, arg);
         }
@@ -660,25 +662,25 @@ static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
 
     String_View required_link_dirs = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LINK_DIRECTORIES"));
     if (required_link_dirs.count > 0) {
-        SV_List dirs = {0};
+        SV_List dirs = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_link_dirs, &dirs)) return false;
-        for (size_t i = 0; i < dirs.count; i++) {
-            if (!try_compile_append_link_dir_arg(ctx, cmd, dirs.items[i], msvc)) return false;
+        for (size_t i = 0; i < arena_arr_len(dirs); i++) {
+            if (!try_compile_append_link_dir_arg(ctx, cmd, dirs[i], msvc)) return false;
         }
     }
 
-    for (size_t i = 0; i < req->link_libraries.count; i++) {
-        if (!try_compile_append_link_library_arg(ctx, cmd, req->link_libraries.items[i], artifacts, artifact_count, msvc)) {
+    for (size_t i = 0; i < arena_arr_len(req->link_libraries); i++) {
+        if (!try_compile_append_link_library_arg(ctx, cmd, req->link_libraries[i], artifacts, artifact_count, msvc)) {
             return false;
         }
     }
 
     String_View required_libs = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LIBRARIES"));
     if (required_libs.count > 0) {
-        SV_List libs = {0};
+        SV_List libs = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_libs, &libs)) return false;
-        for (size_t i = 0; i < libs.count; i++) {
-            if (!try_compile_append_link_library_arg(ctx, cmd, libs.items[i], artifacts, artifact_count, msvc)) return false;
+        for (size_t i = 0; i < arena_arr_len(libs); i++) {
+            if (!try_compile_append_link_library_arg(ctx, cmd, libs[i], artifacts, artifact_count, msvc)) return false;
         }
     }
 
@@ -820,8 +822,8 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
         String_View out_arg = sv_copy_to_arena(eval_temp_arena(ctx),
                                                nob_sv_from_cstr(nob_temp_sprintf("/OUT:%s", out_c)));
         nob_cmd_append(&cmd, "lib.exe", "/NOLOGO", out_arg.data);
-        for (size_t i = 0; i < object_paths.count; i++) {
-            char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths.items[i]);
+        for (size_t i = 0; i < arena_arr_len(object_paths); i++) {
+            char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, obj_c, false);
             nob_cmd_append(&cmd, obj_c);
         }
@@ -834,8 +836,8 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
         EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
         Nob_Cmd cmd = {0};
         nob_cmd_append(&cmd, "ar", "rcs", out_c);
-        for (size_t i = 0; i < object_paths.count; i++) {
-            char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths.items[i]);
+        for (size_t i = 0; i < arena_arr_len(object_paths); i++) {
+            char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, obj_c, false);
             nob_cmd_append(&cmd, obj_c);
         }
@@ -898,8 +900,8 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
     {
         nob_cmd_append(&link_cmd, "-o", out_c);
     }
-    for (size_t i = 0; i < object_paths.count; i++) {
-        char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths.items[i]);
+    for (size_t i = 0; i < arena_arr_len(object_paths); i++) {
+        char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths[i]);
         EVAL_OOM_RETURN_IF_NULL(ctx, obj_c, false);
         nob_cmd_append(&link_cmd, obj_c);
     }
@@ -1093,16 +1095,16 @@ static bool try_compile_execute_project_request(Evaluator_Context *ctx,
 
     String_View platform_vars = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_PLATFORM_VARIABLES"));
     if (platform_vars.count > 0) {
-        SV_List names = {0};
+        SV_List names = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), platform_vars, &names)) {
             evaluator_destroy(child);
             arena_destroy(child_temp);
             arena_destroy(child_event);
             return false;
         }
-        for (size_t i = 0; i < names.count; i++) {
-            String_View value = eval_var_get(ctx, names.items[i]);
-            if (value.count > 0 && !eval_var_set(child, names.items[i], value)) {
+        for (size_t i = 0; i < arena_arr_len(names); i++) {
+            String_View value = eval_var_get(ctx, names[i]);
+            if (value.count > 0 && !eval_var_set(child, names[i], value)) {
                 evaluator_destroy(child);
                 arena_destroy(child_temp);
                 arena_destroy(child_event);
@@ -1111,10 +1113,10 @@ static bool try_compile_execute_project_request(Evaluator_Context *ctx,
         }
     }
 
-    for (size_t i = 0; i < req->cmake_flags.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(req->cmake_flags); i++) {
         String_View key = nob_sv_from_cstr("");
         String_View value = nob_sv_from_cstr("");
-        if (!try_compile_parse_cmake_flag_define_token(req->cmake_flags.items[i], &key, &value)) continue;
+        if (!try_compile_parse_cmake_flag_define_token(req->cmake_flags[i], &key, &value)) continue;
         if (!eval_var_set(child, key, value)) {
             evaluator_destroy(child);
             arena_destroy(child_temp);
@@ -1222,27 +1224,27 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
     if (!ctx || !node || !args || !req) return false;
     Try_Compile_Language current_type = TRY_COMPILE_LANG_AUTO;
 
-    for (size_t i = start; i < args->count; i++) {
-        String_View tok = args->items[i];
+    for (size_t i = start; i < arena_arr_len(*args); i++) {
+        String_View tok = (*args)[i];
 
         if (eval_sv_eq_ci_lit(tok, "OUTPUT_VARIABLE")) {
-            if (i + 1 < args->count) req->output_var = args->items[++i];
+            if (i + 1 < arena_arr_len(*args)) req->output_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "COPY_FILE")) {
-            if (i + 1 < args->count) req->copy_file_path = args->items[++i];
+            if (i + 1 < arena_arr_len(*args)) req->copy_file_path = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "COPY_FILE_ERROR")) {
-            if (i + 1 < args->count) req->copy_file_error_var = args->items[++i];
+            if (i + 1 < arena_arr_len(*args)) req->copy_file_error_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "LOG_DESCRIPTION")) {
-            if (i + 1 < args->count) req->log_description = args->items[++i];
+            if (i + 1 < arena_arr_len(*args)) req->log_description = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "LINKER_LANGUAGE")) {
-            if (i + 1 < args->count) req->linker_language = args->items[++i];
+            if (i + 1 < arena_arr_len(*args)) req->linker_language = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "NO_CACHE")) {
@@ -1250,42 +1252,42 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "SOURCES_TYPE")) {
-            if (i + 1 < args->count) current_type = try_compile_language_from_sources_type(args->items[++i]);
+            if (i + 1 < arena_arr_len(*args)) current_type = try_compile_language_from_sources_type((*args)[++i]);
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "C_STANDARD")) {
-            if (i + 1 < args->count) {
+            if (i + 1 < arena_arr_len(*args)) {
                 req->c_lang.has_value = true;
-                req->c_lang.standard = args->items[++i];
+                req->c_lang.standard = (*args)[++i];
             }
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "C_STANDARD_REQUIRED")) {
-            if (i + 1 < args->count) req->c_lang.standard_required = !try_compile_is_false(args->items[++i]);
+            if (i + 1 < arena_arr_len(*args)) req->c_lang.standard_required = !try_compile_is_false((*args)[++i]);
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "C_EXTENSIONS")) {
-            if (i + 1 < args->count) {
+            if (i + 1 < arena_arr_len(*args)) {
                 req->c_lang.extensions_set = true;
-                req->c_lang.extensions = !try_compile_is_false(args->items[++i]);
+                req->c_lang.extensions = !try_compile_is_false((*args)[++i]);
             }
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "CXX_STANDARD")) {
-            if (i + 1 < args->count) {
+            if (i + 1 < arena_arr_len(*args)) {
                 req->cxx_lang.has_value = true;
-                req->cxx_lang.standard = args->items[++i];
+                req->cxx_lang.standard = (*args)[++i];
             }
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "CXX_STANDARD_REQUIRED")) {
-            if (i + 1 < args->count) req->cxx_lang.standard_required = !try_compile_is_false(args->items[++i]);
+            if (i + 1 < arena_arr_len(*args)) req->cxx_lang.standard_required = !try_compile_is_false((*args)[++i]);
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "CXX_EXTENSIONS")) {
-            if (i + 1 < args->count) {
+            if (i + 1 < arena_arr_len(*args)) {
                 req->cxx_lang.extensions_set = true;
-                req->cxx_lang.extensions = !try_compile_is_false(args->items[++i]);
+                req->cxx_lang.extensions = !try_compile_is_false((*args)[++i]);
             }
             continue;
         }
@@ -1306,49 +1308,49 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "SOURCES")) {
-            SV_List values = {0};
+            SV_List values = NULL;
             if (!try_compile_collect_until_keyword(ctx, args, &i, &values)) return false;
-            for (size_t vi = 0; vi < values.count; vi++) {
-                if (!try_compile_add_source_item(ctx, req, values.items[vi], current_type)) return false;
+            for (size_t vi = 0; vi < arena_arr_len(values); vi++) {
+                if (!try_compile_add_source_item(ctx, req, values[vi], current_type)) return false;
             }
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "SOURCE_FROM_CONTENT")) {
-            SV_List values = {0};
+            SV_List values = NULL;
             if (!try_compile_collect_until_keyword(ctx, args, &i, &values)) return false;
-            if (values.count == 0) continue;
-            String_View content = values.count > 1
-                ? svu_join_space_temp(ctx, &values.items[1], values.count - 1)
+            if (arena_arr_len(values) == 0) continue;
+            String_View content = arena_arr_len(values) > 1
+                ? svu_join_space_temp(ctx, &values[1], arena_arr_len(values) - 1)
                 : nob_sv_from_cstr("");
-            if (!try_compile_write_generated_source(ctx, req, values.items[0], content, current_type)) return false;
+            if (!try_compile_write_generated_source(ctx, req, values[0], content, current_type)) return false;
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "SOURCE_FROM_VAR")) {
-            SV_List values = {0};
+            SV_List values = NULL;
             if (!try_compile_collect_until_keyword(ctx, args, &i, &values)) return false;
-            if (values.count < 2) continue;
+            if (arena_arr_len(values) < 2) continue;
             if (!try_compile_write_generated_source(ctx,
                                                     req,
-                                                    values.items[0],
-                                                    eval_var_get(ctx, values.items[1]),
+                                                    values[0],
+                                                    eval_var_get(ctx, values[1]),
                                                     current_type)) {
                 return false;
             }
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "SOURCE_FROM_FILE")) {
-            SV_List values = {0};
+            SV_List values = NULL;
             if (!try_compile_collect_until_keyword(ctx, args, &i, &values)) return false;
-            if (values.count < 2) continue;
+            if (arena_arr_len(values) < 2) continue;
 
-            String_View src_file = try_compile_resolve_in_dir(ctx, values.items[1], req->current_src_dir);
+            String_View src_file = try_compile_resolve_in_dir(ctx, values[1], req->current_src_dir);
             char *src_c = eval_sv_to_cstr_temp(ctx, src_file);
             EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
 
             Nob_String_Builder sb = {0};
             if (!nob_read_entire_file(src_c, &sb)) continue;
             String_View content = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
-            bool ok = try_compile_write_generated_source(ctx, req, values.items[0], content, current_type);
+            bool ok = try_compile_write_generated_source(ctx, req, values[0], content, current_type);
             nob_sb_free(sb);
             if (!ok) return false;
             continue;
@@ -1391,7 +1393,7 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
                                                   const SV_List *args,
                                                   Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
-    if (args->count < 2) {
+    if (arena_arr_len(*args) < 2) {
         return eval_emit_diag(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
@@ -1401,11 +1403,11 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
-    try_compile_init_request(ctx, args->items[0], out_req);
+    try_compile_init_request(ctx, (*args)[0], out_req);
 
     size_t opt_start = 1;
-    if (!try_compile_is_keyword(args->items[1])) {
-        out_req->binary_dir = try_compile_resolve_in_dir(ctx, args->items[1], out_req->current_bin_dir);
+    if (!try_compile_is_keyword((*args)[1])) {
+        out_req->binary_dir = try_compile_resolve_in_dir(ctx, (*args)[1], out_req->current_bin_dir);
         opt_start = 2;
     } else {
         out_req->binary_dir = try_compile_make_scratch_dir(ctx, out_req->current_bin_dir);
@@ -1434,7 +1436,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
                                       const SV_List *args,
                                       Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
-    if (args->count < 2) {
+    if (arena_arr_len(*args) < 2) {
         return eval_emit_diag(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
@@ -1444,35 +1446,35 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
-    try_compile_init_request(ctx, args->items[0], out_req);
+    try_compile_init_request(ctx, (*args)[0], out_req);
 
-    if (eval_sv_eq_ci_lit(args->items[1], "PROJECT")) {
+    if (eval_sv_eq_ci_lit((*args)[1], "PROJECT")) {
         out_req->signature = TRY_COMPILE_SIGNATURE_PROJECT;
         size_t i = 1;
-        for (; i < args->count; i++) {
-            String_View tok = args->items[i];
+        for (; i < arena_arr_len(*args); i++) {
+            String_View tok = (*args)[i];
             if (eval_sv_eq_ci_lit(tok, "PROJECT")) {
-                if (i + 1 < args->count) out_req->project_name = args->items[++i];
+                if (i + 1 < arena_arr_len(*args)) out_req->project_name = (*args)[++i];
                 continue;
             }
             if (eval_sv_eq_ci_lit(tok, "SOURCE_DIR")) {
-                if (i + 1 < args->count) out_req->source_dir = try_compile_resolve_in_dir(ctx, args->items[++i], out_req->current_src_dir);
+                if (i + 1 < arena_arr_len(*args)) out_req->source_dir = try_compile_resolve_in_dir(ctx, (*args)[++i], out_req->current_src_dir);
                 continue;
             }
             if (eval_sv_eq_ci_lit(tok, "BINARY_DIR")) {
-                if (i + 1 < args->count) out_req->binary_dir = try_compile_resolve_in_dir(ctx, args->items[++i], out_req->current_bin_dir);
+                if (i + 1 < arena_arr_len(*args)) out_req->binary_dir = try_compile_resolve_in_dir(ctx, (*args)[++i], out_req->current_bin_dir);
                 continue;
             }
             if (eval_sv_eq_ci_lit(tok, "TARGET")) {
-                if (i + 1 < args->count) out_req->target_name = args->items[++i];
+                if (i + 1 < arena_arr_len(*args)) out_req->target_name = (*args)[++i];
                 continue;
             }
             if (eval_sv_eq_ci_lit(tok, "OUTPUT_VARIABLE")) {
-                if (i + 1 < args->count) out_req->output_var = args->items[++i];
+                if (i + 1 < arena_arr_len(*args)) out_req->output_var = (*args)[++i];
                 continue;
             }
             if (eval_sv_eq_ci_lit(tok, "LOG_DESCRIPTION")) {
-                if (i + 1 < args->count) out_req->log_description = args->items[++i];
+                if (i + 1 < arena_arr_len(*args)) out_req->log_description = (*args)[++i];
                 continue;
             }
             if (eval_sv_eq_ci_lit(tok, "NO_CACHE")) {
@@ -1508,7 +1510,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
 
 static bool try_run_append_token(Evaluator_Context *ctx, SV_List *list, String_View item) {
     if (!ctx || !list) return false;
-    if (!arena_da_try_append(eval_temp_arena(ctx), list, item)) return ctx_oom(ctx);
+    if (!arena_arr_push(eval_temp_arena(ctx), *list, item)) return ctx_oom(ctx);
     return true;
 }
 
@@ -1517,7 +1519,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                   const SV_List *args,
                                   Try_Run_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
-    if (args->count < 4) {
+    if (arena_arr_len(*args) < 4) {
         return eval_emit_diag(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
@@ -1528,10 +1530,10 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
     }
 
     *out_req = (Try_Run_Request){
-        .run_result_var = args->items[0],
+        .run_result_var = (*args)[0],
     };
 
-    if (eval_sv_eq_ci_lit(args->items[2], "PROJECT")) {
+    if (eval_sv_eq_ci_lit((*args)[2], "PROJECT")) {
         return eval_emit_diag(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
@@ -1541,7 +1543,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Use source-file forms only"));
     }
 
-    if (try_compile_is_keyword(args->items[2])) {
+    if (try_compile_is_keyword((*args)[2])) {
         return eval_emit_diag(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
@@ -1551,11 +1553,11 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
     }
 
-    SV_List compile_args = {0};
-    if (!try_run_append_token(ctx, &compile_args, args->items[1])) return false;
+    SV_List compile_args = NULL;
+    if (!try_run_append_token(ctx, &compile_args, (*args)[1])) return false;
 
-    for (size_t i = 2; i < args->count; i++) {
-        String_View tok = args->items[i];
+    for (size_t i = 2; i < arena_arr_len(*args); i++) {
+        String_View tok = (*args)[i];
 
         if (eval_sv_eq_ci_lit(tok, "PROJECT")) {
             return eval_emit_diag(ctx,
@@ -1568,7 +1570,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         }
 
         if (eval_sv_eq_ci_lit(tok, "COMPILE_OUTPUT_VARIABLE")) {
-            if (i + 1 >= args->count) {
+            if (i + 1 >= arena_arr_len(*args)) {
                 return eval_emit_diag(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
@@ -1577,11 +1579,11 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                       nob_sv_from_cstr("try_run(COMPILE_OUTPUT_VARIABLE) requires an output variable"),
                                       nob_sv_from_cstr("Usage: try_run(... COMPILE_OUTPUT_VARIABLE <var>)"));
             }
-            out_req->compile_output_var = args->items[++i];
+            out_req->compile_output_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_VARIABLE")) {
-            if (i + 1 >= args->count) {
+            if (i + 1 >= arena_arr_len(*args)) {
                 return eval_emit_diag(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
@@ -1590,11 +1592,11 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                       nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) requires an output variable"),
                                       nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_VARIABLE <var>)"));
             }
-            out_req->run_output_var = args->items[++i];
+            out_req->run_output_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDOUT_VARIABLE")) {
-            if (i + 1 >= args->count) {
+            if (i + 1 >= arena_arr_len(*args)) {
                 return eval_emit_diag(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
@@ -1603,11 +1605,11 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                       nob_sv_from_cstr("try_run(RUN_OUTPUT_STDOUT_VARIABLE) requires an output variable"),
                                       nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDOUT_VARIABLE <var>)"));
             }
-            out_req->run_stdout_var = args->items[++i];
+            out_req->run_stdout_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDERR_VARIABLE")) {
-            if (i + 1 >= args->count) {
+            if (i + 1 >= arena_arr_len(*args)) {
                 return eval_emit_diag(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
@@ -1616,11 +1618,11 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                       nob_sv_from_cstr("try_run(RUN_OUTPUT_STDERR_VARIABLE) requires an output variable"),
                                       nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDERR_VARIABLE <var>)"));
             }
-            out_req->run_stderr_var = args->items[++i];
+            out_req->run_stderr_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "WORKING_DIRECTORY")) {
-            if (i + 1 >= args->count) {
+            if (i + 1 >= arena_arr_len(*args)) {
                 return eval_emit_diag(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
@@ -1629,12 +1631,12 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                       nob_sv_from_cstr("try_run(WORKING_DIRECTORY) requires a path"),
                                       nob_sv_from_cstr("Usage: try_run(... WORKING_DIRECTORY <dir>)"));
             }
-            out_req->working_directory = args->items[++i];
+            out_req->working_directory = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "ARGS")) {
-            for (size_t j = i + 1; j < args->count; j++) {
-                if (!try_run_append_token(ctx, &out_req->run_args, args->items[j])) return false;
+            for (size_t j = i + 1; j < arena_arr_len(*args); j++) {
+                if (!try_run_append_token(ctx, &out_req->run_args, (*args)[j])) return false;
             }
             break;
         }
@@ -1798,10 +1800,10 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    SV_List argv = {0};
+    SV_List argv = NULL;
     if (!try_run_append_token(ctx, &argv, exec_path)) return false;
-    for (size_t i = 0; i < req.run_args.count; i++) {
-        if (!try_run_append_token(ctx, &argv, req.run_args.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(req.run_args); i++) {
+        if (!try_run_append_token(ctx, &argv, req.run_args[i])) return false;
     }
 
     String_View working_dir = req.working_directory.count > 0

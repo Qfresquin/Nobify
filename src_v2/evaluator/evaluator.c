@@ -170,10 +170,10 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
 
     bool watched = false;
     String_View command = nob_sv_from_cstr("");
-    for (size_t i = 0; i < ctx->watched_variables.count; i++) {
-        if (!eval_sv_key_eq(ctx->watched_variables.items[i], key)) continue;
+    for (size_t i = 0; i < arena_arr_len(ctx->watched_variables); i++) {
+        if (!eval_sv_key_eq(ctx->watched_variables[i], key)) continue;
         watched = true;
-        if (i < ctx->watched_variable_commands.count) command = ctx->watched_variable_commands.items[i];
+        if (i < arena_arr_len(ctx->watched_variable_commands)) command = ctx->watched_variable_commands[i];
         break;
     }
     if (!watched) return true;
@@ -304,7 +304,9 @@ static const Eval_Property_Definition *eval_property_definition_find_impl(Evalua
 bool eval_macro_frame_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};
-    if (!arena_da_try_append(ctx->event_arena, &ctx->macro_frames, frame)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->event_arena, ctx->macro_frames.items, frame)) return ctx_oom(ctx);
+    ctx->macro_frames.count = arena_arr_len(ctx->macro_frames.items);
+    ctx->macro_frames.capacity = arena_arr_cap(ctx->macro_frames.items);
     return true;
 }
 
@@ -331,7 +333,9 @@ bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View va
     Var_Binding b = {0};
     b.key = key;
     b.value = value;
-    if (!arena_da_try_append(ctx->event_arena, &top->bindings, b)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->event_arena, top->bindings.items, b)) return ctx_oom(ctx);
+    top->bindings.count = arena_arr_len(top->bindings.items);
+    top->bindings.capacity = arena_arr_cap(top->bindings.items);
     return true;
 }
 
@@ -351,8 +355,8 @@ bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *o
 
 bool eval_target_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    for (size_t i = 0; i < ctx->known_targets.count; i++) {
-        if (eval_sv_key_eq(ctx->known_targets.items[i], name)) return true;
+    for (size_t i = 0; i < arena_arr_len(ctx->known_targets); i++) {
+        if (eval_sv_key_eq(ctx->known_targets[i], name)) return true;
     }
     return false;
 }
@@ -361,14 +365,14 @@ bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_da_try_append(ctx->known_targets_arena, &ctx->known_targets, name)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->known_targets_arena, ctx->known_targets, name)) return ctx_oom(ctx);
     return true;
 }
 
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    for (size_t i = 0; i < ctx->alias_targets.count; i++) {
-        if (eval_sv_key_eq(ctx->alias_targets.items[i], name)) return true;
+    for (size_t i = 0; i < arena_arr_len(ctx->alias_targets); i++) {
+        if (eval_sv_key_eq(ctx->alias_targets[i], name)) return true;
     }
     return false;
 }
@@ -377,7 +381,7 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_alias_known(ctx, name)) return true;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_da_try_append(ctx->known_targets_arena, &ctx->alias_targets, name)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->known_targets_arena, ctx->alias_targets, name)) return ctx_oom(ctx);
     return true;
 }
 
@@ -397,7 +401,9 @@ bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition
     }
     if (eval_should_stop(ctx)) return false;
 
-    if (!arena_da_try_append(ctx->event_arena, &ctx->property_definitions, stored)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->event_arena, ctx->property_definitions.items, stored)) return ctx_oom(ctx);
+    ctx->property_definitions.count = arena_arr_len(ctx->property_definitions.items);
+    ctx->property_definitions.capacity = arena_arr_cap(ctx->property_definitions.items);
     return true;
 }
 
@@ -444,9 +450,7 @@ static bool sv_eq_ci(String_View a, String_View b) {
 
 static bool sv_list_push(Arena *arena, SV_List *list, String_View sv) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = sv;
-    return true;
+    return arena_arr_push(arena, *list, sv);
 }
 
 static bool sv_parse_long(String_View sv, long *out) {
@@ -602,16 +606,18 @@ static bool eval_if(Evaluator_Context *ctx, const Node *node) {
 static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.foreach_stmt.args);
     if (ctx->oom) return false;
-    if (a.count == 0) return true;
+    if (arena_arr_len(a) == 0) return true;
 
-    String_View var = a.items[0];
+    String_View var = a[0];
     size_t idx = 1;
-    SV_List items = {0};
+    SV_List items = NULL;
+    String_View *items_ptr = NULL;
+    size_t items_count = 0;
     bool cmp0124_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0124")), "NEW");
 
-    if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "RANGE")) {
+    if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "RANGE")) {
         idx++;
-        if (a.count - idx < 1 || a.count - idx > 3) {
+        if (arena_arr_len(a) - idx < 1 || arena_arr_len(a) - idx > 3) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -622,12 +628,12 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         long start = 0, stop = 0, step = 1;
-        if (a.count - idx == 1) {
-            if (!sv_parse_long(a.items[idx], &stop)) return false;
+        if (arena_arr_len(a) - idx == 1) {
+            if (!sv_parse_long(a[idx], &stop)) return false;
         } else {
-            if (!sv_parse_long(a.items[idx], &start)) return false;
-            if (!sv_parse_long(a.items[idx + 1], &stop)) return false;
-            if (a.count - idx == 3 && !sv_parse_long(a.items[idx + 2], &step)) return false;
+            if (!sv_parse_long(a[idx], &start)) return false;
+            if (!sv_parse_long(a[idx + 1], &stop)) return false;
+            if (arena_arr_len(a) - idx == 3 && !sv_parse_long(a[idx + 2], &step)) return false;
         }
         if (step == 0) {
             (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"),
@@ -636,7 +642,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        if (a.count - idx == 1) start = 0;
+        if (arena_arr_len(a) - idx == 1) start = 0;
         if ((step > 0 && start > stop) || (step < 0 && start < stop)) return true;
         for (long v = start;; v += step) {
             char buf[64];
@@ -645,34 +651,38 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
             if (!sv_list_push(ctx->arena, &items, nob_sv_from_cstr(buf))) return ctx_oom(ctx);
             if ((step > 0 && v + step > stop) || (step < 0 && v + step < stop)) break;
         }
-    } else if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "IN")) {
+        items_ptr = items;
+        items_count = arena_arr_len(items);
+    } else if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "IN")) {
         idx++;
-        if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "ITEMS")) {
+        if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "ITEMS")) {
             idx++;
-            items.items = &a.items[idx];
-            items.count = a.count - idx;
-        } else if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "LISTS")) {
+            items_ptr = &a[idx];
+            items_count = arena_arr_len(a) - idx;
+        } else if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "LISTS")) {
             idx++;
-            for (; idx < a.count; idx++) {
-                String_View list_txt = eval_var_get(ctx, a.items[idx]);
+            for (; idx < arena_arr_len(a); idx++) {
+                String_View list_txt = eval_var_get(ctx, a[idx]);
                 if (list_txt.count == 0) continue;
                 if (!eval_sv_split_semicolon_genex_aware(ctx->arena, list_txt, &items)) return ctx_oom(ctx);
             }
-        } else if (idx < a.count && eval_sv_eq_ci_lit(a.items[idx], "ZIP_LISTS")) {
+            items_ptr = items;
+            items_count = arena_arr_len(items);
+        } else if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "ZIP_LISTS")) {
             idx++;
-            size_t list_count = a.count - idx;
+            size_t list_count = arena_arr_len(a) - idx;
             String_View **zip_items = arena_alloc_array(eval_temp_arena(ctx), String_View*, list_count);
             size_t *zip_counts = arena_alloc_array(eval_temp_arena(ctx), size_t, list_count);
             EVAL_OOM_RETURN_IF_NULL(ctx, zip_items, false);
             EVAL_OOM_RETURN_IF_NULL(ctx, zip_counts, false);
             size_t max_len = 0;
             for (size_t li = 0; li < list_count; li++, idx++) {
-                String_View list_txt = eval_var_get(ctx, a.items[idx]);
-                SV_List one = {0};
+                String_View list_txt = eval_var_get(ctx, a[idx]);
+                SV_List one = NULL;
                 if (list_txt.count > 0 && !eval_sv_split_semicolon_genex_aware(ctx->arena, list_txt, &one)) return ctx_oom(ctx);
-                if (one.count > max_len) max_len = one.count;
-                zip_items[li] = one.items;
-                zip_counts[li] = one.count;
+                if (arena_arr_len(one) > max_len) max_len = arena_arr_len(one);
+                zip_items[li] = one;
+                zip_counts[li] = arena_arr_len(one);
             }
             for (size_t row = 0; row < max_len; row++) {
                 Nob_String_Builder sb = {0};
@@ -685,21 +695,23 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
                 nob_sb_free(sb);
                 if (!sv_list_push(ctx->arena, &items, zipped)) return ctx_oom(ctx);
             }
+            items_ptr = items;
+            items_count = arena_arr_len(items);
         } else {
-            items.items = &a.items[idx];
-            items.count = a.count - idx;
+            items_ptr = &a[idx];
+            items_count = arena_arr_len(a) - idx;
         }
     } else {
-        items.items = &a.items[idx];
-        items.count = a.count - idx;
+        items_ptr = &a[idx];
+        items_count = arena_arr_len(a) - idx;
     }
 
     String_View loop_old = eval_var_get(ctx, var);
     bool loop_old_defined = eval_var_defined(ctx, var);
 
     ctx->loop_depth++;
-    for (size_t ii = 0; ii < items.count; ii++) {
-        if (!eval_var_set(ctx, var, items.items[ii])) {
+    for (size_t ii = 0; ii < items_count; ii++) {
+        if (!eval_var_set(ctx, var, items_ptr[ii])) {
             ctx->loop_depth--;
             return false;
         }
@@ -950,10 +962,11 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     cmd.name = name;
     cmd.kind = (node->kind == NODE_MACRO) ? USER_CMD_MACRO : USER_CMD_FUNCTION;
     cmd.params = params;
-    cmd.param_count = param_count;
     cmd.body = body;
 
-    if (!arena_da_try_append(ctx->user_commands_arena, &ctx->user_commands, cmd)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->user_commands_arena, ctx->user_commands.items, cmd)) return ctx_oom(ctx);
+    ctx->user_commands.count = arena_arr_len(ctx->user_commands.items);
+    ctx->user_commands.capacity = arena_arr_cap(ctx->user_commands.items);
     return true;
 }
 
@@ -993,9 +1006,10 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     }
 
     bool ok = false;
-    for (size_t i = 0; i < cmd->param_count; i++) {
+    size_t arg_count = args ? arena_arr_len(*args) : 0;
+    for (size_t i = 0; i < arena_arr_len(cmd->params); i++) {
         String_View val = nob_sv_from_cstr("");
-        if (i < args->count) val = args->items[i];
+        if (i < arg_count) val = (*args)[i];
         if (is_function) {
             if (!eval_var_set(ctx, cmd->params[i], val)) goto cleanup;
         } else {
@@ -1005,7 +1019,7 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
 
     // CMake implicit args.
     char buf_argc[64];
-    int argc_n = snprintf(buf_argc, sizeof(buf_argc), "%zu", args->count);
+    int argc_n = snprintf(buf_argc, sizeof(buf_argc), "%zu", arg_count);
     if (argc_n < 0 || (size_t)argc_n >= sizeof(buf_argc)) {
         return ctx_oom(ctx);
     }
@@ -1015,17 +1029,17 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
         if (!eval_macro_bind_set(ctx, nob_sv_from_cstr("ARGC"), nob_sv_from_cstr(buf_argc))) goto cleanup;
     }
 
-    String_View argv_val = eval_sv_join_semi_temp(ctx, args->items, args->count);
+    String_View argv_val = eval_sv_join_semi_temp(ctx, args ? *args : NULL, arg_count);
     if (is_function) {
         if (!eval_var_set(ctx, nob_sv_from_cstr("ARGV"), argv_val)) goto cleanup;
     } else {
         if (!eval_macro_bind_set(ctx, nob_sv_from_cstr("ARGV"), argv_val)) goto cleanup;
     }
 
-    if (args->count > cmd->param_count) {
+    if (arg_count > arena_arr_len(cmd->params)) {
         String_View argn_val = eval_sv_join_semi_temp(ctx,
-                                                      &args->items[cmd->param_count],
-                                                      args->count - cmd->param_count);
+                                                      &(*args)[arena_arr_len(cmd->params)],
+                                                      arg_count - arena_arr_len(cmd->params));
         if (is_function) {
             if (!eval_var_set(ctx, nob_sv_from_cstr("ARGN"), argn_val)) goto cleanup;
         } else {
@@ -1039,14 +1053,14 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
         }
     }
 
-    for (size_t i = 0; i < args->count; i++) {
+    for (size_t i = 0; i < arg_count; i++) {
         char key[64];
         int key_n = snprintf(key, sizeof(key), "ARGV%zu", i);
         if (key_n < 0 || (size_t)key_n >= sizeof(key)) goto cleanup;
         if (is_function) {
-            if (!eval_var_set(ctx, nob_sv_from_cstr(key), args->items[i])) goto cleanup;
+            if (!eval_var_set(ctx, nob_sv_from_cstr(key), (*args)[i])) goto cleanup;
         } else {
-            if (!eval_macro_bind_set(ctx, nob_sv_from_cstr(key), args->items[i])) goto cleanup;
+            if (!eval_macro_bind_set(ctx, nob_sv_from_cstr(key), (*args)[i])) goto cleanup;
         }
     }
 

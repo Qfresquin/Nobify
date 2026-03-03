@@ -26,8 +26,8 @@ static bool load_cache_emit_diag(Evaluator_Context *ctx,
 
 static bool load_cache_name_in_list(String_View name, const SV_List *list) {
     if (!list) return false;
-    for (size_t i = 0; i < list->count; i++) {
-        if (nob_sv_eq(name, list->items[i])) return true;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (nob_sv_eq(name, (*list)[i])) return true;
     }
     return false;
 }
@@ -103,7 +103,7 @@ static bool parse_sv_eq_exact(String_View a, String_View b) {
 
 static bool parse_sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View item) {
     if (!ctx || !list) return false;
-    if (!arena_da_try_append(eval_temp_arena(ctx), list, item)) return ctx_oom(ctx);
+    if (!arena_arr_push(eval_temp_arena(ctx), *list, item)) return ctx_oom(ctx);
     return true;
 }
 
@@ -237,11 +237,11 @@ static bool parse_add_keyword_list(Evaluator_Context *ctx,
     if (eval_should_stop(ctx)) return false;
     if (raw.count == 0) return true;
 
-    SV_List items = {0};
+    SV_List items = NULL;
     if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw, &items)) return ctx_oom(ctx);
 
-    for (size_t i = 0; i < items.count; i++) {
-        String_View keyword = items.items[i];
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        String_View keyword = items[i];
         if (!parse_keyword_name_valid(keyword)) continue;
         if (parse_find_keyword(specs, *inout_count, keyword)) {
             if (!parse_warn_duplicate_keyword(ctx, node, keyword)) return false;
@@ -311,7 +311,7 @@ static bool parse_single_empty_value_defines_var(Evaluator_Context *ctx) {
 
 static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start_index, SV_List *out) {
     if (!ctx || !out) return false;
-    *out = (SV_List){0};
+    *out = NULL;
 
     String_View argc_sv = eval_var_get(ctx, nob_sv_from_cstr("ARGC"));
     size_t argc = 0;
@@ -357,7 +357,7 @@ static bool parse_assign_results(Evaluator_Context *ctx,
                 if (specs[i].multi_defined) {
                     if (!eval_var_set(ctx,
                                       var,
-                                      eval_sv_join_semi_temp(ctx, specs[i].multi_values.items, specs[i].multi_values.count))) {
+                                      eval_sv_join_semi_temp(ctx, specs[i].multi_values, arena_arr_len(specs[i].multi_values)))) {
                         return false;
                     }
                 } else {
@@ -369,16 +369,16 @@ static bool parse_assign_results(Evaluator_Context *ctx,
 
     String_View unparsed_var = {0};
     if (!parse_build_prefix_var_name(ctx, prefix, "_UNPARSED_ARGUMENTS", &unparsed_var)) return false;
-    if (unparsed && unparsed->count > 0) {
-        if (!eval_var_set(ctx, unparsed_var, eval_sv_join_semi_temp(ctx, unparsed->items, unparsed->count))) return false;
+    if (unparsed && arena_arr_len(*unparsed) > 0) {
+        if (!eval_var_set(ctx, unparsed_var, eval_sv_join_semi_temp(ctx, *unparsed, arena_arr_len(*unparsed)))) return false;
     } else {
         if (!eval_var_unset(ctx, unparsed_var)) return false;
     }
 
     String_View missing_var = {0};
     if (!parse_build_prefix_var_name(ctx, prefix, "_KEYWORDS_MISSING_VALUES", &missing_var)) return false;
-    if (missing && missing->count > 0) {
-        if (!eval_var_set(ctx, missing_var, eval_sv_join_semi_temp(ctx, missing->items, missing->count))) return false;
+    if (missing && arena_arr_len(*missing) > 0) {
+        if (!eval_var_set(ctx, missing_var, eval_sv_join_semi_temp(ctx, *missing, arena_arr_len(*missing)))) return false;
     } else {
         if (!eval_var_unset(ctx, missing_var)) return false;
     }
@@ -411,7 +411,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
     }
 
     String_View prefix = nob_sv_from_cstr("");
-    SV_List source_args = {0};
+    SV_List source_args = NULL;
     if (use_parse_argv) {
         if (arena_arr_len(*raw) < 6) {
             (void)eval_emit_diag(ctx,
@@ -472,9 +472,9 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
         if (eval_should_stop(ctx)) return false;
         if (raw_list.count == 0) continue;
 
-        SV_List split = {0};
+        SV_List split = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw_list, &split)) return !eval_should_stop(ctx);
-        max_specs += split.count;
+        max_specs += arena_arr_len(split);
     }
 
     Parse_Keyword_Spec *specs = NULL;
@@ -494,14 +494,14 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
         return !eval_should_stop(ctx);
     }
 
-    SV_List unparsed = {0};
-    SV_List missing = {0};
+    SV_List unparsed = NULL;
+    SV_List missing = NULL;
     Parse_Keyword_Spec *active = NULL;
     bool active_has_value = false;
     bool single_empty_defines = parse_single_empty_value_defines_var(ctx);
 
-    for (size_t i = 0; i < source_args.count; i++) {
-        String_View token = source_args.items[i];
+    for (size_t i = 0; i < arena_arr_len(source_args); i++) {
+        String_View token = source_args[i];
         Parse_Keyword_Spec *matched = parse_find_keyword(specs, spec_count, token);
         if (matched) {
             if (active && !active_has_value) {
@@ -519,7 +519,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
                 matched->one_value = nob_sv_from_cstr("");
             } else {
                 matched->multi_defined = false;
-                matched->multi_values.count = 0;
+                matched->multi_values = NULL;
             }
             continue;
         }
@@ -793,16 +793,16 @@ static bool unset_process_env(Evaluator_Context *ctx, String_View name) {
 bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || a.count == 0) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx) || arena_arr_len(a) == 0) return !eval_should_stop(ctx);
 
-    String_View var = a.items[0];
+    String_View var = a[0];
     String_View env_name = {0};
     if (parse_env_var_name(var, &env_name)) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
 
         // CMake: set(ENV{var} [value]) uses only first value arg and warns on extras.
-        String_View env_value = (a.count >= 2) ? a.items[1] : nob_sv_from_cstr("");
-        if (a.count > 2) {
+        String_View env_value = (arena_arr_len(a) >= 2) ? a[1] : nob_sv_from_cstr("");
+        if (arena_arr_len(a) > 2) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_WARNING,
                                  nob_sv_from_cstr("set"),
@@ -824,17 +824,17 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    size_t cache_idx = a.count;
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "CACHE")) {
+    size_t cache_idx = arena_arr_len(a);
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
             cache_idx = i;
             break;
         }
     }
 
-    if (cache_idx < a.count) {
+    if (cache_idx < arena_arr_len(a)) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        if (cache_idx + 2 >= a.count) {
+        if (cache_idx + 2 >= arena_arr_len(a)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("set"),
@@ -845,7 +845,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        String_View cache_type_raw = a.items[cache_idx + 1];
+        String_View cache_type_raw = a[cache_idx + 1];
         String_View cache_type = {0};
         bool is_internal = false;
         if (!parse_cache_type(cache_type_raw, &cache_type, &is_internal)) {
@@ -859,10 +859,10 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        String_View cache_doc = a.items[cache_idx + 2];
+        String_View cache_doc = a[cache_idx + 2];
         bool force = false;
-        if (cache_idx + 3 < a.count) {
-            if (cache_idx + 3 == a.count - 1 && eval_sv_eq_ci_lit(a.items[cache_idx + 3], "FORCE")) {
+        if (cache_idx + 3 < arena_arr_len(a)) {
+            if (cache_idx + 3 == arena_arr_len(a) - 1 && eval_sv_eq_ci_lit(a[cache_idx + 3], "FORCE")) {
                 force = true;
             } else {
                 (void)eval_emit_diag(ctx,
@@ -878,7 +878,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         if (is_internal) force = true;
 
         String_View value = nob_sv_from_cstr("");
-        if (cache_idx > 1) value = eval_sv_join_semi_temp(ctx, &a.items[1], cache_idx - 1);
+        if (cache_idx > 1) value = eval_sv_join_semi_temp(ctx, &a[1], cache_idx - 1);
 
         Eval_Cache_Entry *existing = cache_find(ctx, var);
         bool should_write_cache = (existing == NULL) || force;
@@ -906,25 +906,25 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (a.count == 1) {
+    if (arena_arr_len(a) == 1) {
         (void)eval_var_unset(ctx, var);
         return !eval_should_stop(ctx);
     }
 
     bool parent_scope = false;
 
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PARENT_SCOPE")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PARENT_SCOPE")) {
             parent_scope = true;
             break;
         }
     }
 
-    size_t val_end = a.count;
+    size_t val_end = arena_arr_len(a);
     if (parent_scope) val_end--;
 
     String_View value = nob_sv_from_cstr("");
-    if (val_end > 1) value = eval_sv_join_semi_temp(ctx, &a.items[1], val_end - 1);
+    if (val_end > 1) value = eval_sv_join_semi_temp(ctx, &a[1], val_end - 1);
 
     if (parent_scope) {
         if (ctx->scope_depth > 1) {
@@ -957,7 +957,7 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return false;
-    if (a.count == 0) {
+    if (arena_arr_len(a) == 0) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
@@ -968,7 +968,7 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
                              nob_sv_from_cstr("Usage: unset(<var> [CACHE|PARENT_SCOPE])"));
         return !eval_should_stop(ctx);
     }
-    if (a.count > 2) {
+    if (arena_arr_len(a) > 2) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
@@ -980,11 +980,11 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View var = a.items[0];
+    String_View var = a[0];
     String_View env_name = {0};
     if (parse_env_var_name(var, &env_name)) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        if (a.count > 1) {
+        if (arena_arr_len(a) > 1) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("unset"),
@@ -1008,10 +1008,10 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
 
     bool cache_mode = false;
     bool parent_scope = false;
-    if (a.count == 2) {
-        if (eval_sv_eq_ci_lit(a.items[1], "CACHE")) {
+    if (arena_arr_len(a) == 2) {
+        if (eval_sv_eq_ci_lit(a[1], "CACHE")) {
             cache_mode = true;
-        } else if (eval_sv_eq_ci_lit(a.items[1], "PARENT_SCOPE")) {
+        } else if (eval_sv_eq_ci_lit(a[1], "PARENT_SCOPE")) {
             parent_scope = true;
         } else {
             Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
@@ -1021,7 +1021,7 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("unset() received unsupported option"),
-                                 a.items[1]);
+                                 a[1]);
             return !eval_should_stop(ctx);
         }
     }
@@ -1071,7 +1071,7 @@ bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2 || a.count > 3) {
+    if (arena_arr_len(a) < 2 || arena_arr_len(a) > 3) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("option"),
@@ -1082,7 +1082,7 @@ bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View var = a.items[0];
+    String_View var = a[0];
     if (var.count == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
@@ -1094,8 +1094,8 @@ bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View doc = a.items[1];
-    String_View value = (a.count >= 3) ? a.items[2] : nob_sv_from_cstr("OFF");
+    String_View doc = a[1];
+    String_View value = (arena_arr_len(a) >= 3) ? a[2] : nob_sv_from_cstr("OFF");
 
     bool cmp0077_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0077")), "NEW");
     bool has_normal_binding = scope_has_normal_binding(ctx, var);
@@ -1123,14 +1123,14 @@ bool eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *node) {
 
     bool clear_mode = false;
     size_t start = 0;
-    if (a.count > 0 && eval_sv_eq_ci_lit(a.items[0], "CLEAR")) {
+    if (arena_arr_len(a) > 0 && eval_sv_eq_ci_lit(a[0], "CLEAR")) {
         clear_mode = true;
         start = 1;
-    } else if (a.count > 0 && eval_sv_eq_ci_lit(a.items[0], "FORCE")) {
+    } else if (arena_arr_len(a) > 0 && eval_sv_eq_ci_lit(a[0], "FORCE")) {
         start = 1;
     }
 
-    if (start >= a.count) {
+    if (start >= arena_arr_len(a)) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("mark_as_advanced"),
@@ -1142,8 +1142,8 @@ bool eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *node) {
     }
 
     bool cmp0102_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0102")), "NEW");
-    for (size_t i = start; i < a.count; i++) {
-        String_View var_name = a.items[i];
+    for (size_t i = start; i < arena_arr_len(a); i++) {
+        String_View var_name = a[i];
         if (var_name.count == 0) continue;
 
         if (!eval_cache_defined(ctx, var_name)) {
@@ -1171,7 +1171,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count == 0) {
+    if (arena_arr_len(a) == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("separate_arguments"),
@@ -1182,7 +1182,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[0];
+    String_View out_var = a[0];
     bool windows_mode =
 #if defined(_WIN32)
         true;
@@ -1192,16 +1192,16 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
     bool explicit_mode = false;
     size_t input_index = 1;
 
-    if (a.count > 1) {
-        if (eval_sv_eq_ci_lit(a.items[1], "UNIX_COMMAND")) {
+    if (arena_arr_len(a) > 1) {
+        if (eval_sv_eq_ci_lit(a[1], "UNIX_COMMAND")) {
             windows_mode = false;
             explicit_mode = true;
             input_index = 2;
-        } else if (eval_sv_eq_ci_lit(a.items[1], "WINDOWS_COMMAND")) {
+        } else if (eval_sv_eq_ci_lit(a[1], "WINDOWS_COMMAND")) {
             windows_mode = true;
             explicit_mode = true;
             input_index = 2;
-        } else if (eval_sv_eq_ci_lit(a.items[1], "NATIVE_COMMAND")) {
+        } else if (eval_sv_eq_ci_lit(a[1], "NATIVE_COMMAND")) {
 #if defined(_WIN32)
             windows_mode = true;
 #else
@@ -1212,7 +1212,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    if (explicit_mode && input_index >= a.count) {
+    if (explicit_mode && input_index >= arena_arr_len(a)) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("separate_arguments"),
@@ -1223,7 +1223,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (explicit_mode && input_index < a.count && eval_sv_eq_ci_lit(a.items[input_index], "PROGRAM")) {
+    if (explicit_mode && input_index < arena_arr_len(a) && eval_sv_eq_ci_lit(a[input_index], "PROGRAM")) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("separate_arguments"),
@@ -1235,17 +1235,17 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View input = nob_sv_from_cstr("");
-    if (a.count == 1) {
+    if (arena_arr_len(a) == 1) {
         input = eval_var_get(ctx, out_var);
     } else {
-        if (!join_sv_with_spaces_temp(ctx, &a.items[input_index], a.count - input_index, &input)) {
+        if (!join_sv_with_spaces_temp(ctx, &a[input_index], arena_arr_len(a) - input_index, &input)) {
             return !eval_should_stop(ctx);
         }
     }
 
-    SV_List tokens = {0};
+    SV_List tokens = NULL;
     if (!separate_arguments_parse_tokens(ctx, windows_mode, input, &tokens)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens.items, tokens.count))) {
+    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)))) {
         return !eval_should_stop(ctx);
     }
 
@@ -1256,7 +1256,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)load_cache_emit_diag(ctx,
                                    node,
                                    EV_DIAG_ERROR,
@@ -1266,7 +1266,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View cache_path = nob_sv_from_cstr("");
-    if (!load_cache_resolve_path(ctx, a.items[0], &cache_path)) return !eval_should_stop(ctx);
+    if (!load_cache_resolve_path(ctx, a[0], &cache_path)) return !eval_should_stop(ctx);
     char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
     EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, !eval_should_stop(ctx));
 
@@ -1282,14 +1282,14 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
 
     bool read_with_prefix = false;
     String_View prefix = nob_sv_from_cstr("");
-    SV_List requested = {0};
-    SV_List excludes = {0};
-    SV_List include_internals = {0};
+    SV_List requested = NULL;
+    SV_List excludes = NULL;
+    SV_List include_internals = NULL;
 
     size_t i = 1;
-    if (eval_sv_eq_ci_lit(a.items[i], "READ_WITH_PREFIX")) {
+    if (eval_sv_eq_ci_lit(a[i], "READ_WITH_PREFIX")) {
         read_with_prefix = true;
-        if (i + 2 >= a.count) {
+        if (i + 2 >= arena_arr_len(a)) {
             (void)load_cache_emit_diag(ctx,
                                        node,
                                        EV_DIAG_ERROR,
@@ -1298,20 +1298,20 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
             nob_sb_free(sb);
             return !eval_should_stop(ctx);
         }
-        prefix = a.items[i + 1];
+        prefix = a[i + 1];
         i += 2;
-        for (; i < a.count; i++) {
-            if (!parse_sv_list_push_temp(ctx, &requested, a.items[i])) {
+        for (; i < arena_arr_len(a); i++) {
+            if (!parse_sv_list_push_temp(ctx, &requested, a[i])) {
                 nob_sb_free(sb);
                 return !eval_should_stop(ctx);
             }
         }
     } else {
-        while (i < a.count) {
-            if (eval_sv_eq_ci_lit(a.items[i], "EXCLUDE")) {
+        while (i < arena_arr_len(a)) {
+            if (eval_sv_eq_ci_lit(a[i], "EXCLUDE")) {
                 i++;
-                while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "INCLUDE_INTERNALS")) {
-                    if (!parse_sv_list_push_temp(ctx, &excludes, a.items[i])) {
+                while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
+                    if (!parse_sv_list_push_temp(ctx, &excludes, a[i])) {
                         nob_sb_free(sb);
                         return !eval_should_stop(ctx);
                     }
@@ -1319,10 +1319,10 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
                 }
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "INCLUDE_INTERNALS")) {
+            if (eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
                 i++;
-                while (i < a.count) {
-                    if (!parse_sv_list_push_temp(ctx, &include_internals, a.items[i])) {
+                while (i < arena_arr_len(a)) {
+                    if (!parse_sv_list_push_temp(ctx, &include_internals, a[i])) {
                         nob_sb_free(sb);
                         return !eval_should_stop(ctx);
                     }
@@ -1334,7 +1334,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
                                        node,
                                        EV_DIAG_ERROR,
                                        nob_sv_from_cstr("load_cache() received an unsupported argument"),
-                                       a.items[i]);
+                                       a[i]);
             nob_sb_free(sb);
             return !eval_should_stop(ctx);
         }

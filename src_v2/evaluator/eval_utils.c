@@ -474,7 +474,7 @@ bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View 
 bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_name, const SV_List *argv, String_View status) {
     if (!ctx || command_name.count == 0 || !argv) return false;
 
-    String_View joined = eval_sv_join_semi_temp(ctx, argv->items, argv->count);
+    String_View joined = eval_sv_join_semi_temp(ctx, *argv, arena_arr_len(*argv));
     if (eval_should_stop(ctx)) return false;
 
     size_t args_key_len = sizeof("NOBIFY_CTEST::") - 1 + command_name.count + sizeof("::ARGS") - 1;
@@ -506,7 +506,7 @@ bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_nam
 bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, const SV_List *argv) {
     if (!ctx || command_name.count == 0 || !argv) return false;
 
-    String_View joined = eval_sv_join_semi_temp(ctx, argv->items, argv->count);
+    String_View joined = eval_sv_join_semi_temp(ctx, *argv, arena_arr_len(*argv));
     if (eval_should_stop(ctx)) return false;
 
     size_t key_len = sizeof("NOBIFY_LEGACY::") - 1 + command_name.count + sizeof("::ARGS") - 1;
@@ -623,20 +623,14 @@ bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_Lis
         }
         if (input.data[i] == ';' && genex_depth == 0) {
             String_View item = nob_sv_from_parts(input.data + start, i - start);
-            if (!arena_da_reserve(arena, (void**)&out->items, &out->capacity, sizeof(out->items[0]), out->count + 1)) {
-                return false;
-            }
-            out->items[out->count++] = item;
+            if (!arena_arr_push(arena, *out, item)) return false;
             start = i + 1;
         }
     }
 
     if (start < input.count) {
         String_View item = nob_sv_from_parts(input.data + start, input.count - start);
-        if (!arena_da_reserve(arena, (void**)&out->items, &out->capacity, sizeof(out->items[0]), out->count + 1)) {
-            return false;
-        }
-        out->items[out->count++] = item;
+        if (!arena_arr_push(arena, *out, item)) return false;
     }
     return true;
 }
@@ -806,19 +800,19 @@ static String_View eval_process_sb_to_owned_sv(Evaluator_Context *ctx, Nob_Strin
 bool eval_process_run_capture(Evaluator_Context *ctx,
                               const Eval_Process_Run_Request *req,
                               Eval_Process_Run_Result *out) {
-    if (!ctx || !req || !out || req->argv.count == 0) return false;
+    if (!ctx || !req || !out || arena_arr_len(req->argv) == 0) return false;
 
     *out = (Eval_Process_Run_Result){
         .result_text = nob_sv_from_cstr("1"),
     };
 
-    const char **argv = arena_alloc_array(ctx->arena, const char *, req->argv.count + 1);
+    const char **argv = arena_alloc_array(ctx->arena, const char *, arena_arr_len(req->argv) + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, argv, false);
-    for (size_t i = 0; i < req->argv.count; i++) {
-        argv[i] = eval_sv_to_cstr_temp(ctx, req->argv.items[i]);
+    for (size_t i = 0; i < arena_arr_len(req->argv); i++) {
+        argv[i] = eval_sv_to_cstr_temp(ctx, req->argv[i]);
         EVAL_OOM_RETURN_IF_NULL(ctx, argv[i], false);
     }
-    argv[req->argv.count] = NULL;
+    argv[arena_arr_len(req->argv)] = NULL;
 
     bool changed_cwd = false;
     char old_cwd[4096] = {0};
@@ -1049,10 +1043,10 @@ String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View inpu
 
         if (seg.count == 0 || nob_sv_eq(seg, nob_sv_from_cstr("."))) continue;
         if (nob_sv_eq(seg, nob_sv_from_cstr(".."))) {
-            if (segments.count > 0 &&
-                !nob_sv_eq(segments.items[segments.count - 1], nob_sv_from_cstr("..")) &&
-                (!is_unc || segments.count > unc_root_segments)) {
-                segments.count--;
+            if (arena_arr_len(segments) > 0 &&
+                !nob_sv_eq(segments[arena_arr_len(segments) - 1], nob_sv_from_cstr("..")) &&
+                (!is_unc || arena_arr_len(segments) > unc_root_segments)) {
+                arena_arr_set_len(segments, arena_arr_len(segments) - 1);
                 continue;
             }
             if (!absolute) {
@@ -1071,12 +1065,12 @@ String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View inpu
     if (absolute && !is_unc && !has_drive) total += 1;
     if (absolute && has_drive) total += 1;
 
-    for (size_t i = 0; i < segments.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(segments); i++) {
         if (i > 0 || is_unc || absolute || (has_drive && absolute)) total += 1;
-        total += segments.items[i].count;
+        total += segments[i].count;
     }
 
-    if (segments.count == 0) {
+    if (arena_arr_len(segments) == 0) {
         if (is_unc) total += 0;
         else if (has_drive && absolute) {
             if (total == 2) total += 1;
@@ -1100,13 +1094,13 @@ String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View inpu
         buf[off++] = '/';
     }
 
-    for (size_t i = 0; i < segments.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(segments); i++) {
         if (off > 0 && buf[off - 1] != '/') buf[off++] = '/';
-        memcpy(buf + off, segments.items[i].data, segments.items[i].count);
-        off += segments.items[i].count;
+        memcpy(buf + off, segments[i].data, segments[i].count);
+        off += segments[i].count;
     }
 
-    if (segments.count == 0) {
+    if (arena_arr_len(segments) == 0) {
         if (has_drive && absolute) {
             if (off == 2) buf[off++] = '/';
         } else if (!is_unc && !has_drive && !absolute) {

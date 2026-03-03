@@ -15,11 +15,7 @@
 extern "C" {
 #endif
 
-typedef struct {
-    String_View *items;
-    size_t count;
-    size_t capacity;
-} SV_List;
+typedef String_View *SV_List;
 
 typedef struct {
     String_View key;

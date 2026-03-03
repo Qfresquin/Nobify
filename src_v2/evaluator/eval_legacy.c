@@ -80,7 +80,7 @@ static bool legacy_metadata_only(Evaluator_Context *ctx,
                                  String_View command_name) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < min_args) {
+    if (arena_arr_len(a) < min_args) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -127,7 +127,7 @@ bool eval_handle_make_directory(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count == 0) {
+    if (arena_arr_len(a) == 0) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -135,8 +135,8 @@ bool eval_handle_make_directory(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: make_directory(<dir>...)"));
         return !eval_should_stop(ctx);
     }
-    for (size_t i = 0; i < a.count; i++) {
-        String_View path = legacy_resolve_binary_path(ctx, a.items[i]);
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        String_View path = legacy_resolve_binary_path(ctx, a[i]);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         if (!eval_mkdirs_for_parent(ctx, path)) return !eval_should_stop(ctx);
         char *path_c = eval_sv_to_cstr_temp(ctx, path);
@@ -156,7 +156,7 @@ bool eval_handle_write_file(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -166,8 +166,8 @@ bool eval_handle_write_file(Evaluator_Context *ctx, const Node *node) {
     }
 
     bool append = false;
-    size_t content_end = a.count;
-    if (eval_sv_eq_ci_lit(a.items[a.count - 1], "APPEND")) {
+    size_t content_end = arena_arr_len(a);
+    if (eval_sv_eq_ci_lit(a[arena_arr_len(a) - 1], "APPEND")) {
         append = true;
         content_end--;
         if (content_end < 2) {
@@ -182,9 +182,9 @@ bool eval_handle_write_file(Evaluator_Context *ctx, const Node *node) {
 
     Nob_String_Builder sb = {0};
     for (size_t i = 1; i < content_end; i++) {
-        nob_sb_append_buf(&sb, a.items[i].data, a.items[i].count);
+        nob_sb_append_buf(&sb, a[i].data, a[i].count);
     }
-    String_View path = legacy_resolve_binary_path(ctx, a.items[0]);
+    String_View path = legacy_resolve_binary_path(ctx, a[0]);
     if (!eval_write_text_file(ctx, path, nob_sv_from_parts(sb.items, sb.count), append)) {
         (void)legacy_emit_diag(ctx,
                                node,
@@ -199,7 +199,7 @@ bool eval_handle_remove(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -208,25 +208,25 @@ bool eval_handle_remove(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View current = eval_var_get(ctx, a.items[0]);
-    SV_List items = {0};
+    String_View current = eval_var_get(ctx, a[0]);
+    SV_List items = NULL;
     if (current.count > 0 && !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current, &items)) {
         return !eval_should_stop(ctx);
     }
 
-    SV_List kept = {0};
-    for (size_t i = 0; i < items.count; i++) {
+    SV_List kept = NULL;
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
         bool drop = false;
-        for (size_t j = 1; j < a.count; j++) {
-            if (nob_sv_eq(items.items[i], a.items[j])) {
+        for (size_t j = 1; j < arena_arr_len(a); j++) {
+            if (nob_sv_eq(items[i], a[j])) {
                 drop = true;
                 break;
             }
         }
-        if (!drop && !svu_list_push_temp(ctx, &kept, items.items[i])) return !eval_should_stop(ctx);
+        if (!drop && !svu_list_push_temp(ctx, &kept, items[i])) return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, a.items[0], eval_sv_join_semi_temp(ctx, kept.items, kept.count))) {
+    if (!eval_var_set(ctx, a[0], eval_sv_join_semi_temp(ctx, kept, arena_arr_len(kept)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -236,7 +236,7 @@ bool eval_handle_install_files(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -244,8 +244,8 @@ bool eval_handle_install_files(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: install_files(<dir> <extension> <file>...)"));
         return !eval_should_stop(ctx);
     }
-    for (size_t i = 2; i < a.count; i++) {
-        if (!legacy_emit_install_rule(ctx, node, EV_INSTALL_RULE_FILE, a.items[i], a.items[0])) return false;
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (!legacy_emit_install_rule(ctx, node, EV_INSTALL_RULE_FILE, a[i], a[0])) return false;
     }
     return !eval_should_stop(ctx);
 }
@@ -254,7 +254,7 @@ bool eval_handle_install_programs(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -262,8 +262,8 @@ bool eval_handle_install_programs(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: install_programs(<dir> <file>...)"));
         return !eval_should_stop(ctx);
     }
-    for (size_t i = 1; i < a.count; i++) {
-        if (!legacy_emit_install_rule(ctx, node, EV_INSTALL_RULE_PROGRAM, a.items[i], a.items[0])) return false;
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (!legacy_emit_install_rule(ctx, node, EV_INSTALL_RULE_PROGRAM, a[i], a[0])) return false;
     }
     return !eval_should_stop(ctx);
 }
@@ -272,7 +272,7 @@ bool eval_handle_install_targets(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -281,10 +281,10 @@ bool eval_handle_install_targets(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
     size_t start = 1;
-    if (a.count >= 4 && eval_sv_eq_ci_lit(a.items[1], "RUNTIME_DIRECTORY")) {
+    if (arena_arr_len(a) >= 4 && eval_sv_eq_ci_lit(a[1], "RUNTIME_DIRECTORY")) {
         start = 3;
     }
-    if (start >= a.count) {
+    if (start >= arena_arr_len(a)) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -292,16 +292,16 @@ bool eval_handle_install_targets(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: install_targets(<dir> [RUNTIME_DIRECTORY <dir>] <target>...)"));
         return !eval_should_stop(ctx);
     }
-    for (size_t i = start; i < a.count; i++) {
-        if (!eval_target_known(ctx, a.items[i])) {
+    for (size_t i = start; i < arena_arr_len(a); i++) {
+        if (!eval_target_known(ctx, a[i])) {
             (void)legacy_emit_diag(ctx,
                                    node,
                                    EV_DIAG_ERROR,
                                    nob_sv_from_cstr("install_targets() target was not declared"),
-                                   a.items[i]);
+                                   a[i]);
             continue;
         }
-        if (!legacy_emit_install_rule(ctx, node, EV_INSTALL_RULE_TARGET, a.items[i], a.items[0])) return false;
+        if (!legacy_emit_install_rule(ctx, node, EV_INSTALL_RULE_TARGET, a[i], a[0])) return false;
     }
     return !eval_should_stop(ctx);
 }
@@ -310,7 +310,7 @@ bool eval_handle_qt_wrap_cpp(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -318,14 +318,14 @@ bool eval_handle_qt_wrap_cpp(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: qt_wrap_cpp(<lib> <out-var> <header>...)"));
         return !eval_should_stop(ctx);
     }
-    SV_List generated = {0};
-    for (size_t i = 2; i < a.count; i++) {
-        String_View stem = legacy_stem_from_path(a.items[i]);
+    SV_List generated = NULL;
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        String_View stem = legacy_stem_from_path(a[i]);
         if (!svu_list_push_temp(ctx, &generated, legacy_generated_name_temp(ctx, "moc_", stem, ".cxx"))) {
             return !eval_should_stop(ctx);
         }
     }
-    if (!eval_var_set(ctx, a.items[1], eval_sv_join_semi_temp(ctx, generated.items, generated.count))) {
+    if (!eval_var_set(ctx, a[1], eval_sv_join_semi_temp(ctx, generated, arena_arr_len(generated)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -335,7 +335,7 @@ bool eval_handle_qt_wrap_ui(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -343,10 +343,10 @@ bool eval_handle_qt_wrap_ui(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: qt_wrap_ui(<lib> <headers-var> <sources-var> <ui>...)"));
         return !eval_should_stop(ctx);
     }
-    SV_List headers = {0};
-    SV_List sources = {0};
-    for (size_t i = 3; i < a.count; i++) {
-        String_View stem = legacy_stem_from_path(a.items[i]);
+    SV_List headers = NULL;
+    SV_List sources = NULL;
+    for (size_t i = 3; i < arena_arr_len(a); i++) {
+        String_View stem = legacy_stem_from_path(a[i]);
         if (!svu_list_push_temp(ctx, &headers, legacy_generated_name_temp(ctx, "ui_", stem, ".h"))) {
             return !eval_should_stop(ctx);
         }
@@ -354,8 +354,8 @@ bool eval_handle_qt_wrap_ui(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
     }
-    if (!eval_var_set(ctx, a.items[1], eval_sv_join_semi_temp(ctx, headers.items, headers.count))) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, a.items[2], eval_sv_join_semi_temp(ctx, sources.items, sources.count))) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, a[1], eval_sv_join_semi_temp(ctx, headers, arena_arr_len(headers)))) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, a[2], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
 
@@ -363,7 +363,7 @@ bool eval_handle_fltk_wrap_ui(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -372,9 +372,9 @@ bool eval_handle_fltk_wrap_ui(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    SV_List outputs = {0};
-    for (size_t i = 1; i < a.count; i++) {
-        String_View stem = legacy_stem_from_path(a.items[i]);
+    SV_List outputs = NULL;
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        String_View stem = legacy_stem_from_path(a[i]);
         if (!svu_list_push_temp(ctx, &outputs, legacy_generated_name_temp(ctx, "fluid_", stem, ".cxx"))) {
             return !eval_should_stop(ctx);
         }
@@ -383,12 +383,12 @@ bool eval_handle_fltk_wrap_ui(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    size_t total = a.items[0].count + sizeof("_FLTK_UI_SRCS") - 1;
+    size_t total = a[0].count + sizeof("_FLTK_UI_SRCS") - 1;
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
-    memcpy(buf, a.items[0].data, a.items[0].count);
-    memcpy(buf + a.items[0].count, "_FLTK_UI_SRCS", sizeof("_FLTK_UI_SRCS"));
-    if (!eval_var_set(ctx, nob_sv_from_parts(buf, total), eval_sv_join_semi_temp(ctx, outputs.items, outputs.count))) {
+    memcpy(buf, a[0].data, a[0].count);
+    memcpy(buf + a[0].count, "_FLTK_UI_SRCS", sizeof("_FLTK_UI_SRCS"));
+    if (!eval_var_set(ctx, nob_sv_from_parts(buf, total), eval_sv_join_semi_temp(ctx, outputs, arena_arr_len(outputs)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -398,7 +398,7 @@ bool eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count == 0 || a.count > 2) {
+    if (arena_arr_len(a) == 0 || arena_arr_len(a) > 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
@@ -407,19 +407,18 @@ bool eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    for (size_t i = 0; i < ctx->watched_variables.count; i++) {
-        if (!eval_sv_key_eq(ctx->watched_variables.items[i], a.items[0])) continue;
-        if (i < ctx->watched_variable_commands.count) {
-            ctx->watched_variable_commands.items[i] = sv_copy_to_event_arena(ctx, a.count > 1 ? a.items[1] : nob_sv_from_cstr(""));
+    for (size_t i = 0; i < arena_arr_len(ctx->watched_variables); i++) {
+        if (!eval_sv_key_eq(ctx->watched_variables[i], a[0])) continue;
+        if (i < arena_arr_len(ctx->watched_variable_commands)) {
+            ctx->watched_variable_commands[i] = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
         }
         return !eval_should_stop(ctx);
     }
 
-    String_View stable_var = sv_copy_to_event_arena(ctx, a.items[0]);
-    String_View stable_cmd = sv_copy_to_event_arena(ctx, a.count > 1 ? a.items[1] : nob_sv_from_cstr(""));
+    String_View stable_var = sv_copy_to_event_arena(ctx, a[0]);
+    String_View stable_cmd = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
     if (eval_should_stop(ctx)) return false;
-    if (!arena_da_try_append(ctx->known_targets_arena, &ctx->watched_variables, stable_var)) return ctx_oom(ctx);
-    if (!arena_da_try_append(ctx->known_targets_arena, &ctx->watched_variable_commands, stable_cmd)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->known_targets_arena, ctx->watched_variables, stable_var)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->known_targets_arena, ctx->watched_variable_commands, stable_cmd)) return ctx_oom(ctx);
     return !eval_should_stop(ctx);
 }
-

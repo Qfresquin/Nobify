@@ -70,15 +70,15 @@ static bool msg_check_stack_push(Evaluator_Context *ctx, String_View msg) {
     if (!ctx) return false;
     msg = sv_copy_to_event_arena(ctx, msg);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_da_try_append(ctx->event_arena, &ctx->message_check_stack, msg)) return ctx_oom(ctx);
+    if (!arena_arr_push(ctx->event_arena, ctx->message_check_stack, msg)) return ctx_oom(ctx);
     return true;
 }
 
 static bool msg_check_stack_pop(Evaluator_Context *ctx, String_View *out_msg) {
     if (!ctx || !out_msg) return false;
-    if (ctx->message_check_stack.count == 0) return false;
-    *out_msg = ctx->message_check_stack.items[ctx->message_check_stack.count - 1];
-    ctx->message_check_stack.count--;
+    if (arena_arr_len(ctx->message_check_stack) == 0) return false;
+    *out_msg = ctx->message_check_stack[arena_arr_len(ctx->message_check_stack) - 1];
+    arena_arr_set_len(ctx->message_check_stack, arena_arr_len(ctx->message_check_stack) - 1);
     return true;
 }
 
@@ -153,10 +153,10 @@ bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_
              node ? node->line : 0u);
     ok = ok && msg_write_all(f, bt);
 
-    if (ctx->message_check_stack.count > 0) {
+    if (arena_arr_len(ctx->message_check_stack) > 0) {
         ok = ok && msg_write_all(f, "    checks:\n");
-        for (size_t i = ctx->message_check_stack.count; i-- > 0;) {
-            String_View check = ctx->message_check_stack.items[i];
+        for (size_t i = arena_arr_len(ctx->message_check_stack); i-- > 0;) {
+            String_View check = ctx->message_check_stack[i];
             ok = ok && msg_write_all(f, "      - \"");
             if (check.count > 0) ok = ok && (fwrite(check.data, 1, check.count, f) == check.count);
             ok = ok && msg_write_all(f, "\"\n");
@@ -179,14 +179,14 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
 
     Eval_Message_Mode mode = MSG_MODE_PLAIN;
     size_t msg_begin = 0;
-    if (a.count > 0) {
+    if (arena_arr_len(a) > 0) {
         bool is_mode = false;
-        mode = msg_parse_mode(a.items[0], &is_mode);
+        mode = msg_parse_mode(a[0], &is_mode);
         if (is_mode) msg_begin = 1;
     }
 
     String_View msg = {0};
-    if (!msg_join_no_sep_temp(ctx, &a.items[msg_begin], a.count > msg_begin ? (a.count - msg_begin) : 0, &msg)) {
+    if (!msg_join_no_sep_temp(ctx, a ? &a[msg_begin] : NULL, arena_arr_len(a) > msg_begin ? (arena_arr_len(a) - msg_begin) : 0, &msg)) {
         return !eval_should_stop(ctx);
     }
 
