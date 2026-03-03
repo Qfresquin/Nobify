@@ -101,10 +101,6 @@ static bool parse_sv_eq_exact(String_View a, String_View b) {
     return memcmp(a.data, b.data, a.count) == 0;
 }
 
-static bool parse_sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View item) {
-    return eval_sv_arr_push_temp(ctx, list, item);
-}
-
 static bool parse_strip_bracket_arg(String_View in, String_View *out) {
     if (!out) return false;
     *out = in;
@@ -187,7 +183,7 @@ static bool parse_resolve_arg_range(Evaluator_Context *ctx,
         if (eval_should_stop(ctx)) return false;
 
         if (arg->kind == ARG_QUOTED || arg->kind == ARG_BRACKET) {
-            if (!parse_sv_list_push_temp(ctx, out, value)) return false;
+            if (!eval_sv_arr_push_temp(ctx, out, value)) return false;
             continue;
         }
 
@@ -319,7 +315,7 @@ static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start
         char key_buf[64];
         int n = snprintf(key_buf, sizeof(key_buf), "ARGV%zu", i);
         if (n <= 0 || (size_t)n >= sizeof(key_buf)) return ctx_oom(ctx);
-        if (!parse_sv_list_push_temp(ctx, out, eval_var_get(ctx, nob_sv_from_cstr(key_buf)))) return false;
+        if (!eval_sv_arr_push_temp(ctx, out, eval_var_get(ctx, nob_sv_from_cstr(key_buf)))) return false;
     }
 
     return true;
@@ -503,7 +499,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
         Parse_Keyword_Spec *matched = parse_find_keyword(specs, spec_count, token);
         if (matched) {
             if (active && !active_has_value) {
-                if (!parse_sv_list_push_temp(ctx, &missing, active->name)) return false;
+                if (!eval_sv_arr_push_temp(ctx, &missing, active->name)) return false;
             }
 
             active = matched;
@@ -531,18 +527,18 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
                 continue;
             }
             if (active->kind == PARSE_KEYWORD_MULTI) {
-                if (!parse_sv_list_push_temp(ctx, &active->multi_values, token)) return false;
+                if (!eval_sv_arr_push_temp(ctx, &active->multi_values, token)) return false;
                 active->multi_defined = true;
                 active_has_value = true;
                 continue;
             }
         }
 
-        if (!parse_sv_list_push_temp(ctx, &unparsed, token)) return false;
+        if (!eval_sv_arr_push_temp(ctx, &unparsed, token)) return false;
     }
 
     if (active && !active_has_value) {
-        if (!parse_sv_list_push_temp(ctx, &missing, active->name)) return false;
+        if (!eval_sv_arr_push_temp(ctx, &missing, active->name)) return false;
     }
 
     if (!parse_assign_results(ctx, prefix, specs, spec_count, &unparsed, &missing)) return false;
@@ -1299,7 +1295,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
         prefix = a[i + 1];
         i += 2;
         for (; i < arena_arr_len(a); i++) {
-            if (!parse_sv_list_push_temp(ctx, &requested, a[i])) {
+            if (!eval_sv_arr_push_temp(ctx, &requested, a[i])) {
                 nob_sb_free(sb);
                 return !eval_should_stop(ctx);
             }
@@ -1309,7 +1305,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
             if (eval_sv_eq_ci_lit(a[i], "EXCLUDE")) {
                 i++;
                 while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
-                    if (!parse_sv_list_push_temp(ctx, &excludes, a[i])) {
+                    if (!eval_sv_arr_push_temp(ctx, &excludes, a[i])) {
                         nob_sb_free(sb);
                         return !eval_should_stop(ctx);
                     }
@@ -1320,7 +1316,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
             if (eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
                 i++;
                 while (i < arena_arr_len(a)) {
-                    if (!parse_sv_list_push_temp(ctx, &include_internals, a[i])) {
+                    if (!eval_sv_arr_push_temp(ctx, &include_internals, a[i])) {
                         nob_sb_free(sb);
                         return !eval_should_stop(ctx);
                     }

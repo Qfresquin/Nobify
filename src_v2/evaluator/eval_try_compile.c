@@ -201,10 +201,6 @@ static bool try_compile_is_false(String_View v) {
            (v.count >= 9 && eval_sv_eq_ci_lit(nob_sv_from_parts(v.data + v.count - 9, 9), "-NOTFOUND"));
 }
 
-static bool try_compile_sv_push(Evaluator_Context *ctx, SV_List *list, String_View item) {
-    return eval_sv_arr_push_temp(ctx, list, item);
-}
-
 static bool try_compile_source_push(Evaluator_Context *ctx,
                                     Try_Compile_Source_List *list,
                                     Try_Compile_Source_Item item) {
@@ -396,7 +392,7 @@ static bool try_compile_collect_until_keyword(Evaluator_Context *ctx,
     if (!ctx || !args || !io_index || !out) return false;
     while (*io_index + 1 < arena_arr_len(*args) && !try_compile_is_keyword((*args)[*io_index + 1])) {
         (*io_index)++;
-        if (!try_compile_sv_push(ctx, out, (*args)[*io_index])) return false;
+        if (!eval_sv_arr_push_temp(ctx, out, (*args)[*io_index])) return false;
     }
     return true;
 }
@@ -787,7 +783,7 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
             return true;
         }
 
-        if (!try_compile_sv_push(ctx, &object_paths, obj_path)) {
+        if (!eval_sv_arr_push_temp(ctx, &object_paths, obj_path)) {
             nob_sb_free(log);
             return false;
         }
@@ -964,34 +960,34 @@ static bool try_compile_build_target(Evaluator_Context *ctx,
     const String_List *global_link_libs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES);
 
     for (size_t i = 0; i < arena_arr_len(*global_defs); i++) {
-        if (!try_compile_sv_push(ctx, &req.compile_definitions, (*global_defs)[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &req.compile_definitions, (*global_defs)[i])) return false;
     }
     for (size_t i = 0; i < arena_arr_len(*global_link_opts); i++) {
-        if (!try_compile_sv_push(ctx, &req.link_options, (*global_link_opts)[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &req.link_options, (*global_link_opts)[i])) return false;
     }
     for (size_t i = 0; i < arena_arr_len(*global_link_libs); i++) {
-        if (!try_compile_sv_push(ctx, &req.link_libraries, (*global_link_libs)[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &req.link_libraries, (*global_link_libs)[i])) return false;
     }
 
     String_List local = NULL;
     string_list_init(&local);
     build_target_collect_effective_compile_definitions(target, eval_temp_arena(ctx), NULL, &local);
     for (size_t i = 0; i < arena_arr_len(local); i++) {
-        if (!try_compile_sv_push(ctx, &req.compile_definitions, local[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &req.compile_definitions, local[i])) return false;
     }
 
     local = NULL;
     string_list_init(&local);
     build_target_collect_effective_link_options(target, eval_temp_arena(ctx), NULL, &local);
     for (size_t i = 0; i < arena_arr_len(local); i++) {
-        if (!try_compile_sv_push(ctx, &req.link_options, local[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &req.link_options, local[i])) return false;
     }
 
     local = NULL;
     string_list_init(&local);
     build_target_collect_effective_link_libraries(target, eval_temp_arena(ctx), NULL, &local);
     for (size_t i = 0; i < arena_arr_len(local); i++) {
-        if (!try_compile_sv_push(ctx, &req.link_libraries, local[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &req.link_libraries, local[i])) return false;
     }
 
     const String_List *target_sources = build_target_get_string_list(target, BUILD_TARGET_LIST_SOURCES);
@@ -1506,10 +1502,6 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
     return try_compile_parse_source_request_core(ctx, node, args, out_req);
 }
 
-static bool try_run_append_token(Evaluator_Context *ctx, SV_List *list, String_View item) {
-    return eval_sv_arr_push_temp(ctx, list, item);
-}
-
 static bool try_run_parse_request(Evaluator_Context *ctx,
                                   const Node *node,
                                   const SV_List *args,
@@ -1550,7 +1542,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
     }
 
     SV_List compile_args = NULL;
-    if (!try_run_append_token(ctx, &compile_args, (*args)[1])) return false;
+    if (!eval_sv_arr_push_temp(ctx, &compile_args, (*args)[1])) return false;
 
     for (size_t i = 2; i < arena_arr_len(*args); i++) {
         String_View tok = (*args)[i];
@@ -1632,12 +1624,12 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         }
         if (eval_sv_eq_ci_lit(tok, "ARGS")) {
             for (size_t j = i + 1; j < arena_arr_len(*args); j++) {
-                if (!try_run_append_token(ctx, &out_req->run_args, (*args)[j])) return false;
+                if (!eval_sv_arr_push_temp(ctx, &out_req->run_args, (*args)[j])) return false;
             }
             break;
         }
 
-        if (!try_run_append_token(ctx, &compile_args, tok)) return false;
+        if (!eval_sv_arr_push_temp(ctx, &compile_args, tok)) return false;
     }
 
     return try_compile_parse_source_request_core(ctx, node, &compile_args, &out_req->compile_req);
@@ -1797,9 +1789,9 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     }
 
     SV_List argv = NULL;
-    if (!try_run_append_token(ctx, &argv, exec_path)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, exec_path)) return false;
     for (size_t i = 0; i < arena_arr_len(req.run_args); i++) {
-        if (!try_run_append_token(ctx, &argv, req.run_args[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, req.run_args[i])) return false;
     }
 
     String_View working_dir = req.working_directory.count > 0

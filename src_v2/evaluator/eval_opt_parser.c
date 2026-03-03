@@ -17,10 +17,6 @@ static bool opt_sv_eq_ci_lit(String_View sv, const char *lit) {
     return true;
 }
 
-static bool opt_sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    return eval_sv_arr_push_temp(ctx, list, sv);
-}
-
 static int opt_find_spec_idx(String_View tok, const Eval_Opt_Spec *specs, size_t spec_count) {
     if (!specs) return -1;
     for (size_t i = 0; i < spec_count; i++) {
@@ -82,16 +78,16 @@ bool eval_opt_parse_walk(Evaluator_Context *ctx,
                                tok);
                 return false;
             }
-            if (!opt_sv_list_push_temp(ctx, &values, args[i])) return false;
+            if (!eval_sv_arr_push_temp(ctx, &values, args[i])) return false;
             i++;
         } else if (spec->kind == EVAL_OPT_OPTIONAL_SINGLE) {
             if (i < arena_arr_len(args) && opt_find_spec_idx(args[i], specs, spec_count) < 0) {
-                if (!opt_sv_list_push_temp(ctx, &values, args[i])) return false;
+                if (!eval_sv_arr_push_temp(ctx, &values, args[i])) return false;
                 i++;
             }
         } else if (spec->kind == EVAL_OPT_MULTI) {
             while (i < arena_arr_len(args) && opt_find_spec_idx(args[i], specs, spec_count) < 0) {
-                if (!opt_sv_list_push_temp(ctx, &values, args[i])) return false;
+                if (!eval_sv_arr_push_temp(ctx, &values, args[i])) return false;
                 i++;
             }
         }
