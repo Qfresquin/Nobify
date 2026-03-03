@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const String_List g_empty_string_list = {0};
+static const String_List g_empty_string_list = NULL;
 static String_View bm_sv_copy_to_arena(Arena *arena, String_View sv);
 String_View build_path_join(Arena *arena, String_View base, String_View rel);
 static bool bm_sv_eq_ci(String_View a, String_View b);
@@ -57,15 +57,15 @@ static int build_model_lookup_property_index(const Property_List *list, Build_Pr
     if (!list || !index_map) return -1;
     Build_Property_Index_Entry *entry = stbds_shgetp_null(index_map, nob_temp_sv_to_cstr(key));
     if (!entry) return -1;
-    if (entry->value < 0 || (size_t)entry->value >= list->count) return -1;
-    if (!nob_sv_eq(list->items[entry->value].name, key)) return -1;
+    if (entry->value < 0 || (size_t)entry->value >= arena_arr_len(*list)) return -1;
+    if (!nob_sv_eq((*list)[entry->value].name, key)) return -1;
     return entry->value;
 }
 
 static int build_model_lookup_property_index_linear(const Property_List *list, String_View key) {
     if (!list) return -1;
-    for (size_t i = 0; i < list->count; i++) {
-        if (nob_sv_eq(list->items[i].name, key)) return (int)i;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (nob_sv_eq((*list)[i].name, key)) return (int)i;
     }
     return -1;
 }
@@ -87,10 +87,10 @@ static void build_model_rebuild_property_index(Arena *arena, Property_List *list
     if (!arena || !list || !index_map) return;
     stbds_shfree(*index_map);
     *index_map = NULL;
-    for (size_t i = 0; i < list->count; i++) {
-        char *stable_key = build_model_copy_sv_cstr(arena, list->items[i].name);
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        char *stable_key = build_model_copy_sv_cstr(arena, (*list)[i].name);
         if (!stable_key) continue;
-        list->items[i].name = sv_from_cstr(stable_key);
+        (*list)[i].name = sv_from_cstr(stable_key);
         if (!build_model_put_property_index(index_map, stable_key, (int)i)) {
             nob_log(NOB_WARNING, "failed to rebuild property index for key '%s'", stable_key);
         }
@@ -123,15 +123,15 @@ static bool build_model_has_cycle_dfs(const Build_Model *model, size_t idx, uint
     state[idx] = 1;
     const Build_Target *target = model->targets[idx];
 
-    for (size_t j = 0; j < target->dependencies.count; j++) {
-        int dep_idx = build_model_find_target_index(model, target->dependencies.items[j]);
+    for (size_t j = 0; j < arena_arr_len(target->dependencies); j++) {
+        int dep_idx = build_model_find_target_index(model, target->dependencies[j]);
         if (dep_idx < 0) continue;
         if (build_model_has_cycle_dfs(model, (size_t)dep_idx, state)) {
             return true;
         }
     }
-    for (size_t j = 0; j < target->object_dependencies.count; j++) {
-        int dep_idx = build_model_find_target_index(model, target->object_dependencies.items[j]);
+    for (size_t j = 0; j < arena_arr_len(target->object_dependencies); j++) {
+        int dep_idx = build_model_find_target_index(model, target->object_dependencies[j]);
         if (dep_idx < 0) continue;
         if (build_model_has_cycle_dfs(model, (size_t)dep_idx, state)) {
             return true;
@@ -148,19 +148,18 @@ static bool build_model_has_cycle_dfs(const Build_Model *model, size_t idx, uint
 
 void string_list_init(String_List *list) {
     if (!list) return;
-    memset(list, 0, sizeof(*list));
+    *list = NULL;
 }
 
 void string_list_add(String_List *list, Arena *arena, String_View item) {
     if (!list || !arena) return;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(*list->items), list->count + 1)) return;
-    list->items[list->count++] = bm_sv_copy_to_arena(arena, item);
+    (void)arena_arr_push(arena, *list, bm_sv_copy_to_arena(arena, item));
 }
 
 bool string_list_contains(const String_List *list, String_View item) {
     if (!list) return false;
-    for (size_t i = 0; i < list->count; i++) {
-        if (nob_sv_eq(list->items[i], item)) return true;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (nob_sv_eq((*list)[i], item)) return true;
     }
     return false;
 }
@@ -174,23 +173,24 @@ bool string_list_add_unique(String_List *list, Arena *arena, String_View item) {
 
 void property_list_init(Property_List *list) {
     if (!list) return;
-    memset(list, 0, sizeof(*list));
+    *list = NULL;
 }
 
 void property_list_add(Property_List *list, Arena *arena, 
                        String_View key, String_View value) {
     if (!list || !arena) return;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(*list->items), list->count + 1)) return;
-    list->items[list->count].name = bm_sv_copy_to_arena(arena, key);
-    list->items[list->count].value = bm_sv_copy_to_arena(arena, value);
-    list->count++;
+    Property p = {
+        .name = bm_sv_copy_to_arena(arena, key),
+        .value = bm_sv_copy_to_arena(arena, value),
+    };
+    (void)arena_arr_push(arena, *list, p);
 }
 
 String_View property_list_find(Property_List *list, String_View key) {
     if (!list) return sv_from_cstr("");
-    for (size_t i = 0; i < list->count; i++) {
-        if (nob_sv_eq(list->items[i].name, key)) {
-            return list->items[i].value;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (nob_sv_eq((*list)[i].name, key)) {
+            return (*list)[i].value;
         }
     }
     return sv_from_cstr("");
@@ -198,7 +198,7 @@ String_View property_list_find(Property_List *list, String_View key) {
 
 static void conditional_property_list_init(Conditional_Property_List *list) {
     if (!list) return;
-    memset(list, 0, sizeof(*list));
+    *list = NULL;
 }
 
 static bool conditional_property_list_add(Conditional_Property_List *list,
@@ -206,14 +206,11 @@ static bool conditional_property_list_add(Conditional_Property_List *list,
                                           String_View value,
                                           Logic_Node *condition) {
     if (!list || !arena || value.count == 0 || !value.data) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity,
-                          sizeof(*list->items), list->count + 1)) {
-        return false;
-    }
-    list->items[list->count].value = value;
-    list->items[list->count].condition = condition;
-    list->count++;
-    return true;
+    Conditional_Property item = {
+        .value = value,
+        .condition = condition,
+    };
+    return arena_arr_push(arena, *list, item);
 }
 
 static String_View bm_config_to_cmake_build_type(Build_Config config) {
@@ -268,8 +265,8 @@ static bool bm_condition_extract_config(const Logic_Node *condition, Build_Confi
 static void bm_conditional_list_clear_for_config(Conditional_Property_List *list, Build_Config cfg) {
     if (!list) return;
     size_t out = 0;
-    for (size_t i = 0; i < list->count; i++) {
-        Conditional_Property item = list->items[i];
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        Conditional_Property item = (*list)[i];
         bool remove = false;
         if (cfg == CONFIG_ALL) {
             remove = (item.condition == NULL);
@@ -280,10 +277,10 @@ static void bm_conditional_list_clear_for_config(Conditional_Property_List *list
             }
         }
         if (!remove) {
-            list->items[out++] = item;
+            (*list)[out++] = item;
         }
     }
-    list->count = out;
+    arena_arr_set_len(*list, out);
 }
 
 static void bm_conditional_list_append_from_semicolon(Conditional_Property_List *list,
@@ -307,11 +304,11 @@ static void bm_conditional_list_append_from_semicolon(Conditional_Property_List 
 }
 
 static String_View bm_join_conditional_list_by_config_temp(const Conditional_Property_List *list, Build_Config cfg) {
-    if (!list || list->count == 0) return sv_from_cstr("");
+    if (!list || arena_arr_len(*list) == 0) return sv_from_cstr("");
     String_Builder sb = {0};
     bool first = true;
-    for (size_t i = 0; i < list->count; i++) {
-        Conditional_Property item = list->items[i];
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        Conditional_Property item = (*list)[i];
         bool include = false;
         if (cfg == CONFIG_ALL) {
             include = (item.condition == NULL);
@@ -334,8 +331,8 @@ static void bm_collect_effective_conditional(const Conditional_Property_List *li
                                              const Logic_Eval_Context *logic_ctx,
                                              String_List *out) {
     if (!list || !arena || !out) return;
-    for (size_t i = 0; i < list->count; i++) {
-        Conditional_Property item = list->items[i];
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        Conditional_Property item = (*list)[i];
         if (item.value.count == 0 || !item.value.data) continue;
         bool take = false;
         if (!item.condition) {
@@ -438,8 +435,8 @@ Build_Target* build_model_add_target(Build_Model *model,
     
     // Expande array se necessario
     if (model->target_count >= model->target_capacity) {
-        if (!arena_da_reserve(model->arena, (void**)&model->targets, &model->target_capacity,
-                sizeof(*model->targets), model->target_count + 1)) {
+        if (!arena_arr_reserve(model->arena, model->targets, model->target_count + 1) ||
+            !(model->target_capacity = arena_arr_cap(model->targets))) {
             return NULL;
         }
     }
@@ -546,13 +543,10 @@ Build_Directory_Node* build_model_add_directory_node(Build_Model *model,
         return node;
     }
 
-    if (!arena_da_reserve(arena,
-                          (void**)&model->directory_nodes,
-                          &model->directory_node_capacity,
-                          sizeof(*model->directory_nodes),
-                          model->directory_node_count + 1)) {
+    if (!arena_arr_reserve(arena, model->directory_nodes, model->directory_node_count + 1)) {
         return NULL;
     }
+    model->directory_node_capacity = arena_arr_cap(model->directory_nodes);
 
     Build_Directory_Node *node = &model->directory_nodes[model->directory_node_count];
     memset(node, 0, sizeof(*node));
@@ -588,8 +582,8 @@ void build_target_add_source(Build_Target *target, Arena *arena, String_View sou
 
 void build_target_add_dependency(Build_Target *target, Arena *arena, String_View dep_name) {
     if (!target || !arena) return;
-    for (size_t i = 0; i < target->dependencies.count; i++) {
-        if (nob_sv_eq(target->dependencies.items[i], dep_name)) {
+    for (size_t i = 0; i < arena_arr_len(target->dependencies); i++) {
+        if (nob_sv_eq(target->dependencies[i], dep_name)) {
             return;
         }
     }
@@ -598,8 +592,8 @@ void build_target_add_dependency(Build_Target *target, Arena *arena, String_View
 
 void build_target_add_object_dependency(Build_Target *target, Arena *arena, String_View dep_target_name) {
     if (!target || !arena) return;
-    for (size_t i = 0; i < target->object_dependencies.count; i++) {
-        if (nob_sv_eq(target->object_dependencies.items[i], dep_target_name)) {
+    for (size_t i = 0; i < arena_arr_len(target->object_dependencies); i++) {
+        if (nob_sv_eq(target->object_dependencies[i], dep_target_name)) {
             return;
         }
     }
@@ -856,8 +850,8 @@ void build_target_add_interface_dependency(Build_Target *target,
                                            Arena *arena,
                                            String_View dep_name) {
     if (!target || !arena) return;
-    for (size_t i = 0; i < target->interface_dependencies.count; i++) {
-        if (nob_sv_eq(target->interface_dependencies.items[i], dep_name)) {
+    for (size_t i = 0; i < arena_arr_len(target->interface_dependencies); i++) {
+        if (nob_sv_eq(target->interface_dependencies[i], dep_name)) {
             return;
         }
     }
@@ -878,16 +872,16 @@ void build_target_set_property(Build_Target *target,
     }
 
     if (idx >= 0) {
-        target->custom_properties.items[idx].value = bm_sv_copy_to_arena(arena, value);
+        target->custom_properties[idx].value = bm_sv_copy_to_arena(arena, value);
         return;
     }
 
     char *stable_key = build_model_copy_sv_cstr(arena, key);
     if (!stable_key) return;
     String_View stable_key_sv = sv_from_cstr(stable_key);
-    size_t before = target->custom_properties.count;
+    size_t before = arena_arr_len(target->custom_properties);
     property_list_add(&target->custom_properties, arena, stable_key_sv, value);
-    if (target->custom_properties.count == before + 1) {
+    if (arena_arr_len(target->custom_properties) == before + 1) {
         if (!build_model_put_property_index(&target->custom_property_index, stable_key, (int)before)) {
             nob_log(NOB_WARNING, "failed to index target property '%s'", stable_key);
         }
@@ -897,10 +891,10 @@ void build_target_set_property(Build_Target *target,
 String_View build_target_get_property(Build_Target *target, String_View key) {
     if (!target) return sv_from_cstr("");
     int idx = build_model_lookup_property_index(&target->custom_properties, target->custom_property_index, key);
-    if (idx >= 0) return target->custom_properties.items[idx].value;
+    if (idx >= 0) return target->custom_properties[idx].value;
 
     idx = build_model_lookup_property_index_linear(&target->custom_properties, key);
-    if (idx >= 0) return target->custom_properties.items[idx].value;
+    if (idx >= 0) return target->custom_properties[idx].value;
     return sv_from_cstr("");
 }
 
@@ -917,10 +911,10 @@ Found_Package* build_model_add_package(Build_Model *model,
     
     // Expande array se necessario
     if (model->package_count >= model->package_capacity) {
-        if (!arena_da_reserve(model->arena, (void**)&model->found_packages, &model->package_capacity,
-                sizeof(*model->found_packages), model->package_count + 1)) {
+        if (!arena_arr_reserve(model->arena, model->found_packages, model->package_count + 1)) {
             return NULL;
         }
+        model->package_capacity = arena_arr_cap(model->found_packages);
     }
     
     Found_Package *pkg = &model->found_packages[model->package_count++];
@@ -956,10 +950,10 @@ Build_Test* build_model_add_test(Build_Model *model,
     }
 
     if (model->test_count >= model->test_capacity) {
-        if (!arena_da_reserve(model->arena, (void**)&model->tests, &model->test_capacity,
-                sizeof(*model->tests), model->test_count + 1)) {
+        if (!arena_arr_reserve(model->arena, model->tests, model->test_count + 1)) {
             return NULL;
         }
+        model->test_capacity = arena_arr_cap(model->tests);
     }
 
     Build_Test *test = &model->tests[model->test_count++];
@@ -987,10 +981,10 @@ CPack_Component_Group* build_model_add_cpack_component_group(Build_Model *model,
         }
     }
     if (model->cpack_component_group_count >= model->cpack_component_group_capacity) {
-        if (!arena_da_reserve(model->arena, (void**)&model->cpack_component_groups, &model->cpack_component_group_capacity,
-                sizeof(*model->cpack_component_groups), model->cpack_component_group_count + 1)) {
+        if (!arena_arr_reserve(model->arena, model->cpack_component_groups, model->cpack_component_group_count + 1)) {
             return NULL;
         }
+        model->cpack_component_group_capacity = arena_arr_cap(model->cpack_component_groups);
     }
     CPack_Component_Group *group = &model->cpack_component_groups[model->cpack_component_group_count++];
     memset(group, 0, sizeof(*group));
@@ -1006,10 +1000,10 @@ CPack_Install_Type* build_model_add_cpack_install_type(Build_Model *model, Strin
         }
     }
     if (model->cpack_install_type_count >= model->cpack_install_type_capacity) {
-        if (!arena_da_reserve(model->arena, (void**)&model->cpack_install_types, &model->cpack_install_type_capacity,
-                sizeof(*model->cpack_install_types), model->cpack_install_type_count + 1)) {
+        if (!arena_arr_reserve(model->arena, model->cpack_install_types, model->cpack_install_type_count + 1)) {
             return NULL;
         }
+        model->cpack_install_type_capacity = arena_arr_cap(model->cpack_install_types);
     }
     CPack_Install_Type *install_type = &model->cpack_install_types[model->cpack_install_type_count++];
     memset(install_type, 0, sizeof(*install_type));
@@ -1025,10 +1019,10 @@ CPack_Component* build_model_add_cpack_component(Build_Model *model, String_View
         }
     }
     if (model->cpack_component_count >= model->cpack_component_capacity) {
-        if (!arena_da_reserve(model->arena, (void**)&model->cpack_components, &model->cpack_component_capacity,
-                sizeof(*model->cpack_components), model->cpack_component_count + 1)) {
+        if (!arena_arr_reserve(model->arena, model->cpack_components, model->cpack_component_count + 1)) {
             return NULL;
         }
+        model->cpack_component_capacity = arena_arr_cap(model->cpack_components);
     }
     CPack_Component *component = &model->cpack_components[model->cpack_component_count++];
     memset(component, 0, sizeof(*component));
@@ -1055,7 +1049,7 @@ void build_model_set_cache_variable(Build_Model *model,
         }
     }
     if (idx >= 0) {
-        model->cache_variables.items[idx].value = bm_sv_copy_to_arena(model->arena, value);
+        model->cache_variables[idx].value = bm_sv_copy_to_arena(model->arena, value);
         return;
     }
 
@@ -1063,9 +1057,9 @@ void build_model_set_cache_variable(Build_Model *model,
     if (!stable_key) return;
     String_View stable_key_sv = sv_from_cstr(stable_key);
 
-    size_t before = model->cache_variables.count;
+    size_t before = arena_arr_len(model->cache_variables);
     property_list_add(&model->cache_variables, model->arena, stable_key_sv, value);
-    if (model->cache_variables.count == before + 1) {
+    if (arena_arr_len(model->cache_variables) == before + 1) {
         if (!build_model_put_property_index(&model->cache_variable_index, stable_key, (int)before)) {
             nob_log(NOB_WARNING, "failed to index cache variable '%s'", stable_key);
         }
@@ -1076,10 +1070,10 @@ String_View build_model_get_cache_variable(Build_Model *model, String_View key) 
     if (!model) return sv_from_cstr("");
 
     int idx = build_model_lookup_property_index(&model->cache_variables, model->cache_variable_index, key);
-    if (idx >= 0) return model->cache_variables.items[idx].value;
+    if (idx >= 0) return model->cache_variables[idx].value;
 
     idx = build_model_lookup_property_index_linear(&model->cache_variables, key);
-    if (idx >= 0) return model->cache_variables.items[idx].value;
+    if (idx >= 0) return model->cache_variables[idx].value;
     return sv_from_cstr("");
 }
 
@@ -1101,10 +1095,10 @@ bool build_model_unset_cache_variable(Build_Model *model, String_View key) {
     }
     if (idx < 0) return false;
 
-    for (size_t i = (size_t)idx + 1; i < model->cache_variables.count; i++) {
-        model->cache_variables.items[i - 1] = model->cache_variables.items[i];
+    for (size_t i = (size_t)idx + 1; i < arena_arr_len(model->cache_variables); i++) {
+        model->cache_variables[i - 1] = model->cache_variables[i];
     }
-    model->cache_variables.count--;
+    arena_arr_set_len(model->cache_variables, arena_arr_len(model->cache_variables) - 1);
     build_model_rebuild_property_index(model->arena, &model->cache_variables, &model->cache_variable_index);
     return true;
 }
@@ -1113,10 +1107,10 @@ String_View build_model_get_env_var(const Build_Model *model, String_View key) {
     if (!model) return sv_from_cstr("");
 
     int idx = build_model_lookup_property_index(&model->environment_variables, model->environment_variable_index, key);
-    if (idx >= 0) return model->environment_variables.items[idx].value;
+    if (idx >= 0) return model->environment_variables[idx].value;
 
     idx = build_model_lookup_property_index_linear(&model->environment_variables, key);
-    if (idx >= 0) return model->environment_variables.items[idx].value;
+    if (idx >= 0) return model->environment_variables[idx].value;
     return sv_from_cstr("");
 }
 
@@ -1138,10 +1132,10 @@ bool build_model_unset_env_var(Build_Model *model, String_View key) {
     }
     if (idx < 0) return false;
 
-    for (size_t i = (size_t)idx + 1; i < model->environment_variables.count; i++) {
-        model->environment_variables.items[i - 1] = model->environment_variables.items[i];
+    for (size_t i = (size_t)idx + 1; i < arena_arr_len(model->environment_variables); i++) {
+        model->environment_variables[i - 1] = model->environment_variables[i];
     }
-    model->environment_variables.count--;
+    arena_arr_set_len(model->environment_variables, arena_arr_len(model->environment_variables) - 1);
     build_model_rebuild_property_index(model->arena, &model->environment_variables, &model->environment_variable_index);
     return true;
 }
@@ -1151,14 +1145,14 @@ bool build_model_validate_dependencies(Build_Model *model) {
 
     for (size_t i = 0; i < model->target_count; i++) {
         Build_Target *target = model->targets[i];
-        for (size_t j = 0; j < target->dependencies.count; j++) {
-            String_View dep_name = target->dependencies.items[j];
+        for (size_t j = 0; j < arena_arr_len(target->dependencies); j++) {
+            String_View dep_name = target->dependencies[j];
             if (!build_model_find_target(model, dep_name)) {
                 return false;
             }
         }
-        for (size_t j = 0; j < target->object_dependencies.count; j++) {
-            String_View dep_name = target->object_dependencies.items[j];
+        for (size_t j = 0; j < arena_arr_len(target->object_dependencies); j++) {
+            String_View dep_name = target->object_dependencies[j];
             if (!build_model_find_target(model, dep_name)) {
                 return false;
             }
@@ -1191,14 +1185,14 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
 
     for (size_t i = 0; i < n; i++) {
         Build_Target *target = model->targets[i];
-        for (size_t j = 0; j < target->dependencies.count; j++) {
-            int dep_idx = build_model_find_target_index(model, target->dependencies.items[j]);
+        for (size_t j = 0; j < arena_arr_len(target->dependencies); j++) {
+            int dep_idx = build_model_find_target_index(model, target->dependencies[j]);
             if (dep_idx >= 0) {
                 in_degree[i]++;
             }
         }
-        for (size_t j = 0; j < target->object_dependencies.count; j++) {
-            int dep_idx = build_model_find_target_index(model, target->object_dependencies.items[j]);
+        for (size_t j = 0; j < arena_arr_len(target->object_dependencies); j++) {
+            int dep_idx = build_model_find_target_index(model, target->object_dependencies[j]);
             if (dep_idx >= 0) {
                 in_degree[i]++;
             }
@@ -1223,8 +1217,8 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
             if (in_degree[i] == 0) continue;
 
             Build_Target *other = model->targets[i];
-            for (size_t j = 0; j < other->dependencies.count; j++) {
-                if (nob_sv_eq(other->dependencies.items[j], current->name)) {
+            for (size_t j = 0; j < arena_arr_len(other->dependencies); j++) {
+                if (nob_sv_eq(other->dependencies[j], current->name)) {
                     in_degree[i]--;
                     if (in_degree[i] == 0) {
                         queue[q_back++] = i;
@@ -1233,8 +1227,8 @@ Build_Target** build_model_topological_sort(Build_Model *model, size_t *count) {
                 }
             }
             if (in_degree[i] == 0) continue;
-            for (size_t j = 0; j < other->object_dependencies.count; j++) {
-                if (nob_sv_eq(other->object_dependencies.items[j], current->name)) {
+            for (size_t j = 0; j < arena_arr_len(other->object_dependencies); j++) {
+                if (nob_sv_eq(other->object_dependencies[j], current->name)) {
                     in_degree[i]--;
                     if (in_degree[i] == 0) {
                         queue[q_back++] = i;
@@ -1260,8 +1254,8 @@ void build_model_dump(Build_Model *model, FILE *output) {
             SV_Arg(model->project_name), SV_Arg(model->project_version));
     
     fprintf(output, "Languages: ");
-    for (size_t i = 0; i < model->project_languages.count; i++) {
-        fprintf(output, SV_Fmt" ", SV_Arg(model->project_languages.items[i]));
+    for (size_t i = 0; i < arena_arr_len(model->project_languages); i++) {
+        fprintf(output, SV_Fmt" ", SV_Arg(model->project_languages[i]));
     }
     fprintf(output, "\n\n");
     
@@ -1282,27 +1276,27 @@ void build_model_dump(Build_Model *model, FILE *output) {
         }
         
         fprintf(output, "  [%zu] "SV_Fmt" (%s)\n", i, SV_Arg(t->name), type_str);
-        fprintf(output, "    Sources: %zu\n", t->sources.count);
-        fprintf(output, "    Dependencies: %zu\n", t->dependencies.count);
-        fprintf(output, "    Object dependencies: %zu\n", t->object_dependencies.count);
-        fprintf(output, "    Link libraries: %zu\n", t->link_libraries.count);
+        fprintf(output, "    Sources: %zu\n", arena_arr_len(t->sources));
+        fprintf(output, "    Dependencies: %zu\n", arena_arr_len(t->dependencies));
+        fprintf(output, "    Object dependencies: %zu\n", arena_arr_len(t->object_dependencies));
+        fprintf(output, "    Link libraries: %zu\n", arena_arr_len(t->link_libraries));
         
-        if (t->custom_properties.count > 0) {
+        if (arena_arr_len(t->custom_properties) > 0) {
             fprintf(output, "    Properties:\n");
-            for (size_t j = 0; j < t->custom_properties.count; j++) {
+            for (size_t j = 0; j < arena_arr_len(t->custom_properties); j++) {
                 fprintf(output, "      "SV_Fmt": "SV_Fmt"\n",
-                        SV_Arg(t->custom_properties.items[j].name),
-                        SV_Arg(t->custom_properties.items[j].value));
+                        SV_Arg(t->custom_properties[j].name),
+                        SV_Arg(t->custom_properties[j].value));
             }
         }
         fprintf(output, "\n");
     }
     
-    fprintf(output, "Cache variables (%zu):\n", model->cache_variables.count);
-    for (size_t i = 0; i < model->cache_variables.count; i++) {
+    fprintf(output, "Cache variables (%zu):\n", arena_arr_len(model->cache_variables));
+    for (size_t i = 0; i < arena_arr_len(model->cache_variables); i++) {
         fprintf(output, "  "SV_Fmt" = "SV_Fmt"\n",
-                SV_Arg(model->cache_variables.items[i].name),
-                SV_Arg(model->cache_variables.items[i].value));
+                SV_Arg(model->cache_variables[i].name),
+                SV_Arg(model->cache_variables[i].value));
     }
     
     fprintf(output, "\nPackages found (%zu):\n", model->package_count);
@@ -1789,12 +1783,12 @@ const String_List* build_model_get_install_rule_list(const Build_Model *model, I
 }
 
 size_t build_model_get_cache_variable_count(const Build_Model *model) {
-    return model ? model->cache_variables.count : 0;
+    return model ? arena_arr_len(model->cache_variables) : 0;
 }
 
 String_View build_model_get_cache_variable_name_at(const Build_Model *model, size_t index) {
-    if (!model || index >= model->cache_variables.count) return sv_from_cstr("");
-    return model->cache_variables.items[index].name;
+    if (!model || index >= arena_arr_len(model->cache_variables)) return sv_from_cstr("");
+    return model->cache_variables[index].name;
 }
 
 size_t build_model_get_target_count(const Build_Model *model) {
@@ -1895,13 +1889,13 @@ void build_model_set_env_var(Build_Model *model, Arena *arena, String_View key, 
         }
     }
     if (idx >= 0) {
-        model->environment_variables.items[idx].value = safe_val;
+        model->environment_variables[idx].value = safe_val;
         return;
     }
 
-    size_t before = model->environment_variables.count;
+    size_t before = arena_arr_len(model->environment_variables);
     property_list_add(&model->environment_variables, arena, safe_key, safe_val);
-    if (model->environment_variables.count == before + 1) {
+    if (arena_arr_len(model->environment_variables) == before + 1) {
         if (!build_model_put_property_index(&model->environment_variable_index, (char*)safe_key.data, (int)before)) {
             nob_log(NOB_WARNING, "failed to index environment variable '"SV_Fmt"'", SV_Arg(safe_key));
         }
@@ -2002,12 +1996,12 @@ void build_model_add_global_link_library(Build_Model *model, Arena *arena, Strin
 void build_model_remove_global_definition(Build_Model *model, String_View def) {
     if (!model) return;
     size_t out = 0;
-    for (size_t i = 0; i < model->global_definitions.count; i++) {
-        if (!nob_sv_eq(model->global_definitions.items[i], def)) {
-            model->global_definitions.items[out++] = model->global_definitions.items[i];
+    for (size_t i = 0; i < arena_arr_len(model->global_definitions); i++) {
+        if (!nob_sv_eq(model->global_definitions[i], def)) {
+            model->global_definitions[out++] = model->global_definitions[i];
         }
     }
-    model->global_definitions.count = out;
+    arena_arr_set_len(model->global_definitions, out);
 }
 
 void build_target_set_property_smart(Build_Target *target,
@@ -2143,8 +2137,8 @@ Target_Type build_target_get_type(const Build_Target *target) {
 
 bool build_target_has_source(const Build_Target *target, String_View source) {
     if (!target || source.count == 0) return false;
-    for (size_t i = 0; i < target->sources.count; i++) {
-        if (nob_sv_eq(target->sources.items[i], source)) return true;
+    for (size_t i = 0; i < arena_arr_len(target->sources); i++) {
+        if (nob_sv_eq(target->sources[i], source)) return true;
     }
     return false;
 }
@@ -2170,23 +2164,23 @@ void build_target_reset_derived_property(Build_Target *target, Build_Target_Deri
     if (!target) return;
     switch (kind) {
         case BUILD_TARGET_DERIVED_INTERFACE_COMPILE_DEFINITIONS:
-            target->interface_compile_definitions.count = 0;
+            arena_arr_set_len(target->interface_compile_definitions, 0);
             break;
         case BUILD_TARGET_DERIVED_INTERFACE_COMPILE_OPTIONS:
-            target->interface_compile_options.count = 0;
+            arena_arr_set_len(target->interface_compile_options, 0);
             break;
         case BUILD_TARGET_DERIVED_INTERFACE_INCLUDE_DIRECTORIES:
-            target->interface_include_directories.count = 0;
+            arena_arr_set_len(target->interface_include_directories, 0);
             break;
         case BUILD_TARGET_DERIVED_INTERFACE_LINK_OPTIONS:
-            target->interface_link_options.count = 0;
+            arena_arr_set_len(target->interface_link_options, 0);
             break;
         case BUILD_TARGET_DERIVED_INTERFACE_LINK_DIRECTORIES:
-            target->interface_link_directories.count = 0;
+            arena_arr_set_len(target->interface_link_directories, 0);
             break;
         case BUILD_TARGET_DERIVED_INTERFACE_LINK_LIBRARIES:
-            target->interface_dependencies.count = 0;
-            target->interface_libs.count = 0;
+            arena_arr_set_len(target->interface_dependencies, 0);
+            arena_arr_set_len(target->interface_libs, 0);
             break;
         default:
             break;
@@ -2201,10 +2195,10 @@ const Custom_Command* build_target_get_custom_commands(const Build_Target *targe
     if (out_count) *out_count = 0;
     if (!target) return NULL;
     if (pre_build) {
-        if (out_count) *out_count = target->pre_build_count;
+        if (out_count) *out_count = arena_arr_len(target->pre_build_commands);
         return target->pre_build_commands;
     }
-    if (out_count) *out_count = target->post_build_count;
+    if (out_count) *out_count = arena_arr_len(target->post_build_commands);
     return target->post_build_commands;
 }
 
@@ -2401,12 +2395,12 @@ void build_cpack_group_set_bold_title(CPack_Component_Group *group, bool bold_ti
 
 void build_cpack_component_clear_dependencies(CPack_Component *component) {
     if (!component) return;
-    component->depends.count = 0;
+    arena_arr_set_len(component->depends, 0);
 }
 
 void build_cpack_component_clear_install_types(CPack_Component *component) {
     if (!component) return;
-    component->install_types.count = 0;
+    arena_arr_set_len(component->install_types, 0);
 }
 
 void build_cpack_component_set_display_name(CPack_Component *component, String_View display_name) {
@@ -2482,15 +2476,13 @@ Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
     if (!target || !arena || command.count == 0) return NULL;
 
     Custom_Command *list = pre_build ? target->pre_build_commands : target->post_build_commands;
-    size_t *count = pre_build ? &target->pre_build_count : &target->post_build_count;
-    size_t *capacity = pre_build ? &target->pre_build_capacity : &target->post_build_capacity;
-    if (!arena_da_reserve(arena, (void**)&list, capacity, sizeof(*list), *count + 1)) return NULL;
-
+    Custom_Command empty = {0};
+    if (!arena_arr_push(arena, list, empty)) return NULL;
     if (pre_build) target->pre_build_commands = list;
     else target->post_build_commands = list;
     list = pre_build ? target->pre_build_commands : target->post_build_commands;
 
-    Custom_Command *cmd = &list[*count];
+    Custom_Command *cmd = &list[arena_arr_len(list) - 1];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = CUSTOM_COMMAND_SHELL;
     cmd->working_dir = bm_sv_copy_to_arena(arena, working_dir);
@@ -2502,7 +2494,6 @@ Custom_Command* build_target_add_custom_command_ex(Build_Target *target,
     string_list_init(&cmd->inputs);
     string_list_init(&cmd->depends);
     build_custom_command_add_command(cmd, arena, command);
-    (*count)++;
     return cmd;
 }
 
@@ -2519,10 +2510,10 @@ Custom_Command* build_model_add_custom_command_output_ex(Build_Model *model,
                                                          String_View working_dir,
                                                          String_View comment) {
     if (!model || !arena || command.count == 0) return NULL;
-    if (!arena_da_reserve(arena, (void**)&model->output_custom_commands, &model->output_custom_command_capacity,
-            sizeof(*model->output_custom_commands), model->output_custom_command_count + 1)) {
+    if (!arena_arr_reserve(arena, model->output_custom_commands, model->output_custom_command_count + 1)) {
         return NULL;
     }
+    model->output_custom_command_capacity = arena_arr_cap(model->output_custom_commands);
     Custom_Command *cmd = &model->output_custom_commands[model->output_custom_command_count++];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = CUSTOM_COMMAND_SHELL;
@@ -2550,22 +2541,22 @@ Custom_Command* build_model_add_custom_command_output(Build_Model *model,
 
 void build_custom_command_add_outputs(Custom_Command *cmd, Arena *arena, const String_List *items) {
     if (!cmd || !arena || !items) return;
-    for (size_t i = 0; i < items->count; i++) {
-        string_list_add(&cmd->outputs, arena, items->items[i]);
+    for (size_t i = 0; i < arena_arr_len(*items); i++) {
+        string_list_add(&cmd->outputs, arena, (*items)[i]);
     }
 }
 
 void build_custom_command_add_byproducts(Custom_Command *cmd, Arena *arena, const String_List *items) {
     if (!cmd || !arena || !items) return;
-    for (size_t i = 0; i < items->count; i++) {
-        string_list_add(&cmd->byproducts, arena, items->items[i]);
+    for (size_t i = 0; i < arena_arr_len(*items); i++) {
+        string_list_add(&cmd->byproducts, arena, (*items)[i]);
     }
 }
 
 void build_custom_command_add_depends(Custom_Command *cmd, Arena *arena, const String_List *items) {
     if (!cmd || !arena || !items) return;
-    for (size_t i = 0; i < items->count; i++) {
-        string_list_add(&cmd->depends, arena, items->items[i]);
+    for (size_t i = 0; i < arena_arr_len(*items); i++) {
+        string_list_add(&cmd->depends, arena, (*items)[i]);
     }
 }
 
@@ -2639,8 +2630,8 @@ Custom_Command* build_model_find_output_custom_command_by_output(Build_Model *mo
     if (!model || output.count == 0) return NULL;
     for (size_t i = 0; i < model->output_custom_command_count; i++) {
         Custom_Command *cmd = &model->output_custom_commands[i];
-        for (size_t j = 0; j < cmd->outputs.count; j++) {
-            if (nob_sv_eq(cmd->outputs.items[j], output)) return cmd;
+        for (size_t j = 0; j < arena_arr_len(cmd->outputs); j++) {
+            if (nob_sv_eq(cmd->outputs[j], output)) return cmd;
         }
     }
     return NULL;

@@ -108,8 +108,8 @@ static bool curl_apply_common_opts(Evaluator_Context *ctx,
         curl_easy_setopt(h, CURLOPT_NETRC_FILE, netrc_c);
     }
 
-    for (size_t i = 0; i < opt->http_headers.count; i++) {
-        char *hdr_c = eval_sv_to_cstr_temp(ctx, opt->http_headers.items[i]);
+    for (size_t i = 0; i < arena_arr_len(opt->http_headers); i++) {
+        char *hdr_c = eval_sv_to_cstr_temp(ctx, opt->http_headers[i]);
         EVAL_OOM_RETURN_IF_NULL(ctx, hdr_c, false);
         *out_headers = curl_slist_append(*out_headers, hdr_c);
         if (!*out_headers) {

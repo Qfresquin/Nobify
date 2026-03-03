@@ -40,7 +40,7 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count != 2) {
+    if (arena_arr_len(a) != 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_file"),
@@ -51,7 +51,7 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
         return !eval_should_stop(ctx);
     }
 
-    String_View dir = a.items[0];
+    String_View dir = a[0];
     if (!eval_sv_is_abs_path(dir)) {
         dir = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_src_dir(ctx), dir);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
@@ -69,7 +69,7 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, a.items[1], eval_sv_join_semi_temp(ctx, sources.items, sources.count))) {
+    if (!eval_var_set(ctx, a[1], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -820,12 +820,13 @@ static bool posix_glob_collect(Evaluator_Context *ctx,
             globfree(&g);
             return false;
         }
-        if (!arena_da_reserve(eval_temp_arena(ctx), (void**)io_items, io_cap, sizeof(String_View), *io_count + 1)) {
+        if (!arena_arr_push(eval_temp_arena(ctx), *io_items, sv)) {
             globfree(&g);
             ctx_oom(ctx);
             return false;
         }
-        (*io_items)[(*io_count)++] = sv;
+        *io_count = arena_arr_len(*io_items);
+        *io_cap = arena_arr_cap(*io_items);
     }
 
     globfree(&g);
@@ -922,12 +923,9 @@ static void file_glob_walk(Evaluator_Context *ctx,
 
         if (glob_match_sv(pat, full, ci)) {
             if (list_dirs || !is_dir) {
-                if (arena_da_reserve(eval_temp_arena(ctx),
-                                     (void**)io_items,
-                                     io_cap,
-                                     sizeof(String_View),
-                                     *io_count + 1)) {
-                    (*io_items)[(*io_count)++] = full;
+                if (arena_arr_push(eval_temp_arena(ctx), *io_items, full)) {
+                    *io_count = arena_arr_len(*io_items);
+                    *io_cap = arena_arr_cap(*io_items);
                 } else {
                     ctx_oom(ctx);
                     break;
@@ -946,7 +944,7 @@ static void file_glob_walk(Evaluator_Context *ctx,
 
 static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List args, bool recurse) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (arena_arr_len(args) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_file"),
@@ -957,21 +955,21 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
         return;
     }
 
-    String_View out_var = args.items[1];
+    String_View out_var = args[1];
     bool list_dirs = true;
     bool has_relative = false;
     String_View relative_base = nob_sv_from_cstr("");
     size_t pat_idx = 2;
 
-    while (pat_idx < args.count &&
-           (eval_sv_eq_ci_lit(args.items[pat_idx], "CONFIGURE_DEPENDS") ||
-            eval_sv_eq_ci_lit(args.items[pat_idx], "LIST_DIRECTORIES") ||
-            eval_sv_eq_ci_lit(args.items[pat_idx], "RELATIVE"))) {
-        if (eval_sv_eq_ci_lit(args.items[pat_idx], "LIST_DIRECTORIES")) {
-            if (pat_idx + 1 < args.count) list_dirs = eval_truthy(ctx, args.items[++pat_idx]);
-        } else if (eval_sv_eq_ci_lit(args.items[pat_idx], "RELATIVE")) {
-            if (pat_idx + 1 < args.count) {
-                relative_base = args.items[++pat_idx];
+    while (pat_idx < arena_arr_len(args) &&
+           (eval_sv_eq_ci_lit(args[pat_idx], "CONFIGURE_DEPENDS") ||
+            eval_sv_eq_ci_lit(args[pat_idx], "LIST_DIRECTORIES") ||
+            eval_sv_eq_ci_lit(args[pat_idx], "RELATIVE"))) {
+        if (eval_sv_eq_ci_lit(args[pat_idx], "LIST_DIRECTORIES")) {
+            if (pat_idx + 1 < arena_arr_len(args)) list_dirs = eval_truthy(ctx, args[++pat_idx]);
+        } else if (eval_sv_eq_ci_lit(args[pat_idx], "RELATIVE")) {
+            if (pat_idx + 1 < arena_arr_len(args)) {
+                relative_base = args[++pat_idx];
                 has_relative = true;
             }
         }
@@ -994,8 +992,8 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
         relative_base = eval_sv_path_join(eval_temp_arena(ctx), current_src, relative_base);
     }
 
-    for (size_t i = pat_idx; i < args.count; ++i) {
-        String_View pat = args.items[i];
+    for (size_t i = pat_idx; i < arena_arr_len(args); ++i) {
+        String_View pat = args[i];
         if (!eval_sv_is_abs_path(pat)) {
             pat = eval_sv_path_join(eval_temp_arena(ctx), current_src, pat);
         }
@@ -1060,7 +1058,7 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
 
 static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (arena_arr_len(args) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_file"),
@@ -1072,7 +1070,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
     }
 
     String_View path = nob_sv_from_cstr("");
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], ctx->binary_dir, &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], ctx->binary_dir, &path)) return;
 
     char *path_c = (char*)arena_alloc(eval_temp_arena(ctx), path.count + 1);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
@@ -1111,15 +1109,15 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
         return;
     }
 
-    for (size_t i = 2; i < args.count; i++) {
-        fwrite(args.items[i].data, 1, args.items[i].count, f);
+    for (size_t i = 2; i < arena_arr_len(args); i++) {
+        fwrite(args[i].data, 1, args[i].count, f);
     }
     fclose(f);
 }
 
 static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_file"),
@@ -1130,9 +1128,9 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
         return;
     }
 
-    for (size_t i = 1; i < args.count; i++) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
         String_View path = nob_sv_from_cstr("");
-        if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[i], eval_file_current_bin_dir(ctx), &path)) return;
+        if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_file_current_bin_dir(ctx), &path)) return;
 
         if (!eval_file_mkdir_p(ctx, path)) {
             eval_emit_diag(ctx,
@@ -1149,7 +1147,7 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
 
 static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (arena_arr_len(args) < 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(READ) requires <path> and <out-var>"),
                        nob_sv_from_cstr("Usage: file(READ <path> <out-var> [OFFSET n] [LIMIT n] [HEX])"));
@@ -1157,27 +1155,27 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
     }
 
     String_View path = nob_sv_from_cstr("");
-    String_View out_var = args.items[2];
+    String_View out_var = args[2];
     size_t offset = 0;
     bool has_limit = false;
     size_t limit = 0;
     bool hex = false;
 
-    for (size_t i = 3; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "OFFSET") && i + 1 < args.count) {
-            (void)eval_file_parse_size_sv(args.items[++i], &offset);
+    for (size_t i = 3; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "OFFSET") && i + 1 < arena_arr_len(args)) {
+            (void)eval_file_parse_size_sv(args[++i], &offset);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "LIMIT") && i + 1 < args.count) {
-            has_limit = eval_file_parse_size_sv(args.items[++i], &limit);
+        if (eval_sv_eq_ci_lit(args[i], "LIMIT") && i + 1 < arena_arr_len(args)) {
+            has_limit = eval_file_parse_size_sv(args[++i], &limit);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "HEX")) {
+        if (eval_sv_eq_ci_lit(args[i], "HEX")) {
             hex = true;
         }
     }
 
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_src_dir(ctx), &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return;
 
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
@@ -1220,7 +1218,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
 
 static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (arena_arr_len(args) < 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(STRINGS) requires <path> and <out-var>"),
                        nob_sv_from_cstr("Usage: file(STRINGS <path> <out-var>)"));
@@ -1248,78 +1246,78 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     } File_Strings_Options;
 
     String_View path = nob_sv_from_cstr("");
-    String_View out_var = args.items[2];
+    String_View out_var = args[2];
 
     File_Strings_Options opt = {0};
     String_View unsupported_items[64] = {0};
     size_t unsupported_count = 0;
 
-    for (size_t i = 3; i < args.count; i++) {
-        String_View t = args.items[i];
+    for (size_t i = 3; i < arena_arr_len(args); i++) {
+        String_View t = args[i];
 
-        if (eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM") && i + 1 < args.count) {
+        if (eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
-            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MINIMUM value"),
-                               args.items[i]);
+                               args[i]);
                 return;
             }
             opt.has_len_min = true;
             opt.len_min = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM") && i + 1 < args.count) {
+        if (eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
-            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MAXIMUM value"),
-                               args.items[i]);
+                               args[i]);
                 return;
             }
             opt.has_len_max = true;
             opt.len_max = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LIMIT_COUNT") && i + 1 < args.count) {
+        if (eval_sv_eq_ci_lit(t, "LIMIT_COUNT") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
-            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LIMIT_COUNT value"),
-                               args.items[i]);
+                               args[i]);
                 return;
             }
             opt.has_limit_count = true;
             opt.limit_count = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LIMIT_INPUT") && i + 1 < args.count) {
+        if (eval_sv_eq_ci_lit(t, "LIMIT_INPUT") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
-            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LIMIT_INPUT value"),
-                               args.items[i]);
+                               args[i]);
                 return;
             }
             opt.has_limit_input = true;
             opt.limit_input = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT") && i + 1 < args.count) {
+        if (eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
-            if (!eval_file_parse_size_sv(args.items[++i], &v)) {
+            if (!eval_file_parse_size_sv(args[++i], &v)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) invalid LIMIT_OUTPUT value"),
-                               args.items[i]);
+                               args[i]);
                 return;
             }
             opt.has_limit_output = true;
             opt.limit_output = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "REGEX") && i + 1 < args.count) {
+        if (eval_sv_eq_ci_lit(t, "REGEX") && i + 1 < arena_arr_len(args)) {
             opt.has_regex = true;
-            opt.regex = args.items[++i];
+            opt.regex = args[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(t, "NEWLINE_CONSUME")) {
@@ -1331,13 +1329,13 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
             continue;
         }
         if (eval_sv_eq_ci_lit(t, "ENCODING")) {
-            if (i + 1 >= args.count) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(STRINGS) ENCODING requires a value"),
                                t);
                 return;
             }
-            String_View encoding_sv = args.items[++i];
+            String_View encoding_sv = args[++i];
             File_Strings_Encoding enc = file_strings_parse_encoding_sv(encoding_sv);
             if (enc == FILE_STRINGS_ENCODING_INVALID) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
@@ -1368,7 +1366,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_should_stop(ctx)) return;
     }
 
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_src_dir(ctx), &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return;
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
 
@@ -1751,9 +1749,9 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
 
 #if defined(_WIN32)
             // Windows fallback: materialize symlink aliases as copied entries.
-            for (size_t i = 0; i < link_names.count; i++) {
-                if (eval_sv_key_eq(link_names.items[i], base)) continue;
-                String_View alias_dst = eval_sv_path_join(eval_temp_arena(ctx), dest_dir, link_names.items[i]);
+            for (size_t i = 0; i < arena_arr_len(link_names); i++) {
+                if (eval_sv_key_eq(link_names[i], base)) continue;
+                String_View alias_dst = eval_sv_path_join(eval_temp_arena(ctx), dest_dir, link_names[i]);
                 char *alias_dst_c = eval_sv_to_cstr_temp(ctx, alias_dst);
                 EVAL_OOM_RETURN_IF_NULL(ctx, alias_dst_c, false);
 
@@ -1870,8 +1868,8 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
     if (!ctx || !userdata) return false;
     Copy_Parse_State *st = (Copy_Parse_State*)userdata;
     String_View token = nob_sv_from_cstr("");
-    if (token_index < st->args.count) {
-        token = st->args.items[token_index];
+    if (token_index < arena_arr_len(st->args)) {
+        token = st->args[token_index];
     }
 
     if (id == COPY_KEY_FILES_MATCHING) {
@@ -1879,7 +1877,7 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
         return true;
     }
     if (id == COPY_KEY_PATTERN || id == COPY_KEY_REGEX) {
-        if (values.count == 0) {
+        if (arena_arr_len(values) == 0) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                            nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"),
                            token);
@@ -1892,7 +1890,7 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
             return true;
         }
         st->filters[st->filter_count].is_regex = (id == COPY_KEY_REGEX);
-        st->filters[st->filter_count].expr = values.items[0];
+        st->filters[st->filter_count].expr = values[0];
         st->filter_count++;
         return true;
     }
@@ -1924,14 +1922,14 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
         id == COPY_KEY_DIRECTORY_PERMISSIONS) {
         mode_t parsed_mode = 0;
         bool has_any = false;
-        for (size_t i = 0; i < values.count; i++) {
-            if (copy_permission_add_token(&parsed_mode, values.items[i])) {
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (copy_permission_add_token(&parsed_mode, values[i])) {
                 has_any = true;
             } else {
                 st->saw_unknown_permission_token = true;
                 eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                                nob_sv_from_cstr("file(COPY) unknown permission token"),
-                               values.items[i]);
+                               values[i]);
             }
         }
         if (!has_any) {
@@ -1967,7 +1965,7 @@ static bool copy_parse_on_positional(Evaluator_Context *ctx,
 
 void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 4) {
+    if (arena_arr_len(args) < 4) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(COPY) requires sources and DESTINATION"),
                        nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));
@@ -1975,20 +1973,20 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
     }
 
     size_t dest_idx = SIZE_MAX;
-    for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "DESTINATION")) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "DESTINATION")) {
             dest_idx = i;
             break;
         }
     }
-    if (dest_idx == SIZE_MAX || dest_idx + 1 >= args.count || dest_idx == 1) {
+    if (dest_idx == SIZE_MAX || dest_idx + 1 >= arena_arr_len(args) || dest_idx == 1) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(COPY) missing DESTINATION or sources"),
                        nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));
         return;
     }
 
-    String_View dest = args.items[dest_idx + 1];
+    String_View dest = args[dest_idx + 1];
     if (!eval_sv_is_abs_path(dest)) {
         dest = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_bin_dir(ctx), dest);
     }
@@ -2066,7 +2064,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
 
     bool applied_any_permissions = false;
     for (size_t i = 1; i < dest_idx; i++) {
-        String_View src = args.items[i];
+        String_View src = args[i];
         if (!eval_sv_is_abs_path(src)) {
             src = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_src_dir(ctx), src);
         }
@@ -2142,9 +2140,9 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
 bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || args.count == 0) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx) || arena_arr_len(args) == 0) return !eval_should_stop(ctx);
 
-    String_View subcmd = args.items[0];
+    String_View subcmd = args[0];
 
     if (eval_sv_eq_ci_lit(subcmd, "GLOB")) {
         handle_file_glob(ctx, node, args, false);

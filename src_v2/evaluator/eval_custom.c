@@ -24,11 +24,11 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
 }
 
 static String_View *sv_list_copy_to_event_arena(Evaluator_Context *ctx, const SV_List *list) {
-    if (!ctx || !list || list->count == 0) return NULL;
-    String_View *items = arena_alloc_array(eval_event_arena(ctx), String_View, list->count);
+    if (!ctx || !list || arena_arr_len(*list) == 0) return NULL;
+    String_View *items = arena_alloc_array(eval_event_arena(ctx), String_View, arena_arr_len(*list));
     EVAL_OOM_RETURN_IF_NULL(ctx, items, NULL);
-    for (size_t i = 0; i < list->count; i++) {
-        items[i] = sv_copy_to_event_arena(ctx, list->items[i]);
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        items[i] = sv_copy_to_event_arena(ctx, (*list)[i]);
     }
     return items;
 }
@@ -73,25 +73,25 @@ static bool add_custom_target_on_option(Evaluator_Context *ctx,
     Add_Custom_Target_Opts *st = (Add_Custom_Target_Opts*)userdata;
     switch (id) {
     case CUSTOM_TARGET_OPT_DEPENDS:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->depends, values[i])) return false;
         }
         return true;
     case CUSTOM_TARGET_OPT_BYPRODUCTS:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->byproducts, values[i])) return false;
         }
         return true;
     case CUSTOM_TARGET_OPT_SOURCES:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->sources, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->sources, values[i])) return false;
         }
         return true;
     case CUSTOM_TARGET_OPT_WORKING_DIRECTORY:
-        if (values.count > 0) st->working_dir = values.items[0];
+        if (arena_arr_len(values) > 0) st->working_dir = values[0];
         return true;
     case CUSTOM_TARGET_OPT_COMMENT:
-        if (values.count > 0) st->comment = values.items[0];
+        if (arena_arr_len(values) > 0) st->comment = values[0];
         return true;
     case CUSTOM_TARGET_OPT_VERBATIM:
         st->verbatim = true;
@@ -104,20 +104,20 @@ static bool add_custom_target_on_option(Evaluator_Context *ctx,
         return true;
     case CUSTOM_TARGET_OPT_COMMAND: {
         size_t start = 0;
-        if (values.count > 0 && eval_sv_eq_ci_lit(values.items[0], "ARGS")) start = 1;
-        if (start < values.count) {
-            String_View cmd = svu_join_space_temp(ctx, &values.items[start], values.count - start);
+        if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "ARGS")) start = 1;
+        if (start < arena_arr_len(values)) {
+            String_View cmd = svu_join_space_temp(ctx, &values[start], arena_arr_len(values) - start);
             if (!svu_list_push_temp(ctx, &st->commands, cmd)) return false;
         }
         return true;
     }
     case CUSTOM_TARGET_OPT_JOB_POOL:
         st->has_job_pool = true;
-        if (values.count > 0) st->job_pool = values.items[0];
+        if (arena_arr_len(values) > 0) st->job_pool = values[0];
         return true;
     case CUSTOM_TARGET_OPT_JOB_SERVER_AWARE:
         st->has_job_server_aware = true;
-        st->job_server_aware = (values.count > 0) ? values.items[0] : nob_sv_from_cstr("1");
+        st->job_server_aware = (arena_arr_len(values) > 0) ? values[0] : nob_sv_from_cstr("1");
         return true;
     default:
         return true;
@@ -225,8 +225,8 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
     Add_Custom_Command_Opts *st = (Add_Custom_Command_Opts*)userdata;
     switch (id) {
     case CUSTOM_CMD_OPT_OUTPUT:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->outputs, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->outputs, values[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_PRE_BUILD:
@@ -246,28 +246,28 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         return true;
     case CUSTOM_CMD_OPT_COMMAND: {
         size_t start = 0;
-        if (values.count > 0 && eval_sv_eq_ci_lit(values.items[0], "ARGS")) start = 1;
-        if (start < values.count) {
-            String_View cmd = svu_join_space_temp(ctx, &values.items[start], values.count - start);
+        if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "ARGS")) start = 1;
+        if (start < arena_arr_len(values)) {
+            String_View cmd = svu_join_space_temp(ctx, &values[start], arena_arr_len(values) - start);
             if (!svu_list_push_temp(ctx, &st->commands, cmd)) return false;
         }
         return true;
     }
     case CUSTOM_CMD_OPT_DEPENDS:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->depends, values[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_BYPRODUCTS:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->byproducts, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->byproducts, values[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_MAIN_DEPENDENCY:
-        if (values.count > 0) st->main_dependency = values.items[0];
+        if (arena_arr_len(values) > 0) st->main_dependency = values[0];
         return true;
     case CUSTOM_CMD_OPT_IMPLICIT_DEPENDS:
-        if (values.count == 0 || (values.count % 2) != 0) {
+        if (arena_arr_len(values) == 0 || (arena_arr_len(values) % 2) != 0) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -278,32 +278,32 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
             return false;
         }
         st->has_implicit_depends = true;
-        for (size_t i = 0; i < values.count; i += 2) {
-            if (!eval_sv_eq_ci_lit(values.items[i], "C") &&
-                !eval_sv_eq_ci_lit(values.items[i], "CXX")) {
+        for (size_t i = 0; i < arena_arr_len(values); i += 2) {
+            if (!eval_sv_eq_ci_lit(values[i], "C") &&
+                !eval_sv_eq_ci_lit(values[i], "CXX")) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
                                st->command_name,
                                st->origin,
                                nob_sv_from_cstr("Unsupported IMPLICIT_DEPENDS language"),
-                               values.items[i]);
+                               values[i]);
                 return false;
             }
         }
-        for (size_t i = 1; i < values.count; i += 2) {
-            if (!svu_list_push_temp(ctx, &st->depends, values.items[i])) return false;
+        for (size_t i = 1; i < arena_arr_len(values); i += 2) {
+            if (!svu_list_push_temp(ctx, &st->depends, values[i])) return false;
         }
         return true;
     case CUSTOM_CMD_OPT_DEPFILE:
-        if (values.count > 0) st->depfile = values.items[0];
+        if (arena_arr_len(values) > 0) st->depfile = values[0];
         st->has_depfile = true;
         return true;
     case CUSTOM_CMD_OPT_WORKING_DIRECTORY:
-        if (values.count > 0) st->working_dir = values.items[0];
+        if (arena_arr_len(values) > 0) st->working_dir = values[0];
         return true;
     case CUSTOM_CMD_OPT_COMMENT:
-        if (values.count > 0) st->comment = values.items[0];
+        if (arena_arr_len(values) > 0) st->comment = values[0];
         return true;
     case CUSTOM_CMD_OPT_APPEND:
         st->append = true;
@@ -325,11 +325,11 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         return true;
     case CUSTOM_CMD_OPT_JOB_POOL:
         st->has_job_pool = true;
-        if (values.count > 0) st->job_pool = values.items[0];
+        if (arena_arr_len(values) > 0) st->job_pool = values[0];
         return true;
     case CUSTOM_CMD_OPT_JOB_SERVER_AWARE:
         st->has_job_server_aware = true;
-        st->job_server_aware = (values.count > 0) ? values.items[0] : nob_sv_from_cstr("1");
+        st->job_server_aware = (arena_arr_len(values) > 0) ? values[0] : nob_sv_from_cstr("1");
         return true;
     default:
         return true;
@@ -369,7 +369,7 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -380,10 +380,10 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     bool all = false;
     size_t parse_start = 1;
-    if (parse_start < a.count && eval_sv_eq_ci_lit(a.items[parse_start], "ALL")) {
+    if (parse_start < arena_arr_len(a) && eval_sv_eq_ci_lit(a[parse_start], "ALL")) {
         all = true;
         parse_start++;
     }
@@ -462,41 +462,41 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    for (size_t s = 0; s < opt.sources.count; s++) {
+    for (size_t s = 0; s < arena_arr_len(opt.sources); s++) {
         Cmake_Event src_ev = {0};
         src_ev.kind = EV_TARGET_ADD_SOURCE;
         src_ev.origin = o;
         src_ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, name);
-        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, opt.sources.items[s]);
+        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, opt.sources[s]);
         if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
     }
 
-    for (size_t d = 0; d < opt.depends.count; d++) {
+    for (size_t d = 0; d < arena_arr_len(opt.depends); d++) {
         Cmake_Event dep_ev = {0};
         dep_ev.kind = EV_TARGET_LINK_LIBRARIES;
         dep_ev.origin = o;
         dep_ev.as.target_link_libraries.target_name = sv_copy_to_event_arena(ctx, name);
         dep_ev.as.target_link_libraries.visibility = EV_VISIBILITY_PRIVATE;
-        dep_ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, opt.depends.items[d]);
+        dep_ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, opt.depends[d]);
         if (!emit_event(ctx, dep_ev)) return !eval_should_stop(ctx);
     }
 
-    if (opt.commands.count > 0 || opt.byproducts.count > 0) {
+    if (arena_arr_len(opt.commands) > 0 || arena_arr_len(opt.byproducts) > 0) {
         Cmake_Event cmd_ev = {0};
         cmd_ev.kind = EV_CUSTOM_COMMAND_TARGET;
         cmd_ev.origin = o;
         cmd_ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, name);
         cmd_ev.as.custom_command_target.pre_build = true;
         cmd_ev.as.custom_command_target.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
-        cmd_ev.as.custom_command_target.command_count = opt.commands.count;
-        if (opt.commands.count > 0) {
+        cmd_ev.as.custom_command_target.command_count = arena_arr_len(opt.commands);
+        if (arena_arr_len(opt.commands) > 0) {
             EVAL_OOM_RETURN_IF_NULL(ctx, cmd_ev.as.custom_command_target.commands, !eval_should_stop(ctx));
         }
         cmd_ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
         cmd_ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
         cmd_ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
-        cmd_ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts.items, opt.byproducts.count));
-        cmd_ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends.items, opt.depends.count));
+        cmd_ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts, arena_arr_len(opt.byproducts)));
+        cmd_ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends, arena_arr_len(opt.depends)));
         cmd_ev.as.custom_command_target.main_dependency = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
         cmd_ev.as.custom_command_target.depfile = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
         cmd_ev.as.custom_command_target.append = false;
@@ -515,7 +515,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -526,8 +526,8 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    bool mode_target = eval_sv_eq_ci_lit(a.items[0], "TARGET");
-    bool mode_output = eval_sv_eq_ci_lit(a.items[0], "OUTPUT");
+    bool mode_target = eval_sv_eq_ci_lit(a[0], "TARGET");
+    bool mode_output = eval_sv_eq_ci_lit(a[0], "OUTPUT");
     if (!mode_target && !mode_output) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
@@ -542,7 +542,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     String_View target_name = nob_sv_from_cstr("");
     size_t parse_start = 0;
     if (mode_target) {
-        if (a.count < 3) {
+        if (arena_arr_len(a) < 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -552,7 +552,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: add_custom_command(TARGET <target> PRE_BUILD|PRE_LINK|POST_BUILD COMMAND <cmd> ...)"));
             return !eval_should_stop(ctx);
         }
-        target_name = a.items[1];
+        target_name = a[1];
         if (!eval_target_known(ctx, target_name)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
@@ -692,7 +692,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (opt.commands.count == 0) {
+    if (arena_arr_len(opt.commands) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -702,7 +702,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr("Provide at least one COMMAND"));
         return !eval_should_stop(ctx);
     }
-    if (mode_output && opt.outputs.count == 0) {
+    if (mode_output && arena_arr_len(opt.outputs) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -729,15 +729,15 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, target_name);
         ev.as.custom_command_target.pre_build = opt.pre_build;
         ev.as.custom_command_target.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
-        ev.as.custom_command_target.command_count = opt.commands.count;
-        if (opt.commands.count > 0) {
+        ev.as.custom_command_target.command_count = arena_arr_len(opt.commands);
+        if (arena_arr_len(opt.commands) > 0) {
             EVAL_OOM_RETURN_IF_NULL(ctx, ev.as.custom_command_target.commands, !eval_should_stop(ctx));
         }
         ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
         ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
-        ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs.items, opt.outputs.count));
-        ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts.items, opt.byproducts.count));
-        ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends.items, opt.depends.count));
+        ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs, arena_arr_len(opt.outputs)));
+        ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts, arena_arr_len(opt.byproducts)));
+        ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends, arena_arr_len(opt.depends)));
         ev.as.custom_command_target.main_dependency = sv_copy_to_event_arena(ctx, opt.main_dependency);
         ev.as.custom_command_target.depfile = sv_copy_to_event_arena(ctx, opt.depfile);
         ev.as.custom_command_target.append = opt.append;
@@ -752,15 +752,15 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
         ev.origin = o;
         ev.as.custom_command_output.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
-        ev.as.custom_command_output.command_count = opt.commands.count;
-        if (opt.commands.count > 0) {
+        ev.as.custom_command_output.command_count = arena_arr_len(opt.commands);
+        if (arena_arr_len(opt.commands) > 0) {
             EVAL_OOM_RETURN_IF_NULL(ctx, ev.as.custom_command_output.commands, !eval_should_stop(ctx));
         }
         ev.as.custom_command_output.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
         ev.as.custom_command_output.comment = sv_copy_to_event_arena(ctx, opt.comment);
-        ev.as.custom_command_output.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs.items, opt.outputs.count));
-        ev.as.custom_command_output.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts.items, opt.byproducts.count));
-        ev.as.custom_command_output.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends.items, opt.depends.count));
+        ev.as.custom_command_output.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs, arena_arr_len(opt.outputs)));
+        ev.as.custom_command_output.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts, arena_arr_len(opt.byproducts)));
+        ev.as.custom_command_output.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends, arena_arr_len(opt.depends)));
         ev.as.custom_command_output.main_dependency = sv_copy_to_event_arena(ctx, opt.main_dependency);
         ev.as.custom_command_output.depfile = sv_copy_to_event_arena(ctx, opt.depfile);
         ev.as.custom_command_output.append = opt.append;

@@ -196,26 +196,26 @@ static String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View 
     String_View root_b = cmk_path_root_path_temp(ctx, b);
     if (!svu_eq_ci_sv(root_a, root_b)) return a;
 
-    SV_List seg_a = {0};
-    SV_List seg_b = {0};
+    SV_List seg_a = NULL;
+    SV_List seg_b = NULL;
     cmk_path_collect_segments_after_root(ctx, a, root_a, &seg_a);
     cmk_path_collect_segments_after_root(ctx, b, root_b, &seg_b);
     if (ctx->oom) return nob_sv_from_cstr("");
 
     size_t common = 0;
-    while (common < seg_a.count && common < seg_b.count && svu_eq_ci_sv(seg_a.items[common], seg_b.items[common])) {
+    while (common < arena_arr_len(seg_a) && common < arena_arr_len(seg_b) && svu_eq_ci_sv(seg_a[common], seg_b[common])) {
         common++;
     }
 
     size_t total = 0;
     size_t count = 0;
-    for (size_t i = common; i < seg_b.count; i++) {
+    for (size_t i = common; i < arena_arr_len(seg_b); i++) {
         total += 2;
         if (count > 0) total += 1;
         count++;
     }
-    for (size_t i = common; i < seg_a.count; i++) {
-        total += seg_a.items[i].count;
+    for (size_t i = common; i < arena_arr_len(seg_a); i++) {
+        total += seg_a[i].count;
         if (count > 0) total += 1;
         count++;
     }
@@ -225,16 +225,16 @@ static String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View 
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
     size_t off = 0;
     size_t emitted = 0;
-    for (size_t i = common; i < seg_b.count; i++) {
+    for (size_t i = common; i < arena_arr_len(seg_b); i++) {
         if (emitted > 0) buf[off++] = '/';
         buf[off++] = '.';
         buf[off++] = '.';
         emitted++;
     }
-    for (size_t i = common; i < seg_a.count; i++) {
+    for (size_t i = common; i < arena_arr_len(seg_a); i++) {
         if (emitted > 0) buf[off++] = '/';
-        memcpy(buf + off, seg_a.items[i].data, seg_a.items[i].count);
-        off += seg_a.items[i].count;
+        memcpy(buf + off, seg_a[i].data, seg_a[i].count);
+        off += seg_a[i].count;
         emitted++;
     }
     if (emitted == 0) buf[off++] = '.';
@@ -280,24 +280,24 @@ static bool cmk_path_split_char_list_temp(Evaluator_Context *ctx, String_View in
 
 static String_View cmk_path_join_char_list_temp(Evaluator_Context *ctx, SV_List list, char sep) {
     if (!ctx) return nob_sv_from_cstr("");
-    if (list.count == 0) return nob_sv_from_cstr("");
+    if (arena_arr_len(list) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
-    for (size_t i = 0; i < list.count; i++) {
-        total += list.items[i].count;
-        if (i + 1 < list.count) total += 1;
+    for (size_t i = 0; i < arena_arr_len(list); i++) {
+        total += list[i].count;
+        if (i + 1 < arena_arr_len(list)) total += 1;
     }
 
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
 
     size_t off = 0;
-    for (size_t i = 0; i < list.count; i++) {
-        if (list.items[i].count > 0) {
-            memcpy(buf + off, list.items[i].data, list.items[i].count);
-            off += list.items[i].count;
+    for (size_t i = 0; i < arena_arr_len(list); i++) {
+        if (list[i].count > 0) {
+            memcpy(buf + off, list[i].data, list[i].count);
+            off += list[i].count;
         }
-        if (i + 1 < list.count) buf[off++] = sep;
+        if (i + 1 < arena_arr_len(list)) buf[off++] = sep;
     }
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
@@ -363,29 +363,29 @@ static String_View cmk_path_compare_canonical_temp(Evaluator_Context *ctx, Strin
 }
 
 static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(SET) requires <path-var> and <input>",
                        nob_sv_from_cstr("Usage: cmake_path(SET <path-var> [NORMALIZE] <input>)"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     bool normalize = false;
     String_View input = nob_sv_from_cstr("");
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "NORMALIZE")) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "NORMALIZE")) {
             normalize = true;
             continue;
         }
         if (input.count > 0) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(SET) received unexpected argument",
-                           a.items[i]);
+                           a[i]);
             return true;
         }
-        input = a.items[i];
+        input = a[i];
     }
 
     if (input.count == 0) {
@@ -401,26 +401,26 @@ static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
 }
 
 static bool handle_get(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(GET) requires <path-var> <component> <out-var>",
                        nob_sv_from_cstr("Usage: cmake_path(GET <path-var> <component> [LAST_ONLY] <out-var>)"));
         return true;
     }
 
-    String_View path_var = a.items[1];
-    String_View component = a.items[2];
+    String_View path_var = a[1];
+    String_View component = a[2];
     bool supports_last_only = cmk_path_is_component_supports_last_only(component);
 
     bool last_only = false;
     String_View out_var = nob_sv_from_cstr("");
 
     if (supports_last_only) {
-        if (a.count == 4) {
-            out_var = a.items[3];
-        } else if (a.count == 5 && eval_sv_eq_ci_lit(a.items[3], "LAST_ONLY")) {
+        if (arena_arr_len(a) == 4) {
+            out_var = a[3];
+        } else if (arena_arr_len(a) == 5 && eval_sv_eq_ci_lit(a[3], "LAST_ONLY")) {
             last_only = true;
-            out_var = a.items[4];
+            out_var = a[4];
         } else {
             cmk_path_error(ctx, node, o,
                            "cmake_path(GET) invalid argument combination for component",
@@ -428,13 +428,13 @@ static bool handle_get(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
             return true;
         }
     } else {
-        if (a.count != 4) {
+        if (arena_arr_len(a) != 4) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(GET) received unexpected argument",
-                           a.items[4]);
+                           a[4]);
             return true;
         }
-        out_var = a.items[3];
+        out_var = a[3];
     }
 
     String_View input = eval_var_get(ctx, path_var);
@@ -456,7 +456,7 @@ static bool handle_append_like(Evaluator_Context *ctx,
                                Cmake_Event_Origin o,
                                SV_List a,
                                bool string_mode) {
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        string_mode
                            ? "cmake_path(APPEND_STRING) requires <path-var>"
@@ -467,28 +467,28 @@ static bool handle_append_like(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
     String_View current = eval_var_get(ctx, path_var);
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) {
-            if (i + 1 >= a.count) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(APPEND*) OUTPUT_VARIABLE requires a variable name",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            out_var = a.items[++i];
+            out_var = a[++i];
             continue;
         }
 
         if (string_mode) {
-            String_View parts[2] = {current, a.items[i]};
+            String_View parts[2] = {current, a[i]};
             current = svu_join_no_sep_temp(ctx, parts, 2);
         } else {
-            if (current.count == 0) current = a.items[i];
-            else current = eval_sv_path_join(eval_temp_arena(ctx), current, a.items[i]);
+            if (current.count == 0) current = a[i];
+            else current = eval_sv_path_join(eval_temp_arena(ctx), current, a[i]);
         }
     }
 
@@ -497,22 +497,22 @@ static bool handle_append_like(Evaluator_Context *ctx,
 }
 
 static bool handle_remove_filename(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(REMOVE_FILENAME) requires <path-var>",
                        nob_sv_from_cstr("Usage: cmake_path(REMOVE_FILENAME <path-var> [OUTPUT_VARIABLE <out-var>])"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
-    if (a.count > 2) {
-        if (a.count == 4 && eval_sv_eq_ci_lit(a.items[2], "OUTPUT_VARIABLE")) {
-            out_var = a.items[3];
+    if (arena_arr_len(a) > 2) {
+        if (arena_arr_len(a) == 4 && eval_sv_eq_ci_lit(a[2], "OUTPUT_VARIABLE")) {
+            out_var = a[3];
         } else {
             cmk_path_error(ctx, node, o,
                            "cmake_path(REMOVE_FILENAME) received unexpected argument",
-                           a.items[2]);
+                           a[2]);
             return true;
         }
     }
@@ -530,35 +530,35 @@ static bool handle_remove_filename(Evaluator_Context *ctx, const Node *node, Cma
 }
 
 static bool handle_replace_filename(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(REPLACE_FILENAME) requires <path-var> and <input>",
                        nob_sv_from_cstr("Usage: cmake_path(REPLACE_FILENAME <path-var> <input> [OUTPUT_VARIABLE <out-var>])"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     String_View input = nob_sv_from_cstr("");
     String_View out_var = nob_sv_from_cstr("");
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) {
-            if (i + 1 >= a.count) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(REPLACE_FILENAME) OUTPUT_VARIABLE requires a variable name",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            out_var = a.items[++i];
+            out_var = a[++i];
             continue;
         }
         if (input.count > 0) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(REPLACE_FILENAME) received unexpected argument",
-                           a.items[i]);
+                           a[i]);
             return true;
         }
-        input = a.items[i];
+        input = a[i];
     }
 
     if (input.count == 0) {
@@ -586,7 +586,7 @@ static bool handle_extension_common(Evaluator_Context *ctx,
                                     Cmake_Event_Origin o,
                                     SV_List a,
                                     bool replace_mode) {
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        replace_mode
                            ? "cmake_path(REPLACE_EXTENSION) requires <path-var>"
@@ -597,41 +597,41 @@ static bool handle_extension_common(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     bool last_only = false;
     String_View replacement = nob_sv_from_cstr("");
     String_View out_var = nob_sv_from_cstr("");
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "LAST_ONLY")) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "LAST_ONLY")) {
             last_only = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(*_EXTENSION) OUTPUT_VARIABLE requires a variable name",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            out_var = a.items[++i];
+            out_var = a[++i];
             continue;
         }
 
         if (!replace_mode) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(REMOVE_EXTENSION) received unexpected argument",
-                           a.items[i]);
+                           a[i]);
             return true;
         }
 
         if (replacement.count > 0) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(REPLACE_EXTENSION) received unexpected argument",
-                           a.items[i]);
+                           a[i]);
             return true;
         }
-        replacement = a.items[i];
+        replacement = a[i];
     }
 
     if (replace_mode && replacement.count == 0) {
@@ -674,23 +674,23 @@ static bool handle_extension_common(Evaluator_Context *ctx,
 }
 
 static bool handle_normal_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(NORMAL_PATH) requires <path-var>",
                        nob_sv_from_cstr("Usage: cmake_path(NORMAL_PATH <path-var> [OUTPUT_VARIABLE <out-var>])"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
 
-    if (a.count > 2) {
-        if (a.count == 4 && eval_sv_eq_ci_lit(a.items[2], "OUTPUT_VARIABLE")) {
-            out_var = a.items[3];
+    if (arena_arr_len(a) > 2) {
+        if (arena_arr_len(a) == 4 && eval_sv_eq_ci_lit(a[2], "OUTPUT_VARIABLE")) {
+            out_var = a[3];
         } else {
             cmk_path_error(ctx, node, o,
                            "cmake_path(NORMAL_PATH) received unexpected argument",
-                           a.items[2]);
+                           a[2]);
             return true;
         }
     }
@@ -701,42 +701,42 @@ static bool handle_normal_path(Evaluator_Context *ctx, const Node *node, Cmake_E
 }
 
 static bool handle_relative_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(RELATIVE_PATH) requires <path-var>",
                        nob_sv_from_cstr("Usage: cmake_path(RELATIVE_PATH <path-var> [BASE_DIRECTORY <dir>] [OUTPUT_VARIABLE <out-var>])"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
     String_View base_dir = cmk_path_current_source_dir(ctx);
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "BASE_DIRECTORY")) {
-            if (i + 1 >= a.count) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "BASE_DIRECTORY")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(RELATIVE_PATH) BASE_DIRECTORY requires a value",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            base_dir = a.items[++i];
+            base_dir = a[++i];
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(RELATIVE_PATH) OUTPUT_VARIABLE requires a variable name",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            out_var = a.items[++i];
+            out_var = a[++i];
             continue;
         }
 
         cmk_path_error(ctx, node, o,
                        "cmake_path(RELATIVE_PATH) received unexpected argument",
-                       a.items[i]);
+                       a[i]);
         return true;
     }
 
@@ -749,47 +749,47 @@ static bool handle_relative_path(Evaluator_Context *ctx, const Node *node, Cmake
 }
 
 static bool handle_absolute_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(ABSOLUTE_PATH) requires <path-var>",
                        nob_sv_from_cstr("Usage: cmake_path(ABSOLUTE_PATH <path-var> [BASE_DIRECTORY <dir>] [NORMALIZE] [OUTPUT_VARIABLE <out-var>])"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
     String_View base_dir = cmk_path_current_source_dir(ctx);
     bool normalize = false;
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "BASE_DIRECTORY")) {
-            if (i + 1 >= a.count) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "BASE_DIRECTORY")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(ABSOLUTE_PATH) BASE_DIRECTORY requires a value",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            base_dir = a.items[++i];
+            base_dir = a[++i];
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "NORMALIZE")) {
+        if (eval_sv_eq_ci_lit(a[i], "NORMALIZE")) {
             normalize = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_VARIABLE")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 cmk_path_error(ctx, node, o,
                                "cmake_path(ABSOLUTE_PATH) OUTPUT_VARIABLE requires a variable name",
-                               a.items[i]);
+                               a[i]);
                 return true;
             }
-            out_var = a.items[++i];
+            out_var = a[++i];
             continue;
         }
 
         cmk_path_error(ctx, node, o,
                        "cmake_path(ABSOLUTE_PATH) received unexpected argument",
-                       a.items[i]);
+                       a[i]);
         return true;
     }
 
@@ -801,29 +801,29 @@ static bool handle_absolute_path(Evaluator_Context *ctx, const Node *node, Cmake
 }
 
 static bool handle_native_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(NATIVE_PATH) requires <path-var> and output variable",
                        nob_sv_from_cstr("Usage: cmake_path(NATIVE_PATH <path-var> [NORMALIZE] <out-var>)"));
         return true;
     }
 
-    String_View path_var = a.items[1];
+    String_View path_var = a[1];
     bool normalize = false;
     String_View out_var = nob_sv_from_cstr("");
 
-    for (size_t i = 2; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "NORMALIZE")) {
+    for (size_t i = 2; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "NORMALIZE")) {
             normalize = true;
             continue;
         }
         if (out_var.count > 0) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(NATIVE_PATH) received unexpected argument",
-                           a.items[i]);
+                           a[i]);
             return true;
         }
-        out_var = a.items[i];
+        out_var = a[i];
     }
 
     if (out_var.count == 0) {
@@ -841,30 +841,30 @@ static bool handle_native_path(Evaluator_Context *ctx, const Node *node, Cmake_E
 }
 
 static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(CONVERT) requires input, mode and output variable",
                        nob_sv_from_cstr("Usage: cmake_path(CONVERT <input> TO_CMAKE_PATH_LIST|TO_NATIVE_PATH_LIST <out-var> [NORMALIZE])"));
         return true;
     }
 
-    String_View input = a.items[1];
-    String_View mode = a.items[2];
+    String_View input = a[1];
+    String_View mode = a[2];
     bool normalize = false;
     String_View out_var = nob_sv_from_cstr("");
 
-    for (size_t i = 3; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "NORMALIZE")) {
+    for (size_t i = 3; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "NORMALIZE")) {
             normalize = true;
             continue;
         }
         if (out_var.count > 0) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(CONVERT) received unexpected argument",
-                           a.items[i]);
+                           a[i]);
             return true;
         }
-        out_var = a.items[i];
+        out_var = a[i];
     }
 
     if (out_var.count == 0) {
@@ -880,22 +880,22 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
 #else
         const char native_list_sep = ':';
 #endif
-        SV_List parts = {0};
+        SV_List parts = NULL;
         if (!cmk_path_split_char_list_temp(ctx, input, native_list_sep, &parts)) return !eval_should_stop(ctx);
 
-        SV_List converted = {0};
-        for (size_t i = 0; i < parts.count; i++) {
-            String_View p = cmk_path_to_cmake_seps_temp(ctx, parts.items[i]);
+        SV_List converted = NULL;
+        for (size_t i = 0; i < arena_arr_len(parts); i++) {
+            String_View p = cmk_path_to_cmake_seps_temp(ctx, parts[i]);
             if (normalize) p = cmk_path_normalize_temp(ctx, p);
             if (!svu_list_push_temp(ctx, &converted, p)) return !eval_should_stop(ctx);
         }
-        String_View out = eval_sv_join_semi_temp(ctx, converted.items, converted.count);
+        String_View out = eval_sv_join_semi_temp(ctx, converted, arena_arr_len(converted));
         (void)eval_var_set(ctx, out_var, out);
         return true;
     }
 
     if (eval_sv_eq_ci_lit(mode, "TO_NATIVE_PATH_LIST")) {
-        SV_List parts = {0};
+        SV_List parts = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), input, &parts)) {
             return ctx_oom(ctx);
         }
@@ -906,9 +906,9 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
         const char native_list_sep = ':';
 #endif
 
-        SV_List converted = {0};
-        for (size_t i = 0; i < parts.count; i++) {
-            String_View p = parts.items[i];
+        SV_List converted = NULL;
+        for (size_t i = 0; i < arena_arr_len(parts); i++) {
+            String_View p = parts[i];
             if (normalize) p = cmk_path_normalize_temp(ctx, p);
             p = cmk_path_to_native_seps_temp(ctx, p);
             if (!svu_list_push_temp(ctx, &converted, p)) return !eval_should_stop(ctx);
@@ -926,17 +926,17 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
 }
 
 static bool handle_compare(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    if (a.count != 5) {
+    if (arena_arr_len(a) != 5) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(COMPARE) requires exactly 4 arguments",
                        nob_sv_from_cstr("Usage: cmake_path(COMPARE <input1> EQUAL|NOT_EQUAL <input2> <out-var>)"));
         return true;
     }
 
-    String_View lhs = cmk_path_compare_canonical_temp(ctx, a.items[1]);
-    String_View op = a.items[2];
-    String_View rhs = cmk_path_compare_canonical_temp(ctx, a.items[3]);
-    String_View out_var = a.items[4];
+    String_View lhs = cmk_path_compare_canonical_temp(ctx, a[1]);
+    String_View op = a[2];
+    String_View rhs = cmk_path_compare_canonical_temp(ctx, a[3]);
+    String_View out_var = a[4];
 
     bool eq = lhs.count == rhs.count && (lhs.count == 0 || memcmp(lhs.data, rhs.data, lhs.count) == 0);
     bool result = false;
@@ -958,15 +958,15 @@ static bool handle_has_component(Evaluator_Context *ctx,
                                  Cmake_Event_Origin o,
                                  SV_List a,
                                  String_View mode) {
-    if (a.count != 3) {
+    if (arena_arr_len(a) != 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(HAS_*) requires <path-var> and <out-var>",
                        nob_sv_from_cstr("Usage: cmake_path(HAS_<component> <path-var> <out-var>)"));
         return true;
     }
 
-    String_View path_var = a.items[1];
-    String_View out_var = a.items[2];
+    String_View path_var = a[1];
+    String_View out_var = a[2];
     String_View value = eval_var_get(ctx, path_var);
     String_View component = nob_sv_from_parts(mode.data + 4, mode.count - 4);
 
@@ -989,14 +989,14 @@ static bool handle_is_absolute(Evaluator_Context *ctx,
                                Cmake_Event_Origin o,
                                SV_List a,
                                String_View mode) {
-    if (a.count != 3) {
+    if (arena_arr_len(a) != 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(IS_*) requires <path-var> and <out-var>",
                        nob_sv_from_cstr("Usage: cmake_path(IS_ABSOLUTE <path-var> <out-var>)"));
         return true;
     }
 
-    String_View value = eval_var_get(ctx, a.items[1]);
+    String_View value = eval_var_get(ctx, a[1]);
     bool result = false;
     if (eval_sv_eq_ci_lit(mode, "IS_ABSOLUTE")) {
         result = eval_sv_is_abs_path(value);
@@ -1007,7 +1007,7 @@ static bool handle_is_absolute(Evaluator_Context *ctx,
         return true;
     }
 
-    (void)eval_var_set(ctx, a.items[2], result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+    (void)eval_var_set(ctx, a[2], result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
     return true;
 }
 
@@ -1015,14 +1015,14 @@ bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         cmk_path_error(ctx, node, o,
                        "cmake_path() requires a subcommand",
                        nob_sv_from_cstr("Usage: cmake_path(<mode> ...)"));
         return true;
     }
 
-    String_View mode = a.items[0];
+    String_View mode = a[0];
 
     if (eval_sv_eq_ci_lit(mode, "SET")) return handle_set(ctx, node, o, a);
     if (eval_sv_eq_ci_lit(mode, "GET")) return handle_get(ctx, node, o, a);

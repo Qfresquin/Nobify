@@ -30,7 +30,7 @@ static String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
 
 static bool find_package_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
-    *out = (SV_List){0};
+    *out = NULL;
     if (input.count == 0) return true;
 
     const char *p = input.data;
@@ -108,11 +108,11 @@ static bool find_package_try_module(Evaluator_Context *ctx,
 
     String_View module_candidates[32] = {0};
     size_t module_candidate_count = 0;
-    SV_List name_items = {0};
+    SV_List name_items = NULL;
     if (!find_package_split_semicolon_temp(ctx, name_overrides, &name_items)) return false;
-    if (name_items.count > 0) {
-        for (size_t i = 0; i < name_items.count && module_candidate_count < NOB_ARRAY_LEN(module_candidates); i++) {
-            String_View item = name_items.items[i];
+    if (arena_arr_len(name_items) > 0) {
+        for (size_t i = 0; i < arena_arr_len(name_items) && module_candidate_count < NOB_ARRAY_LEN(module_candidates); i++) {
+            String_View item = name_items[i];
             if (item.count == 0) continue;
             module_candidates[module_candidate_count++] = item;
         }
@@ -208,12 +208,12 @@ static void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
 
     String_View names[16] = {0};
     size_t name_count = 0;
-    SV_List name_items = {0};
+    SV_List name_items = NULL;
     if (!find_package_split_semicolon_temp(ctx, names_csv, &name_items)) return;
-    if (name_items.count > 0) {
-        for (size_t i = 0; i < name_items.count && name_count < NOB_ARRAY_LEN(names); i++) {
-            if (name_items.items[i].count == 0) continue;
-            names[name_count++] = name_items.items[i];
+    if (arena_arr_len(name_items) > 0) {
+        for (size_t i = 0; i < arena_arr_len(name_items) && name_count < NOB_ARRAY_LEN(names); i++) {
+            if (name_items[i].count == 0) continue;
+            names[name_count++] = name_items[i];
         }
     }
     if (name_count == 0) names[name_count++] = pkg;
@@ -350,14 +350,14 @@ static bool find_item_collect_multi(Evaluator_Context *ctx,
                                     size_t *io_index,
                                     SV_List *out_values) {
     if (!ctx || !args || !io_index || !out_values) return false;
-    while (*io_index < args->count) {
-        String_View value = args->items[*io_index];
+    while (*io_index < arena_arr_len(*args)) {
+        String_View value = (*args)[*io_index];
         if (find_item_is_keyword(value)) break;
         if (find_item_keyword_eq(value, "ENV")) {
             (*io_index)++;
-            if (*io_index >= args->count) return ctx_oom(ctx);
-            if (find_item_is_keyword(args->items[*io_index])) return false;
-            if (!find_item_list_append_env(ctx, out_values, args->items[*io_index])) return false;
+            if (*io_index >= arena_arr_len(*args)) return ctx_oom(ctx);
+            if (find_item_is_keyword((*args)[*io_index])) return false;
+            if (!find_item_list_append_env(ctx, out_values, (*args)[*io_index])) return false;
             (*io_index)++;
             continue;
         }
@@ -376,7 +376,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
     out_opt->root_mode = FIND_ROOT_MODE_BOTH;
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("dispatcher"),
@@ -387,15 +387,15 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
         return !eval_should_stop(ctx);
     }
 
-    out_opt->out_var = args.items[0];
+    out_opt->out_var = args[0];
     size_t i = 1;
-    while (i < args.count && !find_item_is_keyword(args.items[i])) {
-        if (!find_item_list_append(ctx, &out_opt->names, args.items[i])) return false;
+    while (i < arena_arr_len(args) && !find_item_is_keyword(args[i])) {
+        if (!find_item_list_append(ctx, &out_opt->names, args[i])) return false;
         i++;
     }
 
-    while (i < args.count) {
-        String_View key = args.items[i++];
+    while (i < arena_arr_len(args)) {
+        String_View key = args[i++];
         if (find_item_keyword_eq(key, "NAMES")) {
             if (!find_item_collect_multi(ctx, &args, &i, &out_opt->names)) return false;
             continue;
@@ -413,7 +413,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
             continue;
         }
         if (find_item_keyword_eq(key, "DOC")) {
-            if (i < args.count && !find_item_is_keyword(args.items[i])) i++;
+            if (i < arena_arr_len(args) && !find_item_is_keyword(args[i])) i++;
             continue;
         }
         if (find_item_keyword_eq(key, "NO_CACHE")) {
@@ -469,7 +469,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
             continue;
         }
         if (find_item_keyword_eq(key, "REGISTRY_VIEW")) {
-            if (i >= args.count || find_item_is_keyword(args.items[i])) {
+            if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
                 (void)eval_emit_diag(ctx,
                                      EV_DIAG_ERROR,
                                      nob_sv_from_cstr("dispatcher"),
@@ -480,11 +480,11 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
                 return !eval_should_stop(ctx);
             }
             out_opt->has_registry_view = true;
-            out_opt->registry_view = args.items[i++];
+            out_opt->registry_view = args[i++];
             continue;
         }
         if (find_item_keyword_eq(key, "VALIDATOR")) {
-            if (i >= args.count || find_item_is_keyword(args.items[i])) {
+            if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
                 (void)eval_emit_diag(ctx,
                                      EV_DIAG_ERROR,
                                      nob_sv_from_cstr("dispatcher"),
@@ -495,12 +495,12 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
                 return !eval_should_stop(ctx);
             }
             out_opt->has_validator = true;
-            out_opt->validator = args.items[i++];
+            out_opt->validator = args[i++];
             continue;
         }
     }
 
-    if (out_opt->names.count == 0) {
+    if (arena_arr_len(out_opt->names) == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("dispatcher"),
@@ -564,10 +564,10 @@ static bool find_item_append_package_roots(Evaluator_Context *ctx,
                                            Find_Item_Kind kind,
                                            SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs) return false;
-    if (opt->no_default_path || opt->no_package_root_path || ctx->active_find_packages.count == 0) return true;
+    if (opt->no_default_path || opt->no_package_root_path || arena_arr_len(ctx->active_find_packages) == 0) return true;
     if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0074")), "NEW")) return true;
 
-    String_View pkg = ctx->active_find_packages.items[ctx->active_find_packages.count - 1];
+    String_View pkg = ctx->active_find_packages[arena_arr_len(ctx->active_find_packages) - 1];
     String_View mixed_root = svu_concat_suffix_temp(ctx, pkg, "_ROOT");
     bool cmp0144_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0144")), "NEW");
     String_View upper_root = cmp0144_new ? svu_concat_suffix_temp(ctx, sv_to_upper_temp(ctx, pkg), "_ROOT") : nob_sv_from_cstr("");
@@ -620,10 +620,10 @@ static bool find_item_append_cmake_var_paths(Evaluator_Context *ctx,
     }
     if (!var_name) return true;
 
-    SV_List values = {0};
+    SV_List values = NULL;
     if (!find_package_split_semicolon_temp(ctx, eval_var_get(ctx, nob_sv_from_cstr(var_name)), &values)) return false;
-    for (size_t i = 0; i < values.count; i++) {
-        if (!find_item_list_append(ctx, out_dirs, values.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(values); i++) {
+        if (!find_item_list_append(ctx, out_dirs, values[i])) return false;
     }
     return true;
 }
@@ -713,16 +713,16 @@ static bool find_item_build_search_dirs(Evaluator_Context *ctx,
                                         Find_Item_Kind kind,
                                         SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs) return false;
-    *out_dirs = (SV_List){0};
+    *out_dirs = NULL;
 
     if (!find_item_append_package_roots(ctx, opt, kind, out_dirs)) return false;
-    for (size_t i = 0; i < opt->hints.count; i++) {
-        if (!find_item_list_append(ctx, out_dirs, opt->hints.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(opt->hints); i++) {
+        if (!find_item_list_append(ctx, out_dirs, opt->hints[i])) return false;
     }
     if (!find_item_append_cmake_var_paths(ctx, opt, kind, out_dirs)) return false;
     if (!find_item_append_env_default_paths(ctx, opt, kind, out_dirs)) return false;
-    for (size_t i = 0; i < opt->paths.count; i++) {
-        if (!find_item_list_append(ctx, out_dirs, opt->paths.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(opt->paths); i++) {
+        if (!find_item_list_append(ctx, out_dirs, opt->paths[i])) return false;
     }
     if (!find_item_append_system_env_paths(ctx, opt, kind, out_dirs)) return false;
     if (!find_item_append_install_prefix(ctx, opt, kind, out_dirs)) return false;
@@ -735,24 +735,24 @@ static bool find_item_apply_root_paths(Evaluator_Context *ctx,
                                        const SV_List *base_dirs,
                                        SV_List *out_dirs) {
     if (!ctx || !opt || !base_dirs || !out_dirs) return false;
-    *out_dirs = (SV_List){0};
+    *out_dirs = NULL;
 
-    SV_List roots = {0};
+    SV_List roots = NULL;
     if (opt->root_mode != FIND_ROOT_MODE_NONE) {
         if (!find_package_split_semicolon_temp(ctx, eval_var_get(ctx, nob_sv_from_cstr("CMAKE_FIND_ROOT_PATH")), &roots)) return false;
     }
 
-    if (opt->root_mode != FIND_ROOT_MODE_NONE && roots.count > 0) {
-        for (size_t ri = 0; ri < roots.count; ri++) {
-            for (size_t di = 0; di < base_dirs->count; di++) {
-                if (!find_item_append_prefixed_root(ctx, out_dirs, roots.items[ri], base_dirs->items[di])) return false;
+    if (opt->root_mode != FIND_ROOT_MODE_NONE && arena_arr_len(roots) > 0) {
+        for (size_t ri = 0; ri < arena_arr_len(roots); ri++) {
+            for (size_t di = 0; di < arena_arr_len(*base_dirs); di++) {
+                if (!find_item_append_prefixed_root(ctx, out_dirs, roots[ri], (*base_dirs)[di])) return false;
             }
         }
     }
 
     if (opt->root_mode != FIND_ROOT_MODE_ONLY) {
-        for (size_t di = 0; di < base_dirs->count; di++) {
-            if (!find_item_list_append(ctx, out_dirs, base_dirs->items[di])) return false;
+        for (size_t di = 0; di < arena_arr_len(*base_dirs); di++) {
+            if (!find_item_list_append(ctx, out_dirs, (*base_dirs)[di])) return false;
         }
     }
     return true;
@@ -773,17 +773,13 @@ static bool find_item_invoke_validator(Evaluator_Context *ctx,
     }
 
     char key_buf[64];
-    int n = snprintf(key_buf, sizeof(key_buf), "_NOBIFY_FIND_VALID_%zu", ctx->active_find_packages.count + ctx->scope_depth);
+    int n = snprintf(key_buf, sizeof(key_buf), "_NOBIFY_FIND_VALID_%zu", arena_arr_len(ctx->active_find_packages) + ctx->scope_depth);
     if (n <= 0 || (size_t)n >= sizeof(key_buf)) return ctx_oom(ctx);
     String_View result_var = nob_sv_from_cstr(key_buf);
     if (!eval_var_set(ctx, result_var, nob_sv_from_cstr("TRUE"))) return false;
 
     String_View call_args_storage[2] = {result_var, candidate};
-    SV_List call_args = {
-        .items = call_args_storage,
-        .count = 2,
-        .capacity = 2,
-    };
+    SV_List call_args = call_args_storage;
     Cmake_Event_Origin o = {0};
     o.file_path = ctx->current_file ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr("<input>");
     if (!eval_user_cmd_invoke(ctx, opt->validator, &call_args, o)) return !eval_should_stop(ctx);
@@ -874,16 +870,16 @@ static bool find_item_search(Evaluator_Context *ctx,
         }
     }
 
-    SV_List base_dirs = {0};
+    SV_List base_dirs = NULL;
     if (!find_item_build_search_dirs(ctx, opt, kind, &base_dirs)) return false;
 
-    SV_List search_dirs = {0};
+    SV_List search_dirs = NULL;
     if (!find_item_apply_root_paths(ctx, opt, &base_dirs, &search_dirs)) return false;
 
-    SV_List suffixes = {0};
+    SV_List suffixes = NULL;
     if (!svu_list_push_temp(ctx, &suffixes, nob_sv_from_cstr(""))) return false;
-    for (size_t i = 0; i < opt->path_suffixes.count; i++) {
-        if (!find_item_list_append(ctx, &suffixes, opt->path_suffixes.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(opt->path_suffixes); i++) {
+        if (!find_item_list_append(ctx, &suffixes, opt->path_suffixes[i])) return false;
     }
 
     size_t max_name_variants = (kind == FIND_ITEM_LIBRARY)
@@ -900,12 +896,12 @@ static bool find_item_search(Evaluator_Context *ctx,
 #endif
            : 1);
 
-    size_t outer_limit = opt->names_per_dir ? search_dirs.count : opt->names.count;
-    size_t inner_limit = opt->names_per_dir ? opt->names.count : search_dirs.count;
+    size_t outer_limit = opt->names_per_dir ? arena_arr_len(search_dirs) : arena_arr_len(opt->names);
+    size_t inner_limit = opt->names_per_dir ? arena_arr_len(opt->names) : arena_arr_len(search_dirs);
     for (size_t outer = 0; outer < outer_limit; outer++) {
         for (size_t inner = 0; inner < inner_limit; inner++) {
-            String_View dir = opt->names_per_dir ? search_dirs.items[outer] : search_dirs.items[inner];
-            String_View name = opt->names_per_dir ? opt->names.items[inner] : opt->names.items[outer];
+            String_View dir = opt->names_per_dir ? search_dirs[outer] : search_dirs[inner];
+            String_View name = opt->names_per_dir ? opt->names[inner] : opt->names[outer];
             if (dir.count == 0 || name.count == 0) continue;
 
             if (!eval_sv_is_abs_path(dir)) {
@@ -913,10 +909,10 @@ static bool find_item_search(Evaluator_Context *ctx,
                 if (eval_should_stop(ctx)) return false;
             }
 
-            for (size_t si = 0; si < suffixes.count; si++) {
+            for (size_t si = 0; si < arena_arr_len(suffixes); si++) {
                 String_View base = dir;
-                if (suffixes.items[si].count > 0) {
-                    base = eval_sv_path_join(eval_temp_arena(ctx), dir, suffixes.items[si]);
+                if (suffixes[si].count > 0) {
+                    base = eval_sv_path_join(eval_temp_arena(ctx), dir, suffixes[si]);
                 }
                 for (size_t nv = 0; nv < max_name_variants; nv++) {
                     String_View effective_name = nob_sv_from_cstr("");
@@ -1000,11 +996,11 @@ static bool find_package_try_config_in_prefixes(Evaluator_Context *ctx,
                                                 String_View *out_path) {
     String_View name_items[16] = {0};
     size_t name_count = 0;
-    SV_List parsed_names = {0};
+    SV_List parsed_names = NULL;
     if (!find_package_split_semicolon_temp(ctx, names_csv, &parsed_names)) return false;
-    for (size_t i = 0; i < parsed_names.count && name_count < NOB_ARRAY_LEN(name_items); i++) {
-        if (parsed_names.items[i].count == 0) continue;
-        name_items[name_count++] = parsed_names.items[i];
+    for (size_t i = 0; i < arena_arr_len(parsed_names) && name_count < NOB_ARRAY_LEN(name_items); i++) {
+        if (parsed_names[i].count == 0) continue;
+        name_items[name_count++] = parsed_names[i];
     }
     if (name_count == 0 && default_name.count > 0) {
         name_items[name_count++] = default_name;
@@ -1013,11 +1009,11 @@ static bool find_package_try_config_in_prefixes(Evaluator_Context *ctx,
     String_View suffix_items[32] = {0};
     size_t suffix_count = 0;
     suffix_items[suffix_count++] = nob_sv_from_cstr("");
-    SV_List parsed_suffixes = {0};
+    SV_List parsed_suffixes = NULL;
     if (!find_package_split_semicolon_temp(ctx, path_suffixes_csv, &parsed_suffixes)) return false;
-    for (size_t i = 0; i < parsed_suffixes.count && suffix_count < NOB_ARRAY_LEN(suffix_items); i++) {
-        if (parsed_suffixes.items[i].count == 0) continue;
-        suffix_items[suffix_count++] = parsed_suffixes.items[i];
+    for (size_t i = 0; i < arena_arr_len(parsed_suffixes) && suffix_count < NOB_ARRAY_LEN(suffix_items); i++) {
+        if (parsed_suffixes[i].count == 0) continue;
+        suffix_items[suffix_count++] = parsed_suffixes[i];
     }
 
     const char *p = prefixes.data;
@@ -1078,24 +1074,24 @@ static bool find_package_try_config(Evaluator_Context *ctx,
 
     String_View names[16] = {0};
     size_t name_count = 0;
-    SV_List parsed_names = {0};
+    SV_List parsed_names = NULL;
     if (!find_package_split_semicolon_temp(ctx, names_csv, &parsed_names)) return false;
-    if (parsed_names.count > 0) {
-        for (size_t i = 0; i < parsed_names.count && name_count < NOB_ARRAY_LEN(names); i++) {
-            if (parsed_names.items[i].count == 0) continue;
-            names[name_count++] = parsed_names.items[i];
+    if (arena_arr_len(parsed_names) > 0) {
+        for (size_t i = 0; i < arena_arr_len(parsed_names) && name_count < NOB_ARRAY_LEN(names); i++) {
+            if (parsed_names[i].count == 0) continue;
+            names[name_count++] = parsed_names[i];
         }
     }
     if (name_count == 0) names[name_count++] = pkg;
 
     String_View config_names[32] = {0};
     size_t config_name_count = 0;
-    SV_List parsed_configs = {0};
+    SV_List parsed_configs = NULL;
     if (!find_package_split_semicolon_temp(ctx, configs_csv, &parsed_configs)) return false;
-    if (parsed_configs.count > 0) {
-        for (size_t i = 0; i < parsed_configs.count && config_name_count < NOB_ARRAY_LEN(config_names); i++) {
-            if (parsed_configs.items[i].count == 0) continue;
-            config_names[config_name_count++] = parsed_configs.items[i];
+    if (arena_arr_len(parsed_configs) > 0) {
+        for (size_t i = 0; i < arena_arr_len(parsed_configs) && config_name_count < NOB_ARRAY_LEN(config_names); i++) {
+            if (parsed_configs[i].count == 0) continue;
+            config_names[config_name_count++] = parsed_configs[i];
         }
     } else {
         for (size_t i = 0; i < name_count && config_name_count + 2 <= NOB_ARRAY_LEN(config_names); i++) {
@@ -1397,37 +1393,37 @@ static bool find_package_parse_on_option(Evaluator_Context *ctx,
         return true;
     case FIND_PKG_OPT_NAMES:
         st->force_config_mode = true;
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->names, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->names, values[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_CONFIGS:
         st->force_config_mode = true;
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->configs, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->configs, values[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_PATH_SUFFIXES:
         st->force_config_mode = true;
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->path_suffixes, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->path_suffixes, values[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_COMPONENTS:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->components, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->components, values[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_OPTIONAL_COMPONENTS:
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->optional_components, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->optional_components, values[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_HINTS:
     case FIND_PKG_OPT_PATHS:
         st->force_config_mode = true;
-        for (size_t i = 0; i < values.count; i++) {
-            if (!svu_list_push_temp(ctx, &st->prefixes, values.items[i])) return false;
+        for (size_t i = 0; i < arena_arr_len(values); i++) {
+            if (!svu_list_push_temp(ctx, &st->prefixes, values[i])) return false;
         }
         return true;
     case FIND_PKG_OPT_NO_DEFAULT_PATH:
@@ -1467,7 +1463,7 @@ static bool find_package_parse_on_option(Evaluator_Context *ctx,
         st->out->no_cmake_system_package_registry = true;
         return true;
     case FIND_PKG_OPT_REGISTRY_VIEW:
-        if (values.count > 0) st->out->registry_view_value = values.items[0];
+        if (arena_arr_len(values) > 0) st->out->registry_view_value = values[0];
         return true;
     case FIND_PKG_OPT_GLOBAL:
         st->out->global_targets = true;
@@ -1502,7 +1498,7 @@ static bool find_package_parse_on_positional(Evaluator_Context *ctx,
 
 static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, SV_List args) {
     Find_Package_Options out = {0};
-    out.pkg = args.count > 0 ? args.items[0] : nob_sv_from_cstr("");
+    out.pkg = arena_arr_len(args) > 0 ? args[0] : nob_sv_from_cstr("");
     out.mode = nob_sv_from_cstr("AUTO");
 
     Find_Package_Parse_State st = {
@@ -1510,12 +1506,12 @@ static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, S
         .module_mode = false,
         .config_mode = false,
         .force_config_mode = false,
-        .components = {0},
-        .optional_components = {0},
-        .names = {0},
-        .configs = {0},
-        .path_suffixes = {0},
-        .prefixes = {0},
+        .components = NULL,
+        .optional_components = NULL,
+        .names = NULL,
+        .configs = NULL,
+        .path_suffixes = NULL,
+        .prefixes = NULL,
     };
     Eval_Opt_Parse_Config cfg = {
         .component = nob_sv_from_cstr("dispatcher"),
@@ -1541,16 +1537,16 @@ static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, S
     } else if (st.config_mode || st.force_config_mode || out.no_module) {
         out.mode = nob_sv_from_cstr("CONFIG");
     }
-    if (st.components.count > 0) out.components = eval_sv_join_semi_temp(ctx, st.components.items, st.components.count);
-    if (st.optional_components.count > 0) {
-        out.optional_components = eval_sv_join_semi_temp(ctx, st.optional_components.items, st.optional_components.count);
+    if (arena_arr_len(st.components) > 0) out.components = eval_sv_join_semi_temp(ctx, st.components, arena_arr_len(st.components));
+    if (arena_arr_len(st.optional_components) > 0) {
+        out.optional_components = eval_sv_join_semi_temp(ctx, st.optional_components, arena_arr_len(st.optional_components));
     }
-    if (st.names.count > 0) out.names = eval_sv_join_semi_temp(ctx, st.names.items, st.names.count);
-    if (st.configs.count > 0) out.configs = eval_sv_join_semi_temp(ctx, st.configs.items, st.configs.count);
-    if (st.path_suffixes.count > 0) {
-        out.path_suffixes = eval_sv_join_semi_temp(ctx, st.path_suffixes.items, st.path_suffixes.count);
+    if (arena_arr_len(st.names) > 0) out.names = eval_sv_join_semi_temp(ctx, st.names, arena_arr_len(st.names));
+    if (arena_arr_len(st.configs) > 0) out.configs = eval_sv_join_semi_temp(ctx, st.configs, arena_arr_len(st.configs));
+    if (arena_arr_len(st.path_suffixes) > 0) {
+        out.path_suffixes = eval_sv_join_semi_temp(ctx, st.path_suffixes, arena_arr_len(st.path_suffixes));
     }
-    if (st.prefixes.count > 0) out.extra_prefixes = eval_sv_join_semi_temp(ctx, st.prefixes.items, st.prefixes.count);
+    if (arena_arr_len(st.prefixes) > 0) out.extra_prefixes = eval_sv_join_semi_temp(ctx, st.prefixes, arena_arr_len(st.prefixes));
     return out;
 }
 
@@ -1758,8 +1754,8 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
             *io_found = false;
         }
 
-        if (pushed_pkg && ctx->active_find_packages.count > 0) {
-            ctx->active_find_packages.count--;
+        if (pushed_pkg && arena_arr_len(ctx->active_find_packages) > 0) {
+            arena_arr_set_len(ctx->active_find_packages, arena_arr_len(ctx->active_find_packages) - 1);
         }
 
         if (*io_found && opt->requested_version.count > 0) {
@@ -1821,7 +1817,7 @@ bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),

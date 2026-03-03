@@ -825,12 +825,12 @@ bool eval_condition(struct Evaluator_Context *ctx, const Args *raw_condition) {
     if (!ctx || !raw_condition) return false;
 
     SV_List toks = eval_resolve_args(ctx, raw_condition);
-    if (eval_should_stop(ctx) || toks.count == 0) return false;
+    if (eval_should_stop(ctx) || arena_arr_len(toks) == 0) return false;
 
     Expr e = {0};
     e.ctx = ctx;
-    e.toks = toks.items;
-    e.count = toks.count;
+    e.toks = toks;
+    e.count = arena_arr_len(toks);
     e.pos = 0;
 
     bool v = parse_expr(&e);

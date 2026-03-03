@@ -96,8 +96,8 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
     if (!ctx || !node || !args || !spec || !out_res) return false;
     memset(out_res, 0, sizeof(*out_res));
 
-    for (size_t i = 0; i < args->count; i++) {
-        String_View tok = args->items[i];
+    for (size_t i = 0; i < arena_arr_len(*args); i++) {
+        String_View tok = (*args)[i];
 
         if (ctest_keyword_in_list(tok, spec->flag_keywords, spec->flag_count)) {
             if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), nob_sv_from_cstr("1"))) return false;
@@ -105,7 +105,7 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
         }
 
         if (ctest_keyword_in_list(tok, spec->single_keywords, spec->single_count)) {
-            if (i + 1 >= args->count) {
+            if (i + 1 >= arena_arr_len(*args)) {
                 (void)ctest_emit_diag(ctx,
                                       node,
                                       EV_DIAG_ERROR,
@@ -113,7 +113,7 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
                                       tok);
                 return false;
             }
-            String_View value = args->items[++i];
+            String_View value = (*args)[++i];
             if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), value)) return false;
             if (!ctest_publish_var_keyword(ctx, tok, value)) return false;
             continue;
@@ -122,11 +122,11 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
         if (ctest_keyword_in_list(tok, spec->multi_keywords, spec->multi_count)) {
             SV_List items = {0};
             size_t j = i + 1;
-            for (; j < args->count; j++) {
-                if (ctest_is_any_known_keyword(args->items[j], spec)) break;
-                if (!svu_list_push_temp(ctx, &items, args->items[j])) return false;
+            for (; j < arena_arr_len(*args); j++) {
+                if (ctest_is_any_known_keyword((*args)[j], spec)) break;
+                if (!svu_list_push_temp(ctx, &items, (*args)[j])) return false;
             }
-            if (items.count == 0) {
+            if (arena_arr_len(items) == 0) {
                 (void)ctest_emit_diag(ctx,
                                       node,
                                       EV_DIAG_ERROR,
@@ -134,7 +134,7 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
                                       tok);
                 return false;
             }
-            if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), eval_sv_join_semi_temp(ctx, items.items, items.count))) {
+            if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), eval_sv_join_semi_temp(ctx, items, arena_arr_len(items)))) {
                 return false;
             }
             i = j - 1;
@@ -144,7 +144,7 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
         if (!svu_list_push_temp(ctx, &out_res->positionals, tok)) return false;
     }
 
-    if (out_res->positionals.count < spec->min_positionals || out_res->positionals.count > spec->max_positionals) {
+    if (arena_arr_len(out_res->positionals) < spec->min_positionals || arena_arr_len(out_res->positionals) > spec->max_positionals) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
@@ -153,10 +153,10 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
         return false;
     }
 
-    for (size_t i = 0; i < out_res->positionals.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(out_res->positionals); i++) {
         char field[32];
         snprintf(field, sizeof(field), "POSITIONAL_%zu", i);
-        if (!ctest_set_field(ctx, command_name, field, out_res->positionals.items[i])) return false;
+        if (!ctest_set_field(ctx, command_name, field, out_res->positionals[i])) return false;
     }
 
     return true;
@@ -266,7 +266,7 @@ bool eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, const Node
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (args.count != 1) {
+    if (arena_arr_len(args) != 1) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
@@ -276,7 +276,7 @@ bool eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, const Node
     }
 
     String_View root = eval_sv_path_normalize_temp(ctx, ctest_binary_root(ctx));
-    String_View target = eval_path_resolve_for_cmake_arg(ctx, args.items[0], ctest_current_binary_dir(ctx), false);
+    String_View target = eval_path_resolve_for_cmake_arg(ctx, args[0], ctest_current_binary_dir(ctx), false);
     target = eval_sv_path_normalize_temp(ctx, target);
     if (eval_should_stop(ctx)) return false;
 
@@ -330,7 +330,7 @@ bool eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const Node *nod
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (args.count == 0) {
+    if (arena_arr_len(args) == 0) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
@@ -341,8 +341,8 @@ bool eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const Node *nod
 
     SV_List loaded = {0};
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
-    for (size_t i = 0; i < args.count; i++) {
-        String_View dir = eval_path_resolve_for_cmake_arg(ctx, args.items[i], base_dir, false);
+    for (size_t i = 0; i < arena_arr_len(args); i++) {
+        String_View dir = eval_path_resolve_for_cmake_arg(ctx, args[i], base_dir, false);
         String_View custom = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr("CTestCustom.cmake"));
         if (eval_should_stop(ctx)) return false;
 
@@ -358,7 +358,7 @@ bool eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const Node *nod
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_read_custom_files"),
                          "LOADED_FILES",
-                         eval_sv_join_semi_temp(ctx, loaded.items, loaded.count))) {
+                         eval_sv_join_semi_temp(ctx, loaded, arena_arr_len(loaded)))) {
         return false;
     }
     return eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_read_custom_files"), &args, nob_sv_from_cstr("MODELED"));
@@ -387,13 +387,13 @@ bool eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
     String_View return_var = nob_sv_from_cstr("");
     SV_List scripts = {0};
 
-    for (size_t i = 0; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "NEW_PROCESS")) {
+    for (size_t i = 0; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "NEW_PROCESS")) {
             new_process = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "RETURN_VALUE")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "RETURN_VALUE")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 (void)ctest_emit_diag(ctx,
                                       node,
                                       EV_DIAG_ERROR,
@@ -401,10 +401,10 @@ bool eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
                                       nob_sv_from_cstr("Usage: ctest_run_script(... RETURN_VALUE <var>)"));
                 return !eval_should_stop(ctx);
             }
-            return_var = args.items[++i];
+            return_var = args[++i];
             continue;
         }
-        if (!svu_list_push_temp(ctx, &scripts, args.items[i])) return false;
+        if (!svu_list_push_temp(ctx, &scripts, args[i])) return false;
     }
 
     if (new_process) {
@@ -416,7 +416,7 @@ bool eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (scripts.count == 0) {
+    if (arena_arr_len(scripts) == 0) {
         String_View current = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"));
         if (current.count == 0) {
             (void)ctest_emit_diag(ctx,
@@ -431,8 +431,8 @@ bool eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
 
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
     const char *rv_text = "0";
-    for (size_t i = 0; i < scripts.count; i++) {
-        String_View script = eval_path_resolve_for_cmake_arg(ctx, scripts.items[i], base_dir, false);
+    for (size_t i = 0; i < arena_arr_len(scripts); i++) {
+        String_View script = eval_path_resolve_for_cmake_arg(ctx, scripts[i], base_dir, false);
         if (!eval_execute_file(ctx, script, false, nob_sv_from_cstr(""))) {
             rv_text = "1";
             break;
@@ -443,7 +443,7 @@ bool eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_run_script"),
                          "SCRIPTS",
-                         eval_sv_join_semi_temp(ctx, scripts.items, scripts.count))) {
+                         eval_sv_join_semi_temp(ctx, scripts, arena_arr_len(scripts)))) {
         return false;
     }
     return eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_run_script"), &args, nob_sv_from_cstr("MODELED"));
@@ -453,7 +453,7 @@ bool eval_handle_ctest_sleep(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (!(args.count == 1 || args.count == 3)) {
+    if (!(arena_arr_len(args) == 1 || arena_arr_len(args) == 3)) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
@@ -463,20 +463,20 @@ bool eval_handle_ctest_sleep(Evaluator_Context *ctx, const Node *node) {
     }
 
     double values[3] = {0};
-    for (size_t i = 0; i < args.count; i++) {
-        if (!ctest_parse_double(args.items[i], &values[i])) {
+    for (size_t i = 0; i < arena_arr_len(args); i++) {
+        if (!ctest_parse_double(args[i], &values[i])) {
             (void)ctest_emit_diag(ctx,
                                   node,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("ctest_sleep() requires numeric arguments"),
-                                  args.items[i]);
+                                  args[i]);
             return !eval_should_stop(ctx);
         }
     }
 
     String_View duration = nob_sv_from_cstr("0");
-    if (args.count == 1) {
-        duration = args.items[0];
+    if (arena_arr_len(args) == 1) {
+        duration = args[0];
     } else {
         double computed = values[0] + values[1] - values[2];
         if (computed < 0.0) computed = 0.0;

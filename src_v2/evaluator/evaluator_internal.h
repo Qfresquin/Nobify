@@ -7,6 +7,7 @@
 
 #include "nob.h"
 #include "arena.h"
+#include "arena_dyn.h"
 #include "parser.h"
 #include "evaluator.h"
 #include "eval_policy_engine.h"

@@ -38,11 +38,7 @@ typedef struct {
     String_View value;
 } Property;
 
-typedef struct Property_List {
-    Property *items;
-    size_t count;
-    size_t capacity;
-} Property_List;
+typedef Property *Property_List;
 
 typedef struct Build_Property_Index_Entry {
     char *key;
@@ -52,22 +48,14 @@ typedef struct Build_Property_Index_Entry {
 typedef struct Bm_Genex_Warn_Entry Bm_Genex_Warn_Entry;
 
 // String_List type definition (moved from build_model.c)
-typedef struct String_List {
-    String_View *items;
-    size_t count;
-    size_t capacity;
-} String_List;
+typedef String_View *String_List;
 
 typedef struct {
     String_View value;
     Logic_Node *condition; // NULL => always true
 } Conditional_Property;
 
-typedef struct Conditional_Property_List {
-    Conditional_Property *items;
-    size_t count;
-    size_t capacity;
-} Conditional_Property_List;
+typedef Conditional_Property *Conditional_Property_List;
 
 // ============================================================================
 // COMANDOS PERSONALIZADOS
@@ -187,10 +175,6 @@ typedef struct {
     // Comandos personalizados associados
     Custom_Command *pre_build_commands;
     Custom_Command *post_build_commands;
-    size_t pre_build_count;
-    size_t post_build_count;
-    size_t pre_build_capacity;
-    size_t post_build_capacity;
     
     // Propriedades gen?ricas (key-value)
     Property_List custom_properties;

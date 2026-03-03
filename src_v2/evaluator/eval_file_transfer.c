@@ -158,111 +158,111 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     memset(out, 0, sizeof(*out));
 
-    for (size_t i = start; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "STATUS")) {
-            if (i + 1 >= args.count) {
+    for (size_t i = start; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "STATUS")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() STATUS requires an output variable"), args.items[i]);
+                               nob_sv_from_cstr("file() STATUS requires an output variable"), args[i]);
                 return false;
             }
-            out->status_var = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "LOG")) {
-            if (i + 1 >= args.count) {
+            out->status_var = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "LOG")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() LOG requires an output variable"), args.items[i]);
+                               nob_sv_from_cstr("file() LOG requires an output variable"), args[i]);
                 return false;
             }
-            out->log_var = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "RANGE_START")) {
-            if (i + 1 >= args.count || !eval_file_parse_size_sv(args.items[i + 1], &out->range_start)) {
+            out->log_var = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "RANGE_START")) {
+            if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->range_start)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(DOWNLOAD) invalid RANGE_START"),
-                               (i + 1 < args.count) ? args.items[i + 1] : args.items[i]);
+                               (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
             out->has_range_start = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "RANGE_END")) {
-            if (i + 1 >= args.count || !eval_file_parse_size_sv(args.items[i + 1], &out->range_end)) {
+        } else if (eval_sv_eq_ci_lit(args[i], "RANGE_END")) {
+            if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->range_end)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file(DOWNLOAD) invalid RANGE_END"),
-                               (i + 1 < args.count) ? args.items[i + 1] : args.items[i]);
+                               (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
             out->has_range_end = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "TIMEOUT")) {
-            if (i + 1 >= args.count || !eval_file_parse_size_sv(args.items[i + 1], &out->timeout_sec)) {
+        } else if (eval_sv_eq_ci_lit(args[i], "TIMEOUT")) {
+            if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->timeout_sec)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file() invalid TIMEOUT"),
-                               (i + 1 < args.count) ? args.items[i + 1] : args.items[i]);
+                               (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
             out->has_timeout = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "INACTIVITY_TIMEOUT")) {
-            if (i + 1 >= args.count || !eval_file_parse_size_sv(args.items[i + 1], &out->inactivity_timeout_sec)) {
+        } else if (eval_sv_eq_ci_lit(args[i], "INACTIVITY_TIMEOUT")) {
+            if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->inactivity_timeout_sec)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                                nob_sv_from_cstr("file() invalid INACTIVITY_TIMEOUT"),
-                               (i + 1 < args.count) ? args.items[i + 1] : args.items[i]);
+                               (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
             out->has_inactivity_timeout = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "EXPECTED_HASH")) {
-            if (i + 1 >= args.count) {
+        } else if (eval_sv_eq_ci_lit(args[i], "EXPECTED_HASH")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_HASH requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_HASH requires a value"), args[i]);
                 return false;
             }
-            out->expected_hash = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "EXPECTED_MD5")) {
-            if (i + 1 >= args.count) {
+            out->expected_hash = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "EXPECTED_MD5")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_MD5 requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_MD5 requires a value"), args[i]);
                 return false;
             }
-            out->expected_md5 = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "USERPWD")) {
-            if (i + 1 >= args.count) {
+            out->expected_md5 = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "USERPWD")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() USERPWD requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file() USERPWD requires a value"), args[i]);
                 return false;
             }
-            out->userpwd = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "TLS_CAINFO")) {
-            if (i + 1 >= args.count) {
+            out->userpwd = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "TLS_CAINFO")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() TLS_CAINFO requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file() TLS_CAINFO requires a value"), args[i]);
                 return false;
             }
-            out->tls_cainfo = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "TLS_VERIFY")) {
-            if (i + 1 >= args.count) {
+            out->tls_cainfo = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "TLS_VERIFY")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() TLS_VERIFY requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file() TLS_VERIFY requires a value"), args[i]);
                 return false;
             }
             out->has_tls_verify = true;
-            out->tls_verify = eval_truthy(ctx, args.items[++i]);
-        } else if (eval_sv_eq_ci_lit(args.items[i], "HTTPHEADER")) {
-            if (i + 1 >= args.count) {
+            out->tls_verify = eval_truthy(ctx, args[++i]);
+        } else if (eval_sv_eq_ci_lit(args[i], "HTTPHEADER")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() HTTPHEADER requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file() HTTPHEADER requires a value"), args[i]);
                 return false;
             }
             if (out->http_headers_count < NOB_ARRAY_LEN(out->http_headers)) {
-                out->http_headers[out->http_headers_count++] = args.items[++i];
+                out->http_headers[out->http_headers_count++] = args[++i];
             } else {
                 i++;
             }
-        } else if (eval_sv_eq_ci_lit(args.items[i], "NETRC")) {
-            if (i + 1 >= args.count) {
+        } else if (eval_sv_eq_ci_lit(args[i], "NETRC")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() NETRC requires one of IGNORED/OPTIONAL/REQUIRED"), args.items[i]);
+                               nob_sv_from_cstr("file() NETRC requires one of IGNORED/OPTIONAL/REQUIRED"), args[i]);
                 return false;
             }
-            String_View mode = args.items[++i];
+            String_View mode = args[++i];
             if (eval_sv_eq_ci_lit(mode, "IGNORED")) out->netrc_mode = EVAL_FILE_NETRC_IGNORED;
             else if (eval_sv_eq_ci_lit(mode, "OPTIONAL")) out->netrc_mode = EVAL_FILE_NETRC_OPTIONAL;
             else if (eval_sv_eq_ci_lit(mode, "REQUIRED")) out->netrc_mode = EVAL_FILE_NETRC_REQUIRED;
@@ -271,18 +271,18 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
                                nob_sv_from_cstr("file() NETRC requires IGNORED/OPTIONAL/REQUIRED"), mode);
                 return false;
             }
-        } else if (eval_sv_eq_ci_lit(args.items[i], "NETRC_FILE")) {
-            if (i + 1 >= args.count) {
+        } else if (eval_sv_eq_ci_lit(args[i], "NETRC_FILE")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() NETRC_FILE requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file() NETRC_FILE requires a value"), args[i]);
                 return false;
             }
-            out->netrc_file = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "SHOW_PROGRESS")) {
+            out->netrc_file = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "SHOW_PROGRESS")) {
             out->show_progress = true;
         } else {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file() received unknown transfer option"), args.items[i]);
+                           nob_sv_from_cstr("file() received unknown transfer option"), args[i]);
             return false;
         }
     }
@@ -462,9 +462,7 @@ static bool file_transfer_remote_download(Evaluator_Context *ctx,
     bopt.tls_cainfo = opt->tls_cainfo;
     bopt.netrc_file = opt->netrc_file;
     bopt.netrc_mode = opt->netrc_mode;
-    SV_List header_list = {0};
-    header_list.items = (String_View*)opt->http_headers;
-    header_list.count = opt->http_headers_count;
+    SV_List header_list = (String_View*)opt->http_headers;
     bopt.http_headers = header_list;
 
     bool has_dst = dst.count > 0;
@@ -575,9 +573,7 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
     bopt.tls_cainfo = opt->tls_cainfo;
     bopt.netrc_file = opt->netrc_file;
     bopt.netrc_mode = opt->netrc_mode;
-    SV_List header_list = {0};
-    header_list.items = (String_View*)opt->http_headers;
-    header_list.count = opt->http_headers_count;
+    SV_List header_list = (String_View*)opt->http_headers;
     bopt.http_headers = header_list;
 
     bool backend_ok = eval_file_backend_curl_upload(ctx, src, url, &bopt, out_status_code, out_log);
@@ -648,7 +644,7 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
 
 static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(DOWNLOAD) requires at least URL/path"),
                        nob_sv_from_cstr("Usage: file(DOWNLOAD <url> [<file>] [STATUS var] [LOG var])"));
@@ -658,9 +654,9 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
     bool has_dst = false;
     String_View dst_arg = nob_sv_from_cstr("");
     size_t opt_start = 2;
-    if (args.count >= 3 && !file_transfer_is_known_option(args.items[2])) {
+    if (arena_arr_len(args) >= 3 && !file_transfer_is_known_option(args[2])) {
         has_dst = true;
-        dst_arg = args.items[2];
+        dst_arg = args[2];
         opt_start = 3;
     }
 
@@ -695,7 +691,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
         }
     }
 
-    if (file_transfer_is_remote_url(args.items[1])) {
+    if (file_transfer_is_remote_url(args[1])) {
         if (has_dst && !eval_file_mkdir_p(ctx, svu_dirname(dst))) {
             file_transfer_fail(ctx,
                                node,
@@ -711,7 +707,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
 
         int rc = 1;
         String_View log_sv = nob_sv_from_cstr("");
-        if (!file_transfer_remote_download(ctx, node, o, args.items[1], dst, &opt, &rc, &log_sv)) {
+        if (!file_transfer_remote_download(ctx, node, o, args[1], dst, &opt, &rc, &log_sv)) {
             if (ctx->oom) return true;
             file_transfer_fail(ctx,
                                node,
@@ -721,7 +717,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
                                nob_sv_from_cstr("curl backend failed"),
                                file_transfer_trim_temp(ctx, log_sv),
                                nob_sv_from_cstr("file(DOWNLOAD) remote backend failure"),
-                               args.items[1]);
+                               args[1]);
             return true;
         }
 
@@ -737,7 +733,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
                                first,
                                log_trim,
                                nob_sv_from_cstr("file(DOWNLOAD) failed to fetch remote URL"),
-                               args.items[1]);
+                               args[1]);
             return true;
         }
 
@@ -759,7 +755,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
         return true;
     }
 
-    String_View src_input = file_transfer_local_path_temp(ctx, args.items[1]);
+    String_View src_input = file_transfer_local_path_temp(ctx, args[1]);
     String_View src = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, src_input, eval_file_current_src_dir(ctx), &src)) return true;
 
@@ -843,7 +839,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
 
 static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (arena_arr_len(args) < 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(UPLOAD) requires source file and URL/path"),
                        nob_sv_from_cstr("Usage: file(UPLOAD <file> <url> [STATUS var] [LOG var])"));
@@ -867,12 +863,12 @@ static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List
     }
 
     String_View src = nob_sv_from_cstr("");
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_src_dir(ctx), &src)) return true;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &src)) return true;
 
-    if (file_transfer_is_remote_url(args.items[2])) {
+    if (file_transfer_is_remote_url(args[2])) {
         int rc = 1;
         String_View log_sv = nob_sv_from_cstr("");
-        if (!file_transfer_remote_upload(ctx, node, o, src, args.items[2], &opt, &rc, &log_sv)) {
+        if (!file_transfer_remote_upload(ctx, node, o, src, args[2], &opt, &rc, &log_sv)) {
             if (ctx->oom) return true;
             file_transfer_fail(ctx,
                                node,
@@ -882,7 +878,7 @@ static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List
                                nob_sv_from_cstr("curl backend failed"),
                                file_transfer_trim_temp(ctx, log_sv),
                                nob_sv_from_cstr("file(UPLOAD) remote backend failure"),
-                               args.items[2]);
+                               args[2]);
             return true;
         }
 
@@ -898,7 +894,7 @@ static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List
                                first,
                                log_trim,
                                nob_sv_from_cstr("file(UPLOAD) failed to send to remote URL"),
-                               args.items[2]);
+                               args[2]);
             return true;
         }
 
@@ -906,7 +902,7 @@ static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List
         return true;
     }
 
-    String_View dst_input = file_transfer_local_path_temp(ctx, args.items[2]);
+    String_View dst_input = file_transfer_local_path_temp(ctx, args[2]);
     String_View dst = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, dst_input, eval_file_current_bin_dir(ctx), &dst)) return true;
 
@@ -946,8 +942,8 @@ static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List
 }
 
 bool eval_file_handle_transfer(Evaluator_Context *ctx, const Node *node, SV_List args) {
-    if (!ctx || !node || args.count == 0) return false;
-    if (eval_sv_eq_ci_lit(args.items[0], "DOWNLOAD")) return handle_file_download(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "UPLOAD")) return handle_file_upload(ctx, node, args);
+    if (!ctx || !node || arena_arr_len(args) == 0) return false;
+    if (eval_sv_eq_ci_lit(args[0], "DOWNLOAD")) return handle_file_download(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "UPLOAD")) return handle_file_upload(ctx, node, args);
     return false;
 }

@@ -37,7 +37,7 @@ static bool cpack_install_type_on_option(Evaluator_Context *ctx,
     (void)token_index;
     if (!userdata) return false;
     Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
-    if (id == CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME && values.count > 0) st->display_name = values.items[0];
+    if (id == CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME && arena_arr_len(values) > 0) st->display_name = values[0];
     return true;
 }
 
@@ -87,13 +87,13 @@ static bool cpack_group_on_option(Evaluator_Context *ctx,
     Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
     switch (id) {
     case CPACK_GROUP_OPT_DISPLAY_NAME:
-        if (values.count > 0) st->display_name = values.items[0];
+        if (arena_arr_len(values) > 0) st->display_name = values[0];
         return true;
     case CPACK_GROUP_OPT_DESCRIPTION:
-        if (values.count > 0) st->description = values.items[0];
+        if (arena_arr_len(values) > 0) st->description = values[0];
         return true;
     case CPACK_GROUP_OPT_PARENT_GROUP:
-        if (values.count > 0) st->parent_group = values.items[0];
+        if (arena_arr_len(values) > 0) st->parent_group = values[0];
         return true;
     case CPACK_GROUP_OPT_EXPANDED:
         st->expanded = true;
@@ -163,25 +163,25 @@ static bool cpack_component_on_option(Evaluator_Context *ctx,
     Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
     switch (id) {
     case CPACK_COMPONENT_OPT_DISPLAY_NAME:
-        if (values.count > 0) st->display_name = values.items[0];
+        if (arena_arr_len(values) > 0) st->display_name = values[0];
         return true;
     case CPACK_COMPONENT_OPT_DESCRIPTION:
-        if (values.count > 0) st->description = values.items[0];
+        if (arena_arr_len(values) > 0) st->description = values[0];
         return true;
     case CPACK_COMPONENT_OPT_GROUP:
-        if (values.count > 0) st->group = values.items[0];
+        if (arena_arr_len(values) > 0) st->group = values[0];
         return true;
     case CPACK_COMPONENT_OPT_DEPENDS:
-        st->depends = values.count > 0 ? eval_sv_join_semi_temp(ctx, values.items, values.count) : nob_sv_from_cstr("");
+        st->depends = arena_arr_len(values) > 0 ? eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)) : nob_sv_from_cstr("");
         return true;
     case CPACK_COMPONENT_OPT_INSTALL_TYPES:
-        st->install_types = values.count > 0 ? eval_sv_join_semi_temp(ctx, values.items, values.count) : nob_sv_from_cstr("");
+        st->install_types = arena_arr_len(values) > 0 ? eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)) : nob_sv_from_cstr("");
         return true;
     case CPACK_COMPONENT_OPT_ARCHIVE_FILE:
-        if (values.count > 0) st->archive_file = values.items[0];
+        if (arena_arr_len(values) > 0) st->archive_file = values[0];
         return true;
     case CPACK_COMPONENT_OPT_PLIST:
-        if (values.count > 0) st->plist = values.items[0];
+        if (arena_arr_len(values) > 0) st->plist = values[0];
         return true;
     case CPACK_COMPONENT_OPT_REQUIRED:
         st->required = true;
@@ -222,7 +222,7 @@ bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node
     if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -233,7 +233,7 @@ bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     Cpack_Install_Type_Opts opt = {
         .origin = o,
         .command_name = node->as.cmd.name,
@@ -275,7 +275,7 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
     if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -286,7 +286,7 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     Cpack_Group_Opts opt = {
         .origin = o,
         .command_name = node->as.cmd.name,
@@ -340,7 +340,7 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
     if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -351,7 +351,7 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     Cpack_Component_Opts opt = {
         .origin = o,
         .command_name = node->as.cmd.name,

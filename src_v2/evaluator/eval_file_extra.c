@@ -72,7 +72,7 @@ static void file_append_configure_value(Nob_String_Builder *out, String_View val
 
 static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count != 3) {
+    if (arena_arr_len(args) != 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(<HASH>) requires filename and output variable"),
                        nob_sv_from_cstr("Usage: file(<HASH> <filename> <out-var>)"));
@@ -83,7 +83,7 @@ static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List a
     if (!eval_file_resolve_path(ctx,
                                 node,
                                 o,
-                                args.items[1],
+                                args[1],
                                 eval_file_current_src_dir(ctx),
                                 EVAL_FILE_PATH_MODE_CMAKE,
                                 &in_path)) {
@@ -99,15 +99,15 @@ static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List a
 
     String_View digest = nob_sv_from_cstr("");
     String_View payload = nob_sv_from_parts(data.items, data.count);
-    bool ok = eval_hash_compute_hex_temp(ctx, args.items[0], payload, &digest);
+    bool ok = eval_hash_compute_hex_temp(ctx, args[0], payload, &digest);
     nob_sb_free(data);
     if (!ok) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("Unsupported hash algorithm"), args.items[0]);
+                       nob_sv_from_cstr("Unsupported hash algorithm"), args[0]);
         return true;
     }
 
-    (void)eval_var_set(ctx, args.items[2], digest);
+    (void)eval_var_set(ctx, args[2], digest);
     return true;
 }
 
@@ -368,7 +368,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("configure_file() requires input and output paths"),
                        nob_sv_from_cstr("Usage: configure_file(<input> <output> [COPYONLY] [@ONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE <style>] [NO_SOURCE_PERMISSIONS|USE_SOURCE_PERMISSIONS|FILE_PERMISSIONS <perms>...])"));
@@ -384,42 +384,42 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
     String_View newline_style = nob_sv_from_cstr("");
     mode_t file_mode = 0;
 
-    for (size_t i = 2; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "COPYONLY")) {
+    for (size_t i = 2; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "COPYONLY")) {
             copyonly = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "@ONLY")) {
+        if (eval_sv_eq_ci_lit(args[i], "@ONLY")) {
             at_only = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "ESCAPE_QUOTES")) {
+        if (eval_sv_eq_ci_lit(args[i], "ESCAPE_QUOTES")) {
             escape_quotes = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "NEWLINE_STYLE")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "NEWLINE_STYLE")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("configure_file(NEWLINE_STYLE) requires a value"), args.items[i]);
+                               nob_sv_from_cstr("configure_file(NEWLINE_STYLE) requires a value"), args[i]);
                 return !eval_should_stop(ctx);
             }
-            newline_style = args.items[++i];
+            newline_style = args[++i];
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "USE_SOURCE_PERMISSIONS")) {
+        if (eval_sv_eq_ci_lit(args[i], "USE_SOURCE_PERMISSIONS")) {
             saw_use_source_permissions = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "NO_SOURCE_PERMISSIONS")) {
+        if (eval_sv_eq_ci_lit(args[i], "NO_SOURCE_PERMISSIONS")) {
             saw_no_source_permissions = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "FILE_PERMISSIONS")) {
+        if (eval_sv_eq_ci_lit(args[i], "FILE_PERMISSIONS")) {
             saw_file_permissions = true;
-            for (i = i + 1; i < args.count && !configure_file_keyword(args.items[i]); i++) {
-                if (!configure_file_perm_add_token(&file_mode, args.items[i])) {
+            for (i = i + 1; i < arena_arr_len(args) && !configure_file_keyword(args[i]); i++) {
+                if (!configure_file_perm_add_token(&file_mode, args[i])) {
                     eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("configure_file() unknown FILE_PERMISSIONS token"), args.items[i]);
+                                   nob_sv_from_cstr("configure_file() unknown FILE_PERMISSIONS token"), args[i]);
                     return !eval_should_stop(ctx);
                 }
             }
@@ -428,7 +428,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
         }
 
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file() received unexpected argument"), args.items[i]);
+                       nob_sv_from_cstr("configure_file() received unexpected argument"), args[i]);
         return !eval_should_stop(ctx);
     }
 
@@ -459,11 +459,11 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View in_path = nob_sv_from_cstr("");
-    if (!eval_file_resolve_path(ctx, node, o, args.items[0], eval_file_current_src_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &in_path)) {
+    if (!eval_file_resolve_path(ctx, node, o, args[0], eval_file_current_src_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &in_path)) {
         return !eval_should_stop(ctx);
     }
     String_View out_path = nob_sv_from_cstr("");
-    if (!eval_file_resolve_path(ctx, node, o, args.items[1], eval_file_current_bin_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &out_path)) {
+    if (!eval_file_resolve_path(ctx, node, o, args[1], eval_file_current_bin_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &out_path)) {
         return !eval_should_stop(ctx);
     }
 
@@ -556,20 +556,20 @@ static bool handle_file_configure(Evaluator_Context *ctx, const Node *node, SV_L
     bool at_only = false;
     bool escape_quotes = false;
 
-    for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "OUTPUT") && i + 1 < args.count) {
-            output = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "CONTENT") && i + 1 < args.count) {
-            content = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "NEWLINE_STYLE") && i + 1 < args.count) {
-            newline_style = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "@ONLY")) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "OUTPUT") && i + 1 < arena_arr_len(args)) {
+            output = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "CONTENT") && i + 1 < arena_arr_len(args)) {
+            content = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "NEWLINE_STYLE") && i + 1 < arena_arr_len(args)) {
+            newline_style = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "@ONLY")) {
             at_only = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "ESCAPE_QUOTES")) {
+        } else if (eval_sv_eq_ci_lit(args[i], "ESCAPE_QUOTES")) {
             escape_quotes = true;
         } else {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(CONFIGURE) received unexpected argument"), args.items[i]);
+                           nob_sv_from_cstr("file(CONFIGURE) received unexpected argument"), args[i]);
             return true;
         }
     }
@@ -633,7 +633,7 @@ static bool file_copy_file_do(Evaluator_Context *ctx, String_View src, String_Vi
 
 static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 3) {
+    if (arena_arr_len(args) < 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(COPY_FILE) requires source and destination"),
                        nob_sv_from_cstr("Usage: file(COPY_FILE <old> <new> [RESULT <var>] [ONLY_IF_DIFFERENT] [INPUT_MAY_BE_RECENT])"));
@@ -642,16 +642,16 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
 
     bool only_if_different = false;
     String_View result_var = nob_sv_from_cstr("");
-    for (size_t i = 3; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "ONLY_IF_DIFFERENT")) {
+    for (size_t i = 3; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "ONLY_IF_DIFFERENT")) {
             only_if_different = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "INPUT_MAY_BE_RECENT")) {
+        } else if (eval_sv_eq_ci_lit(args[i], "INPUT_MAY_BE_RECENT")) {
             // Accepted for parity; no extra behavior needed in evaluator backend.
-        } else if (eval_sv_eq_ci_lit(args.items[i], "RESULT") && i + 1 < args.count) {
-            result_var = args.items[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "RESULT") && i + 1 < arena_arr_len(args)) {
+            result_var = args[++i];
         } else {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(COPY_FILE) received unexpected argument"), args.items[i]);
+                           nob_sv_from_cstr("file(COPY_FILE) received unexpected argument"), args[i]);
             return true;
         }
     }
@@ -661,7 +661,7 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
     if (!eval_file_resolve_path(ctx,
                                 node,
                                 o,
-                                args.items[1],
+                                args[1],
                                 eval_file_current_src_dir(ctx),
                                 EVAL_FILE_PATH_MODE_CMAKE,
                                 &src)) {
@@ -670,7 +670,7 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
     if (!eval_file_resolve_path(ctx,
                                 node,
                                 o,
-                                args.items[2],
+                                args[2],
                                 eval_file_current_bin_dir(ctx),
                                 EVAL_FILE_PATH_MODE_CMAKE,
                                 &dst)) {
@@ -710,7 +710,7 @@ static bool file_touch_one(Evaluator_Context *ctx, String_View path, bool create
 
 static bool handle_file_touch(Evaluator_Context *ctx, const Node *node, SV_List args, bool nocreate) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nocreate ? nob_sv_from_cstr("file(TOUCH_NOCREATE) requires at least one file")
                                 : nob_sv_from_cstr("file(TOUCH) requires at least one file"),
@@ -719,12 +719,12 @@ static bool handle_file_touch(Evaluator_Context *ctx, const Node *node, SV_List 
         return true;
     }
 
-    for (size_t i = 1; i < args.count; i++) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
         String_View path = nob_sv_from_cstr("");
         if (!eval_file_resolve_path(ctx,
                                     node,
                                     o,
-                                    args.items[i],
+                                    args[i],
                                     eval_file_current_bin_dir(ctx),
                                     EVAL_FILE_PATH_MODE_CMAKE,
                                     &path)) {
@@ -767,16 +767,16 @@ static bool runtime_parse_lists(Evaluator_Context *ctx,
                                 SV_List *out,
                                 const char **stop_tokens,
                                 size_t stop_count) {
-    while (*idx < args.count) {
+    while (*idx < arena_arr_len(args)) {
         bool stop = false;
         for (size_t s = 0; s < stop_count; s++) {
-            if (eval_sv_eq_ci_lit(args.items[*idx], stop_tokens[s])) {
+            if (eval_sv_eq_ci_lit(args[*idx], stop_tokens[s])) {
                 stop = true;
                 break;
             }
         }
         if (stop) break;
-        if (!runtime_push_temp(ctx, out, args.items[*idx])) return false;
+        if (!runtime_push_temp(ctx, out, args[*idx])) return false;
         (*idx)++;
     }
     return true;
@@ -812,8 +812,8 @@ static bool runtime_sv_eq(String_View a, String_View b) {
 }
 
 static bool runtime_list_contains(SV_List list, String_View v) {
-    for (size_t i = 0; i < list.count; i++) {
-        if (runtime_sv_eq(list.items[i], v)) return true;
+    for (size_t i = 0; i < arena_arr_len(list); i++) {
+        if (runtime_sv_eq(list[i], v)) return true;
     }
     return false;
 }
@@ -894,19 +894,19 @@ static bool runtime_match_any_regex(Evaluator_Context *ctx,
                                     bool *out_match) {
     if (!ctx || !out_match) return false;
     *out_match = false;
-    if (regexes.count == 0) return true;
+    if (arena_arr_len(regexes) == 0) return true;
 
     char *val_c = eval_sv_to_cstr_temp(ctx, value);
     EVAL_OOM_RETURN_IF_NULL(ctx, val_c, false);
-    for (size_t i = 0; i < regexes.count; i++) {
-        char *rx_c = eval_sv_to_cstr_temp(ctx, regexes.items[i]);
+    for (size_t i = 0; i < arena_arr_len(regexes); i++) {
+        char *rx_c = eval_sv_to_cstr_temp(ctx, regexes[i]);
         EVAL_OOM_RETURN_IF_NULL(ctx, rx_c, false);
         regex_t re = {0};
         int rc = regcomp(&re, rx_c, REG_EXTENDED);
         if (rc != 0) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                            nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) invalid regex"),
-                           regexes.items[i]);
+                           regexes[i]);
             return false;
         }
         int m = regexec(&re, val_c, 0, NULL, 0);
@@ -928,7 +928,7 @@ static bool runtime_allow_pre(Evaluator_Context *ctx,
     if (!ctx || !rd || !out_allow) return false;
     *out_allow = true;
 
-    if (rd->pre_include_regexes.count > 0) {
+    if (arena_arr_len(rd->pre_include_regexes) > 0) {
         bool m = false;
         if (!runtime_match_any_regex(ctx, node, o, rd->pre_include_regexes, dep_name, &m)) return false;
         if (!m) {
@@ -937,7 +937,7 @@ static bool runtime_allow_pre(Evaluator_Context *ctx,
         }
     }
 
-    if (rd->pre_exclude_regexes.count > 0) {
+    if (arena_arr_len(rd->pre_exclude_regexes) > 0) {
         bool m = false;
         if (!runtime_match_any_regex(ctx, node, o, rd->pre_exclude_regexes, dep_name, &m)) return false;
         if (m) {
@@ -957,11 +957,11 @@ static bool runtime_allow_post(Evaluator_Context *ctx,
     if (!ctx || !rd || !out_allow) return false;
     *out_allow = true;
 
-    bool include_gate = (rd->post_include_regexes.count > 0 || rd->post_include_files.count > 0);
+    bool include_gate = (arena_arr_len(rd->post_include_regexes) > 0 || arena_arr_len(rd->post_include_files) > 0);
     if (include_gate) {
         bool matched = false;
         if (runtime_list_contains(rd->post_include_files, resolved_path)) matched = true;
-        if (!matched && rd->post_include_regexes.count > 0) {
+        if (!matched && arena_arr_len(rd->post_include_regexes) > 0) {
             if (!runtime_match_any_regex(ctx, node, o, rd->post_include_regexes, resolved_path, &matched)) return false;
         }
         if (!matched) {
@@ -974,7 +974,7 @@ static bool runtime_allow_post(Evaluator_Context *ctx,
         *out_allow = false;
         return true;
     }
-    if (rd->post_exclude_regexes.count > 0) {
+    if (arena_arr_len(rd->post_exclude_regexes) > 0) {
         bool m = false;
         if (!runtime_match_any_regex(ctx, node, o, rd->post_exclude_regexes, resolved_path, &m)) return false;
         if (m) {
@@ -989,8 +989,8 @@ static bool runtime_try_resolve_in_dirs(Evaluator_Context *ctx, String_View name
     if (!ctx || !out_path) return false;
     *out_path = nob_sv_from_cstr("");
     if (name.count == 0) return true;
-    for (size_t i = 0; i < dirs.count; i++) {
-        String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dirs.items[i], name);
+    for (size_t i = 0; i < arena_arr_len(dirs); i++) {
+        String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dirs[i], name);
         char *cand_c = eval_sv_to_cstr_temp(ctx, candidate);
         EVAL_OOM_RETURN_IF_NULL(ctx, cand_c, false);
         struct stat st = {0};
@@ -1122,68 +1122,68 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
         "POST_EXCLUDE_FILES",
     };
 
-    for (size_t i = 1; i < args.count;) {
-        if (eval_sv_eq_ci_lit(args.items[i], "RESOLVED_DEPENDENCIES_VAR") && i + 1 < args.count) {
-            rd.resolved_var = args.items[i + 1];
+    for (size_t i = 1; i < arena_arr_len(args);) {
+        if (eval_sv_eq_ci_lit(args[i], "RESOLVED_DEPENDENCIES_VAR") && i + 1 < arena_arr_len(args)) {
+            rd.resolved_var = args[i + 1];
             i += 2;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "UNRESOLVED_DEPENDENCIES_VAR") && i + 1 < args.count) {
-            rd.unresolved_var = args.items[i + 1];
+        if (eval_sv_eq_ci_lit(args[i], "UNRESOLVED_DEPENDENCIES_VAR") && i + 1 < arena_arr_len(args)) {
+            rd.unresolved_var = args[i + 1];
             i += 2;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "CONFLICTING_DEPENDENCIES_PREFIX") && i + 1 < args.count) {
-            rd.conflicts_prefix = args.items[i + 1];
+        if (eval_sv_eq_ci_lit(args[i], "CONFLICTING_DEPENDENCIES_PREFIX") && i + 1 < arena_arr_len(args)) {
+            rd.conflicts_prefix = args[i + 1];
             i += 2;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "EXECUTABLES")) {
+        if (eval_sv_eq_ci_lit(args[i], "EXECUTABLES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.executables, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "LIBRARIES")) {
+        if (eval_sv_eq_ci_lit(args[i], "LIBRARIES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.libraries, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "MODULES")) {
+        if (eval_sv_eq_ci_lit(args[i], "MODULES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.modules, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "DIRECTORIES")) {
+        if (eval_sv_eq_ci_lit(args[i], "DIRECTORIES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.directories, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "PRE_INCLUDE_REGEXES")) {
+        if (eval_sv_eq_ci_lit(args[i], "PRE_INCLUDE_REGEXES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.pre_include_regexes, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "PRE_EXCLUDE_REGEXES")) {
+        if (eval_sv_eq_ci_lit(args[i], "PRE_EXCLUDE_REGEXES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.pre_exclude_regexes, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "POST_INCLUDE_REGEXES")) {
+        if (eval_sv_eq_ci_lit(args[i], "POST_INCLUDE_REGEXES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.post_include_regexes, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "POST_EXCLUDE_REGEXES")) {
+        if (eval_sv_eq_ci_lit(args[i], "POST_EXCLUDE_REGEXES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.post_exclude_regexes, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "POST_INCLUDE_FILES")) {
+        if (eval_sv_eq_ci_lit(args[i], "POST_INCLUDE_FILES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.post_include_files, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "POST_EXCLUDE_FILES")) {
+        if (eval_sv_eq_ci_lit(args[i], "POST_EXCLUDE_FILES")) {
             i++;
             if (!runtime_parse_lists(ctx, args, &i, &rd.post_exclude_files, k_stops, NOB_ARRAY_LEN(k_stops))) return true;
             continue;
@@ -1191,7 +1191,7 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
 
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) received unexpected argument"),
-                       args.items[i]);
+                       args[i]);
         return true;
     }
 
@@ -1216,13 +1216,13 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
     }
     return true;
 #else
-    SV_List resolved_dirs = {0};
-    for (size_t i = 0; i < rd.directories.count; i++) {
+    SV_List resolved_dirs = NULL;
+    for (size_t i = 0; i < arena_arr_len(rd.directories); i++) {
         String_View dir = nob_sv_from_cstr("");
         if (!eval_file_resolve_path(ctx,
                                     node,
                                     o,
-                                    rd.directories.items[i],
+                                    rd.directories[i],
                                     eval_file_current_src_dir(ctx),
                                     EVAL_FILE_PATH_MODE_CMAKE,
                                     &dir)) {
@@ -1231,66 +1231,66 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
         if (!runtime_list_add_unique_noempty(ctx, &resolved_dirs, dir)) return true;
     }
 
-    SV_List queue = {0};
-    SV_List processed = {0};
-    SV_List resolved = {0};
-    SV_List unresolved = {0};
+    SV_List queue = NULL;
+    SV_List processed = NULL;
+    SV_List resolved = NULL;
+    SV_List unresolved = NULL;
 
-    for (size_t i = 0; i < rd.executables.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(rd.executables); i++) {
         String_View p = nob_sv_from_cstr("");
-        if (!eval_file_resolve_path(ctx, node, o, rd.executables.items[i], eval_file_current_src_dir(ctx),
+        if (!eval_file_resolve_path(ctx, node, o, rd.executables[i], eval_file_current_src_dir(ctx),
                                     EVAL_FILE_PATH_MODE_CMAKE, &p)) return true;
         if (!runtime_list_add_unique_noempty(ctx, &queue, p)) return true;
     }
-    for (size_t i = 0; i < rd.libraries.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(rd.libraries); i++) {
         String_View p = nob_sv_from_cstr("");
-        if (!eval_file_resolve_path(ctx, node, o, rd.libraries.items[i], eval_file_current_src_dir(ctx),
+        if (!eval_file_resolve_path(ctx, node, o, rd.libraries[i], eval_file_current_src_dir(ctx),
                                     EVAL_FILE_PATH_MODE_CMAKE, &p)) return true;
         if (!runtime_list_add_unique_noempty(ctx, &queue, p)) return true;
     }
-    for (size_t i = 0; i < rd.modules.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(rd.modules); i++) {
         String_View p = nob_sv_from_cstr("");
-        if (!eval_file_resolve_path(ctx, node, o, rd.modules.items[i], eval_file_current_src_dir(ctx),
+        if (!eval_file_resolve_path(ctx, node, o, rd.modules[i], eval_file_current_src_dir(ctx),
                                     EVAL_FILE_PATH_MODE_CMAKE, &p)) return true;
         if (!runtime_list_add_unique_noempty(ctx, &queue, p)) return true;
     }
 
-    for (size_t qi = 0; qi < queue.count; qi++) {
-        String_View seed = queue.items[qi];
+    for (size_t qi = 0; qi < arena_arr_len(queue); qi++) {
+        String_View seed = queue[qi];
         if (!runtime_collect_ldd_deps(ctx, node, o, seed, &rd, resolved_dirs, &queue, &processed, &resolved, &unresolved)) {
             return true;
         }
     }
 
-    if (resolved.count > 1) qsort(resolved.items, resolved.count, sizeof(String_View), runtime_sv_cmp_qsort);
-    if (unresolved.count > 1) qsort(unresolved.items, unresolved.count, sizeof(String_View), runtime_sv_cmp_qsort);
+    if (arena_arr_len(resolved) > 1) qsort(resolved, arena_arr_len(resolved), sizeof(String_View), runtime_sv_cmp_qsort);
+    if (arena_arr_len(unresolved) > 1) qsort(unresolved, arena_arr_len(unresolved), sizeof(String_View), runtime_sv_cmp_qsort);
 
     if (rd.resolved_var.count > 0) {
-        String_View joined = (resolved.count > 0) ? eval_sv_join_semi_temp(ctx, resolved.items, resolved.count)
+        String_View joined = (arena_arr_len(resolved) > 0) ? eval_sv_join_semi_temp(ctx, resolved, arena_arr_len(resolved))
                                                   : nob_sv_from_cstr("");
         (void)eval_var_set(ctx, rd.resolved_var, joined);
     }
     if (rd.unresolved_var.count > 0) {
-        String_View joined = (unresolved.count > 0) ? eval_sv_join_semi_temp(ctx, unresolved.items, unresolved.count)
+        String_View joined = (arena_arr_len(unresolved) > 0) ? eval_sv_join_semi_temp(ctx, unresolved, arena_arr_len(unresolved))
                                                     : nob_sv_from_cstr("");
         (void)eval_var_set(ctx, rd.unresolved_var, joined);
     }
 
     if (rd.conflicts_prefix.count > 0) {
-        SV_List conflict_names = {0};
-        for (size_t i = 0; i < resolved.count; i++) {
-            String_View bi = runtime_sv_basename(resolved.items[i]);
-            SV_List paths_for_name = {0};
-            for (size_t j = 0; j < resolved.count; j++) {
-                if (runtime_sv_eq(runtime_sv_basename(resolved.items[j]), bi)) {
-                    if (!runtime_list_add_unique_noempty(ctx, &paths_for_name, resolved.items[j])) return true;
+        SV_List conflict_names = NULL;
+        for (size_t i = 0; i < arena_arr_len(resolved); i++) {
+            String_View bi = runtime_sv_basename(resolved[i]);
+            SV_List paths_for_name = NULL;
+            for (size_t j = 0; j < arena_arr_len(resolved); j++) {
+                if (runtime_sv_eq(runtime_sv_basename(resolved[j]), bi)) {
+                    if (!runtime_list_add_unique_noempty(ctx, &paths_for_name, resolved[j])) return true;
                 }
             }
-            if (paths_for_name.count > 1) {
+            if (arena_arr_len(paths_for_name) > 1) {
                 if (!runtime_list_add_unique_noempty(ctx, &conflict_names, bi)) return true;
 
-                if (paths_for_name.count > 1) qsort(paths_for_name.items, paths_for_name.count, sizeof(String_View), runtime_sv_cmp_qsort);
-                String_View val = eval_sv_join_semi_temp(ctx, paths_for_name.items, paths_for_name.count);
+                if (arena_arr_len(paths_for_name) > 1) qsort(paths_for_name, arena_arr_len(paths_for_name), sizeof(String_View), runtime_sv_cmp_qsort);
+                String_View val = eval_sv_join_semi_temp(ctx, paths_for_name, arena_arr_len(paths_for_name));
 
                 Nob_String_Builder key = {0};
                 nob_sb_append_buf(&key, rd.conflicts_prefix.data, rd.conflicts_prefix.count);
@@ -1302,13 +1302,13 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
             }
         }
 
-        if (conflict_names.count > 1) qsort(conflict_names.items, conflict_names.count, sizeof(String_View), runtime_sv_cmp_qsort);
+        if (arena_arr_len(conflict_names) > 1) qsort(conflict_names, arena_arr_len(conflict_names), sizeof(String_View), runtime_sv_cmp_qsort);
         Nob_String_Builder key = {0};
         nob_sb_append_buf(&key, rd.conflicts_prefix.data, rd.conflicts_prefix.count);
         nob_sb_append_cstr(&key, "_FILENAMES");
         nob_sb_append_null(&key);
-        String_View joined = (conflict_names.count > 0)
-                                 ? eval_sv_join_semi_temp(ctx, conflict_names.items, conflict_names.count)
+        String_View joined = (arena_arr_len(conflict_names) > 0)
+                                 ? eval_sv_join_semi_temp(ctx, conflict_names, arena_arr_len(conflict_names))
                                  : nob_sv_from_cstr("");
         (void)eval_var_set(ctx, nob_sv_from_cstr(key.items), joined);
         nob_sb_free(key);
@@ -1318,14 +1318,14 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
 }
 
 bool eval_file_handle_extra(Evaluator_Context *ctx, const Node *node, SV_List args) {
-    if (!ctx || !node || args.count == 0) return false;
+    if (!ctx || !node || arena_arr_len(args) == 0) return false;
 
-    if (eval_hash_is_supported_algo(args.items[0])) return handle_file_hash(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "CONFIGURE")) return handle_file_configure(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "COPY_FILE")) return handle_file_copy_file(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "TOUCH")) return handle_file_touch(ctx, node, args, false);
-    if (eval_sv_eq_ci_lit(args.items[0], "TOUCH_NOCREATE")) return handle_file_touch(ctx, node, args, true);
-    if (eval_sv_eq_ci_lit(args.items[0], "GET_RUNTIME_DEPENDENCIES")) {
+    if (eval_hash_is_supported_algo(args[0])) return handle_file_hash(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "CONFIGURE")) return handle_file_configure(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "COPY_FILE")) return handle_file_copy_file(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "TOUCH")) return handle_file_touch(ctx, node, args, false);
+    if (eval_sv_eq_ci_lit(args[0], "TOUCH_NOCREATE")) return handle_file_touch(ctx, node, args, true);
+    if (eval_sv_eq_ci_lit(args[0], "GET_RUNTIME_DEPENDENCIES")) {
         return handle_file_get_runtime_dependencies(ctx, node, args);
     }
 

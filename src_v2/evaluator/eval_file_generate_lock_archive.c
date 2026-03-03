@@ -170,14 +170,6 @@ void eval_file_lock_cleanup(Evaluator_Context *ctx) {
 
 static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_t fd_or_dummy, int guard_kind) {
     if (!ctx) return false;
-    if (!arena_da_reserve(ctx->event_arena,
-                          (void**)&ctx->file_locks.items,
-                          &ctx->file_locks.capacity,
-                          sizeof(ctx->file_locks.items[0]),
-                          ctx->file_locks.count + 1)) {
-        return ctx_oom(ctx);
-    }
-
     Eval_File_Lock lock = {0};
     lock.path = sv_copy_to_event_arena(ctx, path);
     lock.guard_kind = guard_kind;
@@ -188,7 +180,9 @@ static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_
 #else
     lock.fd = (int)fd_or_dummy;
 #endif
-    ctx->file_locks.items[ctx->file_locks.count++] = lock;
+    if (!arena_arr_push(ctx->event_arena, ctx->file_locks.items, lock)) return ctx_oom(ctx);
+    ctx->file_locks.count = arena_arr_len(ctx->file_locks.items);
+    ctx->file_locks.capacity = arena_arr_cap(ctx->file_locks.items);
     return true;
 }
 
@@ -248,14 +242,9 @@ static bool file_generate_is_keyword(String_View t) {
 
 static bool file_generate_enqueue_job(Evaluator_Context *ctx, const Eval_File_Generate_Job *job) {
     if (!ctx || !job) return false;
-    if (!arena_da_reserve(ctx->event_arena,
-                          (void**)&ctx->file_generate_jobs.items,
-                          &ctx->file_generate_jobs.capacity,
-                          sizeof(ctx->file_generate_jobs.items[0]),
-                          ctx->file_generate_jobs.count + 1)) {
-        return ctx_oom(ctx);
-    }
-    ctx->file_generate_jobs.items[ctx->file_generate_jobs.count++] = *job;
+    if (!arena_arr_push(ctx->event_arena, ctx->file_generate_jobs.items, *job)) return ctx_oom(ctx);
+    ctx->file_generate_jobs.count = arena_arr_len(ctx->file_generate_jobs.items);
+    ctx->file_generate_jobs.capacity = arena_arr_cap(ctx->file_generate_jobs.items);
     return true;
 }
 
@@ -302,92 +291,92 @@ static bool handle_file_generate(Evaluator_Context *ctx, const Node *node, SV_Li
     job.origin = o;
     job.command_name = node->as.cmd.name;
 
-    for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "OUTPUT")) {
-            if (i + 1 >= args.count) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "OUTPUT")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(GENERATE) OUTPUT requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(GENERATE) OUTPUT requires a value"), args[i]);
                 return true;
             }
             String_View out_path = nob_sv_from_cstr("");
-            if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[++i], eval_file_current_bin_dir(ctx), &out_path)) return true;
+            if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[++i], eval_file_current_bin_dir(ctx), &out_path)) return true;
             job.output_path = sv_copy_to_event_arena(ctx, out_path);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "INPUT")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "INPUT")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(GENERATE) INPUT requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(GENERATE) INPUT requires a value"), args[i]);
                 return true;
             }
             String_View in_path = nob_sv_from_cstr("");
-            if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[++i], eval_file_current_src_dir(ctx), &in_path)) return true;
+            if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[++i], eval_file_current_src_dir(ctx), &in_path)) return true;
             job.has_input = true;
             job.input_path = sv_copy_to_event_arena(ctx, in_path);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "CONTENT")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "CONTENT")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(GENERATE) CONTENT requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(GENERATE) CONTENT requires a value"), args[i]);
                 return true;
             }
             job.has_content = true;
-            job.content = sv_copy_to_event_arena(ctx, args.items[++i]);
+            job.content = sv_copy_to_event_arena(ctx, args[++i]);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "CONDITION")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "CONDITION")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(GENERATE) CONDITION requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(GENERATE) CONDITION requires a value"), args[i]);
                 return true;
             }
             job.has_condition = true;
-            job.condition = sv_copy_to_event_arena(ctx, args.items[++i]);
+            job.condition = sv_copy_to_event_arena(ctx, args[++i]);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "TARGET")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "TARGET")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(GENERATE) TARGET requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(GENERATE) TARGET requires a value"), args[i]);
                 return true;
             }
             job.has_target = true;
-            job.target = sv_copy_to_event_arena(ctx, args.items[++i]);
+            job.target = sv_copy_to_event_arena(ctx, args[++i]);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "NEWLINE_STYLE")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "NEWLINE_STYLE")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(GENERATE) NEWLINE_STYLE requires a value"), args.items[i]);
+                               nob_sv_from_cstr("file(GENERATE) NEWLINE_STYLE requires a value"), args[i]);
                 return true;
             }
             job.has_newline_style = true;
-            job.newline_style = sv_copy_to_event_arena(ctx, args.items[++i]);
+            job.newline_style = sv_copy_to_event_arena(ctx, args[++i]);
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "USE_SOURCE_PERMISSIONS")) {
+        if (eval_sv_eq_ci_lit(args[i], "USE_SOURCE_PERMISSIONS")) {
             job.use_source_permissions = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "NO_SOURCE_PERMISSIONS")) {
+        if (eval_sv_eq_ci_lit(args[i], "NO_SOURCE_PERMISSIONS")) {
             job.no_source_permissions = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "FILE_PERMISSIONS")) {
+        if (eval_sv_eq_ci_lit(args[i], "FILE_PERMISSIONS")) {
             job.has_file_permissions = true;
-            while (i + 1 < args.count && !file_generate_is_keyword(args.items[i + 1])) {
+            while (i + 1 < arena_arr_len(args) && !file_generate_is_keyword(args[i + 1])) {
                 i++;
-                if (!file_parse_permission_token(&parsed_mode, args.items[i])) {
+                if (!file_parse_permission_token(&parsed_mode, args[i])) {
                     eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("file(GENERATE) unknown FILE_PERMISSIONS token"), args.items[i]);
+                                   nob_sv_from_cstr("file(GENERATE) unknown FILE_PERMISSIONS token"), args[i]);
                 }
             }
             continue;
         }
 
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(GENERATE) received unexpected argument"), args.items[i]);
+                       nob_sv_from_cstr("file(GENERATE) received unexpected argument"), args[i]);
         return true;
     }
 
@@ -420,8 +409,6 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
 
     File_Generate_Output_Seen *seen = NULL;
     size_t seen_count = 0;
-    size_t seen_cap = 0;
-
     for (size_t i = 0; i < ctx->file_generate_jobs.count; i++) {
         const Eval_File_Generate_Job *job = &ctx->file_generate_jobs.items[i];
         if (job->has_condition && !eval_truthy(ctx, job->condition)) continue;
@@ -462,13 +449,15 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
             continue;
         }
 
-        if (!arena_da_reserve(eval_temp_arena(ctx), (void**)&seen, &seen_cap, sizeof(seen[0]), seen_count + 1)) {
+        File_Generate_Output_Seen seen_entry = {
+            .path = job->output_path,
+            .content = final_content,
+        };
+        if (!arena_arr_push(eval_temp_arena(ctx), seen, seen_entry)) {
             ctx_oom(ctx);
             break;
         }
-        seen[seen_count].path = job->output_path;
-        seen[seen_count].content = final_content;
-        seen_count++;
+        seen_count = arena_arr_len(seen);
 
         if (!eval_file_mkdir_p(ctx, svu_dirname(job->output_path))) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
@@ -505,7 +494,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
 
 static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(LOCK) requires path"), nob_sv_from_cstr(""));
         return true;
@@ -517,41 +506,41 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     bool has_timeout = false;
     int guard_kind = EVAL_FILE_LOCK_GUARD_PROCESS;
     String_View result_var = nob_sv_from_cstr("");
-    for (size_t i = 2; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "RELEASE")) {
+    for (size_t i = 2; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "RELEASE")) {
             release = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "DIRECTORY")) {
+        if (eval_sv_eq_ci_lit(args[i], "DIRECTORY")) {
             directory_lock = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "TIMEOUT")) {
-            if (i + 1 >= args.count || !eval_file_parse_size_sv(args.items[i + 1], &timeout_sec)) {
+        if (eval_sv_eq_ci_lit(args[i], "TIMEOUT")) {
+            if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &timeout_sec)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(LOCK) invalid TIMEOUT value"), args.items[i]);
+                               nob_sv_from_cstr("file(LOCK) invalid TIMEOUT value"), args[i]);
                 return true;
             }
             has_timeout = true;
             i++;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "RESULT_VARIABLE")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "RESULT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(LOCK) RESULT_VARIABLE requires a variable name"), args.items[i]);
+                               nob_sv_from_cstr("file(LOCK) RESULT_VARIABLE requires a variable name"), args[i]);
                 return true;
             }
-            result_var = args.items[++i];
+            result_var = args[++i];
             continue;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "GUARD")) {
-            if (i + 1 >= args.count) {
+        if (eval_sv_eq_ci_lit(args[i], "GUARD")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(LOCK) GUARD requires PROCESS|FILE|FUNCTION"), args.items[i]);
+                               nob_sv_from_cstr("file(LOCK) GUARD requires PROCESS|FILE|FUNCTION"), args[i]);
                 return true;
             }
-            String_View guard = args.items[++i];
+            String_View guard = args[++i];
             if (eval_sv_eq_ci_lit(guard, "PROCESS")) guard_kind = EVAL_FILE_LOCK_GUARD_PROCESS;
             else if (eval_sv_eq_ci_lit(guard, "FILE")) guard_kind = EVAL_FILE_LOCK_GUARD_FILE;
             else if (eval_sv_eq_ci_lit(guard, "FUNCTION")) guard_kind = EVAL_FILE_LOCK_GUARD_FUNCTION;
@@ -563,12 +552,12 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
             continue;
         }
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(LOCK) received unexpected argument"), args.items[i]);
+                       nob_sv_from_cstr("file(LOCK) received unexpected argument"), args[i]);
         return true;
     }
 
     String_View lock_path = nob_sv_from_cstr("");
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args.items[1], eval_file_current_bin_dir(ctx), &lock_path)) return true;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_bin_dir(ctx), &lock_path)) return true;
     if (directory_lock) {
         if (!eval_file_mkdir_p(ctx, lock_path)) {
             if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to create lock directory"));
@@ -715,58 +704,58 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     bool verbose = false;
     SV_List paths = {0};
 
-    for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "OUTPUT") && i + 1 < args.count) {
-            out = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "FORMAT") && i + 1 < args.count) {
-            format = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "COMPRESSION") && i + 1 < args.count) {
-            compression = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "COMPRESSION_LEVEL") && i + 1 < args.count) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "OUTPUT") && i + 1 < arena_arr_len(args)) {
+            out = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "FORMAT") && i + 1 < arena_arr_len(args)) {
+            format = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "COMPRESSION") && i + 1 < arena_arr_len(args)) {
+            compression = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "COMPRESSION_LEVEL") && i + 1 < arena_arr_len(args)) {
             char *end = NULL;
-            char *lvl = eval_sv_to_cstr_temp(ctx, args.items[++i]);
+            char *lvl = eval_sv_to_cstr_temp(ctx, args[++i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, lvl, true);
             compression_level = strtol(lvl, &end, 10);
             if (!end || *end != '\0') {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(ARCHIVE_CREATE) invalid COMPRESSION_LEVEL"), args.items[i]);
+                               nob_sv_from_cstr("file(ARCHIVE_CREATE) invalid COMPRESSION_LEVEL"), args[i]);
                 return true;
             }
             has_compression_level = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "MTIME") && i + 1 < args.count) {
+        } else if (eval_sv_eq_ci_lit(args[i], "MTIME") && i + 1 < arena_arr_len(args)) {
             char *end = NULL;
-            char *tv = eval_sv_to_cstr_temp(ctx, args.items[++i]);
+            char *tv = eval_sv_to_cstr_temp(ctx, args[++i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, tv, true);
             mtime_epoch = strtoll(tv, &end, 10);
             if (!end || *end != '\0') {
                 eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(ARCHIVE_CREATE) invalid MTIME epoch value"), args.items[i]);
+                               nob_sv_from_cstr("file(ARCHIVE_CREATE) invalid MTIME epoch value"), args[i]);
                 return true;
             }
             has_mtime = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "VERBOSE")) {
+        } else if (eval_sv_eq_ci_lit(args[i], "VERBOSE")) {
             verbose = true;
-        } else if (eval_sv_eq_ci_lit(args.items[i], "PATHS")) {
-            for (size_t j = i + 1; j < args.count; j++) {
-                if (eval_sv_eq_ci_lit(args.items[j], "OUTPUT") ||
-                    eval_sv_eq_ci_lit(args.items[j], "FORMAT") ||
-                    eval_sv_eq_ci_lit(args.items[j], "COMPRESSION") ||
-                    eval_sv_eq_ci_lit(args.items[j], "COMPRESSION_LEVEL") ||
-                    eval_sv_eq_ci_lit(args.items[j], "MTIME") ||
-                    eval_sv_eq_ci_lit(args.items[j], "VERBOSE")) {
+        } else if (eval_sv_eq_ci_lit(args[i], "PATHS")) {
+            for (size_t j = i + 1; j < arena_arr_len(args); j++) {
+                if (eval_sv_eq_ci_lit(args[j], "OUTPUT") ||
+                    eval_sv_eq_ci_lit(args[j], "FORMAT") ||
+                    eval_sv_eq_ci_lit(args[j], "COMPRESSION") ||
+                    eval_sv_eq_ci_lit(args[j], "COMPRESSION_LEVEL") ||
+                    eval_sv_eq_ci_lit(args[j], "MTIME") ||
+                    eval_sv_eq_ci_lit(args[j], "VERBOSE")) {
                     break;
                 }
-                if (!svu_list_push_temp(ctx, &paths, args.items[j])) return true;
+                if (!svu_list_push_temp(ctx, &paths, args[j])) return true;
                 i = j;
             }
         } else {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(ARCHIVE_CREATE) received unexpected argument"), args.items[i]);
+                           nob_sv_from_cstr("file(ARCHIVE_CREATE) received unexpected argument"), args[i]);
             return true;
         }
     }
 
-    if (out.count == 0 || paths.count == 0) {
+    if (out.count == 0 || arena_arr_len(paths) == 0) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
                        nob_sv_from_cstr("file(ARCHIVE_CREATE) requires OUTPUT and PATHS"),
                        nob_sv_from_cstr("Usage: file(ARCHIVE_CREATE OUTPUT <archive> PATHS <path>...)"));
@@ -788,9 +777,9 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     if (!eval_file_mkdir_p(ctx, svu_dirname(out_path))) return true;
 
     SV_List resolved_paths = {0};
-    for (size_t i = 0; i < paths.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(paths); i++) {
         String_View p = nob_sv_from_cstr("");
-        if (!eval_file_resolve_project_scoped_path(ctx, node, o, paths.items[i], eval_file_current_src_dir(ctx), &p)) return true;
+        if (!eval_file_resolve_project_scoped_path(ctx, node, o, paths[i], eval_file_current_src_dir(ctx), &p)) return true;
         if (!svu_list_push_temp(ctx, &resolved_paths, p)) return true;
     }
 
@@ -832,8 +821,8 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     }
 
     SV_List mapped_paths = {0};
-    for (size_t i = 0; i < resolved_paths.count; i++) {
-        String_View p = resolved_paths.items[i];
+    for (size_t i = 0; i < arena_arr_len(resolved_paths); i++) {
+        String_View p = resolved_paths[i];
         String_View p_arg = p;
         if (cwd_len > 0 && p.count > cwd_len && memcmp(p.data, cwd_buf, cwd_len) == 0) {
             size_t off = cwd_len;
@@ -854,8 +843,8 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
             file_cmd_reset(&cmd);
             return true;
         }
-        for (size_t i = 0; i < mapped_paths.count; i++) {
-            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths.items[i]);
+        for (size_t i = 0; i < arena_arr_len(mapped_paths); i++) {
+            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
             if (!file_cmd_append_checked(ctx, &cmd, pc)) {
                 file_cmd_reset(&cmd);
@@ -920,8 +909,8 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
             file_cmd_reset(&cmd);
             return true;
         }
-        for (size_t i = 0; i < mapped_paths.count; i++) {
-            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths.items[i]);
+        for (size_t i = 0; i < arena_arr_len(mapped_paths); i++) {
+            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
             if (!file_cmd_append_checked(ctx, &cmd, pc)) {
                 file_cmd_reset(&cmd);
@@ -946,27 +935,27 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
     bool list_only = false;
     bool verbose = false;
     bool touch = false;
-    for (size_t i = 1; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "INPUT") && i + 1 < args.count) in = args.items[++i];
-        else if (eval_sv_eq_ci_lit(args.items[i], "DESTINATION") && i + 1 < args.count) dst = args.items[++i];
-        else if (eval_sv_eq_ci_lit(args.items[i], "PATTERNS")) {
-            for (size_t j = i + 1; j < args.count; j++) {
-                if (eval_sv_eq_ci_lit(args.items[j], "INPUT") ||
-                    eval_sv_eq_ci_lit(args.items[j], "DESTINATION") ||
-                    eval_sv_eq_ci_lit(args.items[j], "LIST_ONLY") ||
-                    eval_sv_eq_ci_lit(args.items[j], "VERBOSE") ||
-                    eval_sv_eq_ci_lit(args.items[j], "TOUCH")) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "INPUT") && i + 1 < arena_arr_len(args)) in = args[++i];
+        else if (eval_sv_eq_ci_lit(args[i], "DESTINATION") && i + 1 < arena_arr_len(args)) dst = args[++i];
+        else if (eval_sv_eq_ci_lit(args[i], "PATTERNS")) {
+            for (size_t j = i + 1; j < arena_arr_len(args); j++) {
+                if (eval_sv_eq_ci_lit(args[j], "INPUT") ||
+                    eval_sv_eq_ci_lit(args[j], "DESTINATION") ||
+                    eval_sv_eq_ci_lit(args[j], "LIST_ONLY") ||
+                    eval_sv_eq_ci_lit(args[j], "VERBOSE") ||
+                    eval_sv_eq_ci_lit(args[j], "TOUCH")) {
                     break;
                 }
-                if (!svu_list_push_temp(ctx, &patterns, args.items[j])) return true;
+                if (!svu_list_push_temp(ctx, &patterns, args[j])) return true;
                 i = j;
             }
-        } else if (eval_sv_eq_ci_lit(args.items[i], "LIST_ONLY")) list_only = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "VERBOSE")) verbose = true;
-        else if (eval_sv_eq_ci_lit(args.items[i], "TOUCH")) touch = true;
+        } else if (eval_sv_eq_ci_lit(args[i], "LIST_ONLY")) list_only = true;
+        else if (eval_sv_eq_ci_lit(args[i], "VERBOSE")) verbose = true;
+        else if (eval_sv_eq_ci_lit(args[i], "TOUCH")) touch = true;
         else {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(ARCHIVE_EXTRACT) received unexpected argument"), args.items[i]);
+                           nob_sv_from_cstr("file(ARCHIVE_EXTRACT) received unexpected argument"), args[i]);
             return true;
         }
     }
@@ -1038,10 +1027,10 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
 }
 
 bool eval_file_handle_generate_lock_archive(Evaluator_Context *ctx, const Node *node, SV_List args) {
-    if (!ctx || !node || args.count == 0) return false;
-    if (eval_sv_eq_ci_lit(args.items[0], "GENERATE")) return handle_file_generate(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "LOCK")) return handle_file_lock(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "ARCHIVE_CREATE")) return handle_file_archive_create(ctx, node, args);
-    if (eval_sv_eq_ci_lit(args.items[0], "ARCHIVE_EXTRACT")) return handle_file_archive_extract(ctx, node, args);
+    if (!ctx || !node || arena_arr_len(args) == 0) return false;
+    if (eval_sv_eq_ci_lit(args[0], "GENERATE")) return handle_file_generate(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "LOCK")) return handle_file_lock(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "ARCHIVE_CREATE")) return handle_file_archive_create(ctx, node, args);
+    if (eval_sv_eq_ci_lit(args[0], "ARCHIVE_EXTRACT")) return handle_file_archive_extract(ctx, node, args);
     return false;
 }

@@ -129,19 +129,4 @@ static inline bool arena_arr__fit_impl(Arena *arena, void **arr, size_t item_siz
 #define arena_arr_fit(arena, arr) \
     arena_arr__fit_impl((arena), (void**)&(arr), sizeof(*(arr)))
 
-/* Legacy compatibility during migration; remove after all call sites are converted. */
-static inline bool arena_da_reserve(
-    Arena *arena,
-    void **items,
-    size_t *capacity,
-    size_t item_size,
-    size_t min_capacity
-) {
-    (void)capacity;
-    return arena_arr__grow(arena, items, item_size, min_capacity);
-}
-
-#define arena_da_try_append(arena, list, item) \
-    arena_arr_push((arena), (list)->items, (item))
-
 #endif // ARENA_DYN_H_

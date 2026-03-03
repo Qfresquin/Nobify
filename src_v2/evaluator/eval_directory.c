@@ -19,8 +19,8 @@ static bool sv_eq_exact(String_View a, String_View b) {
 
 static bool sv_list_contains_exact(const SV_List *list, String_View item) {
     if (!list) return false;
-    for (size_t i = 0; i < list->count; i++) {
-        if (sv_eq_exact(list->items[i], item)) return true;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (sv_eq_exact((*list)[i], item)) return true;
     }
     return false;
 }
@@ -382,8 +382,8 @@ static bool expand_link_option_token(Evaluator_Context *ctx, String_View tok, SV
             if (!split_comma_list_temp(ctx, payload, &linker_parts)) return false;
         }
 
-        for (size_t i = 0; i < linker_parts.count; i++) {
-            String_View piece = linker_parts.items[i];
+        for (size_t i = 0; i < arena_arr_len(linker_parts); i++) {
+            String_View piece = linker_parts[i];
             size_t total = 7 + piece.count;
             char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
             EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
@@ -404,25 +404,25 @@ bool eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     SV_List expanded = {0};
-    for (size_t i = 0; i < a.count; i++) {
-        if (!expand_compile_option_token(ctx, a.items[i], &expanded)) return !eval_should_stop(ctx);
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (!expand_compile_option_token(ctx, a[i], &expanded)) return !eval_should_stop(ctx);
     }
 
     SV_List unique = {0};
-    for (size_t i = 0; i < expanded.count; i++) {
-        if (expanded.items[i].count == 0) continue;
-        if (sv_list_contains_exact(&unique, expanded.items[i])) continue;
-        if (!svu_list_push_temp(ctx, &unique, expanded.items[i])) return !eval_should_stop(ctx);
+    for (size_t i = 0; i < arena_arr_len(expanded); i++) {
+        if (expanded[i].count == 0) continue;
+        if (sv_list_contains_exact(&unique, expanded[i])) continue;
+        if (!svu_list_push_temp(ctx, &unique, expanded[i])) return !eval_should_stop(ctx);
     }
 
-    for (size_t i = 0; i < unique.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique.items[i], &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return false;
         if (!added) continue;
         Cmake_Event ev = {0};
         ev.kind = EV_GLOBAL_COMPILE_OPTIONS;
         ev.origin = o;
-        ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, unique.items[i]);
+        ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, unique[i]);
         if (!emit_event(ctx, ev)) return false;
     }
     return !eval_should_stop(ctx);
@@ -434,24 +434,24 @@ bool eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *nod
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     SV_List unique = {0};
-    for (size_t i = 0; i < a.count; i++) {
-        String_View item = eval_normalize_compile_definition_item(a.items[i]);
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        String_View item = eval_normalize_compile_definition_item(a[i]);
         if (item.count == 0) continue;
         if (sv_list_contains_exact(&unique, item)) continue;
         if (!svu_list_push_temp(ctx, &unique, item)) return !eval_should_stop(ctx);
     }
 
-    for (size_t i = 0; i < unique.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique.items[i], &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique[i], &added)) return false;
         if (!added) continue;
 
         Cmake_Event ev = {0};
         ev.kind = EV_GLOBAL_COMPILE_DEFINITIONS;
         ev.origin = o;
-        ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, unique.items[i]);
+        ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, unique[i]);
         if (!emit_event(ctx, ev)) return false;
-        if (!emit_compile_definition_to_current_file_targets(ctx, o, unique.items[i])) return false;
+        if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return false;
     }
 
     return !eval_should_stop(ctx);
@@ -462,8 +462,8 @@ bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    for (size_t i = 0; i < a.count; i++) {
-        String_View item = a.items[i];
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        String_View item = a[i];
         if (item.count == 0) continue;
 
         String_View definition = nob_sv_from_cstr("");
@@ -498,9 +498,9 @@ bool eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    for (size_t i = 0; i < a.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View definition = nob_sv_from_cstr("");
-        if (!split_definition_flag(a.items[i], &definition)) continue;
+        if (!split_definition_flag(a[i], &definition)) continue;
         if (definition.count == 0) continue;
         if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, NULL)) {
             return !eval_should_stop(ctx);
@@ -517,7 +517,7 @@ bool eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1 || a.count > 2) {
+    if (arena_arr_len(a) < 1 || arena_arr_len(a) > 2) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("include_regular_expression"),
@@ -528,13 +528,13 @@ bool eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), a.items[0])) {
+    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), a[0])) {
         return !eval_should_stop(ctx);
     }
-    if (a.count == 2) {
+    if (arena_arr_len(a) == 2) {
         if (!eval_var_set(ctx,
                           nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN"),
-                          a.items[1])) {
+                          a[1])) {
             return !eval_should_stop(ctx);
         }
     }
@@ -548,25 +548,25 @@ bool eval_handle_add_link_options(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     SV_List expanded = {0};
-    for (size_t i = 0; i < a.count; i++) {
-        if (!expand_link_option_token(ctx, a.items[i], &expanded)) return !eval_should_stop(ctx);
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (!expand_link_option_token(ctx, a[i], &expanded)) return !eval_should_stop(ctx);
     }
 
     SV_List unique = {0};
-    for (size_t i = 0; i < expanded.count; i++) {
-        if (expanded.items[i].count == 0) continue;
-        if (sv_list_contains_exact(&unique, expanded.items[i])) continue;
-        if (!svu_list_push_temp(ctx, &unique, expanded.items[i])) return !eval_should_stop(ctx);
+    for (size_t i = 0; i < arena_arr_len(expanded); i++) {
+        if (expanded[i].count == 0) continue;
+        if (sv_list_contains_exact(&unique, expanded[i])) continue;
+        if (!svu_list_push_temp(ctx, &unique, expanded[i])) return !eval_should_stop(ctx);
     }
 
-    for (size_t i = 0; i < unique.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_link_opts_var), unique.items[i], &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_link_opts_var), unique[i], &added)) return false;
         if (!added) continue;
         Cmake_Event ev = {0};
         ev.kind = EV_GLOBAL_LINK_OPTIONS;
         ev.origin = o;
-        ev.as.global_link_options.item = sv_copy_to_event_arena(ctx, unique.items[i]);
+        ev.as.global_link_options.item = sv_copy_to_event_arena(ctx, unique[i]);
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -578,11 +578,11 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     String_View qualifier = nob_sv_from_cstr("");
-    for (size_t i = 0; i < a.count; i++) {
-        if (a.items[i].count == 0) continue;
-        if (eval_sv_eq_ci_lit(a.items[i], "DEBUG") ||
-            eval_sv_eq_ci_lit(a.items[i], "OPTIMIZED") ||
-            eval_sv_eq_ci_lit(a.items[i], "GENERAL")) {
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (a[i].count == 0) continue;
+        if (eval_sv_eq_ci_lit(a[i], "DEBUG") ||
+            eval_sv_eq_ci_lit(a[i], "OPTIMIZED") ||
+            eval_sv_eq_ci_lit(a[i], "GENERAL")) {
             if (qualifier.count > 0) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
@@ -592,11 +592,11 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("link_libraries() qualifier without following item"),
                                qualifier);
             }
-            qualifier = a.items[i];
+            qualifier = a[i];
             continue;
         }
 
-        String_View item = a.items[i];
+        String_View item = a[i];
         if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
             item = wrap_link_item_with_config_genex_temp(ctx,
                                                          item,
@@ -637,16 +637,16 @@ bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
 
     bool is_system = false;
     bool is_before = false;
-    for (size_t i = 0; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "SYSTEM")) {
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "SYSTEM")) {
             is_system = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
             is_before = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "AFTER")) {
+        if (eval_sv_eq_ci_lit(a[i], "AFTER")) {
             is_before = false;
             continue;
         }
@@ -654,7 +654,7 @@ bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
         Cmake_Event ev = {0};
         ev.kind = EV_DIRECTORY_INCLUDE_DIRECTORIES;
         ev.origin = o;
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         ev.as.directory_include_directories.path = sv_copy_to_event_arena(ctx, resolved);
         ev.as.directory_include_directories.is_system = is_system;
@@ -674,12 +674,12 @@ bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
     if (cur_src.count == 0) cur_src = ctx->source_dir;
 
     bool is_before = false;
-    for (size_t i = 0; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
             is_before = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "AFTER")) {
+        if (eval_sv_eq_ci_lit(a[i], "AFTER")) {
             is_before = false;
             continue;
         }
@@ -687,7 +687,7 @@ bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
         Cmake_Event ev = {0};
         ev.kind = EV_DIRECTORY_LINK_DIRECTORIES;
         ev.origin = o;
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         ev.as.directory_link_directories.path = sv_copy_to_event_arena(ctx, resolved);
         ev.as.directory_link_directories.is_before = is_before;
@@ -704,7 +704,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("dispatcher"),
@@ -715,9 +715,9 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[0];
-    String_View input = a.items[1];
-    String_View mode = a.items[2];
+    String_View out_var = a[0];
+    String_View input = a[1];
+    String_View mode = a[2];
     bool cache_result = false;
 
     String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
@@ -725,8 +725,8 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
 
     String_View result = nob_sv_from_cstr("");
     if (eval_sv_eq_ci_lit(mode, "DIRECTORY") || eval_sv_eq_ci_lit(mode, "PATH")) {
-        for (size_t i = 3; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "CACHE")) {
+        for (size_t i = 3; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
                 cache_result = true;
                 continue;
             }
@@ -736,15 +736,15 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("get_filename_component(DIRECTORY) received unexpected argument"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         result = gfc_directory_sv(normalized);
     } else if (eval_sv_eq_ci_lit(mode, "NAME")) {
-        for (size_t i = 3; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "CACHE")) {
+        for (size_t i = 3; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
                 cache_result = true;
                 continue;
             }
@@ -754,7 +754,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("get_filename_component(NAME) received unexpected argument"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -762,8 +762,8 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
         result = gfc_filename_sv(normalized);
     } else if (eval_sv_eq_ci_lit(mode, "EXT") || eval_sv_eq_ci_lit(mode, "LAST_EXT") ||
                eval_sv_eq_ci_lit(mode, "NAME_WE") || eval_sv_eq_ci_lit(mode, "NAME_WLE")) {
-        for (size_t i = 3; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "CACHE")) {
+        for (size_t i = 3; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
                 cache_result = true;
                 continue;
             }
@@ -773,7 +773,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("get_filename_component() received unexpected argument for name/extension mode"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -787,9 +787,9 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
         }
     } else if (eval_sv_eq_ci_lit(mode, "ABSOLUTE") || eval_sv_eq_ci_lit(mode, "REALPATH")) {
         String_View base_dir = current_src;
-        for (size_t i = 3; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "BASE_DIR")) {
-                if (i + 1 >= a.count) {
+        for (size_t i = 3; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "BASE_DIR")) {
+                if (i + 1 >= arena_arr_len(a)) {
                     (void)eval_emit_diag(ctx,
                                          EV_DIAG_ERROR,
                                          nob_sv_from_cstr("dispatcher"),
@@ -799,11 +799,11 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                          nob_sv_from_cstr("Usage: get_filename_component(<var> <file> ABSOLUTE|REALPATH [BASE_DIR <dir>] [CACHE])"));
                     return !eval_should_stop(ctx);
                 }
-                base_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[++i], current_src, false);
+                base_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], current_src, false);
                 if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "CACHE")) {
+            if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
                 cache_result = true;
                 continue;
             }
@@ -813,7 +813,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("get_filename_component(ABSOLUTE/REALPATH) received unexpected argument"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
 
@@ -826,9 +826,9 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
         }
     } else if (eval_sv_eq_ci_lit(mode, "PROGRAM")) {
         String_View args_var = nob_sv_from_cstr("");
-        for (size_t i = 3; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "PROGRAM_ARGS")) {
-                if (i + 1 >= a.count) {
+        for (size_t i = 3; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "PROGRAM_ARGS")) {
+                if (i + 1 >= arena_arr_len(a)) {
                     (void)eval_emit_diag(ctx,
                                          EV_DIAG_ERROR,
                                          nob_sv_from_cstr("dispatcher"),
@@ -838,10 +838,10 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                          nob_sv_from_cstr("Usage: get_filename_component(<var> <file> PROGRAM [PROGRAM_ARGS <arg-var>] [CACHE])"));
                     return !eval_should_stop(ctx);
                 }
-                args_var = a.items[++i];
+                args_var = a[++i];
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "CACHE")) {
+            if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
                 cache_result = true;
                 continue;
             }
@@ -851,19 +851,19 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("get_filename_component(PROGRAM) received unexpected argument"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
 
         SV_List tokens = {0};
         if (!eval_split_shell_like_temp(ctx, input, &tokens)) return !eval_should_stop(ctx);
-        if (tokens.count > 0) {
-            result = tokens.items[0];
+        if (arena_arr_len(tokens) > 0) {
+            result = tokens[0];
             if (!gfc_resolve_program_full_path(ctx, result, &result)) return !eval_should_stop(ctx);
         }
         if (args_var.count > 0) {
-            String_View arg_value = (tokens.count > 1)
-                ? eval_sv_join_semi_temp(ctx, &tokens.items[1], tokens.count - 1)
+            String_View arg_value = (arena_arr_len(tokens) > 1)
+                ? eval_sv_join_semi_temp(ctx, &tokens[1], arena_arr_len(tokens) - 1)
                 : nob_sv_from_cstr("");
             if (!eval_var_set(ctx, args_var, arg_value)) return !eval_should_stop(ctx);
         }

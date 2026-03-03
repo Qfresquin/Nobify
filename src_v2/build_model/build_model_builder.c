@@ -226,14 +226,11 @@ static bool builder_push_directory_scope(Build_Model_Builder *builder, String_Vi
         Build_Directory_Node *current = &builder->model->directory_nodes[builder->current_directory_index];
         if (nob_sv_eq(current->source_dir, source_dir) &&
             nob_sv_eq(current->binary_dir, binary_dir)) {
-            if (!arena_da_reserve(builder->arena,
-                                  (void**)&builder->directory_stack,
-                                  &builder->directory_stack_capacity,
-                                  sizeof(*builder->directory_stack),
-                                  builder->directory_stack_count + 1)) {
+            if (!arena_arr_push(builder->arena, builder->directory_stack, builder->current_directory_index)) {
                 return false;
             }
-            builder->directory_stack[builder->directory_stack_count++] = builder->current_directory_index;
+            builder->directory_stack_count = arena_arr_len(builder->directory_stack);
+            builder->directory_stack_capacity = arena_arr_cap(builder->directory_stack);
             return true;
         }
     }
@@ -248,14 +245,11 @@ static bool builder_push_directory_scope(Build_Model_Builder *builder, String_Vi
                                                                  parent_index);
     if (!node) return false;
 
-    if (!arena_da_reserve(builder->arena,
-                          (void**)&builder->directory_stack,
-                          &builder->directory_stack_capacity,
-                          sizeof(*builder->directory_stack),
-                          builder->directory_stack_count + 1)) {
+    if (!arena_arr_push(builder->arena, builder->directory_stack, node->index)) {
         return false;
     }
-    builder->directory_stack[builder->directory_stack_count++] = node->index;
+    builder->directory_stack_count = arena_arr_len(builder->directory_stack);
+    builder->directory_stack_capacity = arena_arr_cap(builder->directory_stack);
     builder->current_directory_index = node->index;
     return true;
 }
@@ -539,9 +533,9 @@ static bool builder_fill_custom_command_from_event(Build_Model_Builder *builder,
                                                    String_View depends) {
     if (!builder || !ev || !cmd) return false;
 
-    String_List outputs_list = {0};
-    String_List byproducts_list = {0};
-    String_List depends_list = {0};
+    String_List outputs_list = NULL;
+    String_List byproducts_list = NULL;
+    String_List depends_list = NULL;
 
     if (!builder_collect_semicolon_list(builder, outputs, &outputs_list)) {
         return builder_fail(builder, ev, "failed to parse custom command outputs", "check event payload formatting");
@@ -593,7 +587,7 @@ static bool builder_handle_event_project_declare(Build_Model_Builder *builder, c
         ev->as.project_declare.description
     );
 
-    builder->model->project_languages.count = 0;
+    arena_arr_set_len(builder->model->project_languages, 0);
     return builder_for_each_semicolon_item(
         ev->as.project_declare.languages,
         true,
@@ -1132,9 +1126,9 @@ static bool builder_handle_event_custom_command_output(Build_Model_Builder *buil
         }
     }
 
-    String_List outputs_list = {0};
-    String_List byproducts_list = {0};
-    String_List depends_list = {0};
+    String_List outputs_list = NULL;
+    String_List byproducts_list = NULL;
+    String_List depends_list = NULL;
     if (!builder_collect_semicolon_list(builder, ev->as.custom_command_output.outputs, &outputs_list)) {
         return builder_fail(builder, ev, "failed to parse output custom command outputs", "check event payload formatting");
     }

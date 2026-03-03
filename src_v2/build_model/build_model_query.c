@@ -29,15 +29,9 @@ static bool bm_query_append_unique_lib(Bm_Query_Lib_Collect_Ctx *ctx, String_Vie
     if (stbds_shgetp_null(ctx->seen_libs, nob_temp_sv_to_cstr(lib))) return true;
     stbds_shput(ctx->seen_libs, nob_temp_sv_to_cstr(lib), 1);
 
-    if (!arena_da_reserve(ctx->arena,
-                          (void**)&ctx->items,
-                          &ctx->capacity,
-                          sizeof(ctx->items[0]),
-                          ctx->count + 1)) {
-        return false;
-    }
-
-    ctx->items[ctx->count++] = lib;
+    if (!arena_arr_push(ctx->arena, ctx->items, lib)) return false;
+    ctx->count = arena_arr_len(ctx->items);
+    ctx->capacity = arena_arr_cap(ctx->items);
     return true;
 }
 
@@ -52,8 +46,8 @@ static bool bm_query_collect_dep_by_name(Bm_Query_Lib_Collect_Ctx *ctx, String_V
 
 static bool bm_query_collect_list_items(Bm_Query_Lib_Collect_Ctx *ctx, const String_List *list, bool item_may_be_target) {
     if (!ctx || !list) return true;
-    for (size_t i = 0; i < list->count; i++) {
-        String_View item = list->items[i];
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        String_View item = (*list)[i];
         if (item.count == 0) continue;
         if (item_may_be_target) {
             const Build_Target *dep = bm_get_target(ctx->model, item);
@@ -76,14 +70,14 @@ static bool bm_query_collect_target_libs(Bm_Query_Lib_Collect_Ctx *ctx, const Bu
     if (!bm_query_collect_list_items(ctx, &target->link_libraries, true)) return false;
     if (!bm_query_collect_list_items(ctx, &target->interface_libs, true)) return false;
 
-    for (size_t i = 0; i < target->dependencies.count; i++) {
-        if (!bm_query_collect_dep_by_name(ctx, target->dependencies.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(target->dependencies); i++) {
+        if (!bm_query_collect_dep_by_name(ctx, target->dependencies[i])) return false;
     }
-    for (size_t i = 0; i < target->interface_dependencies.count; i++) {
-        if (!bm_query_collect_dep_by_name(ctx, target->interface_dependencies.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(target->interface_dependencies); i++) {
+        if (!bm_query_collect_dep_by_name(ctx, target->interface_dependencies[i])) return false;
     }
-    for (size_t i = 0; i < target->object_dependencies.count; i++) {
-        if (!bm_query_collect_dep_by_name(ctx, target->object_dependencies.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(target->object_dependencies); i++) {
+        if (!bm_query_collect_dep_by_name(ctx, target->object_dependencies[i])) return false;
     }
 
     return true;
@@ -125,53 +119,53 @@ Target_Type bm_query_target_type(const Build_Target *target) {
 }
 
 size_t bm_target_source_count(const Build_Target *t) {
-    return t ? t->sources.count : 0;
+    return t ? arena_arr_len(t->sources) : 0;
 }
 
 String_View bm_target_source_at(const Build_Target *t, size_t index) {
-    if (!t || index >= t->sources.count) return g_empty_sv;
-    return t->sources.items[index];
+    if (!t || index >= arena_arr_len(t->sources)) return g_empty_sv;
+    return t->sources[index];
 }
 
 size_t bm_target_include_count(const Build_Target *t) {
-    return t ? t->conditional_include_directories.count : 0;
+    return t ? arena_arr_len(t->conditional_include_directories) : 0;
 }
 
 String_View bm_target_include_at(const Build_Target *t, size_t index) {
-    if (!t || index >= t->conditional_include_directories.count) return g_empty_sv;
-    return t->conditional_include_directories.items[index].value;
+    if (!t || index >= arena_arr_len(t->conditional_include_directories)) return g_empty_sv;
+    return t->conditional_include_directories[index].value;
 }
 
 void bm_query_target_sources(const Build_Target *target, const String_View **out_items, size_t *out_count) {
     if (out_items) *out_items = NULL;
     if (out_count) *out_count = 0;
     if (!target) return;
-    if (out_items) *out_items = target->sources.items;
-    if (out_count) *out_count = target->sources.count;
+    if (out_items) *out_items = target->sources;
+    if (out_count) *out_count = arena_arr_len(target->sources);
 }
 
 void bm_query_target_includes(const Build_Target *target, const String_View **out_items, size_t *out_count) {
     if (out_items) *out_items = NULL;
     if (out_count) *out_count = 0;
     if (!target) return;
-    if (out_items) *out_items = target->interface_include_directories.items;
-    if (out_count) *out_count = target->interface_include_directories.count;
+    if (out_items) *out_items = target->interface_include_directories;
+    if (out_count) *out_count = arena_arr_len(target->interface_include_directories);
 }
 
 void bm_query_target_deps(const Build_Target *target, const String_View **out_items, size_t *out_count) {
     if (out_items) *out_items = NULL;
     if (out_count) *out_count = 0;
     if (!target) return;
-    if (out_items) *out_items = target->dependencies.items;
-    if (out_count) *out_count = target->dependencies.count;
+    if (out_items) *out_items = target->dependencies;
+    if (out_count) *out_count = arena_arr_len(target->dependencies);
 }
 
 void bm_query_target_link_libraries(const Build_Target *target, const String_View **out_items, size_t *out_count) {
     if (out_items) *out_items = NULL;
     if (out_count) *out_count = 0;
     if (!target) return;
-    if (out_items) *out_items = target->link_libraries.items;
-    if (out_count) *out_count = target->link_libraries.count;
+    if (out_items) *out_items = target->link_libraries;
+    if (out_count) *out_count = arena_arr_len(target->link_libraries);
 }
 
 bool bm_query_target_effective_link_libraries(const Build_Target *target,
@@ -183,10 +177,10 @@ bool bm_query_target_effective_link_libraries(const Build_Target *target,
     if (out_count) *out_count = 0;
     if (!target || !scratch_arena) return false;
 
-    String_List list = {0};
+    String_List list = NULL;
     build_target_collect_effective_link_libraries((Build_Target*)target, scratch_arena, logic_ctx, &list);
-    if (out_items) *out_items = list.items;
-    if (out_count) *out_count = list.count;
+    if (out_items) *out_items = list;
+    if (out_count) *out_count = arena_arr_len(list);
     return true;
 }
 
