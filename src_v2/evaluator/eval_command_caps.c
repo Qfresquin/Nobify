@@ -44,6 +44,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"enable_language", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"enable_testing", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"endblock", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
+    {"exec_program", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
     {"execute_process", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
     {"file", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE},
     {"get_cmake_property", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
@@ -93,6 +94,7 @@ static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
     {"target_precompile_headers", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
     {"target_sources", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
     {"try_compile", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
+    {"try_run", EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN},
     {"unset", EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN},
 };
 static const size_t COMMAND_CAPS_COUNT = sizeof(COMMAND_CAPS) / sizeof(COMMAND_CAPS[0]);

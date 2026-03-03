@@ -396,14 +396,6 @@ static double flow_now_seconds(void) {
     return (double)ts.tv_sec + ((double)ts.tv_nsec / 1000000000.0);
 }
 
-static void flow_sleep_millis(unsigned millis) {
-#if defined(_WIN32)
-    Sleep(millis);
-#else
-    usleep((useconds_t)millis * 1000u);
-#endif
-}
-
 static String_View flow_sb_to_temp_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
     if (!ctx || !sb) return nob_sv_from_cstr("");
     if (sb->count == 0) return nob_sv_from_cstr("");
@@ -827,170 +819,29 @@ static bool flow_exec_run_command(Evaluator_Context *ctx,
                                   double deadline_seconds,
                                   Flow_Exec_Result *out_result) {
     if (!ctx || !cmd || !out_result || cmd->args.count == 0) return false;
-
     *out_result = (Flow_Exec_Result){0};
-    out_result->result_text = nob_sv_from_cstr("1");
 
-    const char **argv = arena_alloc_array(ctx->arena, const char *, cmd->args.count + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, argv, false);
-    for (size_t i = 0; i < cmd->args.count; i++) {
-        argv[i] = eval_sv_to_cstr_temp(ctx, cmd->args.items[i]);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[i], false);
-    }
-    argv[cmd->args.count] = NULL;
-
-    bool changed_cwd = false;
-    char old_cwd[4096] = {0};
-    const char *cwd_c = NULL;
-    if (working_directory.count > 0) {
-        cwd_c = eval_sv_to_cstr_temp(ctx, working_directory);
-        EVAL_OOM_RETURN_IF_NULL(ctx, cwd_c, false);
-#if defined(_WIN32)
-        if (!_getcwd(old_cwd, sizeof(old_cwd))) {
-            out_result->result_text = nob_sv_from_cstr("failed to capture working directory");
-            return true;
-        }
-        if (_chdir(cwd_c) != 0) {
-            out_result->result_text = nob_sv_from_cstr("failed to enter WORKING_DIRECTORY");
-            return true;
-        }
-#else
-        if (!getcwd(old_cwd, sizeof(old_cwd))) {
-            out_result->result_text = nob_sv_from_cstr("failed to capture working directory");
-            return true;
-        }
-        if (chdir(cwd_c) != 0) {
-            out_result->result_text = nob_sv_from_cstr("failed to enter WORKING_DIRECTORY");
-            return true;
-        }
-#endif
-        changed_cwd = true;
+    Eval_Process_Run_Request req = {
+        .argv = cmd->args,
+        .working_directory = working_directory,
+        .stdin_data = stdin_data,
+        .has_timeout = deadline_seconds > 0.0,
+        .timeout_seconds = 0.0,
+    };
+    if (req.has_timeout) {
+        double remaining = deadline_seconds - flow_now_seconds();
+        if (remaining < 0.0) remaining = 0.0;
+        req.timeout_seconds = remaining;
     }
 
-    struct subprocess_s proc = {0};
-    int options = subprocess_option_inherit_environment |
-                  subprocess_option_search_user_path |
-                  subprocess_option_enable_async;
-#if defined(_WIN32)
-    options |= subprocess_option_no_window;
-#endif
-    if (subprocess_create(argv, options, &proc) != 0) {
-        if (changed_cwd) {
-#if defined(_WIN32)
-            if (_chdir(old_cwd) != 0) {
-                out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
-                return true;
-            }
-#else
-            if (chdir(old_cwd) != 0) {
-                out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
-                return true;
-            }
-#endif
-        }
-        out_result->result_text = nob_sv_from_cstr("process failed to start");
-        return true;
-    }
-    if (changed_cwd) {
-#if defined(_WIN32)
-        if (_chdir(old_cwd) != 0) {
-            (void)subprocess_terminate(&proc);
-            (void)subprocess_join(&proc, NULL);
-            (void)subprocess_destroy(&proc);
-            out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
-            return true;
-        }
-#else
-        if (chdir(old_cwd) != 0) {
-            (void)subprocess_terminate(&proc);
-            (void)subprocess_join(&proc, NULL);
-            (void)subprocess_destroy(&proc);
-            out_result->result_text = nob_sv_from_cstr("failed to restore working directory");
-            return true;
-        }
-#endif
-    }
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &req, &proc)) return false;
 
-    FILE *child_stdin = subprocess_stdin(&proc);
-    if (child_stdin) {
-        if (stdin_data.count > 0) {
-            size_t written = fwrite(stdin_data.data, 1, stdin_data.count, child_stdin);
-            if (written != stdin_data.count) {
-                fclose(child_stdin);
-                proc.stdin_file = NULL;
-                (void)subprocess_terminate(&proc);
-                (void)subprocess_join(&proc, NULL);
-                (void)subprocess_destroy(&proc);
-                out_result->result_text = nob_sv_from_cstr("failed to write process input");
-                return true;
-            }
-        }
-        fclose(child_stdin);
-        proc.stdin_file = NULL;
-    }
-
-    Nob_String_Builder out_sb = {0};
-    Nob_String_Builder err_sb = {0};
-    for (;;) {
-        char buf[512];
-        unsigned n_out = subprocess_read_stdout(&proc, buf, sizeof(buf));
-        if (n_out > 0 && !flow_exec_append_bytes(&out_sb, buf, (size_t)n_out)) {
-            nob_sb_free(out_sb);
-            nob_sb_free(err_sb);
-            (void)subprocess_terminate(&proc);
-            (void)subprocess_join(&proc, NULL);
-            (void)subprocess_destroy(&proc);
-            return ctx_oom(ctx);
-        }
-
-        unsigned n_err = subprocess_read_stderr(&proc, buf, sizeof(buf));
-        if (n_err > 0 && !flow_exec_append_bytes(&err_sb, buf, (size_t)n_err)) {
-            nob_sb_free(out_sb);
-            nob_sb_free(err_sb);
-            (void)subprocess_terminate(&proc);
-            (void)subprocess_join(&proc, NULL);
-            (void)subprocess_destroy(&proc);
-            return ctx_oom(ctx);
-        }
-
-        int alive = subprocess_alive(&proc);
-        if (deadline_seconds > 0.0 && alive && flow_now_seconds() >= deadline_seconds) {
-            out_result->timed_out = true;
-            (void)subprocess_terminate(&proc);
-            alive = subprocess_alive(&proc);
-        }
-
-        if (!alive && n_out == 0 && n_err == 0) break;
-        if (n_out == 0 && n_err == 0) flow_sleep_millis(10);
-    }
-
-    int exit_code = 1;
-    if (subprocess_join(&proc, &exit_code) != 0) {
-        nob_sb_free(out_sb);
-        nob_sb_free(err_sb);
-        (void)subprocess_destroy(&proc);
-        out_result->result_text = nob_sv_from_cstr("failed to wait for process");
-        return true;
-    }
-    (void)subprocess_destroy(&proc);
-
-    out_result->exit_code = exit_code;
-    out_result->stdout_text = flow_sb_to_temp_sv(ctx, &out_sb);
-    out_result->stderr_text = flow_sb_to_temp_sv(ctx, &err_sb);
-    nob_sb_free(out_sb);
-    nob_sb_free(err_sb);
-    if (eval_should_stop(ctx)) return false;
-
-    if (out_result->timed_out) {
-        out_result->result_text = nob_sv_from_cstr("Process terminated due to timeout");
-    } else {
-        char *result_buf = arena_alloc(ctx->arena, 32);
-        EVAL_OOM_RETURN_IF_NULL(ctx, result_buf, false);
-        int n = snprintf(result_buf, 32, "%d", exit_code);
-        if (n < 0 || n >= 32) return ctx_oom(ctx);
-        out_result->result_text = nob_sv_from_parts(result_buf, (size_t)n);
-    }
-
+    out_result->timed_out = proc.timed_out;
+    out_result->exit_code = proc.exit_code;
+    out_result->stdout_text = proc.stdout_text;
+    out_result->stderr_text = proc.stderr_text;
+    out_result->result_text = proc.result_text;
     return true;
 }
 
@@ -1863,6 +1714,177 @@ bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
 
     Flow_Exec_Options opt = {0};
     if (!flow_exec_parse_options(ctx, node, args, &opt)) return !eval_should_stop(ctx);
+
+    String_View stdout_text = nob_sv_from_cstr("");
+    String_View stderr_text = nob_sv_from_cstr("");
+    String_View last_result = nob_sv_from_cstr("0");
+    String_View results_joined = nob_sv_from_cstr("");
+    bool had_error = false;
+    if (!flow_exec_collect_results(ctx,
+                                   &opt,
+                                   &stdout_text,
+                                   &stderr_text,
+                                   &last_result,
+                                   &results_joined,
+                                   &had_error)) {
+        return !eval_should_stop(ctx);
+    }
+
+    return flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error);
+}
+
+typedef struct {
+    String_View executable;
+    bool has_working_directory;
+    String_View working_directory;
+    bool has_args;
+    String_View arg_string;
+    bool has_output_variable;
+    String_View output_variable;
+    bool has_return_value;
+    String_View return_value;
+} Flow_Exec_Program_Compat;
+
+static bool flow_exec_program_parse(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    const SV_List *args,
+                                    Flow_Exec_Program_Compat *out) {
+    if (!ctx || !node || !args || !out) return false;
+    *out = (Flow_Exec_Program_Compat){0};
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (args->count == 0) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("exec_program() requires an executable"),
+                             nob_sv_from_cstr("Usage: exec_program(<executable> [<working-dir>] [ARGS <arg-string>] [OUTPUT_VARIABLE <var>] [RETURN_VALUE <var>])"));
+        return !eval_should_stop(ctx);
+    }
+
+    out->executable = args->items[0];
+    size_t i = 1;
+    if (i < args->count &&
+        !flow_arg_exact_ci(args->items[i], "ARGS") &&
+        !flow_arg_exact_ci(args->items[i], "OUTPUT_VARIABLE") &&
+        !flow_arg_exact_ci(args->items[i], "RETURN_VALUE")) {
+        out->has_working_directory = true;
+        out->working_directory = args->items[i++];
+    }
+
+    for (; i < args->count; i++) {
+        String_View token = args->items[i];
+        if (flow_arg_exact_ci(token, "ARGS")) {
+            if (out->has_args || i + 1 >= args->count) {
+                (void)eval_emit_diag(ctx,
+                                     EV_DIAG_ERROR,
+                                     nob_sv_from_cstr("flow"),
+                                     node->as.cmd.name,
+                                     origin,
+                                     nob_sv_from_cstr("exec_program(ARGS) requires exactly one argument string"),
+                                     nob_sv_from_cstr("Usage: exec_program(... ARGS \"<arg-string>\")"));
+                return !eval_should_stop(ctx);
+            }
+            out->has_args = true;
+            out->arg_string = args->items[++i];
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "OUTPUT_VARIABLE")) {
+            if (out->has_output_variable || i + 1 >= args->count) {
+                (void)eval_emit_diag(ctx,
+                                     EV_DIAG_ERROR,
+                                     nob_sv_from_cstr("flow"),
+                                     node->as.cmd.name,
+                                     origin,
+                                     nob_sv_from_cstr("exec_program(OUTPUT_VARIABLE) requires exactly one output variable"),
+                                     nob_sv_from_cstr("Usage: exec_program(... OUTPUT_VARIABLE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            out->has_output_variable = true;
+            out->output_variable = args->items[++i];
+            continue;
+        }
+
+        if (flow_arg_exact_ci(token, "RETURN_VALUE")) {
+            if (out->has_return_value || i + 1 >= args->count) {
+                (void)eval_emit_diag(ctx,
+                                     EV_DIAG_ERROR,
+                                     nob_sv_from_cstr("flow"),
+                                     node->as.cmd.name,
+                                     origin,
+                                     nob_sv_from_cstr("exec_program(RETURN_VALUE) requires exactly one output variable"),
+                                     nob_sv_from_cstr("Usage: exec_program(... RETURN_VALUE <var>)"));
+                return !eval_should_stop(ctx);
+            }
+            out->has_return_value = true;
+            out->return_value = args->items[++i];
+            continue;
+        }
+
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("exec_program() received an unsupported argument"),
+                             token);
+        return !eval_should_stop(ctx);
+    }
+
+    return true;
+}
+
+bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    String_View cmp0153 = eval_policy_get_effective(ctx, nob_sv_from_cstr("CMP0153"));
+    if (eval_sv_eq_ci_lit(cmp0153, "NEW")) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("flow"),
+                             node->as.cmd.name,
+                             origin,
+                             nob_sv_from_cstr("exec_program() is disallowed by CMP0153"),
+                             nob_sv_from_cstr("Set CMP0153 to OLD only for legacy compatibility"));
+        return !eval_should_stop(ctx);
+    }
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    Flow_Exec_Program_Compat compat = {0};
+    if (!flow_exec_program_parse(ctx, node, &args, &compat)) return !eval_should_stop(ctx);
+
+    Flow_Exec_Command cmd = {0};
+    if (!flow_exec_append_command_arg(ctx, &cmd, compat.executable)) return false;
+
+    if (compat.has_args) {
+        SV_List split_args = {0};
+        if (!eval_split_command_line_temp(ctx, EVAL_CMDLINE_NATIVE, compat.arg_string, &split_args)) return false;
+        for (size_t i = 0; i < split_args.count; i++) {
+            if (!flow_exec_append_command_arg(ctx, &cmd, split_args.items[i])) return false;
+        }
+    }
+
+    Flow_Exec_Options opt = {0};
+    if (!flow_exec_append_command(ctx, &opt.commands, cmd)) return false;
+    if (compat.has_working_directory) {
+        opt.has_working_directory = true;
+        opt.working_directory = flow_resolve_binary_relative_path(ctx, compat.working_directory);
+        if (eval_should_stop(ctx)) return false;
+    }
+    if (compat.has_output_variable) {
+        opt.has_output_variable = true;
+        opt.output_variable = compat.output_variable;
+    }
+    if (compat.has_return_value) {
+        opt.has_result_variable = true;
+        opt.result_variable = compat.return_value;
+    }
 
     String_View stdout_text = nob_sv_from_cstr("");
     String_View stderr_text = nob_sv_from_cstr("");

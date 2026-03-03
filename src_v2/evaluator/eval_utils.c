@@ -1,5 +1,6 @@
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
+#include "subprocess.h"
 #include "sv_utils.h"
 #include "stb_ds.h"
 #include <ctype.h>
@@ -8,7 +9,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
+#include <direct.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -546,6 +549,283 @@ bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_Li
         if (touched) {
             if (!svu_list_push_temp(ctx, out, nob_sv_from_cstr(buf))) return false;
         }
+    }
+
+    return true;
+}
+
+static bool eval_split_windows_command_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+    if (!ctx || !out) return false;
+
+    size_t i = 0;
+    while (i < input.count) {
+        while (i < input.count && isspace((unsigned char)input.data[i])) i++;
+        if (i >= input.count) break;
+
+        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+        size_t off = 0;
+        bool in_quotes = false;
+        while (i < input.count) {
+            char c = input.data[i];
+            if (!in_quotes && isspace((unsigned char)c)) break;
+
+            if (c == '\\') {
+                size_t slash_count = 0;
+                while (i + slash_count < input.count && input.data[i + slash_count] == '\\') slash_count++;
+
+                bool next_is_quote = (i + slash_count < input.count && input.data[i + slash_count] == '"');
+                if (next_is_quote) {
+                    size_t literal_slashes = slash_count / 2;
+                    for (size_t si = 0; si < literal_slashes; si++) buf[off++] = '\\';
+                    if ((slash_count % 2) == 0) {
+                        in_quotes = !in_quotes;
+                    } else {
+                        buf[off++] = '"';
+                    }
+                    i += slash_count + 1;
+                    continue;
+                }
+
+                for (size_t si = 0; si < slash_count; si++) buf[off++] = '\\';
+                i += slash_count;
+                continue;
+            }
+
+            if (c == '"') {
+                if (in_quotes && i + 1 < input.count && input.data[i + 1] == '"') {
+                    buf[off++] = '"';
+                    i += 2;
+                    continue;
+                }
+                in_quotes = !in_quotes;
+                i++;
+                continue;
+            }
+
+            buf[off++] = c;
+            i++;
+        }
+
+        buf[off] = '\0';
+        if (!svu_list_push_temp(ctx, out, nob_sv_from_parts(buf, off))) return false;
+    }
+
+    return true;
+}
+
+bool eval_split_command_line_temp(Evaluator_Context *ctx,
+                                  Eval_Cmdline_Mode mode,
+                                  String_View input,
+                                  SV_List *out_tokens) {
+    if (!ctx || !out_tokens) return false;
+
+    if (mode == EVAL_CMDLINE_NATIVE) {
+#if defined(_WIN32)
+        mode = EVAL_CMDLINE_WINDOWS;
+#else
+        mode = EVAL_CMDLINE_UNIX;
+#endif
+    }
+
+    if (mode == EVAL_CMDLINE_WINDOWS) return eval_split_windows_command_temp(ctx, input, out_tokens);
+    return eval_split_shell_like_temp(ctx, input, out_tokens);
+}
+
+static double eval_process_now_seconds(void) {
+    struct timespec ts = {0};
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) return 0.0;
+    return (double)ts.tv_sec + ((double)ts.tv_nsec / 1000000000.0);
+}
+
+static void eval_process_sleep_millis(unsigned millis) {
+#if defined(_WIN32)
+    Sleep(millis);
+#else
+    usleep((useconds_t)millis * 1000u);
+#endif
+}
+
+static String_View eval_process_sb_to_owned_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+    if (!ctx || !sb || sb->count == 0) return nob_sv_from_cstr("");
+    char *copy = arena_strndup(ctx->arena, sb->items, sb->count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, nob_sv_from_cstr(""));
+    return nob_sv_from_parts(copy, sb->count);
+}
+
+bool eval_process_run_capture(Evaluator_Context *ctx,
+                              const Eval_Process_Run_Request *req,
+                              Eval_Process_Run_Result *out) {
+    if (!ctx || !req || !out || req->argv.count == 0) return false;
+
+    *out = (Eval_Process_Run_Result){
+        .result_text = nob_sv_from_cstr("1"),
+    };
+
+    const char **argv = arena_alloc_array(ctx->arena, const char *, req->argv.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, argv, false);
+    for (size_t i = 0; i < req->argv.count; i++) {
+        argv[i] = eval_sv_to_cstr_temp(ctx, req->argv.items[i]);
+        EVAL_OOM_RETURN_IF_NULL(ctx, argv[i], false);
+    }
+    argv[req->argv.count] = NULL;
+
+    bool changed_cwd = false;
+    char old_cwd[4096] = {0};
+    if (req->working_directory.count > 0) {
+        const char *cwd_c = eval_sv_to_cstr_temp(ctx, req->working_directory);
+        EVAL_OOM_RETURN_IF_NULL(ctx, cwd_c, false);
+#if defined(_WIN32)
+        if (!_getcwd(old_cwd, sizeof(old_cwd))) {
+            out->result_text = nob_sv_from_cstr("failed to capture working directory");
+            return true;
+        }
+        if (_chdir(cwd_c) != 0) {
+            out->result_text = nob_sv_from_cstr("failed to enter WORKING_DIRECTORY");
+            return true;
+        }
+#else
+        if (!getcwd(old_cwd, sizeof(old_cwd))) {
+            out->result_text = nob_sv_from_cstr("failed to capture working directory");
+            return true;
+        }
+        if (chdir(cwd_c) != 0) {
+            out->result_text = nob_sv_from_cstr("failed to enter WORKING_DIRECTORY");
+            return true;
+        }
+#endif
+        changed_cwd = true;
+    }
+
+    struct subprocess_s proc = {0};
+    int options = subprocess_option_inherit_environment |
+                  subprocess_option_search_user_path |
+                  subprocess_option_enable_async;
+#if defined(_WIN32)
+    options |= subprocess_option_no_window;
+#endif
+    if (subprocess_create(argv, options, &proc) != 0) {
+        if (changed_cwd) {
+#if defined(_WIN32)
+            if (_chdir(old_cwd) != 0) {
+            }
+#else
+            if (chdir(old_cwd) != 0) {
+            }
+#endif
+        }
+        out->result_text = nob_sv_from_cstr("process failed to start");
+        return true;
+    }
+    out->started = true;
+
+    if (changed_cwd) {
+#if defined(_WIN32)
+        if (_chdir(old_cwd) != 0) {
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            out->result_text = nob_sv_from_cstr("failed to restore working directory");
+            out->started = false;
+            return true;
+        }
+#else
+        if (chdir(old_cwd) != 0) {
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            out->result_text = nob_sv_from_cstr("failed to restore working directory");
+            out->started = false;
+            return true;
+        }
+#endif
+    }
+
+    FILE *child_stdin = subprocess_stdin(&proc);
+    if (child_stdin) {
+        if (req->stdin_data.count > 0) {
+            size_t written = fwrite(req->stdin_data.data, 1, req->stdin_data.count, child_stdin);
+            if (written != req->stdin_data.count) {
+                fclose(child_stdin);
+                proc.stdin_file = NULL;
+                (void)subprocess_terminate(&proc);
+                (void)subprocess_join(&proc, NULL);
+                (void)subprocess_destroy(&proc);
+                out->result_text = nob_sv_from_cstr("failed to write process input");
+                out->started = false;
+                return true;
+            }
+        }
+        fclose(child_stdin);
+        proc.stdin_file = NULL;
+    }
+
+    Nob_String_Builder out_sb = {0};
+    Nob_String_Builder err_sb = {0};
+    double deadline = 0.0;
+    if (req->has_timeout) {
+        deadline = eval_process_now_seconds() + req->timeout_seconds;
+    }
+
+    for (;;) {
+        char buf[512];
+        unsigned n_out = subprocess_read_stdout(&proc, buf, sizeof(buf));
+        if (n_out > 0) {
+            nob_sb_append_buf(&out_sb, buf, (size_t)n_out);
+        }
+
+        unsigned n_err = subprocess_read_stderr(&proc, buf, sizeof(buf));
+        if (n_err > 0) {
+            nob_sb_append_buf(&err_sb, buf, (size_t)n_err);
+        }
+
+        if (ctx->oom) {
+            nob_sb_free(out_sb);
+            nob_sb_free(err_sb);
+            (void)subprocess_terminate(&proc);
+            (void)subprocess_join(&proc, NULL);
+            (void)subprocess_destroy(&proc);
+            return false;
+        }
+
+        int alive = subprocess_alive(&proc);
+        if (req->has_timeout && alive && eval_process_now_seconds() >= deadline) {
+            out->timed_out = true;
+            (void)subprocess_terminate(&proc);
+            alive = subprocess_alive(&proc);
+        }
+
+        if (!alive && n_out == 0 && n_err == 0) break;
+        if (n_out == 0 && n_err == 0) eval_process_sleep_millis(10);
+    }
+
+    int exit_code = 1;
+    if (subprocess_join(&proc, &exit_code) != 0) {
+        nob_sb_free(out_sb);
+        nob_sb_free(err_sb);
+        (void)subprocess_destroy(&proc);
+        out->result_text = nob_sv_from_cstr("failed to wait for process");
+        out->started = false;
+        return true;
+    }
+    (void)subprocess_destroy(&proc);
+
+    out->exit_code = exit_code;
+    out->stdout_text = eval_process_sb_to_owned_sv(ctx, &out_sb);
+    out->stderr_text = eval_process_sb_to_owned_sv(ctx, &err_sb);
+    nob_sb_free(out_sb);
+    nob_sb_free(err_sb);
+    if (eval_should_stop(ctx)) return false;
+
+    if (out->timed_out) {
+        out->result_text = nob_sv_from_cstr("Process terminated due to timeout");
+    } else {
+        char *result_buf = arena_alloc(ctx->arena, 32);
+        EVAL_OOM_RETURN_IF_NULL(ctx, result_buf, false);
+        int n = snprintf(result_buf, 32, "%d", exit_code);
+        if (n < 0 || n >= 32) return ctx_oom(ctx);
+        out->result_text = nob_sv_from_parts(result_buf, (size_t)n);
     }
 
     return true;

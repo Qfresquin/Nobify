@@ -13,6 +13,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 void nob__cmd_append(Nob_Cmd *cmd, size_t n, ...);
 
@@ -83,6 +88,26 @@ typedef struct {
     String_View output;
     String_View artifact_path;
 } Try_Compile_Execution_Result;
+
+typedef struct {
+    Try_Compile_Request compile_req;
+    String_View run_result_var;
+    String_View compile_output_var;
+    String_View run_output_var;
+    String_View run_stdout_var;
+    String_View run_stderr_var;
+    String_View working_directory;
+    SV_List run_args;
+} Try_Run_Request;
+
+typedef struct {
+    bool compile_ok;
+    bool run_invoked;
+    int run_exit_code;
+    String_View compile_output;
+    String_View run_stdout;
+    String_View run_stderr;
+} Try_Run_Result;
 
 typedef struct {
     String_View key;
@@ -1348,6 +1373,62 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
     return true;
 }
 
+static void try_compile_init_request(Evaluator_Context *ctx,
+                                     String_View result_var,
+                                     Try_Compile_Request *out_req) {
+    if (!ctx || !out_req) return;
+    *out_req = (Try_Compile_Request){
+        .signature = TRY_COMPILE_SIGNATURE_SOURCE,
+        .result_var = result_var,
+        .current_src_dir = try_compile_current_src_dir(ctx),
+        .current_bin_dir = try_compile_current_bin_dir(ctx),
+        .binary_dir = nob_sv_from_cstr(""),
+    };
+}
+
+static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
+                                                  const Node *node,
+                                                  const SV_List *args,
+                                                  Try_Compile_Request *out_req) {
+    if (!ctx || !node || !args || !out_req) return false;
+    if (args->count < 2) {
+        return eval_emit_diag(ctx,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("dispatcher"),
+                              node->as.cmd.name,
+                              eval_origin_from_node(ctx, node),
+                              nob_sv_from_cstr("try_compile() requires at least a result variable"),
+                              nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
+    }
+
+    try_compile_init_request(ctx, args->items[0], out_req);
+
+    size_t opt_start = 1;
+    if (!try_compile_is_keyword(args->items[1])) {
+        out_req->binary_dir = try_compile_resolve_in_dir(ctx, args->items[1], out_req->current_bin_dir);
+        opt_start = 2;
+    } else {
+        out_req->binary_dir = try_compile_make_scratch_dir(ctx, out_req->current_bin_dir);
+    }
+
+    char *bindir_c = eval_sv_to_cstr_temp(ctx, out_req->binary_dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, bindir_c, false);
+    (void)mkdir_p_local(ctx, bindir_c);
+
+    if (!try_compile_parse_source_options(ctx, node, args, opt_start, out_req)) return false;
+    if (out_req->source_items.count == 0) {
+        return eval_emit_diag(ctx,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("dispatcher"),
+                              node->as.cmd.name,
+                              eval_origin_from_node(ctx, node),
+                              nob_sv_from_cstr("try_compile(SOURCE ...) requires at least one source input"),
+                              nob_sv_from_cstr("Use SOURCES, SOURCE_FROM_CONTENT, SOURCE_FROM_VAR or SOURCE_FROM_FILE"));
+    }
+
+    return true;
+}
+
 static bool try_compile_parse_request(Evaluator_Context *ctx,
                                       const Node *node,
                                       const SV_List *args,
@@ -1363,13 +1444,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
-    *out_req = (Try_Compile_Request){
-        .signature = TRY_COMPILE_SIGNATURE_SOURCE,
-        .result_var = args->items[0],
-        .current_src_dir = try_compile_current_src_dir(ctx),
-        .current_bin_dir = try_compile_current_bin_dir(ctx),
-        .binary_dir = nob_sv_from_cstr(""),
-    };
+    try_compile_init_request(ctx, args->items[0], out_req);
 
     if (eval_sv_eq_ci_lit(args->items[1], "PROJECT")) {
         out_req->signature = TRY_COMPILE_SIGNATURE_PROJECT;
@@ -1428,30 +1503,153 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
         (void)mkdir_p_local(ctx, bindir_c);
         return true;
     }
+    return try_compile_parse_source_request_core(ctx, node, args, out_req);
+}
 
-    size_t opt_start = 1;
-    if (!try_compile_is_keyword(args->items[1])) {
-        out_req->binary_dir = try_compile_resolve_in_dir(ctx, args->items[1], out_req->current_bin_dir);
-        opt_start = 2;
-    } else {
-        out_req->binary_dir = try_compile_make_scratch_dir(ctx, out_req->current_bin_dir);
-    }
+static bool try_run_append_token(Evaluator_Context *ctx, SV_List *list, String_View item) {
+    if (!ctx || !list) return false;
+    if (!arena_da_try_append(eval_temp_arena(ctx), list, item)) return ctx_oom(ctx);
+    return true;
+}
 
-    char *bindir_c = eval_sv_to_cstr_temp(ctx, out_req->binary_dir);
-    EVAL_OOM_RETURN_IF_NULL(ctx, bindir_c, false);
-    (void)mkdir_p_local(ctx, bindir_c);
-
-    if (!try_compile_parse_source_options(ctx, node, args, opt_start, out_req)) return false;
-    if (out_req->source_items.count == 0) {
+static bool try_run_parse_request(Evaluator_Context *ctx,
+                                  const Node *node,
+                                  const SV_List *args,
+                                  Try_Run_Request *out_req) {
+    if (!ctx || !node || !args || !out_req) return false;
+    if (args->count < 4) {
         return eval_emit_diag(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
                               eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_compile(SOURCE ...) requires at least one source input"),
-                              nob_sv_from_cstr("Use SOURCES, SOURCE_FROM_CONTENT, SOURCE_FROM_VAR or SOURCE_FROM_FILE"));
+                              nob_sv_from_cstr("try_run() requires run result, compile result, binary directory and sources"),
+                              nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
     }
 
+    *out_req = (Try_Run_Request){
+        .run_result_var = args->items[0],
+    };
+
+    if (eval_sv_eq_ci_lit(args->items[2], "PROJECT")) {
+        return eval_emit_diag(ctx,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("dispatcher"),
+                              node->as.cmd.name,
+                              eval_origin_from_node(ctx, node),
+                              nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"),
+                              nob_sv_from_cstr("Use source-file forms only"));
+    }
+
+    if (try_compile_is_keyword(args->items[2])) {
+        return eval_emit_diag(ctx,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("dispatcher"),
+                              node->as.cmd.name,
+                              eval_origin_from_node(ctx, node),
+                              nob_sv_from_cstr("try_run() requires an explicit binary directory"),
+                              nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
+    }
+
+    SV_List compile_args = {0};
+    if (!try_run_append_token(ctx, &compile_args, args->items[1])) return false;
+
+    for (size_t i = 2; i < args->count; i++) {
+        String_View tok = args->items[i];
+
+        if (eval_sv_eq_ci_lit(tok, "PROJECT")) {
+            return eval_emit_diag(ctx,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("dispatcher"),
+                                  node->as.cmd.name,
+                                  eval_origin_from_node(ctx, node),
+                                  nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"),
+                                  nob_sv_from_cstr("Use source-file forms only"));
+        }
+
+        if (eval_sv_eq_ci_lit(tok, "COMPILE_OUTPUT_VARIABLE")) {
+            if (i + 1 >= args->count) {
+                return eval_emit_diag(ctx,
+                                      EV_DIAG_ERROR,
+                                      nob_sv_from_cstr("dispatcher"),
+                                      node->as.cmd.name,
+                                      eval_origin_from_node(ctx, node),
+                                      nob_sv_from_cstr("try_run(COMPILE_OUTPUT_VARIABLE) requires an output variable"),
+                                      nob_sv_from_cstr("Usage: try_run(... COMPILE_OUTPUT_VARIABLE <var>)"));
+            }
+            out_req->compile_output_var = args->items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_VARIABLE")) {
+            if (i + 1 >= args->count) {
+                return eval_emit_diag(ctx,
+                                      EV_DIAG_ERROR,
+                                      nob_sv_from_cstr("dispatcher"),
+                                      node->as.cmd.name,
+                                      eval_origin_from_node(ctx, node),
+                                      nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) requires an output variable"),
+                                      nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_VARIABLE <var>)"));
+            }
+            out_req->run_output_var = args->items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDOUT_VARIABLE")) {
+            if (i + 1 >= args->count) {
+                return eval_emit_diag(ctx,
+                                      EV_DIAG_ERROR,
+                                      nob_sv_from_cstr("dispatcher"),
+                                      node->as.cmd.name,
+                                      eval_origin_from_node(ctx, node),
+                                      nob_sv_from_cstr("try_run(RUN_OUTPUT_STDOUT_VARIABLE) requires an output variable"),
+                                      nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDOUT_VARIABLE <var>)"));
+            }
+            out_req->run_stdout_var = args->items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDERR_VARIABLE")) {
+            if (i + 1 >= args->count) {
+                return eval_emit_diag(ctx,
+                                      EV_DIAG_ERROR,
+                                      nob_sv_from_cstr("dispatcher"),
+                                      node->as.cmd.name,
+                                      eval_origin_from_node(ctx, node),
+                                      nob_sv_from_cstr("try_run(RUN_OUTPUT_STDERR_VARIABLE) requires an output variable"),
+                                      nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDERR_VARIABLE <var>)"));
+            }
+            out_req->run_stderr_var = args->items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(tok, "WORKING_DIRECTORY")) {
+            if (i + 1 >= args->count) {
+                return eval_emit_diag(ctx,
+                                      EV_DIAG_ERROR,
+                                      nob_sv_from_cstr("dispatcher"),
+                                      node->as.cmd.name,
+                                      eval_origin_from_node(ctx, node),
+                                      nob_sv_from_cstr("try_run(WORKING_DIRECTORY) requires a path"),
+                                      nob_sv_from_cstr("Usage: try_run(... WORKING_DIRECTORY <dir>)"));
+            }
+            out_req->working_directory = args->items[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(tok, "ARGS")) {
+            for (size_t j = i + 1; j < args->count; j++) {
+                if (!try_run_append_token(ctx, &out_req->run_args, args->items[j])) return false;
+            }
+            break;
+        }
+
+        if (!try_run_append_token(ctx, &compile_args, tok)) return false;
+    }
+
+    return try_compile_parse_source_request_core(ctx, node, &compile_args, &out_req->compile_req);
+}
+
+static bool try_run_clear_run_outputs(Evaluator_Context *ctx, const Try_Run_Request *req) {
+    if (!ctx || !req) return false;
+    if (req->run_output_var.count > 0 && !eval_var_set(ctx, req->run_output_var, nob_sv_from_cstr(""))) return false;
+    if (req->run_stdout_var.count > 0 && !eval_var_set(ctx, req->run_stdout_var, nob_sv_from_cstr(""))) return false;
+    if (req->run_stderr_var.count > 0 && !eval_var_set(ctx, req->run_stderr_var, nob_sv_from_cstr(""))) return false;
     return true;
 }
 
@@ -1522,6 +1720,136 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         }
         (void)eval_append_configure_log(ctx, node, nob_sv_from_parts(log.items, log.count));
         nob_sb_free(log);
+    }
+
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node || eval_should_stop(ctx)) return false;
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+
+    Try_Run_Request req = {0};
+    if (!try_run_parse_request(ctx, node, &args, &req)) {
+        return !eval_should_stop(ctx);
+    }
+
+    Try_Compile_Execution_Result exec_res = {0};
+    if (!try_compile_execute_source_request(ctx, &req.compile_req, &exec_res)) {
+        return !eval_should_stop(ctx);
+    }
+
+    Try_Run_Result run_res = {
+        .compile_ok = exec_res.ok,
+        .compile_output = exec_res.output.count > 0 ? exec_res.output : nob_sv_from_cstr(""),
+    };
+    if (!eval_var_set(ctx,
+                      req.compile_req.result_var,
+                      run_res.compile_ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) {
+        return false;
+    }
+    if (req.compile_output_var.count > 0 && !eval_var_set(ctx, req.compile_output_var, run_res.compile_output)) return false;
+
+    if (!run_res.compile_ok) {
+        if (!try_run_clear_run_outputs(ctx, &req)) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        return !eval_should_stop(ctx);
+    }
+
+    String_View cross_compiling = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
+    if (cross_compiling.count > 0 && !try_compile_is_false(cross_compiling)) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("dispatcher"),
+                             node->as.cmd.name,
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"),
+                             nob_sv_from_cstr("This batch only supports native execution"));
+        if (!try_run_clear_run_outputs(ctx, &req)) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        return !eval_should_stop(ctx);
+    }
+
+    if (exec_res.artifact_path.count == 0) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("dispatcher"),
+                             node->as.cmd.name,
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("try_run() failed to start compiled executable"),
+                             nob_sv_from_cstr("compiled artifact path is empty"));
+        if (!try_run_clear_run_outputs(ctx, &req)) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        return !eval_should_stop(ctx);
+    }
+
+    String_View exec_path = exec_res.artifact_path;
+    if (!eval_sv_is_abs_path(exec_path)) {
+        char cwd_buf[4096] = {0};
+#if defined(_WIN32)
+        if (_getcwd(cwd_buf, (int)sizeof(cwd_buf) - 1)) {
+#else
+        if (getcwd(cwd_buf, sizeof(cwd_buf) - 1)) {
+#endif
+            exec_path = eval_sv_path_join(eval_temp_arena(ctx), nob_sv_from_cstr(cwd_buf), exec_res.artifact_path);
+            if (eval_should_stop(ctx)) return false;
+        }
+    }
+
+    SV_List argv = {0};
+    if (!try_run_append_token(ctx, &argv, exec_path)) return false;
+    for (size_t i = 0; i < req.run_args.count; i++) {
+        if (!try_run_append_token(ctx, &argv, req.run_args.items[i])) return false;
+    }
+
+    String_View working_dir = req.working_directory.count > 0
+        ? eval_path_resolve_for_cmake_arg(ctx, req.working_directory, req.compile_req.current_bin_dir, false)
+        : req.compile_req.binary_dir;
+    if (eval_should_stop(ctx)) return false;
+
+    Eval_Process_Run_Request proc_req = {
+        .argv = argv,
+        .working_directory = working_dir,
+        .stdin_data = nob_sv_from_cstr(""),
+    };
+    Eval_Process_Run_Result proc_res = {0};
+    if (!eval_process_run_capture(ctx, &proc_req, &proc_res)) return false;
+
+    if (!proc_res.started) {
+        (void)eval_emit_diag(ctx,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("dispatcher"),
+                             node->as.cmd.name,
+                             eval_origin_from_node(ctx, node),
+                             nob_sv_from_cstr("try_run() failed to start compiled executable"),
+                             exec_res.artifact_path);
+        if (!try_run_clear_run_outputs(ctx, &req)) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        return !eval_should_stop(ctx);
+    }
+
+    run_res.run_invoked = true;
+    run_res.run_exit_code = proc_res.exit_code;
+    run_res.run_stdout = proc_res.stdout_text;
+    run_res.run_stderr = proc_res.stderr_text;
+
+    if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, proc_res.result_text)) return false;
+    if (req.run_stdout_var.count > 0 && !eval_var_set(ctx, req.run_stdout_var, run_res.run_stdout)) return false;
+    if (req.run_stderr_var.count > 0 && !eval_var_set(ctx, req.run_stderr_var, run_res.run_stderr)) return false;
+    if (req.run_output_var.count > 0) {
+        Nob_String_Builder merged = {0};
+        if (run_res.run_stdout.count > 0) nob_sb_append_buf(&merged, run_res.run_stdout.data, run_res.run_stdout.count);
+        if (run_res.run_stderr.count > 0) nob_sb_append_buf(&merged, run_res.run_stderr.data, run_res.run_stderr.count);
+        String_View combined = nob_sv_from_cstr("");
+        if (merged.count > 0) {
+            char *copy = arena_strndup(ctx->arena, merged.items, merged.count);
+            EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
+            combined = nob_sv_from_parts(copy, merged.count);
+        }
+        nob_sb_free(merged);
+        if (!eval_var_set(ctx, req.run_output_var, combined)) return false;
     }
 
     return !eval_should_stop(ctx);

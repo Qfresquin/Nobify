@@ -157,6 +157,29 @@ typedef struct {
     unsigned long long available_physical_mib;
 } Eval_Host_Memory_Info;
 
+typedef enum {
+    EVAL_CMDLINE_UNIX = 0,
+    EVAL_CMDLINE_WINDOWS,
+    EVAL_CMDLINE_NATIVE,
+} Eval_Cmdline_Mode;
+
+typedef struct {
+    SV_List argv;
+    String_View working_directory;
+    String_View stdin_data;
+    bool has_timeout;
+    double timeout_seconds;
+} Eval_Process_Run_Request;
+
+typedef struct {
+    String_View stdout_text;
+    String_View stderr_text;
+    String_View result_text;
+    int exit_code;
+    bool started;
+    bool timed_out;
+} Eval_Process_Run_Result;
+
 typedef struct {
     String_View scope_upper;
     String_View property_upper;
@@ -386,6 +409,8 @@ String_View eval_host_os_version_temp(Evaluator_Context *ctx);
 String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count);
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out);
+bool eval_split_command_line_temp(Evaluator_Context *ctx, Eval_Cmdline_Mode mode, String_View input, SV_List *out_tokens);
+bool eval_process_run_capture(Evaluator_Context *ctx, const Eval_Process_Run_Request *req, Eval_Process_Run_Result *out);
 bool eval_sv_is_abs_path(String_View p);
 String_View eval_sv_path_join(Arena *arena, String_View a, String_View b);
 String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input);

@@ -12,15 +12,15 @@ This audit expands beyond the dispatcher-only coverage matrix and accounts for t
 
 Evaluator implementation state at the time of this audit:
 
-- `80` dispatcher-registered built-in commands from `src_v2/evaluator/eval_command_caps.c`.
+- `82` dispatcher-registered built-in commands from `src_v2/evaluator/eval_command_caps.c`.
 - `12` structural language commands implemented outside the dispatcher via parser AST nodes in `src_v2/parser/parser.h` and `src_v2/evaluator/evaluator.c`:
   - `if`, `elseif`, `else`, `endif`
   - `foreach`, `endforeach`
   - `while`, `endwhile`
   - `function`, `endfunction`
   - `macro`, `endmacro`
-- Total implemented entry points within the scoped command universe: `92`.
-- Missing from the scoped command universe: `39`.
+- Total implemented entry points within the scoped command universe: `94`.
+- Missing from the scoped command universe: `37`.
 
 Audit constraints used here:
 
@@ -63,7 +63,7 @@ Source-of-truth order used in this audit:
 
 Concrete checks performed:
 
-- Verified that `src_v2/evaluator/eval_command_caps.c` and `src_v2/evaluator/eval_dispatcher.c` expose the same `80` built-in command names with no drift in either direction.
+- Verified that `src_v2/evaluator/eval_command_caps.c` and `src_v2/evaluator/eval_dispatcher.c` expose the same `82` built-in command names with no drift in either direction.
 - Verified that every dispatcher-registered command appears at least once in evaluator test sources or the golden evaluator script.
 - Parsed the CMake `3.28.6` command manual to enumerate the `128` core commands.
 - Parsed the CMake `3.28.6` policy manual and compared the grouped introduction versions against `src_v2/evaluator/eval_policy_engine.c`; the local `CMP0000..CMP0155` registry and introduction ranges matched exactly.
@@ -84,10 +84,10 @@ What this audit intentionally does not claim:
 | CMake `3.28.6` core commands from `cmake-commands(7)` | `128` | Global command reference |
 | `CPackComponent` module commands in scope | `3` | Not listed in `cmake-commands(7)` but explicitly in evaluator scope |
 | Scoped command universe | `131` | Audit denominator |
-| Dispatcher-registered built-ins | `80` | Capability-tracked in `eval_command_caps.c` |
+| Dispatcher-registered built-ins | `82` | Capability-tracked in `eval_command_caps.c` |
 | Structural language commands | `12` | Implemented through AST node handling, not capability-tracked |
-| Implemented entry points in scope | `92` | `80 + 12` |
-| Missing entry points in scope | `39` | Not implemented in dispatcher or structural evaluator flow |
+| Implemented entry points in scope | `94` | `82 + 12` |
+| Missing entry points in scope | `37` | Not implemented in dispatcher or structural evaluator flow |
 
 ### 3.2 Commands implemented outside the dispatcher
 
@@ -99,7 +99,7 @@ These commands are present in the CMake command manual, but in evaluator v2 they
 - `function`, `endfunction`
 - `macro`, `endmacro`
 
-This is why the dispatcher-visible command count (`80`) is smaller than the total implemented command count (`92`).
+This is why the dispatcher-visible command count (`82`) is smaller than the total implemented command count (`94`).
 
 ### 3.3 Module commands implemented outside `cmake-commands(7)`
 
@@ -117,7 +117,7 @@ Current dispatcher-backed surface is documented in `evaluator_v2_coverage_status
 
 Audit outcome for that surface:
 
-- The `80` dispatcher-backed commands remain consistent with the coverage document after this audit update: `64` are documented `FULL` and `16` (`build_command`, `build_name`, `cmake_host_system_information`, `cmake_language`, `get_cmake_property`, `get_directory_property`, `get_property`, `get_source_file_property`, `get_target_property`, `get_test_property`, `remove_definitions`, `separate_arguments`, `source_group`, `target_compile_features`, `target_precompile_headers`, `target_sources`) are documented `PARTIAL`.
+- The `82` dispatcher-backed commands remain consistent with the coverage document after this audit update: `64` are documented `FULL` and `18` (`build_command`, `build_name`, `cmake_host_system_information`, `cmake_language`, `exec_program`, `get_cmake_property`, `get_directory_property`, `get_property`, `get_source_file_property`, `get_target_property`, `get_test_property`, `remove_definitions`, `separate_arguments`, `source_group`, `target_compile_features`, `target_precompile_headers`, `target_sources`, `try_run`) are documented `PARTIAL`.
 - The previously confirmed policy gaps in `find_package`/nested `find_*` (`CMP0074`, `CMP0144`) and `file(REAL_PATH)` (`CMP0152`) are now explicitly modeled in the implementation and covered by targeted evaluator tests.
 
 Test coverage check:
@@ -146,11 +146,9 @@ All missing commands currently fall through the unknown-command path in `src_v2/
 - severity depends on `CMAKE_NOBIFY_UNSUPPORTED_POLICY`
 - behavior remains a no-op after the diagnostic
 
-### 5.1 High impact missing commands (`1`)
+### 5.1 High impact missing commands (`0`)
 
-These are common build-model or configure-flow commands whose absence materially limits parity for modern CMake projects:
-
-- `try_run`
+There are currently no remaining high-impact missing commands in the scoped audit set.
 
 ### 5.2 Medium impact missing commands (`21`)
 
@@ -158,11 +156,11 @@ These are valid and useful commands, but they are narrower, more tooling-oriente
 
 - `aux_source_directory`, `cmake_file_api`, `create_test_sourcelist`, `ctest_build`, `ctest_configure`, `ctest_coverage`, `ctest_empty_binary_directory`, `ctest_memcheck`, `ctest_read_custom_files`, `ctest_run_script`, `ctest_sleep`, `ctest_start`, `ctest_submit`, `ctest_test`, `ctest_update`, `ctest_upload`, `export`, `fltk_wrap_ui`, `include_external_msproject`, `load_cache`, `variable_watch`
 
-### 5.3 Low impact missing commands (`17`)
+### 5.3 Low impact missing commands (`16`)
 
 These are predominantly deprecated, legacy, or niche utility commands:
 
-- `exec_program`, `export_library_dependencies`, `install_files`, `install_programs`, `install_targets`, `load_command`, `make_directory`, `output_required_files`, `qt_wrap_cpp`, `qt_wrap_ui`, `remove`, `subdir_depends`, `subdirs`, `use_mangled_mesa`, `utility_source`, `variable_requires`, `write_file`
+- `export_library_dependencies`, `install_files`, `install_programs`, `install_targets`, `load_command`, `make_directory`, `output_required_files`, `qt_wrap_cpp`, `qt_wrap_ui`, `remove`, `subdir_depends`, `subdirs`, `use_mangled_mesa`, `utility_source`, `variable_requires`, `write_file`
 
 ## 6. Policy audit
 
@@ -194,6 +192,7 @@ Confirmed live policy hooks in evaluator behavior:
 | `CMP0140` | `src_v2/evaluator/eval_flow.c` | Modeled for `return()` argument handling |
 | `CMP0144` | `src_v2/evaluator/eval_package.c` | Modeled for upper-case `<PACKAGENAME>_ROOT` handling in `find_package()` and nested `find_*` package-root stack resolution |
 | `CMP0152` | `src_v2/evaluator/eval_file_fsops.c` | Modeled for `file(REAL_PATH)` path-resolution ordering |
+| `CMP0153` | `src_v2/evaluator/eval_flow.c` | Modeled for `exec_program()` deprecation/disallowance behavior |
 
 ### 6.3 Supported-command policy gaps in this pass
 
@@ -202,6 +201,7 @@ No result-affecting missing policy hooks were confirmed in the dispatcher-backed
 Important clarification:
 
 - `CMP0077` is now live in `option()` and `CMP0102` is now live in `mark_as_advanced()`.
+- `CMP0153` is now live in `exec_program()` and enforces the CMake 3.28 policy split between disallowed modern usage (`NEW`) and legacy compatibility mode (`OLD`).
 - Both hooks are intentionally scoped to the documented CMake 3.28 command behavior implemented in this release; unsupported commands still do not gain automatic policy semantics merely because the registry knows the policy id.
 - `execute_process()` has no dedicated `CMP` policy in the CMake 3.28 baseline; the evaluator models the baseline surface directly, including the pre-4.0 `COMMAND_ERROR_IS_FATAL` values (`ANY`/`LAST`) and explicit rejection of the newer `NONE` mode.
 - `get_filename_component()` has no dedicated `CMP` policy in the CMake 3.28 baseline; the evaluator models the baseline surface directly, including `LAST_EXT` / `NAME_WLE`, `REALPATH`, and `PROGRAM` / `PROGRAM_ARGS`.
@@ -318,7 +318,7 @@ Confidence level for this document: medium-high.
 
 High-confidence statements in this audit:
 
-- Full scoped command counts (`131` total, `92` implemented, `39` missing).
+- Full scoped command counts (`131` total, `94` implemented, `37` missing).
 - Registry alignment between `eval_command_caps.c` and `eval_dispatcher.c`.
 - Policy registry alignment for `CMP0000..CMP0155`.
 - Confirmed implementation and targeted test coverage for `CMP0074`, `CMP0144`, and `CMP0152`.

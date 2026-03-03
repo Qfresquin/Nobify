@@ -685,73 +685,14 @@ static bool join_sv_with_spaces_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool split_windows_command_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
-    if (!ctx || !out) return false;
-
-    size_t i = 0;
-    while (i < input.count) {
-        while (i < input.count && isspace((unsigned char)input.data[i])) i++;
-        if (i >= input.count) break;
-
-        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
-
-        size_t off = 0;
-        bool in_quotes = false;
-        while (i < input.count) {
-            char c = input.data[i];
-            if (!in_quotes && isspace((unsigned char)c)) break;
-
-            if (c == '\\') {
-                size_t slash_count = 0;
-                while (i + slash_count < input.count && input.data[i + slash_count] == '\\') slash_count++;
-
-                bool next_is_quote = (i + slash_count < input.count && input.data[i + slash_count] == '"');
-                if (next_is_quote) {
-                    size_t literal_slashes = slash_count / 2;
-                    for (size_t si = 0; si < literal_slashes; si++) buf[off++] = '\\';
-                    if ((slash_count % 2) == 0) {
-                        in_quotes = !in_quotes;
-                    } else {
-                        buf[off++] = '"';
-                    }
-                    i += slash_count + 1;
-                    continue;
-                }
-
-                for (size_t si = 0; si < slash_count; si++) buf[off++] = '\\';
-                i += slash_count;
-                continue;
-            }
-
-            if (c == '"') {
-                if (in_quotes && i + 1 < input.count && input.data[i + 1] == '"') {
-                    buf[off++] = '"';
-                    i += 2;
-                    continue;
-                }
-                in_quotes = !in_quotes;
-                i++;
-                continue;
-            }
-
-            buf[off++] = c;
-            i++;
-        }
-
-        buf[off] = '\0';
-        if (!parse_sv_list_push_temp(ctx, out, nob_sv_from_parts(buf, off))) return false;
-    }
-
-    return true;
-}
-
 static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
                                             bool windows_mode,
                                             String_View input,
                                             SV_List *out) {
-    if (windows_mode) return split_windows_command_temp(ctx, input, out);
-    return eval_split_shell_like_temp(ctx, input, out);
+    return eval_split_command_line_temp(ctx,
+                                        windows_mode ? EVAL_CMDLINE_WINDOWS : EVAL_CMDLINE_UNIX,
+                                        input,
+                                        out);
 }
 
 static bool set_process_env(Evaluator_Context *ctx, String_View name, String_View value) {

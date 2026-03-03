@@ -3800,6 +3800,191 @@ TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    const char *ok_source =
+        "#include <stdio.h>\n"
+        "int main(void){putchar(65);fputc(66, stderr);return 0;}\n";
+    ASSERT(nob_write_entire_file("probe_ok_try_run.c", ok_source, strlen(ok_source)));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_run(RUN_OK COMPILE_OK tc_try_run_ok\n"
+        "  probe_ok_try_run.c\n"
+        "  NO_CACHE\n"
+        "  COMPILE_OUTPUT_VARIABLE COMPILE_OK_LOG\n"
+        "  RUN_OUTPUT_VARIABLE RUN_ALL\n"
+        "  RUN_OUTPUT_STDOUT_VARIABLE RUN_STDOUT\n"
+        "  RUN_OUTPUT_STDERR_VARIABLE RUN_STDERR)\n"
+        "try_run(RUN_BAD COMPILE_BAD tc_try_run_bad\n"
+        "  SOURCE_FROM_CONTENT probe_bad.c \"int main(void){return 7;}\"\n"
+        "  NO_CACHE)\n"
+        "try_run(RUN_FAIL COMPILE_FAIL tc_try_run_fail\n"
+        "  SOURCE_FROM_CONTENT probe_fail.c \"int main(void){ this is not valid C; }\"\n"
+        "  NO_CACHE\n"
+        "  COMPILE_OUTPUT_VARIABLE COMPILE_FAIL_LOG)\n"
+        "set(CMAKE_CROSSCOMPILING ON)\n"
+        "try_run(RUN_XC COMPILE_XC tc_try_run_xc\n"
+        "  SOURCE_FROM_CONTENT probe_xc.c \"int main(void){return 0;}\"\n"
+        "  NO_CACHE\n"
+        "  RUN_OUTPUT_VARIABLE RUN_XC_ALL)\n"
+        "try_run(RUN_PROJECT COMPILE_PROJECT PROJECT Demo SOURCE_DIR missing_dir)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_OK")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_OK")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_STDOUT")), nob_sv_from_cstr("A")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_STDERR")), nob_sv_from_cstr("B")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_ALL")), nob_sv_from_cstr("AB")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_BAD")), nob_sv_from_cstr("7")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_FAIL")), nob_sv_from_cstr("FALSE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_FAIL")), nob_sv_from_cstr("")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_FAIL_LOG")).count > 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_XC")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC")), nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC_ALL")), nob_sv_from_cstr("")));
+
+    bool saw_cross_diag = false;
+    bool saw_project_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"))) {
+            saw_cross_diag = true;
+        }
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"))) {
+            saw_project_diag = true;
+        }
+    }
+    ASSERT(saw_cross_diag);
+    ASSERT(saw_project_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ep_exec_dir"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+#if defined(_WIN32)
+    const char *script =
+        "cmake_policy(SET CMP0153 NEW)\n"
+        "exec_program(cmd . ARGS [=[/C echo blocked]=] OUTPUT_VARIABLE EP_BLOCKED)\n"
+        "cmake_policy(SET CMP0153 OLD)\n"
+        "exec_program(cmd . ARGS [=[/C echo legacy]=] OUTPUT_VARIABLE EP_OUT RETURN_VALUE EP_RES)\n"
+        "exec_program(cmd ep_exec_dir ARGS [=[/C cd]=] OUTPUT_VARIABLE EP_CWD RETURN_VALUE EP_CWD_RES)\n"
+        "exec_program(cmd . ARGS [=[/C echo hello world]=] OUTPUT_VARIABLE EP_TOKEN)\n"
+        "exec_program(cmd . OUTPUT_VARIABLE)\n"
+        "exec_program(cmd . RETURN_VALUE)\n"
+        "exec_program(cmd . BOGUS)\n";
+#else
+    const char *script =
+        "cmake_policy(SET CMP0153 NEW)\n"
+        "exec_program(/bin/sh . ARGS [=[-c \"printf 'blocked'\"]=] OUTPUT_VARIABLE EP_BLOCKED)\n"
+        "cmake_policy(SET CMP0153 OLD)\n"
+        "exec_program(/bin/sh . ARGS [=[-c \"printf 'legacy'\"]=] OUTPUT_VARIABLE EP_OUT RETURN_VALUE EP_RES)\n"
+        "exec_program(/bin/sh ep_exec_dir ARGS [=[-c \"pwd\"]=] OUTPUT_VARIABLE EP_CWD RETURN_VALUE EP_CWD_RES)\n"
+        "exec_program(/bin/sh . ARGS [=[-c \"printf '%s' \\\"$1\\\"\" sh \"hello world\"]=] OUTPUT_VARIABLE EP_TOKEN)\n"
+        "exec_program(/bin/sh . OUTPUT_VARIABLE)\n"
+        "exec_program(/bin/sh . RETURN_VALUE)\n"
+        "exec_program(/bin/sh . BOGUS)\n";
+#endif
+
+    Ast_Root root = parse_cmake(temp_arena, script);
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("EP_OUT")), nob_sv_from_cstr("legacy")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("EP_RES")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("EP_CWD_RES")), nob_sv_from_cstr("0")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("EP_CWD")), nob_sv_from_cstr("ep_exec_dir")));
+#if defined(_WIN32)
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("EP_TOKEN")), nob_sv_from_cstr("hello")));
+#else
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("EP_TOKEN")), nob_sv_from_cstr("hello world")));
+#endif
+
+    bool saw_cmp0153_diag = false;
+    bool saw_output_diag = false;
+    bool saw_return_diag = false;
+    bool saw_bogus_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("exec_program() is disallowed by CMP0153"))) {
+            saw_cmp0153_diag = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("exec_program(OUTPUT_VARIABLE) requires exactly one output variable"))) {
+            saw_output_diag = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("exec_program(RETURN_VALUE) requires exactly one output variable"))) {
+            saw_return_diag = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("exec_program() received an unsupported argument"))) {
+            saw_bogus_diag = true;
+        }
+    }
+    ASSERT(saw_cmp0153_diag);
+    ASSERT(saw_output_diag);
+    ASSERT(saw_return_diag);
+    ASSERT(saw_bogus_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -6302,6 +6487,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
+    test_evaluator_try_run_executes_native_artifacts_and_reports_partial_limits(passed, failed);
+    test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);

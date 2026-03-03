@@ -24,9 +24,9 @@ Status snapshot sources:
 
 ## Scope note
 
-- This matrix is authoritative for the `80` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
+- This matrix is authoritative for the `82` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
 - It does not by itself represent the entire CMake command universe.
-- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `92` are currently implemented (`80` registry-backed + `12` structural parser/evaluator commands) and `39` remain missing.
+- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `94` are currently implemented (`82` registry-backed + `12` structural parser/evaluator commands) and `37` remain missing.
 - Structural language commands such as `if()`/`foreach()`/`while()`/`function()`/`macro()` are implemented outside the dispatcher and are audited in the full report, not in this registry-backed matrix.
 
 ## 1. Command-Level Matrix (Authoritative)
@@ -63,6 +63,7 @@ Status snapshot sources:
 | `enable_language` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 baseline surface: known-language enabling, file-scope enforcement, and `OPTIONAL` rejection-as-documented placeholder behavior. The newer `CMP0165` pre-`project()` restriction is intentionally not modeled because it is outside the 3.28 policy baseline. | - |
 | `enable_testing` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`enable_testing()`). | - |
 | `endblock` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`endblock()`). | - |
+| `exec_program` | `PARTIAL` | `NOOP_WARN` | The evaluator implements the documented legacy wrapper form only (`exec_program(<exe> [<working-dir>] [ARGS <arg-string>] [OUTPUT_VARIABLE <var>] [RETURN_VALUE <var>])`). `CMP0153` is modeled: `NEW` hard-errors because the command is disallowed, while `OLD` forwards through the shared `execute_process()` backend with native command-line tokenization. | `Medium` |
 | `execute_process` | `FULL` | `NOOP_WARN` | Documented CMake 3.28 surface is modeled in the evaluator for `COMMAND` pipelines, working-directory selection, timeout/result capture variables, output/error redirection, `COMMAND_ECHO`, `ECHO_*_VARIABLE`, and the baseline `COMMAND_ERROR_IS_FATAL` values (`ANY`/`LAST`). There is no dedicated `CMP` policy for this command in the 3.28 baseline, so behavior is fixed directly to the baseline surface and newer `NONE` mode is rejected. | - |
 | `file` | `FULL` | `ERROR_CONTINUE` | No result-affecting divergence found in validated Linux+Windows scope for CMake 3.28 surface implemented by evaluator, including deferred `GENERATE`, transfer/archive backends, lock semantics, and `CMP0152`-aware `REAL_PATH` behavior in covered flow. | - |
 | `find_file` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 search surface used by evaluator: `NAMES`, legacy name positionals, `HINTS`, `PATHS`, `PATH_SUFFIXES`, `NO_*` path toggles, root-path modes, cached-result reuse, and `VALIDATOR` in covered flow. When executed from an active `find_package()` config/module context, the package-root stack is modeled with `CMP0074` and `CMP0144`. | - |
@@ -112,6 +113,7 @@ Status snapshot sources:
 | `target_precompile_headers` | `PARTIAL` | `NOOP_WARN` | The evaluator models documented `PRIVATE`/`PUBLIC`/`INTERFACE` usage requirements plus `REUSE_FROM` target linkage in the property/event layer, but it does not perform compiler-specific precompiled-header generation or backend integration. | `Medium` |
 | `target_sources` | `PARTIAL` | `NOOP_WARN` | The evaluator models documented `PRIVATE`/`PUBLIC`/`INTERFACE` source attachment and interface-source publication, including target validation, but `FILE_SET` and the broader source-set/policy surface (such as `CMP0076` path semantics) are not implemented in this batch. | `Medium` |
 | `try_compile` | `FULL` | `NOOP_WARN` | Native evaluator-side `SOURCE`/`PROJECT` execution now performs real toolchain probes, publishes actual compile output, and records configure-log entries without relying on a simulated existence-only shortcut. | - |
+| `try_run` | `PARTIAL` | `NOOP_WARN` | The evaluator models native source-file signatures by reusing the `try_compile()` toolchain path, publishing real compile output, exit codes, and captured run streams. The command remains narrower than CMake 3.28 because cross-compiling answer-file workflows are not implemented, `PROJECT` signatures are rejected explicitly, and target-emulator semantics are not modeled in this batch. | `Medium` |
 | `unset` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signatures (`unset(<var> [CACHE PARENT_SCOPE])`, `unset(ENV{<var>})`). | - |
 
 ## 2. Subcommand Matrix: `file()`

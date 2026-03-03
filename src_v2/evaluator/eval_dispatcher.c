@@ -58,6 +58,7 @@ static const Command_Entry DISPATCH[] = {
     {"enable_language", eval_handle_enable_language},
     {"enable_testing", eval_handle_enable_testing},
     {"endblock", eval_handle_endblock},
+    {"exec_program", eval_handle_exec_program},
     {"execute_process", eval_handle_execute_process},
     {"file", eval_handle_file},
     {"get_cmake_property", eval_handle_get_cmake_property},
@@ -107,6 +108,7 @@ static const Command_Entry DISPATCH[] = {
     {"target_precompile_headers", eval_handle_target_precompile_headers},
     {"target_sources", eval_handle_target_sources},
     {"try_compile", eval_handle_try_compile},
+    {"try_run", eval_handle_try_run},
     {"unset", eval_handle_unset},
 };
 static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
