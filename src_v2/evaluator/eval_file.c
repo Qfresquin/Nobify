@@ -983,7 +983,7 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
 #if defined(_WIN32) || defined(__APPLE__)
     ci = true;
 #endif
-    bool glob_strict = eval_var_truthy_or_default(ctx, "CMAKE_NOBIFY_FILE_GLOB_STRICT", false);
+    bool glob_strict = eval_var_truthy_or_default(ctx, EVAL_VAR_NOBIFY_FILE_GLOB_STRICT, false);
     size_t open_failures = 0;
 
     String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));

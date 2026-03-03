@@ -305,7 +305,7 @@ static int eval_expand_limit(struct Evaluator_Context *ctx) {
 
     // Priority 1: context variable (script/runtime configurable).
     if (ctx) {
-        String_View cfg = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_EXPAND_MAX_RECURSION"));
+        String_View cfg = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_EXPAND_MAX_RECURSION));
         int parsed = 0;
         if (sv_parse_positive_int(cfg, &parsed)) {
             limit = parsed;
