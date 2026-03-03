@@ -180,8 +180,7 @@ static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_
 #else
     lock.fd = (int)fd_or_dummy;
 #endif
-    if (!arena_arr_push(ctx->event_arena, ctx->file_locks, lock)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_locks, lock);
 }
 
 static void eval_file_lock_remove_at(Evaluator_Context *ctx, size_t idx) {
@@ -240,8 +239,7 @@ static bool file_generate_is_keyword(String_View t) {
 
 static bool file_generate_enqueue_job(Evaluator_Context *ctx, const Eval_File_Generate_Job *job) {
     if (!ctx || !job) return false;
-    if (!arena_arr_push(ctx->event_arena, ctx->file_generate_jobs, *job)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_generate_jobs, *job);
 }
 
 static bool file_read_content_temp(Evaluator_Context *ctx, String_View path, String_View *out_content, struct stat *out_st, bool *out_have_st) {

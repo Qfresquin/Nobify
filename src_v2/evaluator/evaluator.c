@@ -304,8 +304,7 @@ static const Eval_Property_Definition *eval_property_definition_find_impl(Evalua
 bool eval_macro_frame_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};
-    if (!arena_arr_push(ctx->event_arena, ctx->macro_frames, frame)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->macro_frames, frame);
 }
 
 void eval_macro_frame_pop(Evaluator_Context *ctx) {
@@ -331,8 +330,7 @@ bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View va
     Var_Binding b = {0};
     b.key = key;
     b.value = value;
-    if (!arena_arr_push(ctx->event_arena, top->bindings, b)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, top->bindings, b);
 }
 
 bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *out_value) {
@@ -361,8 +359,7 @@ bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_arr_push(ctx->known_targets_arena, ctx->known_targets, name)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->known_targets_arena, ctx->known_targets, name);
 }
 
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
@@ -377,8 +374,7 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_alias_known(ctx, name)) return true;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_arr_push(ctx->known_targets_arena, ctx->alias_targets, name)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->known_targets_arena, ctx->alias_targets, name);
 }
 
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition) {
@@ -397,8 +393,7 @@ bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition
     }
     if (eval_should_stop(ctx)) return false;
 
-    if (!arena_arr_push(ctx->event_arena, ctx->property_definitions, stored)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->property_definitions, stored);
 }
 
 bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name) {
@@ -940,7 +935,7 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
             value = sv_copy_to_event_arena(ctx, param->items[0].text);
             if (eval_should_stop(ctx)) return false;
         }
-        if (!arena_arr_push(ctx->event_arena, params, value)) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, params, value)) return false;
     }
 
     Node_List body = NULL;
@@ -953,8 +948,7 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     cmd.params = params;
     cmd.body = body;
 
-    if (!arena_arr_push(ctx->user_commands_arena, ctx->user_commands, cmd)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->user_commands_arena, ctx->user_commands, cmd);
 }
 
 User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name) {
@@ -1058,17 +1052,17 @@ cleanup:
             String_View key = ctx->return_propagate_vars[i];
             if (!eval_var_defined_in_current_scope(ctx, key)) continue;
             String_View value = eval_var_get(ctx, key);
-            size_t saved_depth = ctx->visible_scope_depth;
-            ctx->visible_scope_depth = saved_depth - 1;
+            size_t saved_depth = 0;
+            if (!eval_scope_enter_parent(ctx, &saved_depth)) {
+                ok = false;
+                continue;
+            }
             bool ok_set = eval_var_set(ctx, key, value);
-            ctx->visible_scope_depth = saved_depth;
+            eval_scope_leave(ctx, saved_depth);
             if (!ok_set) ok = false;
         }
     }
-    if (ctx->return_requested) {
-        ctx->return_requested = false;
-    }
-    ctx->return_propagate_vars = NULL;
+    eval_clear_return_state(ctx);
     ctx->return_context = saved_return_ctx;
     if (entered_function_depth > 0) {
         eval_file_lock_release_function_scope(ctx, entered_function_depth);
@@ -1097,7 +1091,7 @@ bool eval_scope_push(Evaluator_Context *ctx) {
             s->vars = NULL;
         }
     } else {
-        if (!arena_arr_push(ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return false;
     }
     ctx->visible_scope_depth = depth + 1;
     Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
@@ -1306,8 +1300,7 @@ bool eval_execute_file(Evaluator_Context *ctx,
     if (ok && !eval_should_stop(ctx)) {
         ok = eval_defer_flush_current_directory(ctx);
     }
-    if (ctx->return_requested) ctx->return_requested = false;
-    ctx->return_propagate_vars = NULL;
+    eval_clear_return_state(ctx);
     if (is_add_subdirectory) {
         if (!eval_defer_pop_directory(ctx)) ok = false;
     }
@@ -1349,7 +1342,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->source_dir = init->source_dir;
     ctx->binary_dir = init->binary_dir;
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
-    ctx->return_propagate_vars = NULL;
+    eval_clear_return_state(ctx);
     ctx->compat_profile = EVAL_PROFILE_PERMISSIVE;
     if (init->compat_profile == EVAL_PROFILE_STRICT || init->compat_profile == EVAL_PROFILE_CI_STRICT) {
         ctx->compat_profile = init->compat_profile;
@@ -1501,10 +1494,7 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     if (ok && !eval_should_stop(ctx)) {
         ok = eval_file_generate_flush(ctx);
     }
-    if (ctx->return_requested) {
-        ctx->return_requested = false;
-    }
-    ctx->return_propagate_vars = NULL;
+    eval_clear_return_state(ctx);
     eval_file_lock_release_file_scope(ctx, entered_file_depth);
     if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
     eval_report_finalize(ctx);

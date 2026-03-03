@@ -157,7 +157,7 @@ static bool policy_stack_bootstrap(Evaluator_Context *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (ctx->visible_policy_depth == 0) {
         if (arena_arr_len(ctx->policy_levels) == 0) {
-            if (!arena_arr_push(ctx->event_arena, ctx->policy_levels, ((Eval_Policy_Level){0}))) return ctx_oom(ctx);
+            if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->policy_levels, ((Eval_Policy_Level){0}))) return false;
         } else {
             memset(&ctx->policy_levels[0], 0, sizeof(Eval_Policy_Level));
         }
@@ -176,7 +176,7 @@ bool eval_policy_push(Evaluator_Context *ctx) {
     if (depth < arena_arr_len(ctx->policy_levels)) {
         memset(&ctx->policy_levels[depth], 0, sizeof(Eval_Policy_Level));
     } else {
-        if (!arena_arr_push(ctx->event_arena, ctx->policy_levels, ((Eval_Policy_Level){0}))) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->policy_levels, ((Eval_Policy_Level){0}))) return false;
     }
     ctx->visible_policy_depth += 1;
     return policy_set_depth_var(ctx);

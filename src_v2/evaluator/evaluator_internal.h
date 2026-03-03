@@ -263,6 +263,28 @@ static inline size_t eval_policy_visible_depth(const Evaluator_Context *ctx) {
     return ctx ? ctx->visible_policy_depth : 0;
 }
 
+static inline bool eval_scope_enter_parent(Evaluator_Context *ctx, size_t *saved_depth) {
+    if (!ctx || !saved_depth) return false;
+    size_t depth = eval_scope_visible_depth(ctx);
+    if (depth <= 1) return false;
+    *saved_depth = depth;
+    ctx->visible_scope_depth = depth - 1;
+    return true;
+}
+
+static inline bool eval_scope_enter_global(Evaluator_Context *ctx, size_t *saved_depth) {
+    if (!ctx || !saved_depth) return false;
+    size_t depth = eval_scope_visible_depth(ctx);
+    if (depth == 0) return false;
+    *saved_depth = depth;
+    ctx->visible_scope_depth = 1;
+    return true;
+}
+
+static inline void eval_scope_leave(Evaluator_Context *ctx, size_t saved_depth) {
+    if (ctx) ctx->visible_scope_depth = saved_depth;
+}
+
 static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr) {
     if (ptr) return false;
     ctx_oom(ctx);
@@ -275,6 +297,15 @@ static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr
 #define EVAL_OOM_RETURN_VOID_IF_NULL(ctx, ptr) \
     do { if (eval_mark_oom_if_null((ctx), (ptr))) return; } while (0)
 
+#define EVAL_ARR_PUSH(ctx, arena, arr, value) \
+    (arena_arr_push((arena), (arr), (value)) ? true : ctx_oom((ctx)))
+
+static inline void eval_clear_return_state(Evaluator_Context *ctx) {
+    if (!ctx) return;
+    ctx->return_requested = false;
+    ctx->return_propagate_vars = NULL;
+}
+
 Arena *eval_temp_arena(Evaluator_Context *ctx);
 Arena *eval_event_arena(Evaluator_Context *ctx);
 
@@ -282,6 +313,13 @@ String_View sv_copy_to_temp_arena(Evaluator_Context *ctx, String_View sv);
 String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv);
 String_View sv_copy_to_arena(Arena *arena, String_View sv);
 char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv);
+
+static inline bool eval_sv_arr_push_event(Evaluator_Context *ctx, String_View **arr, String_View sv) {
+    if (!ctx || !arr) return false;
+    String_View copied = sv_copy_to_event_arena(ctx, sv);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, *arr, copied);
+}
 
 // ---- rastreio de origem (NOVO) ----
 Cmake_Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node);

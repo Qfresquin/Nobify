@@ -70,8 +70,7 @@ static bool msg_check_stack_push(Evaluator_Context *ctx, String_View msg) {
     if (!ctx) return false;
     msg = sv_copy_to_event_arena(ctx, msg);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_arr_push(ctx->event_arena, ctx->message_check_stack, msg)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->message_check_stack, msg);
 }
 
 static bool msg_check_stack_pop(Evaluator_Context *ctx, String_View *out_msg) {

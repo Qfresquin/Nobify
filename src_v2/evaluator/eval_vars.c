@@ -928,10 +928,10 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
 
     if (parent_scope) {
         if (eval_scope_visible_depth(ctx) > 1) {
-            size_t saved_depth = eval_scope_visible_depth(ctx);
-            ctx->visible_scope_depth = saved_depth - 1;
+            size_t saved_depth = 0;
+            if (!eval_scope_enter_parent(ctx, &saved_depth)) return false;
             bool ok = eval_var_set(ctx, var, value);
-            ctx->visible_scope_depth = saved_depth;
+            eval_scope_leave(ctx, saved_depth);
             if (!ok) return false;
         }
         else {
@@ -1052,10 +1052,10 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        size_t saved_depth = eval_scope_visible_depth(ctx);
-        ctx->visible_scope_depth = saved_depth - 1;
+        size_t saved_depth = 0;
+        if (!eval_scope_enter_parent(ctx, &saved_depth)) return false;
         bool ok = eval_var_unset(ctx, var);
-        ctx->visible_scope_depth = saved_depth;
+        eval_scope_leave(ctx, saved_depth);
         if (!ok) return false;
         return !eval_should_stop(ctx);
     }
