@@ -9,54 +9,43 @@
 #include "nob.h"
 #include "arena.h"
 
+#define CMAKE_EVENT_KIND_LIST(X) \
+    X(EV_DIAGNOSTIC, "diagnostic") \
+    X(EV_PROJECT_DECLARE, "project") \
+    X(EV_VAR_SET, "set") \
+    X(EV_SET_CACHE_ENTRY, "set(cache)") \
+    X(EV_TARGET_DECLARE, "add_target") \
+    X(EV_TARGET_ADD_SOURCE, "target_sources") \
+    X(EV_TARGET_ADD_DEPENDENCY, "add_dependencies") \
+    X(EV_TARGET_PROP_SET, "set_target_properties") \
+    X(EV_TARGET_INCLUDE_DIRECTORIES, "target_include_directories") \
+    X(EV_TARGET_COMPILE_DEFINITIONS, "target_compile_definitions") \
+    X(EV_TARGET_COMPILE_OPTIONS, "target_compile_options") \
+    X(EV_TARGET_LINK_LIBRARIES, "target_link_libraries") \
+    X(EV_TARGET_LINK_OPTIONS, "target_link_options") \
+    X(EV_TARGET_LINK_DIRECTORIES, "target_link_directories") \
+    X(EV_CUSTOM_COMMAND_TARGET, "add_custom_command(TARGET)") \
+    X(EV_CUSTOM_COMMAND_OUTPUT, "add_custom_command(OUTPUT)") \
+    X(EV_DIR_PUSH, "dir_push") \
+    X(EV_DIR_POP, "dir_pop") \
+    X(EV_DIRECTORY_INCLUDE_DIRECTORIES, "include_directories") \
+    X(EV_DIRECTORY_LINK_DIRECTORIES, "link_directories") \
+    X(EV_GLOBAL_COMPILE_DEFINITIONS, "add_compile_definitions") \
+    X(EV_GLOBAL_COMPILE_OPTIONS, "add_compile_options") \
+    X(EV_GLOBAL_LINK_OPTIONS, "add_link_options") \
+    X(EV_GLOBAL_LINK_LIBRARIES, "link_libraries") \
+    X(EV_TESTING_ENABLE, "enable_testing") \
+    X(EV_TEST_ADD, "add_test") \
+    X(EV_INSTALL_ADD_RULE, "install") \
+    X(EV_CPACK_ADD_INSTALL_TYPE, "cpack_add_install_type") \
+    X(EV_CPACK_ADD_COMPONENT_GROUP, "cpack_add_component_group") \
+    X(EV_CPACK_ADD_COMPONENT, "cpack_add_component") \
+    X(EV_FIND_PACKAGE, "find_package")
+
 typedef enum {
-    EV_DIAGNOSTIC = 0,
-
-    // Project
-    EV_PROJECT_DECLARE,
-
-    // Variables / cache
-    EV_VAR_SET, // informational (e.g. CACHE, or debug)
-    EV_SET_CACHE_ENTRY,
-
-    // Targets
-    EV_TARGET_DECLARE,
-    EV_TARGET_ADD_SOURCE,
-    EV_TARGET_ADD_DEPENDENCY,
-    EV_TARGET_PROP_SET,
-    EV_TARGET_INCLUDE_DIRECTORIES,
-    EV_TARGET_COMPILE_DEFINITIONS,
-    EV_TARGET_COMPILE_OPTIONS,
-    EV_TARGET_LINK_LIBRARIES,
-    EV_TARGET_LINK_OPTIONS,
-    EV_TARGET_LINK_DIRECTORIES,
-    EV_CUSTOM_COMMAND_TARGET,
-    EV_CUSTOM_COMMAND_OUTPUT,
-
-    // Directory-level state
-    EV_DIR_PUSH,
-    EV_DIR_POP,
-    EV_DIRECTORY_INCLUDE_DIRECTORIES,
-    EV_DIRECTORY_LINK_DIRECTORIES,
-
-    // Global compile state
-    EV_GLOBAL_COMPILE_DEFINITIONS,
-    EV_GLOBAL_COMPILE_OPTIONS,
-    EV_GLOBAL_LINK_OPTIONS,
-    EV_GLOBAL_LINK_LIBRARIES,
-
-    // Testing / install
-    EV_TESTING_ENABLE,
-    EV_TEST_ADD,
-    EV_INSTALL_ADD_RULE,
-
-    // CPack subset
-    EV_CPACK_ADD_INSTALL_TYPE,
-    EV_CPACK_ADD_COMPONENT_GROUP,
-    EV_CPACK_ADD_COMPONENT,
-
-    // Package discovery
-    EV_FIND_PACKAGE,
+#define DECLARE_CMAKE_EVENT_KIND(kind, builder_name) kind,
+    CMAKE_EVENT_KIND_LIST(DECLARE_CMAKE_EVENT_KIND)
+#undef DECLARE_CMAKE_EVENT_KIND
 } Cmake_Event_Kind;
 
 typedef enum {

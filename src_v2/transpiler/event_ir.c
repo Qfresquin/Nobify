@@ -253,37 +253,9 @@ bool event_stream_next(Event_Stream_Iterator *it) {
 
 static const char *ev_kind_name(Cmake_Event_Kind kind) {
     switch (kind) {
-        case EV_DIAGNOSTIC: return "EV_DIAGNOSTIC";
-        case EV_PROJECT_DECLARE: return "EV_PROJECT_DECLARE";
-        case EV_VAR_SET: return "EV_VAR_SET";
-        case EV_SET_CACHE_ENTRY: return "EV_SET_CACHE_ENTRY";
-        case EV_TARGET_DECLARE: return "EV_TARGET_DECLARE";
-        case EV_TARGET_ADD_SOURCE: return "EV_TARGET_ADD_SOURCE";
-        case EV_TARGET_ADD_DEPENDENCY: return "EV_TARGET_ADD_DEPENDENCY";
-        case EV_TARGET_PROP_SET: return "EV_TARGET_PROP_SET";
-        case EV_TARGET_INCLUDE_DIRECTORIES: return "EV_TARGET_INCLUDE_DIRECTORIES";
-        case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
-        case EV_TARGET_COMPILE_OPTIONS: return "EV_TARGET_COMPILE_OPTIONS";
-        case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
-        case EV_TARGET_LINK_OPTIONS: return "EV_TARGET_LINK_OPTIONS";
-        case EV_TARGET_LINK_DIRECTORIES: return "EV_TARGET_LINK_DIRECTORIES";
-        case EV_CUSTOM_COMMAND_TARGET: return "EV_CUSTOM_COMMAND_TARGET";
-        case EV_CUSTOM_COMMAND_OUTPUT: return "EV_CUSTOM_COMMAND_OUTPUT";
-        case EV_DIR_PUSH: return "EV_DIR_PUSH";
-        case EV_DIR_POP: return "EV_DIR_POP";
-        case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "EV_DIRECTORY_INCLUDE_DIRECTORIES";
-        case EV_DIRECTORY_LINK_DIRECTORIES: return "EV_DIRECTORY_LINK_DIRECTORIES";
-        case EV_GLOBAL_COMPILE_DEFINITIONS: return "EV_GLOBAL_COMPILE_DEFINITIONS";
-        case EV_GLOBAL_COMPILE_OPTIONS: return "EV_GLOBAL_COMPILE_OPTIONS";
-        case EV_GLOBAL_LINK_OPTIONS: return "EV_GLOBAL_LINK_OPTIONS";
-        case EV_GLOBAL_LINK_LIBRARIES: return "EV_GLOBAL_LINK_LIBRARIES";
-        case EV_TESTING_ENABLE: return "EV_TESTING_ENABLE";
-        case EV_TEST_ADD: return "EV_TEST_ADD";
-        case EV_INSTALL_ADD_RULE: return "EV_INSTALL_ADD_RULE";
-        case EV_CPACK_ADD_INSTALL_TYPE: return "EV_CPACK_ADD_INSTALL_TYPE";
-        case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
-        case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
-        case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
+#define EVENT_KIND_CASE(kind, builder_name) case kind: return #kind;
+        CMAKE_EVENT_KIND_LIST(EVENT_KIND_CASE)
+#undef EVENT_KIND_CASE
     }
     return "EV_UNKNOWN";
 }

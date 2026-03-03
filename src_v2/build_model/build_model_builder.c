@@ -73,37 +73,9 @@ static void builder_warn_before_after_once(Build_Model_Builder *builder, const C
 
 static const char *builder_event_command_name(Cmake_Event_Kind kind) {
     switch (kind) {
-        case EV_DIAGNOSTIC: return "diagnostic";
-        case EV_PROJECT_DECLARE: return "project";
-        case EV_VAR_SET: return "set";
-        case EV_SET_CACHE_ENTRY: return "set(cache)";
-        case EV_TARGET_DECLARE: return "add_target";
-        case EV_TARGET_ADD_SOURCE: return "target_sources";
-        case EV_TARGET_ADD_DEPENDENCY: return "add_dependencies";
-        case EV_TARGET_PROP_SET: return "set_target_properties";
-        case EV_TARGET_INCLUDE_DIRECTORIES: return "target_include_directories";
-        case EV_TARGET_COMPILE_DEFINITIONS: return "target_compile_definitions";
-        case EV_TARGET_COMPILE_OPTIONS: return "target_compile_options";
-        case EV_TARGET_LINK_LIBRARIES: return "target_link_libraries";
-        case EV_TARGET_LINK_OPTIONS: return "target_link_options";
-        case EV_TARGET_LINK_DIRECTORIES: return "target_link_directories";
-        case EV_CUSTOM_COMMAND_TARGET: return "add_custom_command(TARGET)";
-        case EV_CUSTOM_COMMAND_OUTPUT: return "add_custom_command(OUTPUT)";
-        case EV_DIR_PUSH: return "dir_push";
-        case EV_DIR_POP: return "dir_pop";
-        case EV_DIRECTORY_INCLUDE_DIRECTORIES: return "include_directories";
-        case EV_DIRECTORY_LINK_DIRECTORIES: return "link_directories";
-        case EV_GLOBAL_COMPILE_DEFINITIONS: return "add_compile_definitions";
-        case EV_GLOBAL_COMPILE_OPTIONS: return "add_compile_options";
-        case EV_GLOBAL_LINK_OPTIONS: return "add_link_options";
-        case EV_GLOBAL_LINK_LIBRARIES: return "link_libraries";
-        case EV_TESTING_ENABLE: return "enable_testing";
-        case EV_TEST_ADD: return "add_test";
-        case EV_INSTALL_ADD_RULE: return "install";
-        case EV_CPACK_ADD_INSTALL_TYPE: return "cpack_add_install_type";
-        case EV_CPACK_ADD_COMPONENT_GROUP: return "cpack_add_component_group";
-        case EV_CPACK_ADD_COMPONENT: return "cpack_add_component";
-        case EV_FIND_PACKAGE: return "find_package";
+#define BUILDER_EVENT_NAME_CASE(kind, builder_name) case kind: return builder_name;
+        CMAKE_EVENT_KIND_LIST(BUILDER_EVENT_NAME_CASE)
+#undef BUILDER_EVENT_NAME_CASE
     }
     return "builder";
 }
