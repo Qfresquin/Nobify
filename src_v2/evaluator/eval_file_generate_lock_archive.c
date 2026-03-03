@@ -437,8 +437,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
             .path = job->output_path,
             .content = final_content,
         };
-        if (!arena_arr_push(eval_temp_arena(ctx), seen, seen_entry)) {
-            ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), seen, seen_entry)) {
             break;
         }
         seen_count = arena_arr_len(seen);

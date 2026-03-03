@@ -203,7 +203,7 @@ static bool try_compile_source_push(Evaluator_Context *ctx,
                                     Try_Compile_Source_List *list,
                                     Try_Compile_Source_Item item) {
     if (!ctx || !list) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), list->items, item)) return ctx_oom(ctx);
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), list->items, item)) return false;
     list->count = arena_arr_len(list->items);
     list->capacity = arena_arr_cap(list->items);
     return true;

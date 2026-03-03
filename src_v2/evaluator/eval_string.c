@@ -1144,7 +1144,7 @@ static String_Json_Value *string_jsonv_new(Evaluator_Context *ctx, String_Json_T
 
 static bool string_jsonv_array_push(Evaluator_Context *ctx, String_Json_Value *arr, String_Json_Value *item) {
     if (!ctx || !arr || arr->type != STRING_JSON_ARRAY || !item) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), arr->array_items, item)) return ctx_oom(ctx);
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), arr->array_items, item)) return false;
     arr->array_count = arena_arr_len(arr->array_items);
     arr->array_capacity = arena_arr_cap(arr->array_items);
     return true;
@@ -1152,8 +1152,8 @@ static bool string_jsonv_array_push(Evaluator_Context *ctx, String_Json_Value *a
 
 static bool string_jsonv_object_push(Evaluator_Context *ctx, String_Json_Value *obj, String_View key, String_Json_Value *item) {
     if (!ctx || !obj || obj->type != STRING_JSON_OBJECT || !item) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), obj->object_items, ((String_Json_Object_Entry){ .key = key, .value = item }))) {
-        return ctx_oom(ctx);
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), obj->object_items, ((String_Json_Object_Entry){ .key = key, .value = item }))) {
+        return false;
     }
     obj->object_count = arena_arr_len(obj->object_items);
     obj->object_capacity = arena_arr_cap(obj->object_items);

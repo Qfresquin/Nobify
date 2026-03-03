@@ -846,10 +846,10 @@ static bool clone_args_to_event(Evaluator_Context *ctx, const Args *src, Args *d
             Token t = (*src)[i].items[k];
             t.text = sv_copy_to_event_arena(ctx, t.text);
             if (eval_should_stop(ctx)) return false;
-            if (!arena_arr_push(ctx->event_arena, copy.items, t)) return ctx_oom(ctx);
+            if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, copy.items, t)) return false;
         }
 
-        if (!arena_arr_push(ctx->event_arena, *dst, copy)) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, *dst, copy)) return false;
     }
 
     return true;
@@ -900,7 +900,7 @@ static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clau
         ElseIf_Clause copy = {0};
         if (!clone_args_to_event(ctx, &(*src)[i].condition, &copy.condition)) return false;
         if (!clone_node_list_to_event(ctx, &(*src)[i].block, &copy.block)) return false;
-        if (!arena_arr_push(ctx->event_arena, *dst, copy)) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, *dst, copy)) return false;
     }
     return true;
 }
@@ -911,7 +911,7 @@ static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *sr
     for (size_t i = 0; i < arena_arr_len(*src); i++) {
         Node copy = {0};
         if (!clone_node_to_event(ctx, &(*src)[i], &copy)) return false;
-        if (!arena_arr_push(ctx->event_arena, *dst, copy)) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, *dst, copy)) return false;
     }
     return true;
 }
@@ -1375,7 +1375,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     }
 
     // Global scope always exists at visible depth 1.
-    if (!arena_arr_push(ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return NULL;
+    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return NULL;
     ctx->visible_scope_depth = 1;
 
     // Bootstrap canonical CMAKE_* variables.

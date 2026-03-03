@@ -701,8 +701,7 @@ static bool handle_file_chmod(Evaluator_Context *ctx, const Node *node, SV_List 
 
     SV_List perm_values = NULL;
     for (size_t i = perm_idx + 1; i < arena_arr_len(args); i++) {
-        if (!arena_arr_push(eval_temp_arena(ctx), perm_values, args[i])) {
-            ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), perm_values, args[i])) {
             return true;
         }
     }
@@ -850,8 +849,7 @@ static bool handle_file_install(Evaluator_Context *ctx, const Node *node, SV_Lis
         ctx_oom(ctx);
         return true;
     }
-    if (!arena_arr_push(eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("COPY"))) {
-        ctx_oom(ctx);
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("COPY"))) {
         return true;
     }
 
@@ -877,15 +875,13 @@ static bool handle_file_install(Evaluator_Context *ctx, const Node *node, SV_Lis
             eval_sv_eq_ci_lit(args[i], "DIRECTORY")) {
             continue;
         }
-        if (!arena_arr_push(eval_temp_arena(ctx), copy_args, args[i])) {
-            ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[i])) {
             return true;
         }
     }
 
-    if (!arena_arr_push(eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("DESTINATION")) ||
-        !arena_arr_push(eval_temp_arena(ctx), copy_args, args[dest_idx + 1])) {
-        ctx_oom(ctx);
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("DESTINATION")) ||
+        !EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[dest_idx + 1])) {
         return true;
     }
 
@@ -898,8 +894,7 @@ static bool handle_file_install(Evaluator_Context *ctx, const Node *node, SV_Lis
             eval_sv_eq_ci_lit(args[i], "MESSAGE_NEVER")) {
             continue;
         }
-        if (!arena_arr_push(eval_temp_arena(ctx), copy_args, args[i])) {
-            ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[i])) {
             return true;
         }
     }
