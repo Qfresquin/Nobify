@@ -10,6 +10,75 @@
 #include <ctype.h>
 #include "stb_ds.h"
 
+static bool load_cache_emit_diag(Evaluator_Context *ctx,
+                                 const Node *node,
+                                 Cmake_Diag_Severity severity,
+                                 String_View cause,
+                                 String_View hint) {
+    return eval_emit_diag(ctx,
+                          severity,
+                          nob_sv_from_cstr("load_cache"),
+                          node->as.cmd.name,
+                          eval_origin_from_node(ctx, node),
+                          cause,
+                          hint);
+}
+
+static bool load_cache_name_in_list(String_View name, const SV_List *list) {
+    if (!list) return false;
+    for (size_t i = 0; i < list->count; i++) {
+        if (nob_sv_eq(name, list->items[i])) return true;
+    }
+    return false;
+}
+
+static bool load_cache_resolve_path(Evaluator_Context *ctx, String_View raw_path, String_View *out_path) {
+    if (!ctx || !out_path) return false;
+    String_View path = raw_path;
+    if (!eval_sv_is_abs_path(path)) {
+        String_View base = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+        if (base.count == 0) base = ctx->binary_dir;
+        path = eval_sv_path_join(eval_temp_arena(ctx), base, path);
+        if (eval_should_stop(ctx)) return false;
+    }
+    if (!nob_sv_end_with(path, "CMakeCache.txt")) {
+        path = eval_sv_path_join(eval_temp_arena(ctx), path, nob_sv_from_cstr("CMakeCache.txt"));
+        if (eval_should_stop(ctx)) return false;
+    }
+    *out_path = path;
+    return true;
+}
+
+static bool load_cache_parse_line(String_View line,
+                                  String_View *out_key,
+                                  String_View *out_type,
+                                  String_View *out_value) {
+    if (!out_key || !out_type || !out_value) return false;
+    *out_key = nob_sv_from_cstr("");
+    *out_type = nob_sv_from_cstr("");
+    *out_value = nob_sv_from_cstr("");
+    if (line.count == 0) return false;
+    if (line.data[0] == '#' || line.data[0] == '/') return false;
+
+    size_t colon = (size_t)-1;
+    size_t eq = (size_t)-1;
+    for (size_t i = 0; i < line.count; i++) {
+        if (line.data[i] == ':' && colon == (size_t)-1) {
+            colon = i;
+            continue;
+        }
+        if (line.data[i] == '=' && colon != (size_t)-1) {
+            eq = i;
+            break;
+        }
+    }
+    if (colon == (size_t)-1 || eq == (size_t)-1 || colon == 0 || eq <= colon + 1) return false;
+    *out_key = nob_sv_from_parts(line.data, colon);
+    *out_type = nob_sv_from_parts(line.data + colon + 1, eq - colon - 1);
+    *out_value = nob_sv_from_parts(line.data + eq + 1, line.count - eq - 1);
+    return out_key->count > 0 && out_type->count > 0;
+}
+
 typedef enum {
     PARSE_KEYWORD_OPTION = 0,
     PARSE_KEYWORD_ONE,
@@ -1180,5 +1249,149 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 2) {
+        (void)load_cache_emit_diag(ctx,
+                                   node,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("load_cache() requires a path and a supported mode"),
+                                   nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View cache_path = nob_sv_from_cstr("");
+    if (!load_cache_resolve_path(ctx, a.items[0], &cache_path)) return !eval_should_stop(ctx);
+    char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, !eval_should_stop(ctx));
+
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(cache_path_c, &sb)) {
+        (void)load_cache_emit_diag(ctx,
+                                   node,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("load_cache() failed to read CMakeCache.txt"),
+                                   cache_path);
+        return !eval_should_stop(ctx);
+    }
+
+    bool read_with_prefix = false;
+    String_View prefix = nob_sv_from_cstr("");
+    SV_List requested = {0};
+    SV_List excludes = {0};
+    SV_List include_internals = {0};
+
+    size_t i = 1;
+    if (eval_sv_eq_ci_lit(a.items[i], "READ_WITH_PREFIX")) {
+        read_with_prefix = true;
+        if (i + 2 >= a.count) {
+            (void)load_cache_emit_diag(ctx,
+                                       node,
+                                       EV_DIAG_ERROR,
+                                       nob_sv_from_cstr("load_cache(READ_WITH_PREFIX ...) requires a prefix and at least one entry"),
+                                       nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
+            nob_sb_free(sb);
+            return !eval_should_stop(ctx);
+        }
+        prefix = a.items[i + 1];
+        i += 2;
+        for (; i < a.count; i++) {
+            if (!parse_sv_list_push_temp(ctx, &requested, a.items[i])) {
+                nob_sb_free(sb);
+                return !eval_should_stop(ctx);
+            }
+        }
+    } else {
+        while (i < a.count) {
+            if (eval_sv_eq_ci_lit(a.items[i], "EXCLUDE")) {
+                i++;
+                while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "INCLUDE_INTERNALS")) {
+                    if (!parse_sv_list_push_temp(ctx, &excludes, a.items[i])) {
+                        nob_sb_free(sb);
+                        return !eval_should_stop(ctx);
+                    }
+                    i++;
+                }
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(a.items[i], "INCLUDE_INTERNALS")) {
+                i++;
+                while (i < a.count) {
+                    if (!parse_sv_list_push_temp(ctx, &include_internals, a.items[i])) {
+                        nob_sb_free(sb);
+                        return !eval_should_stop(ctx);
+                    }
+                    i++;
+                }
+                break;
+            }
+            (void)load_cache_emit_diag(ctx,
+                                       node,
+                                       EV_DIAG_ERROR,
+                                       nob_sv_from_cstr("load_cache() received an unsupported argument"),
+                                       a.items[i]);
+            nob_sb_free(sb);
+            return !eval_should_stop(ctx);
+        }
+    }
+
+    const char *data = sb.items ? sb.items : "";
+    size_t len = sb.count;
+    size_t start = 0;
+    while (start <= len) {
+        size_t end = start;
+        while (end < len && data[end] != '\n') end++;
+        size_t line_len = end - start;
+        if (line_len > 0 && data[start + line_len - 1] == '\r') line_len--;
+        String_View line = nob_sv_from_parts(data + start, line_len);
+
+        String_View key = {0};
+        String_View type = {0};
+        String_View value = {0};
+        if (line.count > 0 && line.data[0] != '#' && line.data[0] != '/') {
+            if (!load_cache_parse_line(line, &key, &type, &value)) {
+                (void)load_cache_emit_diag(ctx,
+                                           node,
+                                           EV_DIAG_WARNING,
+                                           nob_sv_from_cstr("load_cache() skipped a malformed cache entry"),
+                                           line);
+            } else {
+                bool is_internal = eval_sv_eq_ci_lit(type, "INTERNAL");
+                if (read_with_prefix) {
+                    if (load_cache_name_in_list(key, &requested)) {
+                        size_t total = prefix.count + key.count;
+                        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+                        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+                        if (prefix.count > 0) memcpy(buf, prefix.data, prefix.count);
+                        memcpy(buf + prefix.count, key.data, key.count);
+                        buf[total] = '\0';
+                        if (!eval_var_set(ctx, nob_sv_from_parts(buf, total), value)) {
+                            nob_sb_free(sb);
+                            return !eval_should_stop(ctx);
+                        }
+                    }
+                } else {
+                    if (!is_internal || load_cache_name_in_list(key, &include_internals)) {
+                        if (!load_cache_name_in_list(key, &excludes)) {
+                            if (!eval_cache_set(ctx, key, value, nob_sv_from_cstr("INTERNAL"), nob_sv_from_cstr("loaded by load_cache"))) {
+                                nob_sb_free(sb);
+                                return !eval_should_stop(ctx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (end == len) break;
+        start = end + 1;
+    }
+
+    nob_sb_free(sb);
     return !eval_should_stop(ctx);
 }

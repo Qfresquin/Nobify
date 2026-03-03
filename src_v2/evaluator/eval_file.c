@@ -35,6 +35,46 @@ String_View eval_file_current_bin_dir(Evaluator_Context *ctx) {
     return v.count > 0 ? v : ctx->binary_dir;
 }
 
+bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count != 2) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_file"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("aux_source_directory() requires a directory and an output variable"),
+                       nob_sv_from_cstr("Usage: aux_source_directory(<dir> <var>)"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View dir = a.items[0];
+    if (!eval_sv_is_abs_path(dir)) {
+        dir = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_src_dir(ctx), dir);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    }
+
+    SV_List sources = {0};
+    if (!eval_list_dir_sources_sorted_temp(ctx, dir, &sources)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_file"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("aux_source_directory() failed to enumerate the source directory"),
+                       dir);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_var_set(ctx, a.items[1], eval_sv_join_semi_temp(ctx, sources.items, sources.count))) {
+        return !eval_should_stop(ctx);
+    }
+    return !eval_should_stop(ctx);
+}
+
 static bool eval_var_truthy_or_default(Evaluator_Context *ctx, const char *key, bool default_value) {
     if (!ctx || !key) return default_value;
     String_View v = eval_var_get(ctx, nob_sv_from_cstr(key));

@@ -3985,6 +3985,157 @@ TEST(evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface) {
     TEST_PASS();
 }
 
+TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("cache_in"));
+    ASSERT(nob_mkdir_if_not_exists("asd_src"));
+    ASSERT(nob_write_entire_file("cache_in/CMakeCache.txt",
+                                 "FOO:STRING=alpha\n"
+                                 "BAR:BOOL=ON\n"
+                                 "KEEP:STRING=keep-me\n"
+                                 "HIDE:INTERNAL=secret\n"
+                                 "broken-line\n",
+                                 strlen("FOO:STRING=alpha\nBAR:BOOL=ON\nKEEP:STRING=keep-me\nHIDE:INTERNAL=secret\nbroken-line\n")));
+    ASSERT(nob_write_entire_file("asd_src/b.cpp", "int b = 0;\n", strlen("int b = 0;\n")));
+    ASSERT(nob_write_entire_file("asd_src/a.c", "int a = 0;\n", strlen("int a = 0;\n")));
+    ASSERT(nob_write_entire_file("asd_src/skip.txt", "x\n", 2));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_TESTDRIVER_BEFORE_TESTMAIN \"/*before*/\")\n"
+        "set(CMAKE_TESTDRIVER_AFTER_TESTMAIN \"/*after*/\")\n"
+        "add_library(meta_lib INTERFACE)\n"
+        "install(TARGETS meta_lib EXPORT DemoExport DESTINATION lib)\n"
+        "export(TARGETS meta_lib FILE meta-targets.cmake NAMESPACE Demo::)\n"
+        "export(EXPORT DemoExport FILE meta-export.cmake NAMESPACE Demo::)\n"
+        "load_cache(cache_in READ_WITH_PREFIX LC_ FOO BAR)\n"
+        "load_cache(cache_in EXCLUDE BAR INCLUDE_INTERNALS HIDE)\n"
+        "aux_source_directory(asd_src ASD_OUT)\n"
+        "create_test_sourcelist(TEST_SRCS generated_driver.c alpha_test.c beta_test.c EXTRA_INCLUDE extra.h FUNCTION setup_hook)\n"
+        "include_external_msproject(ext_proj external.vcxproj TYPE type-guid GUID proj-guid PLATFORM Win32 meta_lib)\n"
+        "cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 CACHE 2.0)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE")), nob_sv_from_cstr("EXPORT")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_NAMESPACE")), nob_sv_from_cstr("Demo::")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LC_FOO")), nob_sv_from_cstr("alpha")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LC_BAR")), nob_sv_from_cstr("ON")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("KEEP")), nob_sv_from_cstr("keep-me")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BAR")), nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("HIDE")), nob_sv_from_cstr("secret")));
+
+    String_View asd_out = eval_var_get(ctx, nob_sv_from_cstr("ASD_OUT"));
+    ASSERT(sv_contains_sv(asd_out, nob_sv_from_cstr("a.c")));
+    ASSERT(sv_contains_sv(asd_out, nob_sv_from_cstr("b.cpp")));
+    ASSERT(!sv_contains_sv(asd_out, nob_sv_from_cstr("skip.txt")));
+    const char *a_pos = strstr(nob_temp_sv_to_cstr(asd_out), "a.c");
+    const char *b_pos = strstr(nob_temp_sv_to_cstr(asd_out), "b.cpp");
+    ASSERT(a_pos != NULL && b_pos != NULL && a_pos < b_pos);
+
+    String_View test_srcs = eval_var_get(ctx, nob_sv_from_cstr("TEST_SRCS"));
+    ASSERT(sv_contains_sv(test_srcs, nob_sv_from_cstr("alpha_test.c")));
+    ASSERT(sv_contains_sv(test_srcs, nob_sv_from_cstr("beta_test.c")));
+    ASSERT(sv_contains_sv(test_srcs, nob_sv_from_cstr("generated_driver.c")));
+    String_View driver_text = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "generated_driver.c", &driver_text));
+    ASSERT(sv_contains_sv(driver_text, nob_sv_from_cstr("extern int alpha_test(int, char**);")));
+    ASSERT(sv_contains_sv(driver_text, nob_sv_from_cstr("extern int beta_test(int, char**);")));
+    ASSERT(sv_contains_sv(driver_text, nob_sv_from_cstr("#include \"extra.h\"")));
+    ASSERT(sv_contains_sv(driver_text, nob_sv_from_cstr("setup_hook();")));
+    ASSERT(sv_contains_sv(driver_text, nob_sv_from_cstr("/*before*/")));
+    ASSERT(sv_contains_sv(driver_text, nob_sv_from_cstr("/*after*/")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_MSPROJECT::ext_proj::LOCATION")),
+                     nob_sv_from_cstr("external.vcxproj")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_MSPROJECT::ext_proj::DEPENDENCIES")),
+                     nob_sv_from_cstr("meta_lib")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::API_VERSION")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::CODEMODEL")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::CACHE")),
+                     nob_sv_from_cstr("2.0")));
+
+    String_View export_text = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "meta-export.cmake", &export_text));
+    ASSERT(sv_contains_sv(export_text, nob_sv_from_cstr("set(NOBIFY_EXPORT_TARGETS \"meta_lib\")")));
+
+    bool saw_malformed_cache_warning = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_WARNING) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("load_cache() skipped a malformed cache entry"))) {
+            saw_malformed_cache_warning = true;
+            break;
+        }
+    }
+    ASSERT(saw_malformed_cache_warning);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_batch6_metadata_commands_reject_unsupported_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "export(PACKAGE Demo)\n"
+        "cmake_file_api(REPLY)\n"
+        "cmake_file_api(QUERY API_VERSION 2 CODEMODEL 2)\n"
+        "cmake_file_api(QUERY API_VERSION 1 UNKNOWN_KIND 1)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -6489,6 +6640,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
     test_evaluator_try_run_executes_native_artifacts_and_reports_partial_limits(passed, failed);
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
+    test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);
+    test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);

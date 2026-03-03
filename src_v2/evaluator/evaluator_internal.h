@@ -414,6 +414,9 @@ bool eval_process_run_capture(Evaluator_Context *ctx, const Eval_Process_Run_Req
 bool eval_sv_is_abs_path(String_View p);
 String_View eval_sv_path_join(Arena *arena, String_View a, String_View b);
 String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input);
+bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, SV_List *out_sources);
+bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path);
+bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View contents, bool append);
 String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
                                             String_View raw_path,
                                             String_View base_dir,

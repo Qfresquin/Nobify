@@ -11,6 +11,7 @@
 #include "eval_host.h"
 #include "eval_include.h"
 #include "eval_install.h"
+#include "eval_meta.h"
 #include "eval_package.h"
 #include "eval_project.h"
 #include "eval_stdlib.h"
@@ -44,6 +45,7 @@ static const Command_Entry DISPATCH[] = {
     {"build_command", eval_handle_build_command},
     {"build_name", eval_handle_build_name},
     {"cmake_host_system_information", eval_handle_cmake_host_system_information},
+    {"cmake_file_api", eval_handle_cmake_file_api},
     {"cmake_parse_arguments", eval_handle_cmake_parse_arguments},
     {"cmake_minimum_required", eval_handle_cmake_minimum_required},
     {"cmake_language", eval_handle_cmake_language},
@@ -51,6 +53,7 @@ static const Command_Entry DISPATCH[] = {
     {"cmake_policy", eval_handle_cmake_policy},
     {"configure_file", eval_handle_configure_file},
     {"continue", eval_handle_continue},
+    {"create_test_sourcelist", eval_handle_create_test_sourcelist},
     {"cpack_add_component", eval_handle_cpack_add_component},
     {"cpack_add_component_group", eval_handle_cpack_add_component_group},
     {"cpack_add_install_type", eval_handle_cpack_add_install_type},
@@ -61,6 +64,7 @@ static const Command_Entry DISPATCH[] = {
     {"exec_program", eval_handle_exec_program},
     {"execute_process", eval_handle_execute_process},
     {"file", eval_handle_file},
+    {"export", eval_handle_export},
     {"get_cmake_property", eval_handle_get_cmake_property},
     {"get_directory_property", eval_handle_get_directory_property},
     {"find_file", eval_handle_find_file},
@@ -74,6 +78,7 @@ static const Command_Entry DISPATCH[] = {
     {"get_target_property", eval_handle_get_target_property},
     {"get_test_property", eval_handle_get_test_property},
     {"include", eval_handle_include},
+    {"include_external_msproject", eval_handle_include_external_msproject},
     {"include_regular_expression", eval_handle_include_regular_expression},
     {"include_directories", eval_handle_include_directories},
     {"include_guard", eval_handle_include_guard},
@@ -81,6 +86,7 @@ static const Command_Entry DISPATCH[] = {
     {"link_directories", eval_handle_link_directories},
     {"link_libraries", eval_handle_link_libraries},
     {"list", eval_handle_list},
+    {"load_cache", eval_handle_load_cache},
     {"mark_as_advanced", eval_handle_mark_as_advanced},
     {"math", eval_handle_math},
     {"message", eval_handle_message},
@@ -98,6 +104,7 @@ static const Command_Entry DISPATCH[] = {
     {"site_name", eval_handle_site_name},
     {"string", eval_handle_string},
     {"source_group", eval_handle_source_group},
+    {"aux_source_directory", eval_handle_aux_source_directory},
     {"target_compile_features", eval_handle_target_compile_features},
     {"target_compile_definitions", eval_handle_target_compile_definitions},
     {"target_compile_options", eval_handle_target_compile_options},

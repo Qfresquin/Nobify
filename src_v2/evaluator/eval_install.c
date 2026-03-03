@@ -258,11 +258,41 @@ static bool install_handle_targets_like(Evaluator_Context *ctx,
     }
 
     SV_List destinations = {0};
+    String_View export_name = nob_sv_from_cstr("");
     if (!install_collect_destinations(ctx, node, o, args, i, &destinations)) return false;
+    for (size_t j = i; j < args.count; j++) {
+        if (!eval_sv_eq_ci_lit(args.items[j], "EXPORT")) continue;
+        if (j + 1 >= args.count) {
+            install_emit_diag(ctx,
+                              node,
+                              o,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("install(TARGETS ... EXPORT ...) requires an export name"),
+                              nob_sv_from_cstr("Usage: install(TARGETS <tgt>... EXPORT <name> ...)"));
+            return true;
+        }
+        export_name = args.items[j + 1];
+        break;
+    }
     if (destinations.count == 0) {
         // CMake allows some target installs without explicit destination depending on artifact/category.
         // Keep evaluator behavior permissive and preserve the rule with empty destination.
         if (!svu_list_push_temp(ctx, &destinations, nob_sv_from_cstr(""))) return false;
+    }
+
+    if (export_name.count > 0) {
+        size_t total = strlen("NOBIFY_INSTALL_EXPORT::") + export_name.count + strlen("::TARGETS");
+        char *key_buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+        EVAL_OOM_RETURN_IF_NULL(ctx, key_buf, false);
+        memcpy(key_buf, "NOBIFY_INSTALL_EXPORT::", strlen("NOBIFY_INSTALL_EXPORT::"));
+        memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::"), export_name.data, export_name.count);
+        memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::") + export_name.count, "::TARGETS", strlen("::TARGETS"));
+        key_buf[total] = '\0';
+        if (!eval_var_set(ctx,
+                          nob_sv_from_parts(key_buf, total),
+                          eval_sv_join_semi_temp(ctx, targets.items, targets.count))) {
+            return false;
+        }
     }
 
     for (size_t ti = 0; ti < targets.count; ti++) {

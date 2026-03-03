@@ -34,14 +34,14 @@ Handlers return `false` only for fatal/internal stop conditions (for example OOM
 
 Current built-ins include (non-exhaustive grouping):
 - Flow/scope: `block`, `endblock`, `break`, `continue`, `return`
-- Variables/stdlib: `set`, `unset`, `option`, `mark_as_advanced`, `separate_arguments`, `list`, `string`, `math`, `message`
+- Variables/stdlib: `set`, `unset`, `option`, `mark_as_advanced`, `separate_arguments`, `list`, `string`, `math`, `message`, `load_cache`
 - Host/build: `cmake_host_system_information`, `site_name`, `build_name`, `build_command`
 - Project/targets: `project`, `add_executable`, `add_library`, target property/link/include commands, target augmentation commands (`target_sources`, `target_compile_features`, `target_precompile_headers`), property introspection (`get_property`, `get_*_property`), and source-group metadata (`source_group`)
 - Directory/include: `add_subdirectory`, `include`, `include_guard`, `include_regular_expression`, `include_directories`, `link_directories`, `link_libraries`, `remove_definitions`
 - Property wrappers: `set_directory_properties`, `set_source_files_properties`, `set_tests_properties`
 - Compatibility/project controls: `cmake_minimum_required`, `cmake_policy`, `cmake_path`
-- Filesystem and packaging: `file`, `find_package`, `install`, CPack subset
-- Tests/custom/other: `enable_testing`, `add_test`, `add_custom_target`, `add_custom_command`, `execute_process`, `exec_program`, `try_compile`, `try_run`
+- Filesystem and packaging: `file`, `aux_source_directory`, `configure_file`, `find_package`, `install`, `export`, `cmake_file_api`, CPack subset
+- Tests/custom/other: `enable_testing`, `add_test`, `create_test_sourcelist`, `include_external_msproject`, `add_custom_target`, `add_custom_command`, `execute_process`, `exec_program`, `try_compile`, `try_run`
 
 For authoritative command-level compatibility, see `evaluator_v2_coverage_status.md` and `eval_command_caps.c`.
 

@@ -1,6 +1,7 @@
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
 #include "subprocess.h"
+#include "tinydir.h"
 #include "sv_utils.h"
 #include "stb_ds.h"
 #include <ctype.h>
@@ -372,6 +373,102 @@ static bool eval_path_norm_eq_temp(Evaluator_Context *ctx, String_View a, String
     String_View bn = eval_sv_path_normalize_temp(ctx, b);
     if (eval_should_stop(ctx)) return false;
     return svu_eq_ci_sv(an, bn);
+}
+
+static bool eval_source_extension_allowed(String_View path) {
+    if (path.count == 0 || !path.data) return false;
+    size_t dot = SIZE_MAX;
+    for (size_t i = 0; i < path.count; i++) {
+        if (path.data[i] == '.') dot = i;
+        if (path.data[i] == '/' || path.data[i] == '\\') dot = SIZE_MAX;
+    }
+    if (dot == SIZE_MAX || dot + 1 >= path.count) return false;
+    String_View ext = nob_sv_from_parts(path.data + dot + 1, path.count - dot - 1);
+    return eval_sv_eq_ci_lit(ext, "c") ||
+           eval_sv_eq_ci_lit(ext, "cc") ||
+           eval_sv_eq_ci_lit(ext, "cpp") ||
+           eval_sv_eq_ci_lit(ext, "cxx") ||
+           eval_sv_eq_ci_lit(ext, "m") ||
+           eval_sv_eq_ci_lit(ext, "mm");
+}
+
+bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, SV_List *out_sources) {
+    if (!ctx || !out_sources) return false;
+    *out_sources = (SV_List){0};
+
+    char *dir_c = eval_sv_to_cstr_temp(ctx, dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dir_c, false);
+
+    tinydir_dir td = {0};
+    if (tinydir_open_sorted(&td, dir_c) != 0) return true;
+
+    for (size_t i = 0; i < td.n_files; i++) {
+        tinydir_file tf = {0};
+        if (tinydir_readfile_n(&td, &tf, i) != 0) continue;
+        if (tf.is_dir) continue;
+
+        String_View name = nob_sv_from_cstr(tf.name);
+        if (!eval_source_extension_allowed(name)) continue;
+        String_View full = eval_sv_path_join(eval_temp_arena(ctx), dir, name);
+        if (eval_should_stop(ctx)) {
+            tinydir_close(&td);
+            return false;
+        }
+        if (!svu_list_push_temp(ctx, out_sources, full)) {
+            tinydir_close(&td);
+            return false;
+        }
+    }
+
+    tinydir_close(&td);
+    return true;
+}
+
+bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path) {
+    if (!ctx) return false;
+    String_View parent = eval_file_parent_dir_view(path);
+    if (parent.count == 0 || nob_sv_eq(parent, nob_sv_from_cstr("."))) return true;
+
+    char *tmp = eval_sv_to_cstr_temp(ctx, parent);
+    EVAL_OOM_RETURN_IF_NULL(ctx, tmp, false);
+    size_t len0 = strlen(tmp);
+    for (size_t i = 0; i < len0; i++) {
+        if (tmp[i] == '\\') tmp[i] = '/';
+    }
+
+    while (len0 > 0 && tmp[len0 - 1] == '/') {
+        tmp[len0 - 1] = '\0';
+        len0--;
+    }
+    if (len0 == 0) return true;
+
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p != '/') continue;
+        if ((p == tmp + 2) && isalpha((unsigned char)tmp[0]) && tmp[1] == ':') continue;
+        *p = '\0';
+        (void)nob_mkdir_if_not_exists(tmp);
+        *p = '/';
+    }
+    return nob_mkdir_if_not_exists(tmp);
+}
+
+bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View contents, bool append) {
+    if (!ctx) return false;
+    if (!eval_mkdirs_for_parent(ctx, path)) return false;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    if (!append) {
+        return nob_write_entire_file(path_c, contents.data ? contents.data : "", contents.count);
+    }
+
+    Nob_String_Builder sb = {0};
+    if (nob_file_exists(path_c)) {
+        if (!nob_read_entire_file(path_c, &sb)) return false;
+    }
+    if (contents.count > 0) nob_sb_append_buf(&sb, contents.data, contents.count);
+    return nob_write_entire_file(path_c, sb.items ? sb.items : "", sb.count);
 }
 
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {

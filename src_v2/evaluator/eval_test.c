@@ -4,7 +4,29 @@
 #include "sv_utils.h"
 #include "eval_opt_parser.h"
 
+#include <stdio.h>
 #include <string.h>
+
+static String_View test_current_bin_dir(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    return v.count > 0 ? v : ctx->binary_dir;
+}
+
+static String_View test_source_stem_temp(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return nob_sv_from_cstr("");
+    size_t start = 0;
+    for (size_t i = 0; i < path.count; i++) {
+        if (path.data[i] == '/' || path.data[i] == '\\') start = i + 1;
+    }
+    size_t end = path.count;
+    for (size_t i = path.count; i > start; i--) {
+        if (path.data[i - 1] == '.') {
+            end = i - 1;
+            break;
+        }
+    }
+    return nob_sv_from_parts(path.data + start, end - start);
+}
 
 bool eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
@@ -207,6 +229,161 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         (void)eval_var_set(ctx, nob_sv_from_cstr(buf), nob_sv_from_cstr("1"));
     }
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    return !eval_should_stop(ctx);
+}
+
+bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return false;
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (a.count < 3) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_test"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("create_test_sourcelist() requires an output variable, driver, and at least one test"),
+                       nob_sv_from_cstr("Usage: create_test_sourcelist(<sourceListVar> <driver> <tests>... [EXTRA_INCLUDE <inc>] [FUNCTION <fn>])"));
+        return !eval_should_stop(ctx);
+    }
+
+    String_View out_var = a.items[0];
+    String_View driver = a.items[1];
+    String_View extra_include = nob_sv_from_cstr("");
+    String_View hook_fn = nob_sv_from_cstr("");
+    SV_List tests = {0};
+
+    size_t i = 2;
+    while (i < a.count) {
+        if (eval_sv_eq_ci_lit(a.items[i], "EXTRA_INCLUDE") || eval_sv_eq_ci_lit(a.items[i], "FUNCTION")) break;
+        if (!svu_list_push_temp(ctx, &tests, a.items[i])) return !eval_should_stop(ctx);
+        i++;
+    }
+    while (i < a.count) {
+        if (eval_sv_eq_ci_lit(a.items[i], "EXTRA_INCLUDE")) {
+            if (i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("eval_test"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("create_test_sourcelist(EXTRA_INCLUDE ...) requires a value"),
+                               nob_sv_from_cstr("Usage: ... EXTRA_INCLUDE <header>"));
+                return !eval_should_stop(ctx);
+            }
+            extra_include = a.items[i + 1];
+            i += 2;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a.items[i], "FUNCTION")) {
+            if (i + 1 >= a.count) {
+                eval_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               nob_sv_from_cstr("eval_test"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("create_test_sourcelist(FUNCTION ...) requires a value"),
+                               nob_sv_from_cstr("Usage: ... FUNCTION <fn>"));
+                return !eval_should_stop(ctx);
+            }
+            hook_fn = a.items[i + 1];
+            i += 2;
+            continue;
+        }
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_test"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("create_test_sourcelist() received an unsupported argument"),
+                       a.items[i]);
+        return !eval_should_stop(ctx);
+    }
+
+    if (tests.count == 0) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_test"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("create_test_sourcelist() requires at least one test source"),
+                       nob_sv_from_cstr(""));
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_sv_is_abs_path(driver)) {
+        driver = eval_sv_path_join(eval_temp_arena(ctx), test_current_bin_dir(ctx), driver);
+        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    }
+
+    String_View before = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TESTDRIVER_BEFORE_TESTMAIN"));
+    String_View after = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TESTDRIVER_AFTER_TESTMAIN"));
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "/* evaluator-generated create_test_sourcelist driver */\n");
+    nob_sb_append_cstr(&sb, "#include <string.h>\n");
+    if (extra_include.count > 0) {
+        nob_sb_append_cstr(&sb, "#include \"");
+        nob_sb_append_buf(&sb, extra_include.data, extra_include.count);
+        nob_sb_append_cstr(&sb, "\"\n");
+    }
+    for (size_t ti = 0; ti < tests.count; ti++) {
+        String_View stem = test_source_stem_temp(ctx, tests.items[ti]);
+        nob_sb_append_cstr(&sb, "extern int ");
+        nob_sb_append_buf(&sb, stem.data, stem.count);
+        nob_sb_append_cstr(&sb, "(int, char**);\n");
+    }
+    if (hook_fn.count > 0) {
+        nob_sb_append_cstr(&sb, "extern void ");
+        nob_sb_append_buf(&sb, hook_fn.data, hook_fn.count);
+        nob_sb_append_cstr(&sb, "(void);\n");
+    }
+    nob_sb_append_cstr(&sb, "int main(int argc, char **argv) {\n");
+    if (before.count > 0) {
+        nob_sb_append_buf(&sb, before.data, before.count);
+        if (before.data[before.count - 1] != '\n') nob_sb_append_cstr(&sb, "\n");
+    }
+    if (hook_fn.count > 0) {
+        nob_sb_append_cstr(&sb, "  ");
+        nob_sb_append_buf(&sb, hook_fn.data, hook_fn.count);
+        nob_sb_append_cstr(&sb, "();\n");
+    }
+    nob_sb_append_cstr(&sb, "  if (argc < 2) return 0;\n");
+    for (size_t ti = 0; ti < tests.count; ti++) {
+        String_View stem = test_source_stem_temp(ctx, tests.items[ti]);
+        nob_sb_append_cstr(&sb, "  if (strcmp(argv[1], \"");
+        nob_sb_append_buf(&sb, stem.data, stem.count);
+        nob_sb_append_cstr(&sb, "\") == 0) return ");
+        nob_sb_append_buf(&sb, stem.data, stem.count);
+        nob_sb_append_cstr(&sb, "(argc, argv);\n");
+    }
+    if (after.count > 0) {
+        nob_sb_append_buf(&sb, after.data, after.count);
+        if (after.data[after.count - 1] != '\n') nob_sb_append_cstr(&sb, "\n");
+    }
+    nob_sb_append_cstr(&sb, "  return 0;\n}\n");
+
+    if (!eval_write_text_file(ctx, driver, nob_sv_from_parts(sb.items, sb.count), false)) {
+        eval_emit_diag(ctx,
+                       EV_DIAG_ERROR,
+                       nob_sv_from_cstr("eval_test"),
+                       node->as.cmd.name,
+                       o,
+                       nob_sv_from_cstr("create_test_sourcelist() failed to write the generated driver"),
+                       driver);
+        return !eval_should_stop(ctx);
+    }
+
+    SV_List out_items = {0};
+    for (size_t ti = 0; ti < tests.count; ti++) {
+        if (!svu_list_push_temp(ctx, &out_items, tests.items[ti])) return !eval_should_stop(ctx);
+    }
+    if (!svu_list_push_temp(ctx, &out_items, driver)) return !eval_should_stop(ctx);
+    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, out_items.items, out_items.count))) {
+        return !eval_should_stop(ctx);
+    }
+
     return !eval_should_stop(ctx);
 }
 
