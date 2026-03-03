@@ -1096,7 +1096,6 @@ cleanup:
 static bool ensure_scope_capacity(Evaluator_Context *ctx, size_t min_cap) {
     if (!ctx || !ctx->event_arena) return false;
     if (!arena_arr_reserve(ctx->event_arena, ctx->scopes, min_cap)) return ctx_oom(ctx);
-    ctx->scope_capacity = arena_arr_cap(ctx->scopes);
     return true;
 }
 

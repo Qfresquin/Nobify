@@ -144,24 +144,12 @@ static bool policy_set_depth_var(Evaluator_Context *ctx) {
 
 static bool policy_ensure_capacity(Evaluator_Context *ctx, size_t min_capacity) {
     if (!ctx) return false;
-    if (ctx->policy_capacity >= min_capacity && ctx->policy_levels) return true;
-
-    size_t old_capacity = ctx->policy_capacity;
-    size_t new_capacity = old_capacity > 0 ? old_capacity : 4;
-    while (new_capacity < min_capacity) {
-        if (new_capacity > (SIZE_MAX / 2)) return ctx_oom(ctx);
-        new_capacity *= 2;
-    }
-
-    Eval_Policy_Level *grown =
-        (Eval_Policy_Level*)realloc(ctx->policy_levels, new_capacity * sizeof(Eval_Policy_Level));
-    EVAL_OOM_RETURN_IF_NULL(ctx, grown, false);
-
-    ctx->policy_levels = grown;
+    size_t old_capacity = arena_arr_cap(ctx->policy_levels);
+    if (!arena_arr_reserve(ctx->event_arena, ctx->policy_levels, min_capacity)) return ctx_oom(ctx);
+    size_t new_capacity = arena_arr_cap(ctx->policy_levels);
     if (new_capacity > old_capacity) {
         memset(ctx->policy_levels + old_capacity, 0, (new_capacity - old_capacity) * sizeof(Eval_Policy_Level));
     }
-    ctx->policy_capacity = new_capacity;
     return true;
 }
 

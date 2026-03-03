@@ -203,7 +203,6 @@ struct Evaluator_Context {
 
     Var_Scope *scopes;
     size_t scope_depth;
-    size_t scope_capacity;
     Eval_Cache_Entry *cache_entries;
 
     SV_List known_targets; 
@@ -222,7 +221,6 @@ struct Evaluator_Context {
     size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
     size_t policy_depth;
-    size_t policy_capacity;
     bool cpack_component_module_loaded;
     size_t file_eval_depth;
     size_t function_eval_depth;
