@@ -83,7 +83,7 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count == 0) {
+    if (arena_arr_len(a) == 0) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
@@ -92,12 +92,12 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "PACKAGE") || eval_sv_eq_ci_lit(a.items[0], "SETUP")) {
+    if (eval_sv_eq_ci_lit(a[0], "PACKAGE") || eval_sv_eq_ci_lit(a[0], "SETUP")) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("export() signature is not implemented in evaluator v2"),
-                             a.items[0]);
+                             a[0]);
         return !eval_should_stop(ctx);
     }
 
@@ -105,22 +105,22 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
     String_View file_path = nob_sv_from_cstr("");
     String_View ns = nob_sv_from_cstr("");
     String_View export_name = nob_sv_from_cstr("");
-    SV_List targets = {0};
+    SV_List targets = NULL;
 
-    if (eval_sv_eq_ci_lit(a.items[0], "TARGETS")) {
+    if (eval_sv_eq_ci_lit(a[0], "TARGETS")) {
         size_t i = 1;
-        for (; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "NAMESPACE") ||
-                eval_sv_eq_ci_lit(a.items[i], "APPEND") ||
-                eval_sv_eq_ci_lit(a.items[i], "FILE") ||
-                eval_sv_eq_ci_lit(a.items[i], "EXPORT_LINK_INTERFACE_LIBRARIES") ||
-                eval_sv_eq_ci_lit(a.items[i], "CXX_MODULES_DIRECTORY")) {
+        for (; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "NAMESPACE") ||
+                eval_sv_eq_ci_lit(a[i], "APPEND") ||
+                eval_sv_eq_ci_lit(a[i], "FILE") ||
+                eval_sv_eq_ci_lit(a[i], "EXPORT_LINK_INTERFACE_LIBRARIES") ||
+                eval_sv_eq_ci_lit(a[i], "CXX_MODULES_DIRECTORY")) {
                 break;
             }
-            if (!svu_list_push_temp(ctx, &targets, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &targets, a[i])) return !eval_should_stop(ctx);
         }
 
-        if (targets.count == 0) {
+        if (arena_arr_len(targets) == 0) {
             (void)meta_emit_diag(ctx,
                                  node,
                                  EV_DIAG_ERROR,
@@ -129,13 +129,13 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        for (; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "APPEND")) {
+        for (; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "APPEND")) {
                 append = true;
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "EXPORT_LINK_INTERFACE_LIBRARIES")) continue;
-            if (eval_sv_eq_ci_lit(a.items[i], "CXX_MODULES_DIRECTORY")) {
+            if (eval_sv_eq_ci_lit(a[i], "EXPORT_LINK_INTERFACE_LIBRARIES")) continue;
+            if (eval_sv_eq_ci_lit(a[i], "CXX_MODULES_DIRECTORY")) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
@@ -143,8 +143,8 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                      nob_sv_from_cstr("This batch models only classic build-tree export metadata"));
                 return !eval_should_stop(ctx);
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "NAMESPACE")) {
-                if (i + 1 >= a.count) {
+            if (eval_sv_eq_ci_lit(a[i], "NAMESPACE")) {
+                if (i + 1 >= arena_arr_len(a)) {
                     (void)meta_emit_diag(ctx,
                                          node,
                                          EV_DIAG_ERROR,
@@ -152,11 +152,11 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                          nob_sv_from_cstr("Usage: ... NAMESPACE <ns>"));
                     return !eval_should_stop(ctx);
                 }
-                ns = a.items[++i];
+                ns = a[++i];
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "FILE")) {
-                if (i + 1 >= a.count) {
+            if (eval_sv_eq_ci_lit(a[i], "FILE")) {
+                if (i + 1 >= arena_arr_len(a)) {
                     (void)meta_emit_diag(ctx,
                                          node,
                                          EV_DIAG_ERROR,
@@ -164,29 +164,29 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                          nob_sv_from_cstr("Usage: ... FILE <path>"));
                     return !eval_should_stop(ctx);
                 }
-                file_path = a.items[++i];
+                file_path = a[++i];
                 continue;
             }
             (void)meta_emit_diag(ctx,
                                  node,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("export(TARGETS ...) received an unsupported argument"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
 
-        for (size_t ti = 0; ti < targets.count; ti++) {
-            if (!eval_target_known(ctx, targets.items[ti])) {
+        for (size_t ti = 0; ti < arena_arr_len(targets); ti++) {
+            if (!eval_target_known(ctx, targets[ti])) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
                                      nob_sv_from_cstr("export(TARGETS ...) target was not declared"),
-                                     targets.items[ti]);
+                                     targets[ti]);
                 return !eval_should_stop(ctx);
             }
         }
-    } else if (eval_sv_eq_ci_lit(a.items[0], "EXPORT")) {
-        if (a.count < 2) {
+    } else if (eval_sv_eq_ci_lit(a[0], "EXPORT")) {
+        if (arena_arr_len(a) < 2) {
             (void)meta_emit_diag(ctx,
                                  node,
                                  EV_DIAG_ERROR,
@@ -194,15 +194,15 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: export(EXPORT <name> FILE <file>)"));
             return !eval_should_stop(ctx);
         }
-        export_name = a.items[1];
-        for (size_t i = 2; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "EXPORT_LINK_INTERFACE_LIBRARIES")) continue;
-            if (eval_sv_eq_ci_lit(a.items[i], "APPEND")) {
+        export_name = a[1];
+        for (size_t i = 2; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "EXPORT_LINK_INTERFACE_LIBRARIES")) continue;
+            if (eval_sv_eq_ci_lit(a[i], "APPEND")) {
                 append = true;
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "NAMESPACE")) {
-                if (i + 1 >= a.count) {
+            if (eval_sv_eq_ci_lit(a[i], "NAMESPACE")) {
+                if (i + 1 >= arena_arr_len(a)) {
                     (void)meta_emit_diag(ctx,
                                          node,
                                          EV_DIAG_ERROR,
@@ -210,11 +210,11 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                          nob_sv_from_cstr("Usage: ... NAMESPACE <ns>"));
                     return !eval_should_stop(ctx);
                 }
-                ns = a.items[++i];
+                ns = a[++i];
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "FILE")) {
-                if (i + 1 >= a.count) {
+            if (eval_sv_eq_ci_lit(a[i], "FILE")) {
+                if (i + 1 >= arena_arr_len(a)) {
                     (void)meta_emit_diag(ctx,
                                          node,
                                          EV_DIAG_ERROR,
@@ -222,10 +222,10 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                          nob_sv_from_cstr("Usage: ... FILE <path>"));
                     return !eval_should_stop(ctx);
                 }
-                file_path = a.items[++i];
+                file_path = a[++i];
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "CXX_MODULES_DIRECTORY")) {
+            if (eval_sv_eq_ci_lit(a[i], "CXX_MODULES_DIRECTORY")) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
@@ -237,7 +237,7 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                  node,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("export(EXPORT ...) received an unsupported argument"),
-                                 a.items[i]);
+                                 a[i]);
             return !eval_should_stop(ctx);
         }
 
@@ -257,7 +257,7 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                              node,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("export() signature is not implemented in evaluator v2"),
-                             a.items[0]);
+                             a[0]);
         return !eval_should_stop(ctx);
     }
 
@@ -275,7 +275,7 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     }
 
-    String_View targets_joined = eval_sv_join_semi_temp(ctx, targets.items, targets.count);
+    String_View targets_joined = eval_sv_join_semi_temp(ctx, targets, arena_arr_len(targets));
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     String_View mode = export_name.count > 0 ? nob_sv_from_cstr("EXPORT") : nob_sv_from_cstr("TARGETS");
     if (!meta_export_write(ctx, file_path, append, mode, targets_joined, export_name, ns)) {
@@ -295,7 +295,7 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
@@ -304,17 +304,17 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
-    String_View location = a.items[1];
+    String_View name = a[0];
+    String_View location = a[1];
     String_View type_guid = nob_sv_from_cstr("");
     String_View project_guid = nob_sv_from_cstr("");
     String_View platform = nob_sv_from_cstr("");
-    SV_List deps = {0};
+    SV_List deps = NULL;
 
     size_t i = 2;
-    while (i < a.count) {
-        if (eval_sv_eq_ci_lit(a.items[i], "TYPE")) {
-            if (i + 1 >= a.count) {
+    while (i < arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(a[i], "TYPE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
@@ -322,12 +322,12 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
                                      nob_sv_from_cstr("Usage: ... TYPE <projectTypeGUID>"));
                 return !eval_should_stop(ctx);
             }
-            type_guid = a.items[i + 1];
+            type_guid = a[i + 1];
             i += 2;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "GUID")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "GUID")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
@@ -335,12 +335,12 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
                                      nob_sv_from_cstr("Usage: ... GUID <projectGUID>"));
                 return !eval_should_stop(ctx);
             }
-            project_guid = a.items[i + 1];
+            project_guid = a[i + 1];
             i += 2;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PLATFORM")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "PLATFORM")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
@@ -348,15 +348,15 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
                                      nob_sv_from_cstr("Usage: ... PLATFORM <name>"));
                 return !eval_should_stop(ctx);
             }
-            platform = a.items[i + 1];
+            platform = a[i + 1];
             i += 2;
             continue;
         }
         break;
     }
 
-    for (; i < a.count; i++) {
-        if (!svu_list_push_temp(ctx, &deps, a.items[i])) return !eval_should_stop(ctx);
+    for (; i < arena_arr_len(a); i++) {
+        if (!svu_list_push_temp(ctx, &deps, a[i])) return !eval_should_stop(ctx);
     }
 
     if (!eval_target_register(ctx, name)) return !eval_should_stop(ctx);
@@ -367,7 +367,7 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
     ev.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
     if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
 
-    String_View deps_joined = eval_sv_join_semi_temp(ctx, deps.items, deps.count);
+    String_View deps_joined = eval_sv_join_semi_temp(ctx, deps, arena_arr_len(deps));
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::LOCATION"), location)) return !eval_should_stop(ctx);
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::TYPE"), type_guid)) return !eval_should_stop(ctx);
@@ -400,7 +400,7 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
@@ -408,15 +408,15 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
                              nob_sv_from_cstr("Usage: cmake_file_api(QUERY API_VERSION 1 [CODEMODEL <v>...])"));
         return !eval_should_stop(ctx);
     }
-    if (!eval_sv_eq_ci_lit(a.items[0], "QUERY")) {
+    if (!eval_sv_eq_ci_lit(a[0], "QUERY")) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("cmake_file_api() only supports the QUERY form in evaluator v2"),
-                             a.items[0]);
+                             a[0]);
         return !eval_should_stop(ctx);
     }
-    if (!eval_sv_eq_ci_lit(a.items[1], "API_VERSION")) {
+    if (!eval_sv_eq_ci_lit(a[1], "API_VERSION")) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
@@ -424,12 +424,12 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
                              nob_sv_from_cstr("Usage: cmake_file_api(QUERY API_VERSION 1 ...)"));
         return !eval_should_stop(ctx);
     }
-    if (!nob_sv_eq(a.items[2], nob_sv_from_cstr("1"))) {
+    if (!nob_sv_eq(a[2], nob_sv_from_cstr("1"))) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("cmake_file_api() only supports API_VERSION 1 in this batch"),
-                             a.items[2]);
+                             a[2]);
         return !eval_should_stop(ctx);
     }
 
@@ -438,8 +438,8 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
     }
 
     size_t i = 3;
-    while (i < a.count) {
-        String_View kind = a.items[i++];
+    while (i < arena_arr_len(a)) {
+        String_View kind = a[i++];
         if (!meta_file_api_kind_supported(kind)) {
             (void)meta_emit_diag(ctx,
                                  node,
@@ -449,21 +449,21 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        SV_List versions = {0};
-        while (i < a.count && !meta_file_api_kind_supported(a.items[i])) {
-            if (!meta_file_api_is_version(a.items[i])) {
+        SV_List versions = NULL;
+        while (i < arena_arr_len(a) && !meta_file_api_kind_supported(a[i])) {
+            if (!meta_file_api_is_version(a[i])) {
                 (void)meta_emit_diag(ctx,
                                      node,
                                      EV_DIAG_ERROR,
                                      nob_sv_from_cstr("cmake_file_api() received an invalid object version token"),
-                                     a.items[i]);
+                                     a[i]);
                 return !eval_should_stop(ctx);
             }
-            if (!svu_list_push_temp(ctx, &versions, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &versions, a[i])) return !eval_should_stop(ctx);
             i++;
         }
 
-        if (versions.count == 0) {
+        if (arena_arr_len(versions) == 0) {
             (void)meta_emit_diag(ctx,
                                  node,
                                  EV_DIAG_ERROR,
@@ -472,7 +472,7 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        String_View joined = eval_sv_join_semi_temp(ctx, versions.items, versions.count);
+        String_View joined = eval_sv_join_semi_temp(ctx, versions, arena_arr_len(versions));
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_QUERY::", kind, ""), joined)) {
             return !eval_should_stop(ctx);

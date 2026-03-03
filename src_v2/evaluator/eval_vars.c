@@ -423,7 +423,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
                                  nob_sv_from_cstr("Usage: cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one_value_keywords> <multi_value_keywords>)"));
             return !eval_should_stop(ctx);
         }
-        if (ctx->function_eval_depth == 0 || ctx->macro_frames.count > 0) {
+        if (ctx->function_eval_depth == 0 || arena_arr_len(ctx->macro_frames) > 0) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("cmake_parse_arguments"),

@@ -2,6 +2,7 @@
 
 #include "build_model_validate.h"
 
+#include "../arena/arena_dyn.h"
 #include "stb_ds.h"
 
 #include <string.h>
@@ -69,16 +70,11 @@ static bool bm_freeze_copy_string_list(Build_Model_Freeze_Ctx *ctx,
                                        const String_List *src,
                                        String_List *dst) {
     if (!dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (!src || src->count == 0) return true;
+    *dst = NULL;
+    if (!src || arena_arr_len(*src) == 0) return true;
 
-    dst->items = arena_alloc_array(ctx->arena, String_View, src->count);
-    if (!dst->items) return false;
-
-    dst->count = src->count;
-    dst->capacity = src->count;
-    for (size_t i = 0; i < src->count; i++) {
-        dst->items[i] = bm_freeze_intern(ctx, src->items[i]);
+    for (size_t i = 0; i < arena_arr_len(*src); i++) {
+        if (!arena_arr_push(ctx->arena, *dst, bm_freeze_intern(ctx, (*src)[i]))) return false;
     }
     return true;
 }
@@ -87,17 +83,14 @@ static bool bm_freeze_copy_property_list(Build_Model_Freeze_Ctx *ctx,
                                          const Property_List *src,
                                          Property_List *dst) {
     if (!dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (!src || src->count == 0) return true;
+    *dst = NULL;
+    if (!src || arena_arr_len(*src) == 0) return true;
 
-    dst->items = arena_alloc_array(ctx->arena, Property, src->count);
-    if (!dst->items) return false;
-
-    dst->count = src->count;
-    dst->capacity = src->count;
-    for (size_t i = 0; i < src->count; i++) {
-        dst->items[i].name = bm_freeze_intern(ctx, src->items[i].name);
-        dst->items[i].value = bm_freeze_intern(ctx, src->items[i].value);
+    for (size_t i = 0; i < arena_arr_len(*src); i++) {
+        Property p = {0};
+        p.name = bm_freeze_intern(ctx, (*src)[i].name);
+        p.value = bm_freeze_intern(ctx, (*src)[i].value);
+        if (!arena_arr_push(ctx->arena, *dst, p)) return false;
     }
     return true;
 }
@@ -105,11 +98,11 @@ static bool bm_freeze_copy_property_list(Build_Model_Freeze_Ctx *ctx,
 static void bm_freeze_build_property_index(const Property_List *list, Build_Property_Index_Entry **out_index) {
     if (!out_index) return;
     *out_index = NULL;
-    if (!list || !list->items) return;
+    if (!list || !*list) return;
 
-    for (size_t i = 0; i < list->count; i++) {
-        if (list->items[i].name.count == 0 || !list->items[i].name.data) continue;
-        stbds_shput(*out_index, (char*)list->items[i].name.data, (int)i);
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if ((*list)[i].name.count == 0 || !(*list)[i].name.data) continue;
+        stbds_shput(*out_index, (char*)(*list)[i].name.data, (int)i);
     }
 }
 
@@ -117,17 +110,14 @@ static bool bm_freeze_copy_conditional_list(Build_Model_Freeze_Ctx *ctx,
                                             const Conditional_Property_List *src,
                                             Conditional_Property_List *dst) {
     if (!dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (!src || src->count == 0) return true;
+    *dst = NULL;
+    if (!src || arena_arr_len(*src) == 0) return true;
 
-    dst->items = arena_alloc_array(ctx->arena, Conditional_Property, src->count);
-    if (!dst->items) return false;
-
-    dst->count = src->count;
-    dst->capacity = src->count;
-    for (size_t i = 0; i < src->count; i++) {
-        dst->items[i].value = bm_freeze_intern(ctx, src->items[i].value);
-        dst->items[i].condition = bm_freeze_clone_logic_node(ctx, src->items[i].condition);
+    for (size_t i = 0; i < arena_arr_len(*src); i++) {
+        Conditional_Property p = {0};
+        p.value = bm_freeze_intern(ctx, (*src)[i].value);
+        p.condition = bm_freeze_clone_logic_node(ctx, (*src)[i].condition);
+        if (!arena_arr_push(ctx->arena, *dst, p)) return false;
     }
     return true;
 }
@@ -170,7 +160,7 @@ static bool bm_freeze_copy_custom_command_array(Build_Model_Freeze_Ctx *ctx,
     if (dst_items) *dst_items = NULL;
     if (dst_count) *dst_count = 0;
     if (dst_capacity) *dst_capacity = 0;
-    if (!dst_items || !dst_count || !dst_capacity) return false;
+    if (!dst_items) return false;
     if (!src_items || src_count == 0) return true;
 
     Custom_Command *items = arena_alloc_array(ctx->arena, Custom_Command, src_count);
@@ -182,8 +172,8 @@ static bool bm_freeze_copy_custom_command_array(Build_Model_Freeze_Ctx *ctx,
     }
 
     *dst_items = items;
-    *dst_count = src_count;
-    *dst_capacity = src_count;
+    if (dst_count) *dst_count = src_count;
+    if (dst_capacity) *dst_capacity = src_count;
     return true;
 }
 
@@ -237,18 +227,18 @@ static bool bm_freeze_copy_target(Build_Model_Freeze_Ctx *ctx,
 
     if (!bm_freeze_copy_custom_command_array(ctx,
                                              src->pre_build_commands,
-                                             src->pre_build_count,
+                                             arena_arr_len(src->pre_build_commands),
                                              &dst->pre_build_commands,
-                                             &dst->pre_build_count,
-                                             &dst->pre_build_capacity)) {
+                                             NULL,
+                                             NULL)) {
         return false;
     }
     if (!bm_freeze_copy_custom_command_array(ctx,
                                              src->post_build_commands,
-                                             src->post_build_count,
+                                             arena_arr_len(src->post_build_commands),
                                              &dst->post_build_commands,
-                                             &dst->post_build_count,
-                                             &dst->post_build_capacity)) {
+                                             NULL,
+                                             NULL)) {
         return false;
     }
 

@@ -95,7 +95,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
     memset(out_opt, 0, sizeof(*out_opt));
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (args->count == 0) {
+    if (arena_arr_len(*args) == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("host"),
@@ -106,12 +106,12 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
         return false;
     }
 
-    *out_var = args->items[0];
+    *out_var = (*args)[0];
 
     size_t index = 1;
     size_t positional_count = 0;
-    while (index < args->count) {
-        String_View tok = args->items[index];
+    while (index < arena_arr_len(*args)) {
+        String_View tok = (*args)[index];
         if (eval_sv_eq_ci_lit(tok, "CONFIGURATION") ||
             eval_sv_eq_ci_lit(tok, "PARALLEL_LEVEL") ||
             eval_sv_eq_ci_lit(tok, "PROJECT_NAME") ||
@@ -133,11 +133,11 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
         return false;
     }
 
-    if (positional_count == 3) out_opt->target = args->items[3];
+    if (positional_count == 3) out_opt->target = (*args)[3];
 
-    while (index < args->count) {
-        String_View key = args->items[index++];
-        if (index >= args->count) {
+    while (index < arena_arr_len(*args)) {
+        String_View key = (*args)[index++];
+        if (index >= arena_arr_len(*args)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("host"),
@@ -147,7 +147,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
                                  key);
             return false;
         }
-        String_View value = args->items[index++];
+        String_View value = (*args)[index++];
 
         if (eval_sv_eq_ci_lit(key, "CONFIGURATION")) {
             out_opt->config = value;
@@ -308,9 +308,9 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (args.count < 4 ||
-        !eval_sv_eq_ci_lit(args.items[0], "RESULT") ||
-        !eval_sv_eq_ci_lit(args.items[2], "QUERY")) {
+    if (arena_arr_len(args) < 4 ||
+        !eval_sv_eq_ci_lit(args[0], "RESULT") ||
+        !eval_sv_eq_ci_lit(args[2], "QUERY")) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("host"),
@@ -321,15 +321,15 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
         return !eval_should_stop(ctx);
     }
 
-    String_View result_var = args.items[1];
-    String_View *values = arena_alloc_array(eval_temp_arena(ctx), String_View, args.count - 3);
+    String_View result_var = args[1];
+    String_View *values = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(args) - 3);
     EVAL_OOM_RETURN_IF_NULL(ctx, values, false);
 
     size_t value_count = 0;
-    for (size_t i = 3; i < args.count; i++) {
+    for (size_t i = 3; i < arena_arr_len(args); i++) {
         String_View value = nob_sv_from_cstr("");
         bool supported = false;
-        if (!host_info_query_value(ctx, args.items[i], &value, &supported)) return false;
+        if (!host_info_query_value(ctx, args[i], &value, &supported)) return false;
         if (!supported) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
@@ -337,7 +337,7 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
                                  node->as.cmd.name,
                                  o,
                                  nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"),
-                                 args.items[i]);
+                                 args[i]);
             value = nob_sv_from_cstr("");
         }
         values[value_count++] = value;
@@ -356,7 +356,7 @@ bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (args.count != 1) {
+    if (arena_arr_len(args) != 1) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("host"),
@@ -393,7 +393,7 @@ bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    if (!eval_var_set(ctx, args.items[0], value)) return false;
+    if (!eval_var_set(ctx, args[0], value)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -404,7 +404,7 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (args.count != 1) {
+    if (arena_arr_len(args) != 1) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("host"),
@@ -439,7 +439,7 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
     memcpy(buf + system_name.count + 1, compiler_id.data, compiler_id.count);
     buf[total] = '\0';
 
-    if (!eval_var_set(ctx, args.items[0], nob_sv_from_parts(buf, total))) return false;
+    if (!eval_var_set(ctx, args[0], nob_sv_from_parts(buf, total))) return false;
     return !eval_should_stop(ctx);
 }
 

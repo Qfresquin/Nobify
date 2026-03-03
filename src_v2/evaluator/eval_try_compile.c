@@ -929,8 +929,8 @@ static bool try_compile_resolve_project_target_sources(Evaluator_Context *ctx,
                                                        const String_List *raw_sources,
                                                        Try_Compile_Source_List *out_sources) {
     if (!ctx || !raw_sources || !out_sources) return false;
-    for (size_t i = 0; i < raw_sources->count; i++) {
-        String_View src = raw_sources->items[i];
+    for (size_t i = 0; i < arena_arr_len(*raw_sources); i++) {
+        String_View src = (*raw_sources)[i];
         if (!eval_sv_is_abs_path(src)) {
             String_View src_try = eval_sv_path_join(eval_temp_arena(ctx), source_dir, src);
             if (file_exists_sv(ctx, src_try)) src = src_try;
@@ -965,35 +965,35 @@ static bool try_compile_build_target(Evaluator_Context *ctx,
     const String_List *global_link_opts = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS);
     const String_List *global_link_libs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES);
 
-    for (size_t i = 0; i < global_defs->count; i++) {
-        if (!try_compile_sv_push(ctx, &req.compile_definitions, global_defs->items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(*global_defs); i++) {
+        if (!try_compile_sv_push(ctx, &req.compile_definitions, (*global_defs)[i])) return false;
     }
-    for (size_t i = 0; i < global_link_opts->count; i++) {
-        if (!try_compile_sv_push(ctx, &req.link_options, global_link_opts->items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(*global_link_opts); i++) {
+        if (!try_compile_sv_push(ctx, &req.link_options, (*global_link_opts)[i])) return false;
     }
-    for (size_t i = 0; i < global_link_libs->count; i++) {
-        if (!try_compile_sv_push(ctx, &req.link_libraries, global_link_libs->items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(*global_link_libs); i++) {
+        if (!try_compile_sv_push(ctx, &req.link_libraries, (*global_link_libs)[i])) return false;
     }
 
-    String_List local = {0};
+    String_List local = NULL;
     string_list_init(&local);
     build_target_collect_effective_compile_definitions(target, eval_temp_arena(ctx), NULL, &local);
-    for (size_t i = 0; i < local.count; i++) {
-        if (!try_compile_sv_push(ctx, &req.compile_definitions, local.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(local); i++) {
+        if (!try_compile_sv_push(ctx, &req.compile_definitions, local[i])) return false;
     }
 
-    local = (String_List){0};
+    local = NULL;
     string_list_init(&local);
     build_target_collect_effective_link_options(target, eval_temp_arena(ctx), NULL, &local);
-    for (size_t i = 0; i < local.count; i++) {
-        if (!try_compile_sv_push(ctx, &req.link_options, local.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(local); i++) {
+        if (!try_compile_sv_push(ctx, &req.link_options, local[i])) return false;
     }
 
-    local = (String_List){0};
+    local = NULL;
     string_list_init(&local);
     build_target_collect_effective_link_libraries(target, eval_temp_arena(ctx), NULL, &local);
-    for (size_t i = 0; i < local.count; i++) {
-        if (!try_compile_sv_push(ctx, &req.link_libraries, local.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(local); i++) {
+        if (!try_compile_sv_push(ctx, &req.link_libraries, local[i])) return false;
     }
 
     const String_List *target_sources = build_target_get_string_list(target, BUILD_TARGET_LIST_SOURCES);

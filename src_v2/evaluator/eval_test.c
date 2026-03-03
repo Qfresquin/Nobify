@@ -32,7 +32,7 @@ bool eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count > 0) {
+    if (arena_arr_len(a) > 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -73,7 +73,7 @@ static bool add_test_on_option(Evaluator_Context *ctx,
     if (!ctx || !userdata) return false;
     Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
     if (id == ADD_TEST_OPT_WORKING_DIRECTORY) {
-        if (values.count > 0) st->working_dir = values.items[0];
+        if (arena_arr_len(values) > 0) st->working_dir = values[0];
         return true;
     }
     if (id == ADD_TEST_OPT_COMMAND_EXPAND_LISTS) {
@@ -81,7 +81,7 @@ static bool add_test_on_option(Evaluator_Context *ctx,
         return true;
     }
     if (id == ADD_TEST_OPT_CONFIGURATIONS) {
-        if (values.count == 0) {
+        if (arena_arr_len(values) == 0) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_test"),
@@ -117,7 +117,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -133,8 +133,8 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
     String_View working_dir = nob_sv_from_cstr("");
     bool command_expand_lists = false;
 
-    if (eval_sv_eq_ci_lit(a.items[0], "NAME")) {
-        if (a.count < 4) {
+    if (eval_sv_eq_ci_lit(a[0], "NAME")) {
+        if (arena_arr_len(a) < 4) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -144,10 +144,10 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
             return !eval_should_stop(ctx);
         }
-        name = a.items[1];
+        name = a[1];
 
         size_t cmd_i = 2;
-        if (!eval_sv_eq_ci_lit(a.items[cmd_i], "COMMAND")) {
+        if (!eval_sv_eq_ci_lit(a[cmd_i], "COMMAND")) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -165,8 +165,8 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
             {ADD_TEST_OPT_CONFIGURATIONS, "CONFIGURATIONS", EVAL_OPT_MULTI},
         };
         size_t cmd_end = cmd_i;
-        while (cmd_end < a.count &&
-               !eval_opt_token_is_keyword(a.items[cmd_end], add_test_specs, NOB_ARRAY_LEN(add_test_specs))) {
+        while (cmd_end < arena_arr_len(a) &&
+               !eval_opt_token_is_keyword(a[cmd_end], add_test_specs, NOB_ARRAY_LEN(add_test_specs))) {
             cmd_end++;
         }
         if (cmd_end <= cmd_start) {
@@ -179,7 +179,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        command = svu_join_space_temp(ctx, &a.items[cmd_start], cmd_end - cmd_start);
+        command = svu_join_space_temp(ctx, &a[cmd_start], cmd_end - cmd_start);
 
         Add_Test_Option_State st = {
             .origin = o,
@@ -208,8 +208,8 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         working_dir = st.working_dir;
         command_expand_lists = st.command_expand_lists;
     } else {
-        name = a.items[0];
-        command = svu_join_space_temp(ctx, &a.items[1], a.count - 1);
+        name = a[0];
+        command = svu_join_space_temp(ctx, &a[1], arena_arr_len(a) - 1);
     }
 
     Cmake_Event ev = {0};
@@ -237,7 +237,7 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_test"),
@@ -248,21 +248,21 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[0];
-    String_View driver = a.items[1];
+    String_View out_var = a[0];
+    String_View driver = a[1];
     String_View extra_include = nob_sv_from_cstr("");
     String_View hook_fn = nob_sv_from_cstr("");
-    SV_List tests = {0};
+    SV_List tests = NULL;
 
     size_t i = 2;
-    while (i < a.count) {
-        if (eval_sv_eq_ci_lit(a.items[i], "EXTRA_INCLUDE") || eval_sv_eq_ci_lit(a.items[i], "FUNCTION")) break;
-        if (!svu_list_push_temp(ctx, &tests, a.items[i])) return !eval_should_stop(ctx);
+    while (i < arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(a[i], "EXTRA_INCLUDE") || eval_sv_eq_ci_lit(a[i], "FUNCTION")) break;
+        if (!svu_list_push_temp(ctx, &tests, a[i])) return !eval_should_stop(ctx);
         i++;
     }
-    while (i < a.count) {
-        if (eval_sv_eq_ci_lit(a.items[i], "EXTRA_INCLUDE")) {
-            if (i + 1 >= a.count) {
+    while (i < arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(a[i], "EXTRA_INCLUDE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("eval_test"),
@@ -272,12 +272,12 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
                                nob_sv_from_cstr("Usage: ... EXTRA_INCLUDE <header>"));
                 return !eval_should_stop(ctx);
             }
-            extra_include = a.items[i + 1];
+            extra_include = a[i + 1];
             i += 2;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "FUNCTION")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "FUNCTION")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("eval_test"),
@@ -287,7 +287,7 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
                                nob_sv_from_cstr("Usage: ... FUNCTION <fn>"));
                 return !eval_should_stop(ctx);
             }
-            hook_fn = a.items[i + 1];
+            hook_fn = a[i + 1];
             i += 2;
             continue;
         }
@@ -297,11 +297,11 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("create_test_sourcelist() received an unsupported argument"),
-                       a.items[i]);
+                       a[i]);
         return !eval_should_stop(ctx);
     }
 
-    if (tests.count == 0) {
+    if (arena_arr_len(tests) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_test"),
@@ -328,8 +328,8 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
         nob_sb_append_buf(&sb, extra_include.data, extra_include.count);
         nob_sb_append_cstr(&sb, "\"\n");
     }
-    for (size_t ti = 0; ti < tests.count; ti++) {
-        String_View stem = test_source_stem_temp(ctx, tests.items[ti]);
+    for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {
+        String_View stem = test_source_stem_temp(ctx, tests[ti]);
         nob_sb_append_cstr(&sb, "extern int ");
         nob_sb_append_buf(&sb, stem.data, stem.count);
         nob_sb_append_cstr(&sb, "(int, char**);\n");
@@ -350,8 +350,8 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
         nob_sb_append_cstr(&sb, "();\n");
     }
     nob_sb_append_cstr(&sb, "  if (argc < 2) return 0;\n");
-    for (size_t ti = 0; ti < tests.count; ti++) {
-        String_View stem = test_source_stem_temp(ctx, tests.items[ti]);
+    for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {
+        String_View stem = test_source_stem_temp(ctx, tests[ti]);
         nob_sb_append_cstr(&sb, "  if (strcmp(argv[1], \"");
         nob_sb_append_buf(&sb, stem.data, stem.count);
         nob_sb_append_cstr(&sb, "\") == 0) return ");
@@ -375,12 +375,12 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    SV_List out_items = {0};
-    for (size_t ti = 0; ti < tests.count; ti++) {
-        if (!svu_list_push_temp(ctx, &out_items, tests.items[ti])) return !eval_should_stop(ctx);
+    SV_List out_items = NULL;
+    for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {
+        if (!svu_list_push_temp(ctx, &out_items, tests[ti])) return !eval_should_stop(ctx);
     }
     if (!svu_list_push_temp(ctx, &out_items, driver)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, out_items.items, out_items.count))) {
+    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, out_items, arena_arr_len(out_items)))) {
         return !eval_should_stop(ctx);
     }
 

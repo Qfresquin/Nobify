@@ -402,8 +402,8 @@ static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View tar
 static bool property_append_unique_temp(Evaluator_Context *ctx, SV_List *list, String_View value) {
     if (!ctx || !list) return false;
     if (value.count == 0) return true;
-    for (size_t i = 0; i < list->count; i++) {
-        if (eval_sv_key_eq(list->items[i], value)) return true;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (eval_sv_key_eq(*list[i], value)) return true;
     }
     return svu_list_push_temp(ctx, list, value);
 }
@@ -794,7 +794,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -805,16 +805,16 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[0];
+    String_View out_var = a[0];
     String_View scope_upper = nob_sv_from_cstr("");
-    if (!eval_property_scope_upper_temp(ctx, a.items[1], &scope_upper)) {
+    if (!eval_property_scope_upper_temp(ctx, a[1], &scope_upper)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("get_property() unknown scope"),
-                       a.items[1]);
+                       a[1]);
         return !eval_should_stop(ctx);
     }
 
@@ -827,7 +827,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
     bool saw_test_dir_clause = false;
 
     if (!(eval_sv_eq_ci_lit(scope_upper, "GLOBAL") || eval_sv_eq_ci_lit(scope_upper, "VARIABLE"))) {
-        if (i >= a.count) {
+        if (i >= arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -839,11 +839,11 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         }
 
         if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY")) {
-            if (!eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
-                object_token = a.items[i++];
+            if (!eval_sv_eq_ci_lit(a[i], "PROPERTY")) {
+                object_token = a[i++];
             }
         } else {
-            object_token = a.items[i++];
+            object_token = a[i++];
         }
     }
 
@@ -855,9 +855,9 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         inherit_dir = object_id;
     } else if (eval_sv_eq_ci_lit(scope_upper, "SOURCE")) {
         String_View cur_src = eval_current_source_dir_for_paths(ctx);
-        while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
-            if (eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
-                if (saw_source_dir_clause || saw_source_target_dir_clause || i + 1 >= a.count) {
+        while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "PROPERTY")) {
+            if (eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
+                if (saw_source_dir_clause || saw_source_target_dir_clause || i + 1 >= arena_arr_len(a)) {
                     eval_emit_diag(ctx,
                                    EV_DIAG_ERROR,
                                    nob_sv_from_cstr("dispatcher"),
@@ -867,14 +867,14 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
                                    nob_sv_from_cstr(""));
                     return !eval_should_stop(ctx);
                 }
-                inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[++i], cur_src, true);
+                inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], cur_src, true);
                 if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                 saw_source_dir_clause = true;
                 i++;
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "TARGET_DIRECTORY")) {
-                if (saw_source_dir_clause || saw_source_target_dir_clause || i + 1 >= a.count) {
+            if (eval_sv_eq_ci_lit(a[i], "TARGET_DIRECTORY")) {
+                if (saw_source_dir_clause || saw_source_target_dir_clause || i + 1 >= arena_arr_len(a)) {
                     eval_emit_diag(ctx,
                                    EV_DIAG_ERROR,
                                    nob_sv_from_cstr("dispatcher"),
@@ -884,7 +884,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
                                    nob_sv_from_cstr(""));
                     return !eval_should_stop(ctx);
                 }
-                String_View target_name = a.items[++i];
+                String_View target_name = a[++i];
                 if (!eval_target_known(ctx, target_name)) {
                     eval_emit_diag(ctx,
                                    EV_DIAG_ERROR,
@@ -909,7 +909,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("get_property(SOURCE ...) received unexpected argument before PROPERTY"),
-                           a.items[i]);
+                           a[i]);
             return !eval_should_stop(ctx);
         }
         if (!saw_source_target_dir_clause) {
@@ -922,8 +922,8 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         }
     } else if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
         String_View cur_src = eval_current_source_dir_for_paths(ctx);
-        while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
-            if (!eval_sv_eq_ci_lit(a.items[i], "DIRECTORY") || saw_test_dir_clause || i + 1 >= a.count) {
+        while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "PROPERTY")) {
+            if (!eval_sv_eq_ci_lit(a[i], "DIRECTORY") || saw_test_dir_clause || i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
@@ -933,7 +933,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[++i], cur_src, true);
+            inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], cur_src, true);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
             saw_test_dir_clause = true;
             i++;
@@ -950,7 +950,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         object_id = object_token;
     }
 
-    if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+    if (i >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[i], "PROPERTY")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -961,7 +961,7 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
     i++;
-    if (i >= a.count) {
+    if (i >= arena_arr_len(a)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -971,20 +971,20 @@ bool eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
-    String_View prop_name = a.items[i++];
+    String_View prop_name = a[i++];
 
     Eval_Property_Query_Mode mode = PROP_QUERY_VALUE;
-    if (i < a.count) {
-        if (!parse_property_query_mode(ctx, node, o, a.items[i++], &mode)) return !eval_should_stop(ctx);
+    if (i < arena_arr_len(a)) {
+        if (!parse_property_query_mode(ctx, node, o, a[i++], &mode)) return !eval_should_stop(ctx);
     }
-    if (i != a.count) {
+    if (i != arena_arr_len(a)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("get_property() received unexpected trailing arguments"),
-                       a.items[i]);
+                       a[i]);
         return !eval_should_stop(ctx);
     }
 
@@ -1047,7 +1047,7 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count != 2) {
+    if (arena_arr_len(a) != 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1058,9 +1058,9 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[0];
-    String_View prop = a.items[1];
-    SV_List values = {0};
+    String_View out_var = a[0];
+    String_View prop = a[1];
+    SV_List values = NULL;
 
     if (eval_sv_eq_ci_lit(prop, "VARIABLES")) {
         for (size_t depth = 0; depth < ctx->scope_depth; depth++) {
@@ -1073,7 +1073,7 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
                 }
             }
         }
-        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
     }
 
     if (eval_sv_eq_ci_lit(prop, "CACHE_VARIABLES")) {
@@ -1084,16 +1084,16 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
                 return !eval_should_stop(ctx);
             }
         }
-        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
     }
 
     if (eval_sv_eq_ci_lit(prop, "MACROS")) {
-        for (size_t i = 0; i < ctx->user_commands.count; i++) {
-            const User_Command *cmd = &ctx->user_commands.items[i];
+        for (size_t i = 0; i < arena_arr_len(ctx->user_commands); i++) {
+            const User_Command *cmd = &ctx->user_commands[i];
             if (cmd->kind != USER_CMD_MACRO) continue;
             if (!property_append_unique_temp(ctx, &values, cmd->name)) return !eval_should_stop(ctx);
         }
-        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
     }
 
     if (eval_sv_eq_ci_lit(prop, "COMPONENTS")) {
@@ -1106,7 +1106,7 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
                 }
             }
         }
-        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values.items, values.count));
+        return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
     }
 
     if (!get_property_impl(ctx,
@@ -1130,7 +1130,7 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1141,11 +1141,11 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[0];
+    String_View out_var = a[0];
     size_t i = 1;
     String_View dir = eval_current_source_dir_for_paths(ctx);
-    if (eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
-        if (i + 1 >= a.count) {
+    if (eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
+        if (i + 1 >= arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1155,11 +1155,11 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        dir = eval_path_resolve_for_cmake_arg(ctx, a.items[i + 1], dir, true);
+        dir = eval_path_resolve_for_cmake_arg(ctx, a[i + 1], dir, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         i += 2;
     }
-    if (i >= a.count) {
+    if (i >= arena_arr_len(a)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1170,8 +1170,8 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[i], "DEFINITION")) {
-        if (i + 1 >= a.count) {
+    if (eval_sv_eq_ci_lit(a[i], "DEFINITION")) {
+        if (i + 1 >= arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1181,7 +1181,7 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        if (i + 2 != a.count) {
+        if (i + 2 != arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1191,18 +1191,18 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        String_View value = eval_var_get(ctx, a.items[i + 1]);
+        String_View value = eval_var_get(ctx, a[i + 1]);
         return set_output_var_value(ctx, out_var, value);
     }
 
-    if (i + 1 != a.count) {
+    if (i + 1 != arena_arr_len(a)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("get_directory_property() received unexpected trailing arguments"),
-                       a.items[i + 1]);
+                       a[i + 1]);
         return !eval_should_stop(ctx);
     }
 
@@ -1212,7 +1212,7 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
                            out_var,
                            nob_sv_from_cstr("DIRECTORY"),
                            dir,
-                           a.items[i],
+                           a[i],
                            PROP_QUERY_VALUE,
                            dir,
                            false)) {
@@ -1227,7 +1227,7 @@ bool eval_handle_get_source_file_property(Evaluator_Context *ctx, const Node *no
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count != 3) {
+    if (arena_arr_len(a) != 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1242,16 +1242,16 @@ bool eval_handle_get_source_file_property(Evaluator_Context *ctx, const Node *no
     if (!get_property_impl(ctx,
                            node,
                            o,
-                           a.items[0],
+                           a[0],
                            nob_sv_from_cstr("SOURCE"),
-                           a.items[1],
-                           a.items[2],
+                           a[1],
+                           a[2],
                            PROP_QUERY_VALUE,
                            inherit_dir,
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, a.items[0])) return set_output_var_notfound(ctx, a.items[0]);
+    if (!eval_var_defined(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
     return !eval_should_stop(ctx);
 }
 
@@ -1260,7 +1260,7 @@ bool eval_handle_get_target_property(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count != 3) {
+    if (arena_arr_len(a) != 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1270,30 +1270,30 @@ bool eval_handle_get_target_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr("Usage: get_target_property(<var> <target> <property>)"));
         return !eval_should_stop(ctx);
     }
-    if (!eval_target_known(ctx, a.items[1])) {
+    if (!eval_target_known(ctx, a[1])) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("get_target_property() target was not declared"),
-                       a.items[1]);
+                       a[1]);
         return !eval_should_stop(ctx);
     }
 
     if (!get_property_impl(ctx,
                            node,
                            o,
-                           a.items[0],
+                           a[0],
                            nob_sv_from_cstr("TARGET"),
-                           a.items[1],
-                           a.items[2],
+                           a[1],
+                           a[2],
                            PROP_QUERY_VALUE,
                            nob_sv_from_cstr(""),
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, a.items[0])) return set_output_var_notfound(ctx, a.items[0]);
+    if (!eval_var_defined(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
     return !eval_should_stop(ctx);
 }
 
@@ -1302,7 +1302,7 @@ bool eval_handle_get_test_property(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count != 3) {
+    if (arena_arr_len(a) != 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1314,30 +1314,30 @@ bool eval_handle_get_test_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View test_dir = eval_current_source_dir_for_paths(ctx);
-    if (!eval_test_exists_in_directory_scope(ctx, a.items[1], test_dir)) {
+    if (!eval_test_exists_in_directory_scope(ctx, a[1], test_dir)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("get_test_property() test was not declared in current directory scope"),
-                       a.items[1]);
+                       a[1]);
         return !eval_should_stop(ctx);
     }
 
     if (!get_property_impl(ctx,
                            node,
                            o,
-                           a.items[0],
+                           a[0],
                            nob_sv_from_cstr("TEST"),
-                           a.items[1],
-                           a.items[2],
+                           a[1],
+                           a[2],
                            PROP_QUERY_VALUE,
                            test_dir,
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, a.items[0])) return set_output_var_notfound(ctx, a.items[0]);
+    if (!eval_var_defined(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
     return !eval_should_stop(ctx);
 }
 
@@ -1346,7 +1346,7 @@ bool eval_handle_set_directory_properties(Evaluator_Context *ctx, const Node *no
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 3 || !eval_sv_eq_ci_lit(a.items[0], "PROPERTIES")) {
+    if (arena_arr_len(a) < 3 || !eval_sv_eq_ci_lit(a[0], "PROPERTIES")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1356,7 +1356,7 @@ bool eval_handle_set_directory_properties(Evaluator_Context *ctx, const Node *no
                        nob_sv_from_cstr("Usage: set_directory_properties(PROPERTIES <k> <v> [<k> <v>...])"));
         return !eval_should_stop(ctx);
     }
-    if (((a.count - 1) % 2) != 0) {
+    if (((arena_arr_len(a) - 1) % 2) != 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1369,8 +1369,8 @@ bool eval_handle_set_directory_properties(Evaluator_Context *ctx, const Node *no
 
     String_View current_dir = eval_current_source_dir_for_paths(ctx);
     String_View scope_upper = nob_sv_from_cstr("DIRECTORY");
-    for (size_t i = 1; i + 1 < a.count; i += 2) {
-        if (!set_non_target_property(ctx, o, scope_upper, current_dir, a.items[i], a.items[i + 1], EV_PROP_SET)) {
+    for (size_t i = 1; i + 1 < arena_arr_len(a); i += 2) {
+        if (!set_non_target_property(ctx, o, scope_upper, current_dir, a[i], a[i + 1], EV_PROP_SET)) {
             return !eval_should_stop(ctx);
         }
     }
@@ -1382,7 +1382,7 @@ bool eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node 
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1393,9 +1393,9 @@ bool eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node 
         return !eval_should_stop(ctx);
     }
 
-    SV_List files = {0};
-    SV_List dirs = {0};
-    SV_List target_dirs = {0};
+    SV_List files = NULL;
+    SV_List dirs = NULL;
+    SV_List target_dirs = NULL;
     enum {
         SF_PARSE_FILES = 0,
         SF_PARSE_DIRS,
@@ -1403,27 +1403,27 @@ bool eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node 
     } mode = SF_PARSE_FILES;
 
     size_t i = 0;
-    for (; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) break;
-        if (eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+    for (; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PROPERTIES")) break;
+        if (eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
             mode = SF_PARSE_DIRS;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "TARGET_DIRECTORY")) {
+        if (eval_sv_eq_ci_lit(a[i], "TARGET_DIRECTORY")) {
             mode = SF_PARSE_TARGET_DIRS;
             continue;
         }
 
         if (mode == SF_PARSE_FILES) {
-            if (!svu_list_push_temp(ctx, &files, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &files, a[i])) return !eval_should_stop(ctx);
         } else if (mode == SF_PARSE_DIRS) {
-            if (!svu_list_push_temp(ctx, &dirs, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &dirs, a[i])) return !eval_should_stop(ctx);
         } else {
-            if (!svu_list_push_temp(ctx, &target_dirs, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &target_dirs, a[i])) return !eval_should_stop(ctx);
         }
     }
 
-    if (files.count == 0 || i >= a.count) {
+    if (arena_arr_len(files) == 0 || i >= arena_arr_len(a)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1434,7 +1434,7 @@ bool eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node 
         return !eval_should_stop(ctx);
     }
     i++;
-    if (i >= a.count || ((a.count - i) % 2) != 0) {
+    if (i >= arena_arr_len(a) || ((arena_arr_len(a) - i) % 2) != 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1446,52 +1446,52 @@ bool eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node 
     }
 
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    for (size_t di = 0; di < dirs.count; di++) {
-        dirs.items[di] = eval_path_resolve_for_cmake_arg(ctx, dirs.items[di], cur_src, true);
+    for (size_t di = 0; di < arena_arr_len(dirs); di++) {
+        dirs[di] = eval_path_resolve_for_cmake_arg(ctx, dirs[di], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     }
-    for (size_t ti = 0; ti < target_dirs.count; ti++) {
-        if (!eval_target_known(ctx, target_dirs.items[ti])) {
+    for (size_t ti = 0; ti < arena_arr_len(target_dirs); ti++) {
+        if (!eval_target_known(ctx, target_dirs[ti])) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("set_source_files_properties(TARGET_DIRECTORY ...) target was not declared"),
-                           target_dirs.items[ti]);
+                           target_dirs[ti]);
             return !eval_should_stop(ctx);
         }
     }
 
     String_View scope_upper = nob_sv_from_cstr("SOURCE");
-    for (size_t fi = 0; fi < files.count; fi++) {
-        if (dirs.count == 0 && target_dirs.count == 0) {
-            for (size_t pi = i; pi + 1 < a.count; pi += 2) {
-                if (!set_non_target_property(ctx, o, scope_upper, files.items[fi], a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+    for (size_t fi = 0; fi < arena_arr_len(files); fi++) {
+        if (arena_arr_len(dirs) == 0 && arena_arr_len(target_dirs) == 0) {
+            for (size_t pi = i; pi + 1 < arena_arr_len(a); pi += 2) {
+                if (!set_non_target_property(ctx, o, scope_upper, files[fi], a[pi], a[pi + 1], EV_PROP_SET)) {
                     return !eval_should_stop(ctx);
                 }
             }
             continue;
         }
 
-        for (size_t di = 0; di < dirs.count; di++) {
-            String_View object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", dirs.items[di], files.items[fi]);
+        for (size_t di = 0; di < arena_arr_len(dirs); di++) {
+            String_View object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", dirs[di], files[fi]);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-            for (size_t pi = i; pi + 1 < a.count; pi += 2) {
-                if (!set_non_target_property(ctx, o, scope_upper, object_id, a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+            for (size_t pi = i; pi + 1 < arena_arr_len(a); pi += 2) {
+                if (!set_non_target_property(ctx, o, scope_upper, object_id, a[pi], a[pi + 1], EV_PROP_SET)) {
                     return !eval_should_stop(ctx);
                 }
             }
         }
 
-        for (size_t ti = 0; ti < target_dirs.count; ti++) {
+        for (size_t ti = 0; ti < arena_arr_len(target_dirs); ti++) {
             String_View object_id = eval_property_scoped_object_id_temp(ctx,
                                                                         "TARGET_DIRECTORY",
-                                                                        target_dirs.items[ti],
-                                                                        files.items[fi]);
+                                                                        target_dirs[ti],
+                                                                        files[fi]);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-            for (size_t pi = i; pi + 1 < a.count; pi += 2) {
-                if (!set_non_target_property(ctx, o, scope_upper, object_id, a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+            for (size_t pi = i; pi + 1 < arena_arr_len(a); pi += 2) {
+                if (!set_non_target_property(ctx, o, scope_upper, object_id, a[pi], a[pi + 1], EV_PROP_SET)) {
                     return !eval_should_stop(ctx);
                 }
             }
@@ -1506,7 +1506,7 @@ bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) 
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1517,14 +1517,14 @@ bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) 
         return !eval_should_stop(ctx);
     }
 
-    SV_List tests = {0};
+    SV_List tests = NULL;
     size_t i = 0;
-    while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "DIRECTORY") && !eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) {
-        if (!svu_list_push_temp(ctx, &tests, a.items[i])) return !eval_should_stop(ctx);
+    while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "DIRECTORY") && !eval_sv_eq_ci_lit(a[i], "PROPERTIES")) {
+        if (!svu_list_push_temp(ctx, &tests, a[i])) return !eval_should_stop(ctx);
         i++;
     }
 
-    if (tests.count == 0) {
+    if (arena_arr_len(tests) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1537,8 +1537,8 @@ bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) 
 
     String_View test_dir = eval_current_source_dir_for_paths(ctx);
     bool saw_directory_clause = false;
-    if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
-        if (i + 1 >= a.count) {
+    if (i < arena_arr_len(a) && eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
+        if (i + 1 >= arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1548,13 +1548,13 @@ bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) 
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        test_dir = eval_path_resolve_for_cmake_arg(ctx, a.items[i + 1], test_dir, true);
+        test_dir = eval_path_resolve_for_cmake_arg(ctx, a[i + 1], test_dir, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         saw_directory_clause = true;
         i += 2;
     }
 
-    if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) {
+    if (i >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[i], "PROPERTIES")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1565,7 +1565,7 @@ bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) 
         return !eval_should_stop(ctx);
     }
     i++;
-    if (i >= a.count || ((a.count - i) % 2) != 0) {
+    if (i >= arena_arr_len(a) || ((arena_arr_len(a) - i) % 2) != 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1576,28 +1576,28 @@ bool eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) 
         return !eval_should_stop(ctx);
     }
 
-    for (size_t ti = 0; ti < tests.count; ti++) {
-        if (eval_test_exists_in_directory_scope(ctx, tests.items[ti], test_dir)) continue;
+    for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {
+        if (eval_test_exists_in_directory_scope(ctx, tests[ti], test_dir)) continue;
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("set_tests_properties() test was not declared in selected directory scope"),
-                       tests.items[ti]);
+                       tests[ti]);
         return !eval_should_stop(ctx);
     }
 
     String_View scope_upper = nob_sv_from_cstr("TEST");
-    for (size_t ti = 0; ti < tests.count; ti++) {
-        String_View object_id = tests.items[ti];
+    for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {
+        String_View object_id = tests[ti];
         if (saw_directory_clause) {
-            object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", test_dir, tests.items[ti]);
+            object_id = eval_property_scoped_object_id_temp(ctx, "DIRECTORY", test_dir, tests[ti]);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         }
 
-        for (size_t pi = i; pi + 1 < a.count; pi += 2) {
-            if (!set_non_target_property(ctx, o, scope_upper, object_id, a.items[pi], a.items[pi + 1], EV_PROP_SET)) {
+        for (size_t pi = i; pi + 1 < arena_arr_len(a); pi += 2) {
+            if (!set_non_target_property(ctx, o, scope_upper, object_id, a[pi], a[pi + 1], EV_PROP_SET)) {
                 return !eval_should_stop(ctx);
             }
         }
@@ -1611,7 +1611,7 @@ bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1622,7 +1622,7 @@ bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View target_name = a.items[0];
+    String_View target_name = a[0];
     if (!eval_target_known(ctx, target_name)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
@@ -1644,8 +1644,8 @@ bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    for (size_t i = 1; i < a.count; i++) {
-        String_View dep = a.items[i];
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        String_View dep = a[i];
         if (dep.count == 0) continue;
 
         if (!eval_target_known(ctx, dep)) {
@@ -1677,34 +1677,34 @@ bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
 bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || a.count < 2) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx) || arena_arr_len(a) < 2) return !eval_should_stop(ctx);
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     String_View qualifier = nob_sv_from_cstr("");
 
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
             vis = EV_VISIBILITY_PUBLIC;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "DEBUG") ||
-            eval_sv_eq_ci_lit(a.items[i], "OPTIMIZED") ||
-            eval_sv_eq_ci_lit(a.items[i], "GENERAL")) {
-            qualifier = a.items[i];
+        if (eval_sv_eq_ci_lit(a[i], "DEBUG") ||
+            eval_sv_eq_ci_lit(a[i], "OPTIMIZED") ||
+            eval_sv_eq_ci_lit(a[i], "GENERAL")) {
+            qualifier = a[i];
             continue;
         }
 
-        String_View item = a.items[i];
+        String_View item = a[i];
         if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
             item = wrap_link_item_with_config_genex_temp(ctx,
                                                          item,
@@ -1742,7 +1742,7 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1753,24 +1753,24 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_before = false;
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
             is_before = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
             vis = EV_VISIBILITY_PUBLIC;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
@@ -1780,7 +1780,7 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
         ev.origin = o;
         ev.as.target_link_options.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_link_options.visibility = vis;
-        ev.as.target_link_options.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_link_options.item = sv_copy_to_event_arena(ctx, a[i]);
         ev.as.target_link_options.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
@@ -1793,7 +1793,7 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1804,20 +1804,20 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
             vis = EV_VISIBILITY_PUBLIC;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
@@ -1825,7 +1825,7 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
         Cmake_Event ev = {0};
         ev.kind = EV_TARGET_LINK_DIRECTORIES;
         ev.origin = o;
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         ev.as.target_link_directories.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_link_directories.visibility = vis;
@@ -1841,7 +1841,7 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1852,35 +1852,35 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_system = false;
     bool is_before = false;
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
 
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "SYSTEM")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "SYSTEM")) {
             is_system = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
             is_before = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "AFTER")) {
+        if (eval_sv_eq_ci_lit(a[i], "AFTER")) {
             is_before = false;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
             vis = EV_VISIBILITY_PUBLIC;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
@@ -1888,7 +1888,7 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
         Cmake_Event ev = {0};
         ev.kind = EV_TARGET_INCLUDE_DIRECTORIES;
         ev.origin = o;
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         ev.as.target_include_directories.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_include_directories.visibility = vis;
@@ -1906,7 +1906,7 @@ bool eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1917,24 +1917,24 @@ bool eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
             vis = EV_VISIBILITY_PUBLIC;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
 
-        String_View item = eval_normalize_compile_definition_item(a.items[i]);
+        String_View item = eval_normalize_compile_definition_item(a[i]);
         if (item.count == 0) continue;
 
         Cmake_Event ev = {0};
@@ -1953,7 +1953,7 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1964,24 +1964,24 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     bool is_before = false;
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "BEFORE")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
             is_before = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PRIVATE")) {
+        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
             vis = EV_VISIBILITY_PRIVATE;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "PUBLIC")) {
+        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
             vis = EV_VISIBILITY_PUBLIC;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             vis = EV_VISIBILITY_INTERFACE;
             continue;
         }
@@ -1991,7 +1991,7 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
         ev.origin = o;
         ev.as.target_compile_options.target_name = sv_copy_to_event_arena(ctx, tgt);
         ev.as.target_compile_options.visibility = vis;
-        ev.as.target_compile_options.item = sv_copy_to_event_arena(ctx, a.items[i]);
+        ev.as.target_compile_options.item = sv_copy_to_event_arena(ctx, a[i]);
         ev.as.target_compile_options.is_before = is_before;
         if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
     }
@@ -2003,7 +2003,7 @@ bool eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2014,14 +2014,14 @@ bool eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
 
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    for (size_t i = 1; i < a.count; i++) {
-        if (target_usage_parse_visibility(a.items[i], &vis)) continue;
-        if (eval_sv_eq_ci_lit(a.items[i], "FILE_SET")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (target_usage_parse_visibility(a[i], &vis)) continue;
+        if (eval_sv_eq_ci_lit(a[i], "FILE_SET")) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -2036,7 +2036,7 @@ bool eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        String_View item = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        String_View item = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
         if (vis != EV_VISIBILITY_INTERFACE) {
@@ -2062,7 +2062,7 @@ bool eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *nod
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2073,24 +2073,24 @@ bool eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *nod
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
 
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    for (size_t i = 1; i < a.count; i++) {
-        if (target_usage_parse_visibility(a.items[i], &vis)) continue;
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (target_usage_parse_visibility(a[i], &vis)) continue;
         if (vis == EV_VISIBILITY_UNSPECIFIED) {
             (void)target_usage_require_visibility(ctx, node);
             return !eval_should_stop(ctx);
         }
-        if (a.items[i].count == 0) continue;
+        if (a[i].count == 0) continue;
 
         if (vis != EV_VISIBILITY_INTERFACE) {
             if (!emit_target_prop_set(ctx,
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("COMPILE_FEATURES"),
-                                      a.items[i],
+                                      a[i],
                                       EV_PROP_APPEND_LIST)) {
                 return !eval_should_stop(ctx);
             }
@@ -2100,7 +2100,7 @@ bool eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *nod
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
-                                      a.items[i],
+                                      a[i],
                                       EV_PROP_APPEND_LIST)) {
                 return !eval_should_stop(ctx);
             }
@@ -2115,7 +2115,7 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2126,11 +2126,11 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
         return !eval_should_stop(ctx);
     }
 
-    String_View tgt = a.items[0];
+    String_View tgt = a[0];
     if (!target_usage_validate_target(ctx, node, tgt)) return !eval_should_stop(ctx);
 
-    if (eval_sv_eq_ci_lit(a.items[1], "REUSE_FROM")) {
-        if (a.count != 3) {
+    if (eval_sv_eq_ci_lit(a[1], "REUSE_FROM")) {
+        if (arena_arr_len(a) != 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -2140,30 +2140,30 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
                            nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> REUSE_FROM <other-target>)"));
             return !eval_should_stop(ctx);
         }
-        if (!target_usage_validate_target(ctx, node, a.items[2])) return !eval_should_stop(ctx);
+        if (!target_usage_validate_target(ctx, node, a[2])) return !eval_should_stop(ctx);
         if (!emit_target_prop_set(ctx,
                                   o,
                                   tgt,
                                   nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"),
-                                  a.items[2],
+                                  a[2],
                                   EV_PROP_SET)) {
             return !eval_should_stop(ctx);
         }
-        if (!eval_sv_key_eq(tgt, a.items[2])) {
-            if (!emit_target_dependency(ctx, o, tgt, a.items[2])) return !eval_should_stop(ctx);
+        if (!eval_sv_key_eq(tgt, a[2])) {
+            if (!emit_target_dependency(ctx, o, tgt, a[2])) return !eval_should_stop(ctx);
         }
         return !eval_should_stop(ctx);
     }
 
     Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    for (size_t i = 1; i < a.count; i++) {
-        if (target_usage_parse_visibility(a.items[i], &vis)) continue;
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (target_usage_parse_visibility(a[i], &vis)) continue;
         if (vis == EV_VISIBILITY_UNSPECIFIED) {
             (void)target_usage_require_visibility(ctx, node);
             return !eval_should_stop(ctx);
         }
 
-        String_View item = target_pch_item_normalize_temp(ctx, a.items[i]);
+        String_View item = target_pch_item_normalize_temp(ctx, a[i]);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         if (item.count == 0) continue;
 
@@ -2197,7 +2197,7 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2) {
+    if (arena_arr_len(a) < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2209,8 +2209,8 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    if (eval_sv_eq_ci_lit(a.items[0], "TREE")) {
-        if (a.count < 4) {
+    if (eval_sv_eq_ci_lit(a[0], "TREE")) {
+        if (arena_arr_len(a) < 4) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -2221,12 +2221,12 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        String_View root = eval_path_resolve_for_cmake_arg(ctx, a.items[1], cur_src, true);
+        String_View root = eval_path_resolve_for_cmake_arg(ctx, a[1], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         String_View prefix = nob_sv_from_cstr("");
         size_t files_index = 2;
-        if (files_index < a.count && eval_sv_eq_ci_lit(a.items[files_index], "PREFIX")) {
-            if (files_index + 1 >= a.count) {
+        if (files_index < arena_arr_len(a) && eval_sv_eq_ci_lit(a[files_index], "PREFIX")) {
+            if (files_index + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
@@ -2236,10 +2236,10 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: source_group(TREE <root> PREFIX <prefix> FILES <src>...)"));
                 return !eval_should_stop(ctx);
             }
-            prefix = a.items[files_index + 1];
+            prefix = a[files_index + 1];
             files_index += 2;
         }
-        if (files_index >= a.count || !eval_sv_eq_ci_lit(a.items[files_index], "FILES") || files_index + 1 >= a.count) {
+        if (files_index >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[files_index], "FILES") || files_index + 1 >= arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -2250,8 +2250,8 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        for (size_t i = files_index + 1; i < a.count; i++) {
-            String_View file_path = eval_path_resolve_for_cmake_arg(ctx, a.items[i], cur_src, true);
+        for (size_t i = files_index + 1; i < arena_arr_len(a); i++) {
+            String_View file_path = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
             String_View relative = nob_sv_from_cstr("");
             if (!source_group_path_relative_to_root(ctx, root, file_path, &relative)) {
@@ -2271,23 +2271,23 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View group_name = a.items[0];
+    String_View group_name = a[0];
     bool have_files = false;
     bool have_regex = false;
     String_View regex_value = nob_sv_from_cstr("");
-    SV_List files = {0};
+    SV_List files = NULL;
 
-    if (a.count == 2 &&
-        !eval_sv_eq_ci_lit(a.items[1], "FILES") &&
-        !eval_sv_eq_ci_lit(a.items[1], "REGULAR_EXPRESSION")) {
+    if (arena_arr_len(a) == 2 &&
+        !eval_sv_eq_ci_lit(a[1], "FILES") &&
+        !eval_sv_eq_ci_lit(a[1], "REGULAR_EXPRESSION")) {
         have_regex = true;
-        regex_value = a.items[1];
+        regex_value = a[1];
     } else {
         size_t i = 1;
-        while (i < a.count) {
-            if (eval_sv_eq_ci_lit(a.items[i], "FILES")) {
+        while (i < arena_arr_len(a)) {
+            if (eval_sv_eq_ci_lit(a[i], "FILES")) {
                 i++;
-                if (i >= a.count || eval_sv_eq_ci_lit(a.items[i], "REGULAR_EXPRESSION")) {
+                if (i >= arena_arr_len(a) || eval_sv_eq_ci_lit(a[i], "REGULAR_EXPRESSION")) {
                     eval_emit_diag(ctx,
                                    EV_DIAG_ERROR,
                                    nob_sv_from_cstr("dispatcher"),
@@ -2297,15 +2297,15 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
                                    nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
                     return !eval_should_stop(ctx);
                 }
-                while (i < a.count && !eval_sv_eq_ci_lit(a.items[i], "REGULAR_EXPRESSION")) {
-                    if (!svu_list_push_temp(ctx, &files, a.items[i])) return !eval_should_stop(ctx);
+                while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "REGULAR_EXPRESSION")) {
+                    if (!svu_list_push_temp(ctx, &files, a[i])) return !eval_should_stop(ctx);
                     i++;
                 }
-                have_files = files.count > 0;
+                have_files = arena_arr_len(files) > 0;
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "REGULAR_EXPRESSION")) {
-                if (have_regex || i + 1 >= a.count) {
+            if (eval_sv_eq_ci_lit(a[i], "REGULAR_EXPRESSION")) {
+                if (have_regex || i + 1 >= arena_arr_len(a)) {
                     eval_emit_diag(ctx,
                                    EV_DIAG_ERROR,
                                    nob_sv_from_cstr("dispatcher"),
@@ -2316,7 +2316,7 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
                     return !eval_should_stop(ctx);
                 }
                 have_regex = true;
-                regex_value = a.items[i + 1];
+                regex_value = a[i + 1];
                 i += 2;
                 continue;
             }
@@ -2328,12 +2328,12 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
                                node->as.cmd.name,
                                o,
                                nob_sv_from_cstr("source_group() received unexpected argument"),
-                               a.items[i]);
+                               a[i]);
                 return !eval_should_stop(ctx);
             }
 
-            if (!svu_list_push_temp(ctx, &files, a.items[i])) return !eval_should_stop(ctx);
-            have_files = files.count > 0;
+            if (!svu_list_push_temp(ctx, &files, a[i])) return !eval_should_stop(ctx);
+            have_files = arena_arr_len(files) > 0;
             i++;
         }
     }
@@ -2353,8 +2353,8 @@ bool eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
         if (!source_group_emit_regex_rule(ctx, o, group_name, regex_value)) return !eval_should_stop(ctx);
     }
 
-    for (size_t i = 0; i < files.count; i++) {
-        String_View file_path = eval_path_resolve_for_cmake_arg(ctx, files.items[i], cur_src, true);
+    for (size_t i = 0; i < arena_arr_len(files); i++) {
+        String_View file_path = eval_path_resolve_for_cmake_arg(ctx, files[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         if (!source_group_emit_assignment(ctx, o, file_path, group_name)) return !eval_should_stop(ctx);
     }
@@ -2367,7 +2367,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2379,18 +2379,18 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View scope_upper = nob_sv_from_cstr("");
-    if (!eval_property_scope_upper_temp(ctx, a.items[0], &scope_upper)) {
+    if (!eval_property_scope_upper_temp(ctx, a[0], &scope_upper)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("define_property() unknown scope"),
-                       a.items[0]);
+                       a[0]);
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_sv_eq_ci_lit(a.items[1], "PROPERTY")) {
+    if (!eval_sv_eq_ci_lit(a[1], "PROPERTY")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2403,7 +2403,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
 
     Eval_Property_Definition def = {0};
     def.scope_upper = scope_upper;
-    def.property_upper = eval_property_upper_name_temp(ctx, a.items[2]);
+    def.property_upper = eval_property_upper_name_temp(ctx, a[2]);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (def.property_upper.count == 0) {
         eval_emit_diag(ctx,
@@ -2417,33 +2417,33 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     size_t i = 3;
-    while (i < a.count) {
-        if (eval_sv_eq_ci_lit(a.items[i], "INHERITED")) {
+    while (i < arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(a[i], "INHERITED")) {
             def.inherited = true;
             i++;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "BRIEF_DOCS")) {
+        if (eval_sv_eq_ci_lit(a[i], "BRIEF_DOCS")) {
             size_t start = ++i;
-            while (i < a.count && !define_property_keyword(a.items[i])) i++;
+            while (i < arena_arr_len(a) && !define_property_keyword(a[i])) i++;
             def.has_brief_docs = true;
             if (i > start) {
-                def.brief_docs = eval_sv_join_semi_temp(ctx, &a.items[start], i - start);
+                def.brief_docs = eval_sv_join_semi_temp(ctx, &a[start], i - start);
                 if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
             }
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "FULL_DOCS")) {
+        if (eval_sv_eq_ci_lit(a[i], "FULL_DOCS")) {
             size_t start = ++i;
-            while (i < a.count && !define_property_keyword(a.items[i])) i++;
+            while (i < arena_arr_len(a) && !define_property_keyword(a[i])) i++;
             def.has_full_docs = true;
             if (i > start) {
-                def.full_docs = eval_sv_join_semi_temp(ctx, &a.items[start], i - start);
+                def.full_docs = eval_sv_join_semi_temp(ctx, &a[start], i - start);
                 if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
             }
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "INITIALIZE_FROM_VARIABLE")) {
+        if (eval_sv_eq_ci_lit(a[i], "INITIALIZE_FROM_VARIABLE")) {
             if (!eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
@@ -2464,7 +2464,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr(""));
                 return !eval_should_stop(ctx);
             }
-            if (i + 1 >= a.count || define_property_keyword(a.items[i + 1])) {
+            if (i + 1 >= arena_arr_len(a) || define_property_keyword(a[i + 1])) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
@@ -2475,7 +2475,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
                 return !eval_should_stop(ctx);
             }
             def.has_initialize_from_variable = true;
-            def.initialize_from_variable = a.items[i + 1];
+            def.initialize_from_variable = a[i + 1];
             i += 2;
             continue;
         }
@@ -2486,7 +2486,7 @@ bool eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("define_property() received unexpected argument"),
-                       a.items[i]);
+                       a[i]);
         return !eval_should_stop(ctx);
     }
 
@@ -2499,7 +2499,7 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 4) {
+    if (arena_arr_len(a) < 4) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2510,15 +2510,15 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
         return !eval_should_stop(ctx);
     }
 
-    size_t props_i = a.count;
-    for (size_t i = 0; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PROPERTIES")) {
+    size_t props_i = arena_arr_len(a);
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PROPERTIES")) {
             props_i = i;
             break;
         }
     }
 
-    if (props_i == 0 || props_i >= a.count - 1) {
+    if (props_i == 0 || props_i >= arena_arr_len(a) - 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2530,7 +2530,7 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
     }
 
     size_t kv_start = props_i + 1;
-    size_t kv_count = a.count - kv_start;
+    size_t kv_count = arena_arr_len(a) - kv_start;
     if (kv_count < 2) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
@@ -2553,7 +2553,7 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
     }
 
     for (size_t ti = 0; ti < props_i; ti++) {
-        String_View tgt = a.items[ti];
+        String_View tgt = a[ti];
         if (!eval_target_known(ctx, tgt)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
@@ -2574,8 +2574,8 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
                            tgt);
             continue;
         }
-        for (size_t i = kv_start; i + 1 < a.count; i += 2) {
-            if (!emit_target_prop_set(ctx, o, tgt, a.items[i], a.items[i + 1], EV_PROP_SET)) {
+        for (size_t i = kv_start; i + 1 < arena_arr_len(a); i += 2) {
+            if (!emit_target_prop_set(ctx, o, tgt, a[i], a[i + 1], EV_PROP_SET)) {
                 return !eval_should_stop(ctx);
             }
         }
@@ -2589,7 +2589,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2600,7 +2600,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View scope = a.items[0];
+    String_View scope = a[0];
     bool is_target_scope = eval_sv_eq_ci_lit(scope, "TARGET");
     bool is_global_scope = eval_sv_eq_ci_lit(scope, "GLOBAL");
     bool is_dir_scope = eval_sv_eq_ci_lit(scope, "DIRECTORY");
@@ -2621,10 +2621,10 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
 
     bool append = false;
     bool append_string = false;
-    SV_List objects = {0};
-    SV_List source_dirs = {0};
-    SV_List source_target_dirs = {0};
-    SV_List test_dirs = {0};
+    SV_List objects = NULL;
+    SV_List source_dirs = NULL;
+    SV_List source_target_dirs = NULL;
+    SV_List test_dirs = NULL;
     bool saw_source_directory_clause = false;
     bool saw_source_target_directory_clause = false;
     bool saw_test_directory_clause = false;
@@ -2637,48 +2637,48 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     } parse_mode = SP_PARSE_OBJECTS;
 
     size_t i = 1;
-    for (; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) break;
-        if (eval_sv_eq_ci_lit(a.items[i], "APPEND")) {
+    for (; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "PROPERTY")) break;
+        if (eval_sv_eq_ci_lit(a[i], "APPEND")) {
             append = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "APPEND_STRING")) {
+        if (eval_sv_eq_ci_lit(a[i], "APPEND_STRING")) {
             append_string = true;
             continue;
         }
-        if (is_source_scope && eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+        if (is_source_scope && eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
             saw_source_directory_clause = true;
             parse_mode = SP_PARSE_SOURCE_DIRS;
             continue;
         }
-        if (is_source_scope && eval_sv_eq_ci_lit(a.items[i], "TARGET_DIRECTORY")) {
+        if (is_source_scope && eval_sv_eq_ci_lit(a[i], "TARGET_DIRECTORY")) {
             saw_source_target_directory_clause = true;
             parse_mode = SP_PARSE_SOURCE_TARGET_DIRS;
             continue;
         }
-        if (is_test_scope && eval_sv_eq_ci_lit(a.items[i], "DIRECTORY")) {
+        if (is_test_scope && eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
             saw_test_directory_clause = true;
             parse_mode = SP_PARSE_TEST_DIRS;
             continue;
         }
 
         if (parse_mode == SP_PARSE_SOURCE_DIRS) {
-            if (!svu_list_push_temp(ctx, &source_dirs, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &source_dirs, a[i])) return !eval_should_stop(ctx);
             continue;
         }
         if (parse_mode == SP_PARSE_SOURCE_TARGET_DIRS) {
-            if (!svu_list_push_temp(ctx, &source_target_dirs, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &source_target_dirs, a[i])) return !eval_should_stop(ctx);
             continue;
         }
         if (parse_mode == SP_PARSE_TEST_DIRS) {
-            if (!svu_list_push_temp(ctx, &test_dirs, a.items[i])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &test_dirs, a[i])) return !eval_should_stop(ctx);
             continue;
         }
-        if (!svu_list_push_temp(ctx, &objects, a.items[i])) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &objects, a[i])) return !eval_should_stop(ctx);
     }
 
-    if (saw_source_directory_clause && source_dirs.count == 0) {
+    if (saw_source_directory_clause && arena_arr_len(source_dirs) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2688,7 +2688,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
-    if (saw_source_target_directory_clause && source_target_dirs.count == 0) {
+    if (saw_source_target_directory_clause && arena_arr_len(source_target_dirs) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2698,7 +2698,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
-    if (saw_test_directory_clause && test_dirs.count == 0) {
+    if (saw_test_directory_clause && arena_arr_len(test_dirs) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2708,7 +2708,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
-    if (saw_test_directory_clause && test_dirs.count > 1) {
+    if (saw_test_directory_clause && arena_arr_len(test_dirs) > 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2719,7 +2719,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (is_global_scope && objects.count > 0) {
+    if (is_global_scope && arena_arr_len(objects) > 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2732,17 +2732,17 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
 
     {
         String_View cur_src = eval_current_source_dir_for_paths(ctx);
-        for (size_t di = 0; di < source_dirs.count; di++) {
-            source_dirs.items[di] = eval_path_resolve_for_cmake_arg(ctx, source_dirs.items[di], cur_src, true);
+        for (size_t di = 0; di < arena_arr_len(source_dirs); di++) {
+            source_dirs[di] = eval_path_resolve_for_cmake_arg(ctx, source_dirs[di], cur_src, true);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         }
-        for (size_t di = 0; di < test_dirs.count; di++) {
-            test_dirs.items[di] = eval_path_resolve_for_cmake_arg(ctx, test_dirs.items[di], cur_src, true);
+        for (size_t di = 0; di < arena_arr_len(test_dirs); di++) {
+            test_dirs[di] = eval_path_resolve_for_cmake_arg(ctx, test_dirs[di], cur_src, true);
             if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
         }
     }
 
-    if (i >= a.count || !eval_sv_eq_ci_lit(a.items[i], "PROPERTY")) {
+    if (i >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[i], "PROPERTY")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2753,7 +2753,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
     i++;
-    if (i >= a.count) {
+    if (i >= arena_arr_len(a)) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -2764,11 +2764,11 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View key = a.items[i++];
+    String_View key = a[i++];
     String_View value = nob_sv_from_cstr("");
-    if (i < a.count) {
-        if (append_string) value = svu_join_no_sep_temp(ctx, &a.items[i], a.count - i);
-        else value = eval_sv_join_semi_temp(ctx, &a.items[i], a.count - i);
+    if (i < arena_arr_len(a)) {
+        if (append_string) value = svu_join_no_sep_temp(ctx, &a[i], arena_arr_len(a) - i);
+        else value = eval_sv_join_semi_temp(ctx, &a[i], arena_arr_len(a) - i);
     }
 
     Cmake_Target_Property_Op op = EV_PROP_SET;
@@ -2787,28 +2787,28 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (is_target_scope) {
-        for (size_t ti = 0; ti < objects.count; ti++) {
-            if (!eval_target_known(ctx, objects.items[ti])) {
+        for (size_t ti = 0; ti < arena_arr_len(objects); ti++) {
+            if (!eval_target_known(ctx, objects[ti])) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
                                node->as.cmd.name,
                                o,
                                nob_sv_from_cstr("set_property(TARGET ...) target was not declared"),
-                               objects.items[ti]);
+                               objects[ti]);
                 continue;
             }
-            if (eval_target_alias_known(ctx, objects.items[ti])) {
+            if (eval_target_alias_known(ctx, objects[ti])) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
                                node->as.cmd.name,
                                o,
                                nob_sv_from_cstr("set_property(TARGET ...) cannot be used on ALIAS targets"),
-                               objects.items[ti]);
+                               objects[ti]);
                 continue;
             }
-            if (!emit_target_prop_set(ctx, o, objects.items[ti], key, value, op)) {
+            if (!emit_target_prop_set(ctx, o, objects[ti], key, value, op)) {
                 return !eval_should_stop(ctx);
             }
         }
@@ -2825,7 +2825,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (is_dir_scope && objects.count == 0) {
+    if (is_dir_scope && arena_arr_len(objects) == 0) {
         String_View current_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
         if (current_dir.count == 0) current_dir = ctx->source_dir;
         if (!set_non_target_property(ctx, o, scope_upper, current_dir, key, value, op)) {
@@ -2835,42 +2835,42 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (is_source_scope) {
-        for (size_t ti = 0; ti < source_target_dirs.count; ti++) {
-            if (eval_target_known(ctx, source_target_dirs.items[ti])) continue;
+        for (size_t ti = 0; ti < arena_arr_len(source_target_dirs); ti++) {
+            if (eval_target_known(ctx, source_target_dirs[ti])) continue;
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("set_property(SOURCE TARGET_DIRECTORY ...) target was not declared"),
-                           source_target_dirs.items[ti]);
+                           source_target_dirs[ti]);
             return !eval_should_stop(ctx);
         }
 
         if (saw_source_directory_clause || saw_source_target_directory_clause) {
-            for (size_t oi = 0; oi < objects.count; oi++) {
+            for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
                 if (!saw_source_directory_clause && !saw_source_target_directory_clause) {
-                    if (!set_non_target_property(ctx, o, scope_upper, objects.items[oi], key, value, op)) {
+                    if (!set_non_target_property(ctx, o, scope_upper, objects[oi], key, value, op)) {
                         return !eval_should_stop(ctx);
                     }
                     continue;
                 }
 
-                for (size_t di = 0; di < source_dirs.count; di++) {
+                for (size_t di = 0; di < arena_arr_len(source_dirs); di++) {
                     String_View object_id = eval_property_scoped_object_id_temp(ctx,
                                                                                 "DIRECTORY",
-                                                                                source_dirs.items[di],
-                                                                                objects.items[oi]);
+                                                                                source_dirs[di],
+                                                                                objects[oi]);
                     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                     if (!set_non_target_property(ctx, o, scope_upper, object_id, key, value, op)) {
                         return !eval_should_stop(ctx);
                     }
                 }
-                for (size_t ti = 0; ti < source_target_dirs.count; ti++) {
+                for (size_t ti = 0; ti < arena_arr_len(source_target_dirs); ti++) {
                     String_View object_id = eval_property_scoped_object_id_temp(ctx,
                                                                                 "TARGET_DIRECTORY",
-                                                                                source_target_dirs.items[ti],
-                                                                                objects.items[oi]);
+                                                                                source_target_dirs[ti],
+                                                                                objects[oi]);
                     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                     if (!set_non_target_property(ctx, o, scope_upper, object_id, key, value, op)) {
                         return !eval_should_stop(ctx);
@@ -2883,26 +2883,26 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
 
     if (is_test_scope) {
         String_View test_scope_dir = eval_current_source_dir_for_paths(ctx);
-        if (saw_test_directory_clause) test_scope_dir = test_dirs.items[0];
+        if (saw_test_directory_clause) test_scope_dir = test_dirs[0];
 
-        for (size_t oi = 0; oi < objects.count; oi++) {
-            if (eval_test_exists_in_directory_scope(ctx, objects.items[oi], test_scope_dir)) continue;
+        for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
+            if (eval_test_exists_in_directory_scope(ctx, objects[oi], test_scope_dir)) continue;
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("set_property(TEST ...) test was not declared in selected directory scope"),
-                           objects.items[oi]);
+                           objects[oi]);
             return !eval_should_stop(ctx);
         }
 
         if (saw_test_directory_clause) {
-            for (size_t oi = 0; oi < objects.count; oi++) {
+            for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
                 String_View object_id = eval_property_scoped_object_id_temp(ctx,
                                                                             "DIRECTORY",
                                                                             test_scope_dir,
-                                                                            objects.items[oi]);
+                                                                            objects[oi]);
                 if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
                 if (!set_non_target_property(ctx, o, scope_upper, object_id, key, value, op)) {
                     return !eval_should_stop(ctx);
@@ -2913,21 +2913,21 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (is_cache_scope) {
-        for (size_t oi = 0; oi < objects.count; oi++) {
-            if (eval_cache_defined(ctx, objects.items[oi])) continue;
+        for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
+            if (eval_cache_defined(ctx, objects[oi])) continue;
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("set_property(CACHE ...) cache entry does not exist"),
-                           objects.items[oi]);
+                           objects[oi]);
             return !eval_should_stop(ctx);
         }
     }
 
-    for (size_t oi = 0; oi < objects.count; oi++) {
-        if (!set_non_target_property(ctx, o, scope_upper, objects.items[oi], key, value, op)) {
+    for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
+        if (!set_non_target_property(ctx, o, scope_upper, objects[oi], key, value, op)) {
             return !eval_should_stop(ctx);
         }
     }

@@ -52,45 +52,27 @@ typedef struct {
     String_View name;
     User_Command_Kind kind;
     String_View *params;
-    size_t param_count;
     Node_List body;
 } User_Command;
 
-typedef struct {
-    User_Command *items;
-    size_t count;
-    size_t capacity;
-} User_Command_List;
+typedef User_Command *User_Command_List;
 
-typedef struct {
-    Var_Binding *items;
-    size_t count;
-    size_t capacity;
-} Macro_Binding_List;
+typedef Var_Binding *Macro_Binding_List;
 
 typedef struct {
     Macro_Binding_List bindings;
 } Macro_Frame;
 
-typedef struct {
-    Macro_Frame *items;
-    size_t count;
-    size_t capacity;
-} Macro_Frame_Stack;
+typedef Macro_Frame *Macro_Frame_Stack;
 
 typedef struct {
     bool variable_scope_pushed;
     bool policy_scope_pushed;
     String_View *propagate_vars;
-    size_t propagate_count;
     bool propagate_on_return;
 } Block_Frame;
 
-typedef struct {
-    Block_Frame *items;
-    size_t count;
-    size_t capacity;
-} Block_Frame_Stack;
+typedef Block_Frame *Block_Frame_Stack;
 
 typedef struct {
     int guard_kind;
@@ -104,11 +86,7 @@ typedef struct {
 #endif
 } Eval_File_Lock;
 
-typedef struct {
-    Eval_File_Lock *items;
-    size_t count;
-    size_t capacity;
-} Eval_File_Lock_List;
+typedef Eval_File_Lock *Eval_File_Lock_List;
 
 typedef struct {
     Cmake_Event_Origin origin;
@@ -130,11 +108,7 @@ typedef struct {
     unsigned int file_mode;
 } Eval_File_Generate_Job;
 
-typedef struct {
-    Eval_File_Generate_Job *items;
-    size_t count;
-    size_t capacity;
-} Eval_File_Generate_Job_List;
+typedef Eval_File_Generate_Job *Eval_File_Generate_Job_List;
 
 typedef struct {
     unsigned char states[156];
@@ -189,11 +163,7 @@ typedef struct {
     String_View initialize_from_variable;
 } Eval_Property_Definition;
 
-typedef struct {
-    Eval_Property_Definition *items;
-    size_t count;
-    size_t capacity;
-} Eval_Property_Definition_List;
+typedef Eval_Property_Definition *Eval_Property_Definition_List;
 
 typedef struct {
     Cmake_Event_Origin origin;
@@ -202,11 +172,7 @@ typedef struct {
     Args args;
 } Eval_Deferred_Call;
 
-typedef struct {
-    Eval_Deferred_Call *items;
-    size_t count;
-    size_t capacity;
-} Eval_Deferred_Call_List;
+typedef Eval_Deferred_Call *Eval_Deferred_Call_List;
 
 typedef struct {
     String_View source_dir;
@@ -214,11 +180,7 @@ typedef struct {
     Eval_Deferred_Call_List calls;
 } Eval_Deferred_Dir_Frame;
 
-typedef struct {
-    Eval_Deferred_Dir_Frame *items;
-    size_t count;
-    size_t capacity;
-} Eval_Deferred_Dir_Frame_Stack;
+typedef Eval_Deferred_Dir_Frame *Eval_Deferred_Dir_Frame_Stack;
 
 typedef enum {
     EVAL_RETURN_CTX_TOPLEVEL = 0,

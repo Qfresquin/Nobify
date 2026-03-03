@@ -323,8 +323,8 @@ const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context 
     String_View property_upper = eval_property_upper_name_temp(ctx, property_name);
     if (eval_should_stop(ctx)) return NULL;
 
-    for (size_t i = 0; i < ctx->property_definitions.count; i++) {
-        const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
+        const Eval_Property_Definition *def = &ctx->property_definitions[i];
         if (!eval_sv_key_eq(def->scope_upper, scope_upper)) continue;
         if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
         return def;
@@ -332,8 +332,8 @@ const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context 
 
     if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
         String_View cached_scope = nob_sv_from_cstr("CACHED_VARIABLE");
-        for (size_t i = 0; i < ctx->property_definitions.count; i++) {
-            const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+        for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
+            const Eval_Property_Definition *def = &ctx->property_definitions[i];
             if (!eval_sv_key_eq(def->scope_upper, cached_scope)) continue;
             if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
             return def;

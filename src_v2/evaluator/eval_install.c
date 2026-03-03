@@ -107,9 +107,9 @@ static bool install_collect_destinations(Evaluator_Context *ctx,
                                          size_t start,
                                          SV_List *out_destinations) {
     if (!ctx || !node || !out_destinations) return false;
-    for (size_t i = start; i < args.count; i++) {
-        if (!eval_sv_eq_ci_lit(args.items[i], "DESTINATION")) continue;
-        if (i + 1 >= args.count) {
+    for (size_t i = start; i < arena_arr_len(args); i++) {
+        if (!eval_sv_eq_ci_lit(args[i], "DESTINATION")) continue;
+        if (i + 1 >= arena_arr_len(args)) {
             install_emit_diag(ctx,
                               node,
                               o,
@@ -118,7 +118,7 @@ static bool install_collect_destinations(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Usage: ... DESTINATION <dir>"));
             return false;
         }
-        if (!svu_list_push_temp(ctx, out_destinations, args.items[i + 1])) return false;
+        if (!svu_list_push_temp(ctx, out_destinations, args[i + 1])) return false;
         i++;
     }
     return true;
@@ -143,18 +143,18 @@ static bool install_handle_files_like(Evaluator_Context *ctx,
                                       Cmake_Event_Origin o,
                                       SV_List args,
                                       Cmake_Install_Rule_Type rule_type) {
-    SV_List items = {0};
+    SV_List items = NULL;
     size_t i = 1;
-    for (; i < args.count; i++) {
-        if (install_is_files_like_keyword(args.items[i])) break;
-        if (!svu_list_push_temp(ctx, &items, args.items[i])) return false;
+    for (; i < arena_arr_len(args); i++) {
+        if (install_is_files_like_keyword(args[i])) break;
+        if (!svu_list_push_temp(ctx, &items, args[i])) return false;
     }
 
     String_View destination = nob_sv_from_cstr("");
     String_View type = nob_sv_from_cstr("");
-    for (; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "DESTINATION")) {
-            if (i + 1 >= args.count) {
+    for (; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "DESTINATION")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 install_emit_diag(ctx,
                                   node,
                                   o,
@@ -163,9 +163,9 @@ static bool install_handle_files_like(Evaluator_Context *ctx,
                                   nob_sv_from_cstr("Usage: ... DESTINATION <dir>"));
                 return true;
             }
-            destination = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "TYPE")) {
-            if (i + 1 >= args.count) {
+            destination = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "TYPE")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 install_emit_diag(ctx,
                                   node,
                                   o,
@@ -174,12 +174,12 @@ static bool install_handle_files_like(Evaluator_Context *ctx,
                                   nob_sv_from_cstr("Valid examples: BIN, LIB, INCLUDE, DATA, DOC"));
                 return true;
             }
-            type = args.items[++i];
-        } else if (eval_sv_eq_ci_lit(args.items[i], "RENAME") ||
-                   eval_sv_eq_ci_lit(args.items[i], "COMPONENT") ||
-                   eval_sv_eq_ci_lit(args.items[i], "PATTERN") ||
-                   eval_sv_eq_ci_lit(args.items[i], "REGEX")) {
-            if (i + 1 < args.count) i++;
+            type = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "RENAME") ||
+                   eval_sv_eq_ci_lit(args[i], "COMPONENT") ||
+                   eval_sv_eq_ci_lit(args[i], "PATTERN") ||
+                   eval_sv_eq_ci_lit(args[i], "REGEX")) {
+            if (i + 1 < arena_arr_len(args)) i++;
         }
     }
 
@@ -215,7 +215,7 @@ static bool install_handle_files_like(Evaluator_Context *ctx,
         return true;
     }
 
-    if (items.count == 0) {
+    if (arena_arr_len(items) == 0) {
         if (rule_type == EV_INSTALL_RULE_DIRECTORY) {
             // CMake allows install(DIRECTORY DESTINATION <dir>) to create destination only.
             return true;
@@ -229,8 +229,8 @@ static bool install_handle_files_like(Evaluator_Context *ctx,
         return true;
     }
 
-    for (size_t j = 0; j < items.count; j++) {
-        if (!install_emit_rule(ctx, o, rule_type, items.items[j], destination)) return false;
+    for (size_t j = 0; j < arena_arr_len(items); j++) {
+        if (!install_emit_rule(ctx, o, rule_type, items[j], destination)) return false;
     }
     return true;
 }
@@ -240,14 +240,14 @@ static bool install_handle_targets_like(Evaluator_Context *ctx,
                                         Cmake_Event_Origin o,
                                         SV_List args,
                                         bool imported_runtime_artifacts) {
-    SV_List targets = {0};
+    SV_List targets = NULL;
     size_t i = 1;
-    for (; i < args.count; i++) {
-        if (install_is_targets_keyword(args.items[i])) break;
-        if (!svu_list_push_temp(ctx, &targets, args.items[i])) return false;
+    for (; i < arena_arr_len(args); i++) {
+        if (install_is_targets_keyword(args[i])) break;
+        if (!svu_list_push_temp(ctx, &targets, args[i])) return false;
     }
 
-    if (targets.count == 0) {
+    if (arena_arr_len(targets) == 0) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -257,12 +257,12 @@ static bool install_handle_targets_like(Evaluator_Context *ctx,
         return true;
     }
 
-    SV_List destinations = {0};
+    SV_List destinations = NULL;
     String_View export_name = nob_sv_from_cstr("");
     if (!install_collect_destinations(ctx, node, o, args, i, &destinations)) return false;
-    for (size_t j = i; j < args.count; j++) {
-        if (!eval_sv_eq_ci_lit(args.items[j], "EXPORT")) continue;
-        if (j + 1 >= args.count) {
+    for (size_t j = i; j < arena_arr_len(args); j++) {
+        if (!eval_sv_eq_ci_lit(args[j], "EXPORT")) continue;
+        if (j + 1 >= arena_arr_len(args)) {
             install_emit_diag(ctx,
                               node,
                               o,
@@ -271,10 +271,10 @@ static bool install_handle_targets_like(Evaluator_Context *ctx,
                               nob_sv_from_cstr("Usage: install(TARGETS <tgt>... EXPORT <name> ...)"));
             return true;
         }
-        export_name = args.items[j + 1];
+        export_name = args[j + 1];
         break;
     }
-    if (destinations.count == 0) {
+    if (arena_arr_len(destinations) == 0) {
         // CMake allows some target installs without explicit destination depending on artifact/category.
         // Keep evaluator behavior permissive and preserve the rule with empty destination.
         if (!svu_list_push_temp(ctx, &destinations, nob_sv_from_cstr(""))) return false;
@@ -290,19 +290,19 @@ static bool install_handle_targets_like(Evaluator_Context *ctx,
         key_buf[total] = '\0';
         if (!eval_var_set(ctx,
                           nob_sv_from_parts(key_buf, total),
-                          eval_sv_join_semi_temp(ctx, targets.items, targets.count))) {
+                          eval_sv_join_semi_temp(ctx, targets, arena_arr_len(targets)))) {
             return false;
         }
     }
 
-    for (size_t ti = 0; ti < targets.count; ti++) {
-        String_View item = targets.items[ti];
+    for (size_t ti = 0; ti < arena_arr_len(targets); ti++) {
+        String_View item = targets[ti];
         if (imported_runtime_artifacts) {
             item = install_tagged_item_temp(ctx, "IMPORTED_RUNTIME_ARTIFACTS", item);
             if (ctx->oom) return false;
         }
-        for (size_t di = 0; di < destinations.count; di++) {
-            if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_TARGET, item, destinations.items[di])) return false;
+        for (size_t di = 0; di < arena_arr_len(destinations); di++) {
+            if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_TARGET, item, destinations[di])) return false;
         }
     }
     return true;
@@ -319,10 +319,10 @@ static bool install_handle_script_code_block(Evaluator_Context *ctx,
                                              Cmake_Event_Origin o,
                                              SV_List args) {
     bool emitted_any = false;
-    for (size_t i = 0; i < args.count; i++) {
-        if (eval_sv_eq_ci_lit(args.items[i], "SCRIPT") || eval_sv_eq_ci_lit(args.items[i], "CODE")) {
-            bool is_code = eval_sv_eq_ci_lit(args.items[i], "CODE");
-            if (i + 1 >= args.count) {
+    for (size_t i = 0; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "SCRIPT") || eval_sv_eq_ci_lit(args[i], "CODE")) {
+            bool is_code = eval_sv_eq_ci_lit(args[i], "CODE");
+            if (i + 1 >= arena_arr_len(args)) {
                 install_emit_diag(ctx,
                                   node,
                                   o,
@@ -336,7 +336,7 @@ static bool install_handle_script_code_block(Evaluator_Context *ctx,
 
             String_View item = install_tagged_item_temp(ctx,
                                                         is_code ? "CODE" : "SCRIPT",
-                                                        args.items[i + 1]);
+                                                        args[i + 1]);
             if (ctx->oom) return false;
             if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_FILE, item, nob_sv_from_cstr(""))) return false;
             emitted_any = true;
@@ -344,16 +344,16 @@ static bool install_handle_script_code_block(Evaluator_Context *ctx,
             continue;
         }
 
-        if (!install_is_script_code_option(args.items[i])) {
+        if (!install_is_script_code_option(args[i])) {
             install_emit_diag(ctx,
                               node,
                               o,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("install(SCRIPT/CODE) received unexpected argument"),
-                              args.items[i]);
+                              args[i]);
             return true;
         }
-        if (eval_sv_eq_ci_lit(args.items[i], "COMPONENT") && i + 1 < args.count) i++;
+        if (eval_sv_eq_ci_lit(args[i], "COMPONENT") && i + 1 < arena_arr_len(args)) i++;
     }
 
     if (!emitted_any) {
@@ -372,7 +372,7 @@ static bool install_handle_export_like(Evaluator_Context *ctx,
                                        Cmake_Event_Origin o,
                                        SV_List args,
                                        const char *tag) {
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -382,9 +382,9 @@ static bool install_handle_export_like(Evaluator_Context *ctx,
         return true;
     }
 
-    SV_List destinations = {0};
+    SV_List destinations = NULL;
     if (!install_collect_destinations(ctx, node, o, args, 2, &destinations)) return false;
-    if (destinations.count == 0) {
+    if (arena_arr_len(destinations) == 0) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -394,10 +394,10 @@ static bool install_handle_export_like(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View item = install_tagged_item_temp(ctx, tag, args.items[1]);
+    String_View item = install_tagged_item_temp(ctx, tag, args[1]);
     if (ctx->oom) return false;
-    for (size_t i = 0; i < destinations.count; i++) {
-        if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_FILE, item, destinations.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(destinations); i++) {
+        if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_FILE, item, destinations[i])) return false;
     }
     return true;
 }
@@ -406,7 +406,7 @@ static bool install_handle_runtime_dependency_set(Evaluator_Context *ctx,
                                                   const Node *node,
                                                   Cmake_Event_Origin o,
                                                   SV_List args) {
-    if (args.count < 2) {
+    if (arena_arr_len(args) < 2) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -416,9 +416,9 @@ static bool install_handle_runtime_dependency_set(Evaluator_Context *ctx,
         return true;
     }
 
-    SV_List destinations = {0};
+    SV_List destinations = NULL;
     if (!install_collect_destinations(ctx, node, o, args, 2, &destinations)) return false;
-    if (destinations.count == 0) {
+    if (arena_arr_len(destinations) == 0) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -428,10 +428,10 @@ static bool install_handle_runtime_dependency_set(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View item = install_tagged_item_temp(ctx, "RUNTIME_DEPENDENCY_SET", args.items[1]);
+    String_View item = install_tagged_item_temp(ctx, "RUNTIME_DEPENDENCY_SET", args[1]);
     if (ctx->oom) return false;
-    for (size_t i = 0; i < destinations.count; i++) {
-        if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_TARGET, item, destinations.items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(destinations); i++) {
+        if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_TARGET, item, destinations[i])) return false;
     }
     return true;
 }
@@ -442,7 +442,7 @@ bool eval_handle_install(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count == 0) {
+    if (arena_arr_len(a) == 0) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -453,24 +453,24 @@ bool eval_handle_install(Evaluator_Context *ctx, const Node *node) {
     }
 
     bool ok = true;
-    if (eval_sv_eq_ci_lit(a.items[0], "TARGETS")) {
+    if (eval_sv_eq_ci_lit(a[0], "TARGETS")) {
         ok = install_handle_targets_like(ctx, node, o, a, false);
-    } else if (eval_sv_eq_ci_lit(a.items[0], "FILES")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "FILES")) {
         ok = install_handle_files_like(ctx, node, o, a, EV_INSTALL_RULE_FILE);
-    } else if (eval_sv_eq_ci_lit(a.items[0], "PROGRAMS")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "PROGRAMS")) {
         ok = install_handle_files_like(ctx, node, o, a, EV_INSTALL_RULE_PROGRAM);
-    } else if (eval_sv_eq_ci_lit(a.items[0], "DIRECTORY")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "DIRECTORY")) {
         ok = install_handle_files_like(ctx, node, o, a, EV_INSTALL_RULE_DIRECTORY);
-    } else if (eval_sv_eq_ci_lit(a.items[0], "SCRIPT") ||
-               eval_sv_eq_ci_lit(a.items[0], "CODE")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "SCRIPT") ||
+               eval_sv_eq_ci_lit(a[0], "CODE")) {
         ok = install_handle_script_code_block(ctx, node, o, a);
-    } else if (eval_sv_eq_ci_lit(a.items[0], "EXPORT")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "EXPORT")) {
         ok = install_handle_export_like(ctx, node, o, a, "EXPORT");
-    } else if (eval_sv_eq_ci_lit(a.items[0], "EXPORT_ANDROID_MK")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "EXPORT_ANDROID_MK")) {
         ok = install_handle_export_like(ctx, node, o, a, "EXPORT_ANDROID_MK");
-    } else if (eval_sv_eq_ci_lit(a.items[0], "RUNTIME_DEPENDENCY_SET")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "RUNTIME_DEPENDENCY_SET")) {
         ok = install_handle_runtime_dependency_set(ctx, node, o, a);
-    } else if (eval_sv_eq_ci_lit(a.items[0], "IMPORTED_RUNTIME_ARTIFACTS")) {
+    } else if (eval_sv_eq_ci_lit(a[0], "IMPORTED_RUNTIME_ARTIFACTS")) {
         ok = install_handle_targets_like(ctx, node, o, a, true);
     } else {
         install_emit_diag(ctx,
@@ -478,7 +478,7 @@ bool eval_handle_install(Evaluator_Context *ctx, const Node *node) {
                           o,
                           EV_DIAG_ERROR,
                           nob_sv_from_cstr("install() unsupported rule type"),
-                          a.items[0]);
+                          a[0]);
     }
 
     if (!ok && !ctx->oom) {

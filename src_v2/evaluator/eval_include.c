@@ -41,7 +41,7 @@ static bool include_file_exists_sv(Evaluator_Context *ctx, String_View path) {
 
 static bool include_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
-    *out = (SV_List){0};
+    *out = NULL;
     if (input.count == 0) return true;
 
     const char *p = input.data;
@@ -112,7 +112,7 @@ static bool include_try_module_search(Evaluator_Context *ctx,
     }
     if (eval_should_stop(ctx)) return false;
 
-    SV_List module_dirs = {0};
+    SV_List module_dirs = NULL;
     if (!include_split_semicolon_temp(ctx, eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH")), &module_dirs)) {
         return false;
     }
@@ -137,8 +137,8 @@ static bool include_try_module_search(Evaluator_Context *ctx,
         }
     }
 
-    for (size_t di = 0; di < module_dirs.count; di++) {
-        String_View dir = module_dirs.items[di];
+    for (size_t di = 0; di < arena_arr_len(module_dirs); di++) {
+        String_View dir = module_dirs[di];
         if (dir.count == 0) continue;
         if (!eval_sv_is_abs_path(dir)) {
             dir = eval_path_resolve_for_cmake_arg(ctx, dir, current_source_dir, false);
@@ -251,13 +251,13 @@ static bool include_guard_directory_hit(Evaluator_Context *ctx, String_View key,
     String_View existing = include_guard_var_get_global(ctx, key);
     if (existing.count == 0) return false;
 
-    SV_List dirs = {0};
+    SV_List dirs = NULL;
     if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing, &dirs)) return false;
     if (eval_should_stop(ctx)) return false;
 
-    for (size_t i = 0; i < dirs.count; i++) {
-        if (dirs.items[i].count == 0) continue;
-        String_View guard_dir = eval_sv_path_normalize_temp(ctx, dirs.items[i]);
+    for (size_t i = 0; i < arena_arr_len(dirs); i++) {
+        if (dirs[i].count == 0) continue;
+        String_View guard_dir = eval_sv_path_normalize_temp(ctx, dirs[i]);
         if (include_path_is_same_or_child(current_norm, guard_dir)) return true;
     }
     return false;
@@ -269,19 +269,19 @@ static bool include_guard_directory_add(Evaluator_Context *ctx, String_View key,
     String_View existing = include_guard_var_get_global(ctx, key);
     if (existing.count == 0) return include_guard_var_set_global(ctx, key, current_norm);
 
-    SV_List dirs = {0};
+    SV_List dirs = NULL;
     if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing, &dirs)) return false;
     if (eval_should_stop(ctx)) return false;
 
-    for (size_t i = 0; i < dirs.count; i++) {
-        if (nob_sv_eq(dirs.items[i], current_norm)) return true;
+    for (size_t i = 0; i < arena_arr_len(dirs); i++) {
+        if (nob_sv_eq(dirs[i], current_norm)) return true;
     }
 
-    String_View *joined = arena_alloc_array(eval_temp_arena(ctx), String_View, dirs.count + 1);
+    String_View *joined = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(dirs) + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, joined, false);
-    for (size_t i = 0; i < dirs.count; i++) joined[i] = dirs.items[i];
-    joined[dirs.count] = current_norm;
-    String_View updated = eval_sv_join_semi_temp(ctx, joined, dirs.count + 1);
+    for (size_t i = 0; i < arena_arr_len(dirs); i++) joined[i] = dirs[i];
+    joined[arena_arr_len(dirs)] = current_norm;
+    String_View updated = eval_sv_join_semi_temp(ctx, joined, arena_arr_len(dirs) + 1);
     return include_guard_var_set_global(ctx, key, updated);
 }
 
@@ -290,7 +290,7 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count > 1) {
+    if (arena_arr_len(a) > 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_include"),
@@ -302,10 +302,10 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     }
 
     Include_Guard_Mode mode = INCLUDE_GUARD_VARIABLE;
-    if (a.count == 1) {
-        if (eval_sv_eq_ci_lit(a.items[0], "DIRECTORY")) {
+    if (arena_arr_len(a) == 1) {
+        if (eval_sv_eq_ci_lit(a[0], "DIRECTORY")) {
             mode = INCLUDE_GUARD_DIRECTORY;
-        } else if (eval_sv_eq_ci_lit(a.items[0], "GLOBAL")) {
+        } else if (eval_sv_eq_ci_lit(a[0], "GLOBAL")) {
             mode = INCLUDE_GUARD_GLOBAL;
         } else {
             eval_emit_diag(ctx,
@@ -367,7 +367,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_include"),
@@ -378,22 +378,22 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View file_or_module = a.items[0];
+    String_View file_or_module = a[0];
     bool optional = false;
     bool no_policy_scope = false;
     String_View result_variable = nob_sv_from_cstr("");
 
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "OPTIONAL")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "OPTIONAL")) {
             optional = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "NO_POLICY_SCOPE")) {
+        if (eval_sv_eq_ci_lit(a[i], "NO_POLICY_SCOPE")) {
             no_policy_scope = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "RESULT_VARIABLE")) {
-            if (i + 1 >= a.count) {
+        if (eval_sv_eq_ci_lit(a[i], "RESULT_VARIABLE")) {
+            if (i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("eval_include"),
@@ -403,7 +403,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Usage: include(<file|module> ... RESULT_VARIABLE <var>)"));
                 return !eval_should_stop(ctx);
             }
-            result_variable = a.items[++i];
+            result_variable = a[++i];
             continue;
         }
         eval_emit_diag(ctx,
@@ -412,7 +412,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("include() received unexpected argument"),
-                       a.items[i]);
+                       a[i]);
         return !eval_should_stop(ctx);
     }
 
@@ -491,7 +491,7 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -502,18 +502,18 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View source_dir = a.items[0];
+    String_View source_dir = a[0];
     String_View binary_dir = nob_sv_from_cstr("");
     bool system = false;
 
-    for (size_t i = 1; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "EXCLUDE_FROM_ALL")) continue;
-        if (eval_sv_eq_ci_lit(a.items[i], "SYSTEM")) {
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "EXCLUDE_FROM_ALL")) continue;
+        if (eval_sv_eq_ci_lit(a[i], "SYSTEM")) {
             system = true;
             continue;
         }
         if (binary_dir.count == 0) {
-            binary_dir = a.items[i];
+            binary_dir = a[i];
             continue;
         }
         eval_emit_diag(ctx,
@@ -522,7 +522,7 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("add_subdirectory() ignoring extra argument"),
-                       a.items[i]);
+                       a[i]);
     }
 
     String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));

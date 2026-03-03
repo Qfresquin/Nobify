@@ -19,9 +19,7 @@
 
 static bool block_frame_push(Evaluator_Context *ctx, Block_Frame frame) {
     if (!ctx) return false;
-    if (!arena_arr_push(ctx->event_arena, ctx->block_frames.items, frame)) return ctx_oom(ctx);
-    ctx->block_frames.count = arena_arr_len(ctx->block_frames.items);
-    ctx->block_frames.capacity = arena_arr_cap(ctx->block_frames.items);
+    if (!arena_arr_push(ctx->event_arena, ctx->block_frames, frame)) return ctx_oom(ctx);
     return true;
 }
 
@@ -35,7 +33,6 @@ static bool block_parse_options(Evaluator_Context *ctx,
         .variable_scope_pushed = true,
         .policy_scope_pushed = true,
         .propagate_vars = NULL,
-        .propagate_count = 0,
         .propagate_on_return = false,
     };
 
@@ -87,11 +84,11 @@ static bool block_parse_options(Evaluator_Context *ctx,
             return !eval_should_stop(ctx);
         }
 
-        frame.propagate_count = arena_arr_len(args) - i;
-        frame.propagate_vars = arena_alloc_array(ctx->event_arena, String_View, frame.propagate_count);
+        size_t propagate_count = arena_arr_len(args) - i;
+        frame.propagate_vars = arena_alloc_array(ctx->event_arena, String_View, propagate_count);
         EVAL_OOM_RETURN_IF_NULL(ctx, frame.propagate_vars, false);
 
-        for (size_t pi = 0; pi < frame.propagate_count; pi++) {
+        for (size_t pi = 0; pi < propagate_count; pi++) {
             frame.propagate_vars[pi] = sv_copy_to_event_arena(ctx, args[i + pi]);
             if (eval_should_stop(ctx)) return false;
         }
@@ -109,7 +106,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
         return !eval_should_stop(ctx);
     }
 
-    if (frame.propagate_count > 0 && !frame.variable_scope_pushed) {
+    if (frame.propagate_vars && !frame.variable_scope_pushed) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("flow"),
@@ -125,11 +122,11 @@ static bool block_parse_options(Evaluator_Context *ctx,
 }
 
 static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_Frame *frame) {
-    if (!ctx || !frame || frame->propagate_count == 0) return true;
+    if (!ctx || !frame || !frame->propagate_vars) return true;
     if (!frame->variable_scope_pushed) return true;
     if (ctx->scope_depth <= 1) return true;
 
-    for (size_t i = 0; i < frame->propagate_count; i++) {
+    for (size_t i = 0; i < arena_arr_len(frame->propagate_vars); i++) {
         String_View key = frame->propagate_vars[i];
         if (!eval_var_defined_in_current_scope(ctx, key)) continue;
 
@@ -145,17 +142,16 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
 }
 
 static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return) {
-    if (!ctx || ctx->block_frames.count == 0) return true;
+    if (!ctx || arena_arr_len(ctx->block_frames) == 0) return true;
 
-    Block_Frame frame = ctx->block_frames.items[ctx->block_frames.count - 1];
-    ctx->block_frames.count--;
+    Block_Frame frame = ctx->block_frames[arena_arr_len(ctx->block_frames) - 1];
+    arena_arr_set_len(ctx->block_frames, arena_arr_len(ctx->block_frames) - 1);
 
     bool should_propagate = !for_return || frame.propagate_on_return;
     if (should_propagate) {
         if (for_return && ctx->return_propagate_count > 0) {
             Block_Frame ret_frame = frame;
             ret_frame.propagate_vars = ctx->return_propagate_vars;
-            ret_frame.propagate_count = ctx->return_propagate_count;
             if (!block_propagate_to_parent_scope(ctx, &ret_frame)) return false;
         } else if (!block_propagate_to_parent_scope(ctx, &frame)) {
             return false;
@@ -1122,14 +1118,14 @@ static bool flow_clone_args_to_event_range(Evaluator_Context *ctx,
 }
 
 static Eval_Deferred_Dir_Frame *flow_current_defer_dir(Evaluator_Context *ctx) {
-    if (!ctx || ctx->deferred_dirs.count == 0) return NULL;
-    return &ctx->deferred_dirs.items[ctx->deferred_dirs.count - 1];
+    if (!ctx || arena_arr_len(ctx->deferred_dirs) == 0) return NULL;
+    return &ctx->deferred_dirs[arena_arr_len(ctx->deferred_dirs) - 1];
 }
 
 static Eval_Deferred_Dir_Frame *flow_find_defer_dir(Evaluator_Context *ctx, String_View path) {
     if (!ctx || path.count == 0) return NULL;
-    for (size_t i = ctx->deferred_dirs.count; i-- > 0;) {
-        Eval_Deferred_Dir_Frame *frame = &ctx->deferred_dirs.items[i];
+    for (size_t i = arena_arr_len(ctx->deferred_dirs); i-- > 0;) {
+        Eval_Deferred_Dir_Frame *frame = &ctx->deferred_dirs[i];
         if (flow_sv_eq_exact(frame->source_dir, path) || flow_sv_eq_exact(frame->binary_dir, path)) {
             return frame;
         }
@@ -1139,10 +1135,10 @@ static Eval_Deferred_Dir_Frame *flow_find_defer_dir(Evaluator_Context *ctx, Stri
 
 static Eval_Deferred_Call *flow_find_deferred_call(Eval_Deferred_Dir_Frame *frame, String_View id, size_t *out_index) {
     if (!frame || id.count == 0) return NULL;
-    for (size_t i = 0; i < frame->calls.count; i++) {
-        if (!flow_sv_eq_exact(frame->calls.items[i].id, id)) continue;
+    for (size_t i = 0; i < arena_arr_len(frame->calls); i++) {
+        if (!flow_sv_eq_exact(frame->calls[i].id, id)) continue;
         if (out_index) *out_index = i;
-        return &frame->calls.items[i];
+        return &frame->calls[i];
     }
     return NULL;
 }
@@ -1205,9 +1201,7 @@ static bool flow_append_defer_queue(Evaluator_Context *ctx,
                                     Eval_Deferred_Dir_Frame *frame,
                                     Eval_Deferred_Call call) {
     if (!ctx || !frame) return false;
-    if (!arena_arr_push(ctx->event_arena, frame->calls.items, call)) return ctx_oom(ctx);
-    frame->calls.count = arena_arr_len(frame->calls.items);
-    frame->calls.capacity = arena_arr_cap(frame->calls.items);
+    if (!arena_arr_push(ctx->event_arena, frame->calls, call)) return ctx_oom(ctx);
     return true;
 }
 
@@ -1217,16 +1211,14 @@ bool eval_defer_push_directory(Evaluator_Context *ctx, String_View source_dir, S
     frame.source_dir = sv_copy_to_event_arena(ctx, source_dir);
     frame.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     if (eval_should_stop(ctx)) return false;
-    if (!arena_arr_push(ctx->event_arena, ctx->deferred_dirs.items, frame)) return ctx_oom(ctx);
-    ctx->deferred_dirs.count = arena_arr_len(ctx->deferred_dirs.items);
-    ctx->deferred_dirs.capacity = arena_arr_cap(ctx->deferred_dirs.items);
+    if (!arena_arr_push(ctx->event_arena, ctx->deferred_dirs, frame)) return ctx_oom(ctx);
     return true;
 }
 
 bool eval_defer_pop_directory(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    if (ctx->deferred_dirs.count == 0) return true;
-    ctx->deferred_dirs.count--;
+    if (arena_arr_len(ctx->deferred_dirs) == 0) return true;
+    arena_arr_set_len(ctx->deferred_dirs, arena_arr_len(ctx->deferred_dirs) - 1);
     return true;
 }
 
@@ -1234,12 +1226,12 @@ bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
     Eval_Deferred_Dir_Frame *frame = flow_current_defer_dir(ctx);
     if (!ctx || !frame) return true;
 
-    while (frame->calls.count > 0) {
-        Eval_Deferred_Call call = frame->calls.items[0];
-        if (frame->calls.count > 1) {
-            memmove(frame->calls.items, frame->calls.items + 1, (frame->calls.count - 1) * sizeof(frame->calls.items[0]));
+    while (arena_arr_len(frame->calls) > 0) {
+        Eval_Deferred_Call call = frame->calls[0];
+        if (arena_arr_len(frame->calls) > 1) {
+            memmove(frame->calls, frame->calls + 1, (arena_arr_len(frame->calls) - 1) * sizeof(frame->calls[0]));
         }
-        frame->calls.count--;
+        arena_arr_set_len(frame->calls, arena_arr_len(frame->calls) - 1);
 
         Node deferred = {0};
         deferred.kind = NODE_COMMAND;
@@ -1346,12 +1338,12 @@ static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
     if (!ctx || !frame) return false;
 
     String_View *ids = NULL;
-    if (frame->calls.count > 0) {
-        ids = arena_alloc_array(ctx->arena, String_View, frame->calls.count);
+    if (arena_arr_len(frame->calls) > 0) {
+        ids = arena_alloc_array(ctx->arena, String_View, arena_arr_len(frame->calls));
         EVAL_OOM_RETURN_IF_NULL(ctx, ids, false);
-        for (size_t i = 0; i < frame->calls.count; i++) ids[i] = frame->calls.items[i].id;
+        for (size_t i = 0; i < arena_arr_len(frame->calls); i++) ids[i] = frame->calls[i].id;
     }
-    return eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, ids, frame->calls.count));
+    return eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, ids, arena_arr_len(frame->calls)));
 }
 
 static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
@@ -1494,10 +1486,10 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
             if (eval_should_stop(ctx)) return false;
             size_t idx = 0;
             if (!flow_find_deferred_call(frame, id, &idx)) continue;
-            if (idx + 1 < frame->calls.count) {
-                memmove(frame->calls.items + idx, frame->calls.items + idx + 1, (frame->calls.count - idx - 1) * sizeof(frame->calls.items[0]));
+            if (idx + 1 < arena_arr_len(frame->calls)) {
+                memmove(frame->calls + idx, frame->calls + idx + 1, (arena_arr_len(frame->calls) - idx - 1) * sizeof(frame->calls[0]));
             }
-            frame->calls.count--;
+            arena_arr_set_len(frame->calls, arena_arr_len(frame->calls) - 1);
         }
         return !eval_should_stop(ctx);
     }
@@ -1902,7 +1894,7 @@ bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
 
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    while (ctx->block_frames.count > 0) {
+    while (arena_arr_len(ctx->block_frames) > 0) {
         if (!block_pop_frame(ctx, NULL, true)) return false;
     }
     return true;
@@ -1994,7 +1986,7 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (ctx->return_propagate_count > 0) {
-        for (size_t bi = ctx->block_frames.count; bi-- > 0;) ctx->block_frames.items[bi].propagate_on_return = true;
+        for (size_t bi = arena_arr_len(ctx->block_frames); bi-- > 0;) ctx->block_frames[bi].propagate_on_return = true;
     }
     ctx->return_requested = true;
     return true;
@@ -2027,7 +2019,7 @@ bool eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: endblock()"))) return !eval_should_stop(ctx);
 
-    if (ctx->block_frames.count == 0) {
+    if (arena_arr_len(ctx->block_frames) == 0) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("flow"),

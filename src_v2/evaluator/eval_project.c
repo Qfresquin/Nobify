@@ -221,7 +221,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 2 || !eval_sv_eq_ci_lit(a.items[0], "VERSION")) {
+    if (arena_arr_len(a) < 2 || !eval_sv_eq_ci_lit(a[0], "VERSION")) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -231,7 +231,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
         return !eval_should_stop(ctx);
     }
-    if (a.count > 3 || (a.count == 3 && !eval_sv_eq_ci_lit(a.items[2], "FATAL_ERROR"))) {
+    if (arena_arr_len(a) > 3 || (arena_arr_len(a) == 3 && !eval_sv_eq_ci_lit(a[2], "FATAL_ERROR"))) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -247,7 +247,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
     Eval_Semver min_version = {0};
     Eval_Semver max_version = {0};
     bool has_max = false;
-    if (!policy_parse_version_range_strict(a.items[1],
+    if (!policy_parse_version_range_strict(a[1],
                                            &min_token,
                                            &min_version,
                                            &has_max,
@@ -259,7 +259,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("cmake_minimum_required() received invalid VERSION token"),
-                       a.items[1]);
+                       a[1]);
         return !eval_should_stop(ctx);
     }
     if (eval_semver_compare(&min_version, &k_running_cmake_328) > 0) {
@@ -279,7 +279,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
                        node->as.cmd.name,
                        o,
                        nob_sv_from_cstr("cmake_minimum_required() requires max version >= min version"),
-                       a.items[1]);
+                       a[1]);
         return !eval_should_stop(ctx);
     }
 
@@ -305,7 +305,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -316,8 +316,8 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "VERSION")) {
-        if (a.count != 2) {
+    if (eval_sv_eq_ci_lit(a[0], "VERSION")) {
+        if (arena_arr_len(a) != 2) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -333,7 +333,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
         Eval_Semver min_version = {0};
         Eval_Semver max_version = {0};
         bool has_max = false;
-        if (!policy_parse_version_range_strict(a.items[1],
+        if (!policy_parse_version_range_strict(a[1],
                                                &min_token,
                                                &min_version,
                                                &has_max,
@@ -345,7 +345,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("cmake_policy(VERSION ...) received invalid version token"),
-                           a.items[1]);
+                           a[1]);
             return !eval_should_stop(ctx);
         }
         if (eval_semver_compare(&min_version, &k_policy_floor_24) < 0) {
@@ -375,7 +375,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("cmake_policy(VERSION ...) requires max version >= min version"),
-                           a.items[1]);
+                           a[1]);
             return !eval_should_stop(ctx);
         }
 
@@ -386,8 +386,8 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "SET")) {
-        if (a.count != 3) {
+    if (eval_sv_eq_ci_lit(a[0], "SET")) {
+        if (arena_arr_len(a) != 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -397,32 +397,32 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: cmake_policy(SET CMP0077 NEW)"));
             return !eval_should_stop(ctx);
         }
-        if (!eval_policy_is_known(a.items[1])) {
+        if (!eval_policy_is_known(a[1])) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("cmake_policy(SET ...) requires a known CMP policy id"),
-                           a.items[1]);
+                           a[1]);
             return !eval_should_stop(ctx);
         }
-        if (!(eval_sv_eq_ci_lit(a.items[2], "OLD") || eval_sv_eq_ci_lit(a.items[2], "NEW"))) {
+        if (!(eval_sv_eq_ci_lit(a[2], "OLD") || eval_sv_eq_ci_lit(a[2], "NEW"))) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("cmake_policy(SET ...) requires OLD or NEW"),
-                           a.items[2]);
+                           a[2]);
             return !eval_should_stop(ctx);
         }
-        if (!eval_policy_set(ctx, a.items[1], a.items[2])) return !eval_should_stop(ctx);
+        if (!eval_policy_set(ctx, a[1], a[2])) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "GET")) {
-        if (a.count != 3) {
+    if (eval_sv_eq_ci_lit(a[0], "GET")) {
+        if (arena_arr_len(a) != 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -432,23 +432,23 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
             return !eval_should_stop(ctx);
         }
-        if (!eval_policy_is_known(a.items[1])) {
+        if (!eval_policy_is_known(a[1])) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            node->as.cmd.name,
                            o,
                            nob_sv_from_cstr("cmake_policy(GET ...) requires a known CMP policy id"),
-                           a.items[1]);
+                           a[1]);
             return !eval_should_stop(ctx);
         }
-        String_View val = eval_policy_get_effective(ctx, a.items[1]);
-        if (!eval_var_set(ctx, a.items[2], val)) return !eval_should_stop(ctx);
+        String_View val = eval_policy_get_effective(ctx, a[1]);
+        if (!eval_var_set(ctx, a[2], val)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "PUSH")) {
-        if (a.count != 1) {
+    if (eval_sv_eq_ci_lit(a[0], "PUSH")) {
+        if (arena_arr_len(a) != 1) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -462,8 +462,8 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (eval_sv_eq_ci_lit(a.items[0], "POP")) {
-        if (a.count != 1) {
+    if (eval_sv_eq_ci_lit(a[0], "POP")) {
+        if (arena_arr_len(a) != 1) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -493,7 +493,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                    node->as.cmd.name,
                    o,
                    nob_sv_from_cstr("Unknown cmake_policy() subcommand"),
-                   a.items[0]);
+                   a[0]);
     eval_request_stop_on_error(ctx);
     return !eval_should_stop(ctx);
 }
@@ -566,8 +566,8 @@ static bool language_token_is_known(String_View lang) {
 }
 
 static bool enabled_languages_contains(SV_List langs, String_View candidate) {
-    for (size_t i = 0; i < langs.count; i++) {
-        if (eval_sv_key_eq(langs.items[i], candidate)) return true;
+    for (size_t i = 0; i < arena_arr_len(langs); i++) {
+        if (eval_sv_key_eq(langs[i], candidate)) return true;
     }
     return false;
 }
@@ -597,14 +597,14 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
     if (!ctx || !requested) return false;
 
     String_View existing_text = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"));
-    SV_List enabled = {0};
+    SV_List enabled = NULL;
     if (existing_text.count > 0) {
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing_text, &enabled)) return false;
         if (eval_should_stop(ctx)) return false;
     }
 
-    for (size_t i = 0; i < requested->count; i++) {
-        String_View lang = requested->items[i];
+    for (size_t i = 0; i < arena_arr_len(*requested); i++) {
+        String_View lang = (*requested)[i];
         if (!language_token_is_known(lang)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
@@ -624,7 +624,7 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
         if (!eval_var_set(ctx, loaded_var, nob_sv_from_cstr("1"))) return false;
     }
 
-    String_View merged = eval_sv_join_semi_temp(ctx, enabled.items, enabled.count);
+    String_View merged = eval_sv_join_semi_temp(ctx, enabled, arena_arr_len(enabled));
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), merged)) return false;
     if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), merged)) return false;
@@ -636,7 +636,7 @@ bool eval_handle_enable_language(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -647,7 +647,7 @@ bool eval_handle_enable_language(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (ctx->function_eval_depth > 0 || ctx->block_frames.count > 0) {
+    if (ctx->function_eval_depth > 0 || arena_arr_len(ctx->block_frames) > 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -658,14 +658,14 @@ bool eval_handle_enable_language(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    SV_List requested = {0};
+    SV_List requested = NULL;
     bool saw_optional = false;
-    for (size_t i = 0; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "OPTIONAL")) {
+    for (size_t i = 0; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "OPTIONAL")) {
             saw_optional = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a.items[i], "NONE")) {
+        if (eval_sv_eq_ci_lit(a[i], "NONE")) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -675,10 +675,10 @@ bool eval_handle_enable_language(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Use project(... LANGUAGES NONE) to leave all languages disabled"));
             return !eval_should_stop(ctx);
         }
-        if (!svu_list_push_temp(ctx, &requested, a.items[i])) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &requested, a[i])) return !eval_should_stop(ctx);
     }
 
-    if (requested.count == 0) {
+    if (arena_arr_len(requested) == 0) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -709,7 +709,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -720,7 +720,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     String_View version_token = nob_sv_from_cstr("");
     String_View desc = nob_sv_from_cstr("");
     String_View homepage_url = nob_sv_from_cstr("");
@@ -730,10 +730,10 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     bool seen_homepage = false;
     bool seen_languages_keyword = false;
     bool seen_named_options = false;
-    SV_List lang_items = {0};
+    SV_List lang_items = NULL;
 
-    for (size_t i = 1; i < a.count; i++) {
-        String_View token = a.items[i];
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        String_View token = a[i];
         if (eval_sv_eq_ci_lit(token, "VERSION")) {
             seen_named_options = true;
             if (seen_version) {
@@ -746,7 +746,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Use VERSION only once"));
                 return !eval_should_stop(ctx);
             }
-            if (i + 1 >= a.count) {
+            if (i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
@@ -758,7 +758,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
             }
             seen_version = true;
             has_version_arg = true;
-            version_token = a.items[++i];
+            version_token = a[++i];
             continue;
         }
 
@@ -774,7 +774,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Use DESCRIPTION only once"));
                 return !eval_should_stop(ctx);
             }
-            if (i + 1 >= a.count) {
+            if (i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
@@ -785,7 +785,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                 return !eval_should_stop(ctx);
             }
             seen_description = true;
-            desc = a.items[++i];
+            desc = a[++i];
             continue;
         }
 
@@ -801,7 +801,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                                nob_sv_from_cstr("Use HOMEPAGE_URL only once"));
                 return !eval_should_stop(ctx);
             }
-            if (i + 1 >= a.count) {
+            if (i + 1 >= arena_arr_len(a)) {
                 eval_emit_diag(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
@@ -812,7 +812,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                 return !eval_should_stop(ctx);
             }
             seen_homepage = true;
-            homepage_url = a.items[++i];
+            homepage_url = a[++i];
             continue;
         }
 
@@ -829,8 +829,8 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                 return !eval_should_stop(ctx);
             }
             seen_languages_keyword = true;
-            for (size_t j = i + 1; j < a.count; j++) {
-                if (!svu_list_push_temp(ctx, &lang_items, a.items[j])) return !eval_should_stop(ctx);
+            for (size_t j = i + 1; j < arena_arr_len(a); j++) {
+                if (!svu_list_push_temp(ctx, &lang_items, a[j])) return !eval_should_stop(ctx);
             }
             break;
         }
@@ -846,8 +846,8 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
 
-        for (size_t j = i; j < a.count; j++) {
-            if (!svu_list_push_temp(ctx, &lang_items, a.items[j])) return !eval_should_stop(ctx);
+        for (size_t j = i; j < arena_arr_len(a); j++) {
+            if (!svu_list_push_temp(ctx, &lang_items, a[j])) return !eval_should_stop(ctx);
         }
         break;
     }
@@ -864,17 +864,17 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (lang_items.count == 0 && !seen_languages_keyword) {
+    if (arena_arr_len(lang_items) == 0 && !seen_languages_keyword) {
         if (!svu_list_push_temp(ctx, &lang_items, nob_sv_from_cstr("C"))) return !eval_should_stop(ctx);
         if (!svu_list_push_temp(ctx, &lang_items, nob_sv_from_cstr("CXX"))) return !eval_should_stop(ctx);
     }
 
     size_t none_count = 0;
-    for (size_t i = 0; i < lang_items.count; i++) {
-        if (eval_sv_eq_ci_lit(lang_items.items[i], "NONE")) none_count++;
+    for (size_t i = 0; i < arena_arr_len(lang_items); i++) {
+        if (eval_sv_eq_ci_lit(lang_items[i], "NONE")) none_count++;
     }
     if (none_count > 0) {
-        if (lang_items.count != 1 || none_count != 1) {
+        if (arena_arr_len(lang_items) != 1 || none_count != 1) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -884,7 +884,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Use only NONE to skip enabling languages"));
             return !eval_should_stop(ctx);
         }
-        lang_items.count = 0;
+        arena_arr_set_len(lang_items, 0);
     }
     if (!apply_enabled_languages(ctx, o, node->as.cmd.name, &lang_items)) return !eval_should_stop(ctx);
 
@@ -893,7 +893,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     String_View version_minor = has_version_arg ? version_info.minor : nob_sv_from_cstr("");
     String_View version_patch = has_version_arg ? version_info.patch : nob_sv_from_cstr("");
     String_View version_tweak = has_version_arg ? version_info.tweak : nob_sv_from_cstr("");
-    String_View langs = eval_sv_join_semi_temp(ctx, lang_items.items, lang_items.count);
+    String_View langs = eval_sv_join_semi_temp(ctx, lang_items, arena_arr_len(lang_items));
 
     String_View project_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (project_src_dir.count == 0) project_src_dir = ctx->source_dir;
@@ -960,7 +960,7 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -971,11 +971,11 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     if (!add_target_name_must_be_new(ctx, node->as.cmd.name, o, name)) return !eval_should_stop(ctx);
 
-    if (a.count >= 2 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
-        if (a.count != 3) {
+    if (arena_arr_len(a) >= 2 && eval_sv_eq_ci_lit(a[1], "ALIAS")) {
+        if (arena_arr_len(a) != 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -985,7 +985,7 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: add_executable(<name> ALIAS <target>)"));
             return !eval_should_stop(ctx);
         }
-        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a.items[2]);
+        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2]);
         return !eval_should_stop(ctx);
     }
 
@@ -996,14 +996,14 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     bool is_exclude_from_all = false;
     size_t source_start = 1;
 
-    if (a.count >= 2 && eval_sv_eq_ci_lit(a.items[1], "IMPORTED")) {
+    if (arena_arr_len(a) >= 2 && eval_sv_eq_ci_lit(a[1], "IMPORTED")) {
         is_imported = true;
         source_start = 2;
-        if (source_start < a.count && eval_sv_eq_ci_lit(a.items[source_start], "GLOBAL")) {
+        if (source_start < arena_arr_len(a) && eval_sv_eq_ci_lit(a[source_start], "GLOBAL")) {
             is_global = true;
             source_start++;
         }
-        if (source_start < a.count) {
+        if (source_start < arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1016,18 +1016,18 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (!is_imported) {
-        for (size_t i = 1; i < a.count; i++) {
-            if (eval_sv_eq_ci_lit(a.items[i], "WIN32")) {
+        for (size_t i = 1; i < arena_arr_len(a); i++) {
+            if (eval_sv_eq_ci_lit(a[i], "WIN32")) {
                 is_win32 = true;
                 source_start = i + 1;
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "MACOSX_BUNDLE")) {
+            if (eval_sv_eq_ci_lit(a[i], "MACOSX_BUNDLE")) {
                 is_macos_bundle = true;
                 source_start = i + 1;
                 continue;
             }
-            if (eval_sv_eq_ci_lit(a.items[i], "EXCLUDE_FROM_ALL")) {
+            if (eval_sv_eq_ci_lit(a[i], "EXCLUDE_FROM_ALL")) {
                 is_exclude_from_all = true;
                 source_start = i + 1;
                 continue;
@@ -1064,12 +1064,12 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    for (size_t i = source_start; !is_imported && i < a.count; i++) {
+    for (size_t i = source_start; !is_imported && i < arena_arr_len(a); i++) {
         Cmake_Event src_ev = {0};
         src_ev.kind = EV_TARGET_ADD_SOURCE;
         src_ev.origin = o;
         src_ev.as.target_add_source.target_name = ev.as.target_declare.name;
-        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, a[i]);
         if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
     }
 
@@ -1083,7 +1083,7 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
@@ -1094,11 +1094,11 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View name = a.items[0];
+    String_View name = a[0];
     if (!add_target_name_must_be_new(ctx, node->as.cmd.name, o, name)) return !eval_should_stop(ctx);
 
-    if (a.count >= 2 && eval_sv_eq_ci_lit(a.items[1], "ALIAS")) {
-        if (a.count != 3) {
+    if (arena_arr_len(a) >= 2 && eval_sv_eq_ci_lit(a[1], "ALIAS")) {
+        if (arena_arr_len(a) != 3) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1108,7 +1108,7 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: add_library(<name> ALIAS <target>)"));
             return !eval_should_stop(ctx);
         }
-        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a.items[2]);
+        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2]);
         return !eval_should_stop(ctx);
     }
 
@@ -1120,35 +1120,35 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     bool is_imported = false;
     bool is_global = false;
     bool is_exclude_from_all = false;
-    if (i < a.count) {
-        if (eval_sv_eq_ci_lit(a.items[i], "STATIC")) {
+    if (i < arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(a[i], "STATIC")) {
             ty = EV_TARGET_LIBRARY_STATIC;
             has_explicit_type = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(a.items[i], "SHARED")) {
+        } else if (eval_sv_eq_ci_lit(a[i], "SHARED")) {
             ty = EV_TARGET_LIBRARY_SHARED;
             has_explicit_type = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(a.items[i], "MODULE")) {
+        } else if (eval_sv_eq_ci_lit(a[i], "MODULE")) {
             ty = EV_TARGET_LIBRARY_MODULE;
             has_explicit_type = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(a.items[i], "INTERFACE")) {
+        } else if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
             ty = EV_TARGET_LIBRARY_INTERFACE;
             has_explicit_type = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(a.items[i], "OBJECT")) {
+        } else if (eval_sv_eq_ci_lit(a[i], "OBJECT")) {
             ty = EV_TARGET_LIBRARY_OBJECT;
             has_explicit_type = true;
             i++;
-        } else if (eval_sv_eq_ci_lit(a.items[i], "UNKNOWN")) {
+        } else if (eval_sv_eq_ci_lit(a[i], "UNKNOWN")) {
             ty = EV_TARGET_LIBRARY_UNKNOWN;
             has_explicit_type = true;
             i++;
         }
     }
 
-    if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "IMPORTED")) {
+    if (i < arena_arr_len(a) && eval_sv_eq_ci_lit(a[i], "IMPORTED")) {
         is_imported = true;
         i++;
         if (!has_explicit_type) {
@@ -1161,11 +1161,11 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: add_library(<name> <STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN> IMPORTED [GLOBAL])"));
             return !eval_should_stop(ctx);
         }
-        if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "GLOBAL")) {
+        if (i < arena_arr_len(a) && eval_sv_eq_ci_lit(a[i], "GLOBAL")) {
             is_global = true;
             i++;
         }
-        if (i < a.count) {
+        if (i < arena_arr_len(a)) {
             eval_emit_diag(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
@@ -1181,7 +1181,7 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         if (!has_explicit_type) {
             ty = add_library_default_shared(ctx) ? EV_TARGET_LIBRARY_SHARED : EV_TARGET_LIBRARY_STATIC;
         }
-        if (i < a.count && eval_sv_eq_ci_lit(a.items[i], "EXCLUDE_FROM_ALL")) {
+        if (i < arena_arr_len(a) && eval_sv_eq_ci_lit(a[i], "EXCLUDE_FROM_ALL")) {
             is_exclude_from_all = true;
             i++;
         }
@@ -1206,12 +1206,12 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    for (; !is_imported && i < a.count; i++) {
+    for (; !is_imported && i < arena_arr_len(a); i++) {
         Cmake_Event src_ev = {0};
         src_ev.kind = EV_TARGET_ADD_SOURCE;
         src_ev.origin = o;
         src_ev.as.target_add_source.target_name = ev.as.target_declare.name;
-        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, a.items[i]);
+        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, a[i]);
         if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
     }
 

@@ -292,8 +292,8 @@ static const Eval_Property_Definition *eval_property_definition_find_impl(Evalua
                                                                           String_View scope_upper,
                                                                           String_View property_upper) {
     if (!ctx) return NULL;
-    for (size_t i = 0; i < ctx->property_definitions.count; i++) {
-        const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
+        const Eval_Property_Definition *def = &ctx->property_definitions[i];
         if (!eval_sv_key_eq(def->scope_upper, scope_upper)) continue;
         if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
         return def;
@@ -304,28 +304,26 @@ static const Eval_Property_Definition *eval_property_definition_find_impl(Evalua
 bool eval_macro_frame_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};
-    if (!arena_arr_push(ctx->event_arena, ctx->macro_frames.items, frame)) return ctx_oom(ctx);
-    ctx->macro_frames.count = arena_arr_len(ctx->macro_frames.items);
-    ctx->macro_frames.capacity = arena_arr_cap(ctx->macro_frames.items);
+    if (!arena_arr_push(ctx->event_arena, ctx->macro_frames, frame)) return ctx_oom(ctx);
     return true;
 }
 
 void eval_macro_frame_pop(Evaluator_Context *ctx) {
-    if (!ctx || ctx->macro_frames.count == 0) return;
-    ctx->macro_frames.count--;
+    if (!ctx || arena_arr_len(ctx->macro_frames) == 0) return;
+    arena_arr_set_len(ctx->macro_frames, arena_arr_len(ctx->macro_frames) - 1);
 }
 
 bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View value) {
-    if (!ctx || ctx->macro_frames.count == 0) return false;
+    if (!ctx || arena_arr_len(ctx->macro_frames) == 0) return false;
 
-    Macro_Frame *top = &ctx->macro_frames.items[ctx->macro_frames.count - 1];
+    Macro_Frame *top = &ctx->macro_frames[arena_arr_len(ctx->macro_frames) - 1];
     key = sv_copy_to_event_arena(ctx, key);
     value = sv_copy_to_event_arena(ctx, value);
     if (eval_should_stop(ctx)) return false;
 
-    for (size_t i = top->bindings.count; i-- > 0;) {
-        if (eval_sv_key_eq(top->bindings.items[i].key, key)) {
-            top->bindings.items[i].value = value;
+    for (size_t i = arena_arr_len(top->bindings); i-- > 0;) {
+        if (eval_sv_key_eq(top->bindings[i].key, key)) {
+            top->bindings[i].value = value;
             return true;
         }
     }
@@ -333,19 +331,17 @@ bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View va
     Var_Binding b = {0};
     b.key = key;
     b.value = value;
-    if (!arena_arr_push(ctx->event_arena, top->bindings.items, b)) return ctx_oom(ctx);
-    top->bindings.count = arena_arr_len(top->bindings.items);
-    top->bindings.capacity = arena_arr_cap(top->bindings.items);
+    if (!arena_arr_push(ctx->event_arena, top->bindings, b)) return ctx_oom(ctx);
     return true;
 }
 
 bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *out_value) {
     if (!ctx || !out_value) return false;
-    for (size_t fi = ctx->macro_frames.count; fi-- > 0;) {
-        const Macro_Frame *f = &ctx->macro_frames.items[fi];
-        for (size_t i = f->bindings.count; i-- > 0;) {
-            if (eval_sv_key_eq(f->bindings.items[i].key, key)) {
-                *out_value = f->bindings.items[i].value;
+    for (size_t fi = arena_arr_len(ctx->macro_frames); fi-- > 0;) {
+        const Macro_Frame *f = &ctx->macro_frames[fi];
+        for (size_t i = arena_arr_len(f->bindings); i-- > 0;) {
+            if (eval_sv_key_eq(f->bindings[i].key, key)) {
+                *out_value = f->bindings[i].value;
                 return true;
             }
         }
@@ -401,9 +397,7 @@ bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition
     }
     if (eval_should_stop(ctx)) return false;
 
-    if (!arena_arr_push(ctx->event_arena, ctx->property_definitions.items, stored)) return ctx_oom(ctx);
-    ctx->property_definitions.count = arena_arr_len(ctx->property_definitions.items);
-    ctx->property_definitions.capacity = arena_arr_cap(ctx->property_definitions.items);
+    if (!arena_arr_push(ctx->event_arena, ctx->property_definitions, stored)) return ctx_oom(ctx);
     return true;
 }
 
@@ -417,8 +411,8 @@ bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, S
 bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_Origin origin, String_View target_name) {
     if (!ctx || eval_should_stop(ctx)) return false;
 
-    for (size_t i = 0; i < ctx->property_definitions.count; i++) {
-        const Eval_Property_Definition *def = &ctx->property_definitions.items[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
+        const Eval_Property_Definition *def = &ctx->property_definitions[i];
         if (!eval_sv_eq_ci_lit(def->scope_upper, "TARGET")) continue;
         if (!def->has_initialize_from_variable) continue;
         if (!eval_var_defined(ctx, def->initialize_from_variable)) continue;
@@ -964,17 +958,15 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     cmd.params = params;
     cmd.body = body;
 
-    if (!arena_arr_push(ctx->user_commands_arena, ctx->user_commands.items, cmd)) return ctx_oom(ctx);
-    ctx->user_commands.count = arena_arr_len(ctx->user_commands.items);
-    ctx->user_commands.capacity = arena_arr_cap(ctx->user_commands.items);
+    if (!arena_arr_push(ctx->user_commands_arena, ctx->user_commands, cmd)) return ctx_oom(ctx);
     return true;
 }
 
 User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return NULL;
-    for (size_t i = ctx->user_commands.count; i-- > 0;) {
-        if (sv_eq_ci(ctx->user_commands.items[i].name, name)) {
-            return &ctx->user_commands.items[i];
+    for (size_t i = arena_arr_len(ctx->user_commands); i-- > 0;) {
+        if (sv_eq_ci(ctx->user_commands[i].name, name)) {
+            return &ctx->user_commands[i];
         }
     }
     return NULL;
@@ -1103,21 +1095,8 @@ cleanup:
 
 static bool ensure_scope_capacity(Evaluator_Context *ctx, size_t min_cap) {
     if (!ctx || !ctx->event_arena) return false;
-    if (min_cap <= ctx->scope_capacity) return true;
-
-    size_t new_cap = ctx->scope_capacity == 0 ? 4 : ctx->scope_capacity * 2;
-    while (new_cap < min_cap) new_cap *= 2;
-
-    // Do not rely on realloc-last semantics here: the persistent arena receives
-    // many interleaved allocations (vars, macro frames, user commands).
-    // Growing by allocate+copy is stable and preserves existing scope payloads.
-    Var_Scope *new_scopes = arena_alloc_array_zero(ctx->event_arena, Var_Scope, new_cap);
-    EVAL_OOM_RETURN_IF_NULL(ctx, new_scopes, false);
-    if (ctx->scopes && ctx->scope_capacity > 0) {
-        memcpy(new_scopes, ctx->scopes, ctx->scope_capacity * sizeof(Var_Scope));
-    }
-    ctx->scopes = new_scopes;
-    ctx->scope_capacity = new_cap;
+    if (!arena_arr_reserve(ctx->event_arena, ctx->scopes, min_cap)) return ctx_oom(ctx);
+    ctx->scope_capacity = arena_arr_cap(ctx->scopes);
     return true;
 }
 

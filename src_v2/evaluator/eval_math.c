@@ -294,14 +294,14 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (a.count < 1) {
+    if (arena_arr_len(a) < 1) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                        nob_sv_from_cstr("math() requires a subcommand"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_sv_eq_ci_lit(a.items[0], "EXPR")) {
+    if (!eval_sv_eq_ci_lit(a[0], "EXPR")) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                        nob_sv_from_cstr("Unsupported math() subcommand"),
                        nob_sv_from_cstr("Implemented: EXPR"));
@@ -309,50 +309,50 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (a.count < 3) {
+    if (arena_arr_len(a) < 3) {
         eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                        nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return !eval_should_stop(ctx);
     }
 
-    String_View out_var = a.items[1];
+    String_View out_var = a[1];
     size_t expr_begin = 2;
-    size_t expr_end = a.count;
+    size_t expr_end = arena_arr_len(a);
     Math_Output_Format out_fmt = MATH_OUTPUT_DECIMAL;
-    size_t output_format_idx = a.count;
-    for (size_t i = expr_begin; i < a.count; i++) {
-        if (eval_sv_eq_ci_lit(a.items[i], "OUTPUT_FORMAT")) {
+    size_t output_format_idx = arena_arr_len(a);
+    for (size_t i = expr_begin; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "OUTPUT_FORMAT")) {
             output_format_idx = i;
             break;
         }
     }
 
-    if (output_format_idx < a.count) {
-        if (output_format_idx + 1 >= a.count) {
+    if (output_format_idx < arena_arr_len(a)) {
+        if (output_format_idx + 1 >= arena_arr_len(a)) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                            nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"),
                            nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
             return !eval_should_stop(ctx);
         }
-        if (!math_parse_output_format_sv(a.items[output_format_idx + 1], &out_fmt)) {
+        if (!math_parse_output_format_sv(a[output_format_idx + 1], &out_fmt)) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                            nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"),
-                           a.items[output_format_idx + 1]);
+                           a[output_format_idx + 1]);
             return !eval_should_stop(ctx);
         }
-        if (output_format_idx + 2 != a.count) {
+        if (output_format_idx + 2 != arena_arr_len(a)) {
             eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
                            nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"),
                            nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
             return !eval_should_stop(ctx);
         }
         expr_end = output_format_idx;
-    } else if (a.count >= 4) {
+    } else if (arena_arr_len(a) >= 4) {
         Math_Output_Format legacy_out_fmt = MATH_OUTPUT_DECIMAL;
-        if (math_parse_output_format_sv(a.items[a.count - 1], &legacy_out_fmt)) {
+        if (math_parse_output_format_sv(a[arena_arr_len(a) - 1], &legacy_out_fmt)) {
             out_fmt = legacy_out_fmt;
-            expr_end = a.count - 1;
+            expr_end = arena_arr_len(a) - 1;
         }
     }
 
@@ -364,7 +364,7 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     }
 
     size_t expr_count = expr_end - expr_begin;
-    String_View expr_sv = (expr_count == 1) ? a.items[expr_begin] : svu_join_no_sep_temp(ctx, &a.items[expr_begin], expr_count);
+    String_View expr_sv = (expr_count == 1) ? a[expr_begin] : svu_join_no_sep_temp(ctx, &a[expr_begin], expr_count);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     char *expr_buf = (char*)arena_alloc(eval_temp_arena(ctx), expr_sv.count + 1);

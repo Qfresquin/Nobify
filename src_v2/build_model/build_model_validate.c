@@ -1,6 +1,7 @@
 #include "build_model_validate.h"
 
 #include "../diagnostics/diagnostics.h"
+#include "../arena/arena_dyn.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -114,8 +115,8 @@ static void bm_validate_ref_list(Build_Model_Validate_Ctx *ctx,
                                  const char *list_name) {
     if (!ctx || !ctx->model || !owner || !list) return;
 
-    for (size_t i = 0; i < list->count; i++) {
-        String_View ref = list->items[i];
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        String_View ref = (*list)[i];
         if (ref.count == 0) continue;
         if (build_model_find_target_index(ctx->model, ref) >= 0) continue;
 
@@ -164,8 +165,8 @@ static bool bm_cycle_visit(Build_Model_Validate_Ctx *ctx, size_t idx, uint8_t *s
 
     for (size_t li = 0; li < sizeof(lists) / sizeof(lists[0]); li++) {
         const String_List *list = lists[li];
-        for (size_t i = 0; i < list->count; i++) {
-            String_View ref = list->items[i];
+        for (size_t i = 0; i < arena_arr_len(*list); i++) {
+            String_View ref = (*list)[i];
             if (ref.count == 0) continue;
             int dep_idx = build_model_find_target_index(ctx->model, ref);
             if (dep_idx < 0) continue;
@@ -283,14 +284,14 @@ static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
         if (!target) continue;
 
         if (target->type == TARGET_INTERFACE_LIB) {
-            if (target->sources.count > 0) {
+            if (arena_arr_len(target->sources) > 0) {
                 bm_validate_report(ctx,
                                    true,
                                    target,
                                    "INTERFACE target contains sources",
                                    "move sources to a concrete library/executable target");
             }
-            if (target->dependencies.count > 0 || target->link_libraries.count > 0) {
+            if (arena_arr_len(target->dependencies) > 0 || arena_arr_len(target->link_libraries) > 0) {
                 bm_validate_report(ctx,
                                    true,
                                    target,
@@ -300,9 +301,9 @@ static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
         }
 
         bool duplicate_source = false;
-        for (size_t a = 0; a < target->sources.count && !duplicate_source; a++) {
-            for (size_t b = a + 1; b < target->sources.count; b++) {
-                if (nob_sv_eq(target->sources.items[a], target->sources.items[b])) {
+        for (size_t a = 0; a < arena_arr_len(target->sources) && !duplicate_source; a++) {
+            for (size_t b = a + 1; b < arena_arr_len(target->sources); b++) {
+                if (nob_sv_eq(target->sources[a], target->sources[b])) {
                     duplicate_source = true;
                     break;
                 }
@@ -344,8 +345,8 @@ static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
     const char *install_names[] = {"TARGETS", "FILES", "PROGRAMS", "DIRECTORY"};
     for (size_t li = 0; li < sizeof(install_lists) / sizeof(install_lists[0]); li++) {
         const String_List *list = install_lists[li];
-        for (size_t i = 0; i < list->count; i++) {
-            if (!bm_install_rule_has_destination(list->items[i])) {
+        for (size_t i = 0; i < arena_arr_len(*list); i++) {
+            if (!bm_install_rule_has_destination((*list)[i])) {
                 bm_validate_report(ctx,
                                    true,
                                    NULL,
@@ -367,8 +368,8 @@ static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
                                "declare the group via cpack_add_component_group()");
         }
 
-        for (size_t d = 0; d < component->depends.count; d++) {
-            String_View dep = component->depends.items[d];
+        for (size_t d = 0; d < arena_arr_len(component->depends); d++) {
+            String_View dep = component->depends[d];
             if (dep.count == 0) continue;
             if (!bm_has_cpack_component(ctx->model, dep)) {
                 bm_validate_report(ctx,
@@ -381,8 +382,8 @@ static void bm_validate_semantics(Build_Model_Validate_Ctx *ctx) {
             }
         }
 
-        for (size_t t = 0; t < component->install_types.count; t++) {
-            String_View install_type = component->install_types.items[t];
+        for (size_t t = 0; t < arena_arr_len(component->install_types); t++) {
+            String_View install_type = component->install_types[t];
             if (install_type.count == 0) continue;
             if (!bm_has_cpack_install_type(ctx->model, install_type)) {
                 bm_validate_report(ctx,
