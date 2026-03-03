@@ -382,6 +382,21 @@ bool eval_emit_event(Evaluator_Context *ctx, Cmake_Event ev);
 static inline bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
     return eval_emit_event(ctx, ev);
 }
+static inline bool eval_emit_target_prop_set(Evaluator_Context *ctx,
+                                             Cmake_Event_Origin origin,
+                                             String_View target_name,
+                                             String_View key,
+                                             String_View value,
+                                             Cmake_Target_Property_Op op) {
+    Cmake_Event ev = {0};
+    ev.kind = EV_TARGET_PROP_SET;
+    ev.origin = origin;
+    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.target_prop_set.op = op;
+    return emit_event(ctx, ev);
+}
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Cmake_Diag_Severity sev,
                     String_View component,

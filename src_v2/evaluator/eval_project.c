@@ -10,22 +10,6 @@
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 
-static bool emit_target_prop_set(Evaluator_Context *ctx,
-                                 Cmake_Event_Origin o,
-                                 String_View target_name,
-                                 String_View key,
-                                 String_View value,
-                                 Cmake_Target_Property_Op op) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_PROP_SET;
-    ev.origin = o;
-    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
-    ev.as.target_prop_set.op = op;
-    return emit_event(ctx, ev);
-}
-
 static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
                                                   Cmake_Event_Origin o,
                                                   String_View target_name) {
@@ -34,12 +18,12 @@ static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
     if (eval_sv_eq_ci_lit(raw, "0") || eval_sv_eq_ci_lit(raw, "FALSE") || eval_sv_eq_ci_lit(raw, "OFF")) {
         return true;
     }
-    return emit_target_prop_set(ctx,
-                                o,
-                                target_name,
-                                nob_sv_from_cstr("SYSTEM"),
-                                nob_sv_from_cstr("1"),
-                                EV_PROP_SET);
+    return eval_emit_target_prop_set(ctx,
+                                     o,
+                                     target_name,
+                                     nob_sv_from_cstr("SYSTEM"),
+                                     nob_sv_from_cstr("1"),
+                                     EV_PROP_SET);
 }
 
 static bool emit_items_from_list(Evaluator_Context *ctx,
@@ -90,12 +74,12 @@ static bool emit_bool_target_prop_true(Evaluator_Context *ctx,
                                        Cmake_Event_Origin o,
                                        String_View target_name,
                                        const char *key) {
-    return emit_target_prop_set(ctx,
-                                o,
-                                target_name,
-                                nob_sv_from_cstr(key),
-                                nob_sv_from_cstr("1"),
-                                EV_PROP_SET);
+    return eval_emit_target_prop_set(ctx,
+                                     o,
+                                     target_name,
+                                     nob_sv_from_cstr(key),
+                                     nob_sv_from_cstr("1"),
+                                     EV_PROP_SET);
 }
 
 static bool add_target_name_must_be_new(Evaluator_Context *ctx,

@@ -10,22 +10,6 @@
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 
-static bool emit_target_prop_set(Evaluator_Context *ctx,
-                                 Cmake_Event_Origin o,
-                                 String_View target_name,
-                                 String_View key,
-                                 String_View value,
-                                 Cmake_Target_Property_Op op) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_PROP_SET;
-    ev.origin = o;
-    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
-    ev.as.target_prop_set.op = op;
-    return emit_event(ctx, ev);
-}
-
 static bool emit_var_set(Evaluator_Context *ctx, Cmake_Event_Origin o, String_View key, String_View value) {
     Cmake_Event ev = {0};
     ev.kind = EV_VAR_SET;
@@ -2043,7 +2027,7 @@ bool eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
             if (!emit_target_add_source(ctx, o, tgt, item)) return !eval_should_stop(ctx);
         }
         if (vis != EV_VISIBILITY_PRIVATE) {
-            if (!emit_target_prop_set(ctx,
+            if (!eval_emit_target_prop_set(ctx,
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("INTERFACE_SOURCES"),
@@ -2086,7 +2070,7 @@ bool eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *nod
         if (a[i].count == 0) continue;
 
         if (vis != EV_VISIBILITY_INTERFACE) {
-            if (!emit_target_prop_set(ctx,
+            if (!eval_emit_target_prop_set(ctx,
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("COMPILE_FEATURES"),
@@ -2096,7 +2080,7 @@ bool eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *nod
             }
         }
         if (vis != EV_VISIBILITY_PRIVATE) {
-            if (!emit_target_prop_set(ctx,
+            if (!eval_emit_target_prop_set(ctx,
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
@@ -2141,7 +2125,7 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
             return !eval_should_stop(ctx);
         }
         if (!target_usage_validate_target(ctx, node, a[2])) return !eval_should_stop(ctx);
-        if (!emit_target_prop_set(ctx,
+        if (!eval_emit_target_prop_set(ctx,
                                   o,
                                   tgt,
                                   nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"),
@@ -2168,7 +2152,7 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
         if (item.count == 0) continue;
 
         if (vis != EV_VISIBILITY_INTERFACE) {
-            if (!emit_target_prop_set(ctx,
+            if (!eval_emit_target_prop_set(ctx,
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("PRECOMPILE_HEADERS"),
@@ -2178,7 +2162,7 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
             }
         }
         if (vis != EV_VISIBILITY_PRIVATE) {
-            if (!emit_target_prop_set(ctx,
+            if (!eval_emit_target_prop_set(ctx,
                                       o,
                                       tgt,
                                       nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"),
@@ -2575,7 +2559,7 @@ bool eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node)
             continue;
         }
         for (size_t i = kv_start; i + 1 < arena_arr_len(a); i += 2) {
-            if (!emit_target_prop_set(ctx, o, tgt, a[i], a[i + 1], EV_PROP_SET)) {
+            if (!eval_emit_target_prop_set(ctx, o, tgt, a[i], a[i + 1], EV_PROP_SET)) {
                 return !eval_should_stop(ctx);
             }
         }
@@ -2808,7 +2792,7 @@ bool eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
                                objects[ti]);
                 continue;
             }
-            if (!emit_target_prop_set(ctx, o, objects[ti], key, value, op)) {
+            if (!eval_emit_target_prop_set(ctx, o, objects[ti], key, value, op)) {
                 return !eval_should_stop(ctx);
             }
         }

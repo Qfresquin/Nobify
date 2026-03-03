@@ -51,7 +51,7 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
 
     String_View dir = a[0];
     if (!eval_sv_is_abs_path(dir)) {
-        dir = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_src_dir(ctx), dir);
+        dir = eval_sv_path_join(eval_temp_arena(ctx), eval_current_source_dir(ctx), dir);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     }
 
@@ -1127,7 +1127,7 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
 
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         String_View path = nob_sv_from_cstr("");
-        if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_file_current_bin_dir(ctx), &path)) return;
+        if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_current_binary_dir(ctx), &path)) return;
 
         if (!eval_file_mkdir_p(ctx, path)) {
             eval_emit_diag(ctx,
@@ -1172,7 +1172,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
         }
     }
 
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_current_source_dir(ctx), &path)) return;
 
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
@@ -1363,7 +1363,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_should_stop(ctx)) return;
     }
 
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return;
+    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_current_source_dir(ctx), &path)) return;
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
 
@@ -1985,7 +1985,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
 
     String_View dest = args[dest_idx + 1];
     if (!eval_sv_is_abs_path(dest)) {
-        dest = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_bin_dir(ctx), dest);
+        dest = eval_sv_path_join(eval_temp_arena(ctx), eval_current_binary_dir(ctx), dest);
     }
 
     static const Eval_Opt_Spec k_copy_specs[] = {
@@ -2063,7 +2063,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
     for (size_t i = 1; i < dest_idx; i++) {
         String_View src = args[i];
         if (!eval_sv_is_abs_path(src)) {
-            src = eval_sv_path_join(eval_temp_arena(ctx), eval_file_current_src_dir(ctx), src);
+            src = eval_sv_path_join(eval_temp_arena(ctx), eval_current_source_dir(ctx), src);
         }
 
         char *src_c = eval_sv_to_cstr_temp(ctx, src);
