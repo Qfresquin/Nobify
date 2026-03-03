@@ -33,19 +33,41 @@ String_View eval_file_current_bin_dir(Evaluator_Context *ctx) {
     return eval_current_binary_dir(ctx);
 }
 
+static bool file_diag(Evaluator_Context *ctx,
+                      const Node *node,
+                      Cmake_Diag_Severity severity,
+                      Cmake_Event_Origin origin,
+                      String_View cause,
+                      String_View hint) {
+    if (!ctx || !node) return false;
+    return eval_emit_diag(ctx,
+                          severity,
+                          nob_sv_from_cstr("eval_file"),
+                          node->as.cmd.name,
+                          origin,
+                          cause,
+                          hint);
+}
+
+static bool file_diag_error(Evaluator_Context *ctx,
+                            const Node *node,
+                            Cmake_Event_Origin origin,
+                            String_View cause,
+                            String_View hint) {
+    return file_diag(ctx, node, EV_DIAG_ERROR, origin, cause, hint);
+}
+
 bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (arena_arr_len(a) != 2) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("eval_file"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("aux_source_directory() requires a directory and an output variable"),
-                       nob_sv_from_cstr("Usage: aux_source_directory(<dir> <var>)"));
+        file_diag_error(ctx,
+                        node,
+                        o,
+                        nob_sv_from_cstr("aux_source_directory() requires a directory and an output variable"),
+                        nob_sv_from_cstr("Usage: aux_source_directory(<dir> <var>)"));
         return !eval_should_stop(ctx);
     }
 
@@ -57,13 +79,11 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
 
     SV_List sources = {0};
     if (!eval_list_dir_sources_sorted_temp(ctx, dir, &sources)) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("eval_file"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("aux_source_directory() failed to enumerate the source directory"),
-                       dir);
+        file_diag_error(ctx,
+                        node,
+                        o,
+                        nob_sv_from_cstr("aux_source_directory() failed to enumerate the source directory"),
+                        dir);
         return !eval_should_stop(ctx);
     }
 

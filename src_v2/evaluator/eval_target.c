@@ -10,65 +10,47 @@
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 
-static bool emit_var_set(Evaluator_Context *ctx, Cmake_Event_Origin o, String_View key, String_View value) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_VAR_SET;
-    ev.origin = o;
-    ev.as.var_set.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.var_set.value = sv_copy_to_event_arena(ctx, value);
-    return emit_event(ctx, ev);
+static bool target_diag(Evaluator_Context *ctx,
+                        const Node *node,
+                        Cmake_Diag_Severity severity,
+                        String_View cause,
+                        String_View hint) {
+    if (!ctx || !node) return false;
+    return eval_emit_diag(ctx,
+                          severity,
+                          nob_sv_from_cstr("dispatcher"),
+                          node->as.cmd.name,
+                          eval_origin_from_node(ctx, node),
+                          cause,
+                          hint);
 }
 
-static bool emit_target_dependency(Evaluator_Context *ctx,
-                                   Cmake_Event_Origin o,
-                                   String_View target_name,
-                                   String_View dependency_name) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_ADD_DEPENDENCY;
-    ev.origin = o;
-    ev.as.target_add_dependency.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_add_dependency.dependency_name = sv_copy_to_event_arena(ctx, dependency_name);
-    return emit_event(ctx, ev);
-}
-
-static bool emit_target_add_source(Evaluator_Context *ctx,
-                                   Cmake_Event_Origin o,
-                                   String_View target_name,
-                                   String_View path) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_ADD_SOURCE;
-    ev.origin = o;
-    ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, path);
-    return emit_event(ctx, ev);
+static bool target_diag_error(Evaluator_Context *ctx,
+                              const Node *node,
+                              String_View cause,
+                              String_View hint) {
+    return target_diag(ctx, node, EV_DIAG_ERROR, cause, hint);
 }
 
 static bool target_usage_validate_target(Evaluator_Context *ctx,
                                          const Node *node,
                                          String_View target_name) {
     if (!ctx || !node) return false;
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     char *cmd_c = eval_sv_to_cstr_temp(ctx, node->as.cmd.name);
     EVAL_OOM_RETURN_IF_NULL(ctx, cmd_c, false);
 
     if (!eval_target_known(ctx, target_name)) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr(nob_temp_sprintf("%s() target was not declared", cmd_c)),
-                       target_name);
+        target_diag_error(ctx,
+                          node,
+                          nob_sv_from_cstr(nob_temp_sprintf("%s() target was not declared", cmd_c)),
+                          target_name);
         return false;
     }
     if (eval_target_alias_known(ctx, target_name)) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr(nob_temp_sprintf("%s() cannot be used on ALIAS targets", cmd_c)),
-                       target_name);
+        target_diag_error(ctx,
+                          node,
+                          nob_sv_from_cstr(nob_temp_sprintf("%s() cannot be used on ALIAS targets", cmd_c)),
+                          target_name);
         return false;
     }
     return true;
@@ -94,14 +76,10 @@ static bool target_usage_parse_visibility(String_View tok, Cmake_Visibility *io_
 static bool target_usage_require_visibility(Evaluator_Context *ctx,
                                             const Node *node) {
     if (!ctx || !node) return false;
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    eval_emit_diag(ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("dispatcher"),
-                   node->as.cmd.name,
-                   o,
-                   nob_sv_from_cstr("target command requires PUBLIC, PRIVATE or INTERFACE before items"),
-                   nob_sv_from_cstr("Start each item group with PUBLIC, PRIVATE or INTERFACE"));
+    target_diag_error(ctx,
+                      node,
+                      nob_sv_from_cstr("target command requires PUBLIC, PRIVATE or INTERFACE before items"),
+                      nob_sv_from_cstr("Start each item group with PUBLIC, PRIVATE or INTERFACE"));
     return false;
 }
 
@@ -118,7 +96,7 @@ static bool source_group_emit_assignment(Evaluator_Context *ctx,
     String_View key = svu_join_no_sep_temp(ctx, key_parts, 3);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set(ctx, key, group_name)) return false;
-    return emit_var_set(ctx, o, key, group_name);
+    return eval_emit_var_set(ctx, o, key, group_name);
 }
 
 static String_View source_group_dirname(String_View path) {
@@ -210,7 +188,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     String_View key = svu_join_no_sep_temp(ctx, key_parts, 5);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set(ctx, key, regex_value)) return false;
-    if (!emit_var_set(ctx, o, key, regex_value)) return false;
+    if (!eval_emit_var_set(ctx, o, key, regex_value)) return false;
 
     String_View name_key_parts[3] = {
         key,
@@ -220,7 +198,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     String_View name_key = svu_join_no_sep_temp(ctx, name_key_parts, 3);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set(ctx, name_key, group_name)) return false;
-    return emit_var_set(ctx, o, name_key, group_name);
+    return eval_emit_var_set(ctx, o, name_key, group_name);
 }
 
 static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
@@ -296,7 +274,7 @@ static bool set_non_target_property(Evaluator_Context *ctx,
     if (eval_should_stop(ctx)) return false;
 
     if (!eval_var_set(ctx, store_key, merged)) return false;
-    if (!emit_var_set(ctx, o, store_key, merged)) return false;
+    if (!eval_emit_var_set(ctx, o, store_key, merged)) return false;
 
     // Bridge common DIRECTORY properties to existing evaluator behavior.
     if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY") && is_current_directory_object(ctx, object_id)) {
@@ -1652,7 +1630,7 @@ bool eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
                            dep);
             return !eval_should_stop(ctx);
         }
-        if (!emit_target_dependency(ctx, o, target_name, dep)) return !eval_should_stop(ctx);
+        if (!eval_emit_target_dependency(ctx, o, target_name, dep)) return !eval_should_stop(ctx);
     }
 
     return !eval_should_stop(ctx);
@@ -2024,7 +2002,7 @@ bool eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
         if (vis != EV_VISIBILITY_INTERFACE) {
-            if (!emit_target_add_source(ctx, o, tgt, item)) return !eval_should_stop(ctx);
+            if (!eval_emit_target_add_source(ctx, o, tgt, item)) return !eval_should_stop(ctx);
         }
         if (vis != EV_VISIBILITY_PRIVATE) {
             if (!eval_emit_target_prop_set(ctx,
@@ -2134,7 +2112,7 @@ bool eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *n
             return !eval_should_stop(ctx);
         }
         if (!eval_sv_key_eq(tgt, a[2])) {
-            if (!emit_target_dependency(ctx, o, tgt, a[2])) return !eval_should_stop(ctx);
+            if (!eval_emit_target_dependency(ctx, o, tgt, a[2])) return !eval_should_stop(ctx);
         }
         return !eval_should_stop(ctx);
     }
