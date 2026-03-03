@@ -417,6 +417,7 @@ String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View inpu
 bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, SV_List *out_sources);
 bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path);
 bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View contents, bool append);
+bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_name, const SV_List *argv, String_View status);
 String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
                                             String_View raw_path,
                                             String_View base_dir,

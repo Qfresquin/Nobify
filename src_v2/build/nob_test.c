@@ -107,6 +107,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_cpack.c",
         "src_v2/evaluator/eval_cmake_path.c",
         "src_v2/evaluator/eval_custom.c",
+        "src_v2/evaluator/eval_ctest.c",
         "src_v2/evaluator/eval_directory.c",
         "src_v2/evaluator/eval_diag.c",
         "src_v2/evaluator/eval_diag_classify.c",

@@ -24,9 +24,9 @@ Status snapshot sources:
 
 ## Scope note
 
-- This matrix is authoritative for the `88` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
+- This matrix is authoritative for the `101` dispatcher-registered built-in commands exposed by `src_v2/evaluator/eval_command_caps.c`.
 - It does not by itself represent the entire CMake command universe.
-- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `100` are currently implemented (`88` registry-backed + `12` structural parser/evaluator commands) and `31` remain missing.
+- The broader audit scope is tracked in `evaluator_v2_full_audit.md`: `131` scoped documented entry points (`128` from `cmake-commands(7)` + `3` `CPackComponent` module commands), of which `113` are currently implemented (`101` registry-backed + `12` structural parser/evaluator commands) and `18` remain missing.
 - Structural language commands such as `if()`/`foreach()`/`while()`/`function()`/`macro()` are implemented outside the dispatcher and are audited in the full report, not in this registry-backed matrix.
 
 ## 1. Command-Level Matrix (Authoritative)
@@ -62,6 +62,19 @@ Status snapshot sources:
 | `cpack_add_component` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, including `ARCHIVE_FILE` and `PLIST`, with availability gated by `include(CPackComponent)`. | - |
 | `cpack_add_component_group` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, with availability gated by `include(CPackComponent)`. | - |
 | `cpack_add_install_type` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented option set, with availability gated by `include(CPackComponent)`. | - |
+| `ctest_build` | `PARTIAL` | `NOOP_WARN` | The evaluator implements a deterministic metadata-first subset: documented keywords in the covered surface are parsed, `RETURN_VALUE` / `CAPTURE_CMAKE_ERROR` / `NUMBER_ERRORS` / `NUMBER_WARNINGS` variables are populated, and normalized `NOBIFY_CTEST::*` metadata is published. It does not invoke the real build toolchain. | `Medium` |
+| `ctest_configure` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered keyword subset (`BUILD`, `SOURCE`, `OPTIONS`, `RETURN_VALUE`, `CAPTURE_CMAKE_ERROR`, `QUIET`), publishes deterministic metadata, and populates requested result variables. It does not execute an actual configure step. | `Medium` |
+| `ctest_coverage` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered keyword subset (`BUILD`, `LABELS`, `RETURN_VALUE`, `CAPTURE_CMAKE_ERROR`, `QUIET`), publishes deterministic metadata, and populates requested result variables. It does not invoke coverage tooling. | `Medium` |
+| `ctest_empty_binary_directory` | `PARTIAL` | `NOOP_WARN` | The evaluator performs a guarded local deletion of a target directory and recreates it, but only when the path resolves inside `CMAKE_BINARY_DIR`. That extra safety restriction is narrower than full CMake behavior. | `Medium` |
+| `ctest_memcheck` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered keyword subset, publishes deterministic metadata, and populates `RETURN_VALUE` / `CAPTURE_CMAKE_ERROR` / `DEFECT_COUNT`. It does not invoke memcheck tooling. | `Medium` |
+| `ctest_read_custom_files` | `PARTIAL` | `NOOP_WARN` | The evaluator locates `CTestCustom.cmake` files in the provided directories, evaluates them in-process, and records the loaded file list in metadata. It does not model external CTest-specific side channels beyond evaluator-visible script effects. | `Medium` |
+| `ctest_run_script` | `PARTIAL` | `NOOP_WARN` | The evaluator runs scripts in-process and supports `RETURN_VALUE`, but it rejects `NEW_PROCESS` and does not model process isolation. | `Medium` |
+| `ctest_sleep` | `PARTIAL` | `NOOP_WARN` | The evaluator validates the documented one-argument and three-argument numeric forms and records deterministic metadata, but it intentionally does not block/sleep. | `Low` |
+| `ctest_start` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered positional + `TRACK` / `APPEND` surface and records deterministic metadata only. It does not create or manage a real dashboard session. | `Medium` |
+| `ctest_submit` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered `PARTS` / `FILES` / retry/result keyword subset, populates requested result variables, and records deterministic metadata. It does not perform network submission. | `Medium` |
+| `ctest_test` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered keyword subset, populates requested result variables, and records deterministic metadata. It does not invoke the real CTest execution engine. | `Medium` |
+| `ctest_update` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered keyword subset, populates requested result variables, and records deterministic metadata. It does not invoke VCS update tooling. | `Medium` |
+| `ctest_upload` | `PARTIAL` | `NOOP_WARN` | The evaluator parses the covered `FILES` / `CAPTURE_CMAKE_ERROR` surface, populates requested result variables, and records deterministic metadata. It does not perform external uploads. | `Medium` |
 | `define_property` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented scope definitions (`GLOBAL`, `DIRECTORY`, `TARGET`, `SOURCE`, `TEST`, `VARIABLE`, `CACHED_VARIABLE`), optional docs clauses, and `INITIALIZE_FROM_VARIABLE` behavior in the covered target-creation flow. | - |
 | `enable_language` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for the documented CMake 3.28 baseline surface: known-language enabling, file-scope enforcement, and `OPTIONAL` rejection-as-documented placeholder behavior. The newer `CMP0165` pre-`project()` restriction is intentionally not modeled because it is outside the 3.28 policy baseline. | - |
 | `enable_testing` | `FULL` | `NOOP_WARN` | No result-affecting divergence found for documented signature (`enable_testing()`). | - |
@@ -282,16 +295,16 @@ Evaluator `install()` handler covers core and advanced signature families in the
 
 ## 11. Commands currently `FULL`
 
-`add_compile_definitions`, `add_dependencies`, `add_compile_options`, `add_custom_command`, `add_custom_target`, `add_definitions`, `add_executable`, `add_library`, `add_link_options`, `add_subdirectory`, `add_test`, `block`, `break`, `cmake_minimum_required`, `cmake_parse_arguments`, `cmake_path`, `cmake_policy`, `configure_file`, `continue`, `cpack_add_component`, `cpack_add_component_group`, `cpack_add_install_type`, `define_property`, `enable_language`, `enable_testing`, `endblock`, `execute_process`, `file`, `find_file`, `find_library`, `find_package`, `find_path`, `find_program`, `get_filename_component`, `include`, `include_regular_expression`, `include_directories`, `include_guard`, `install`, `link_directories`, `link_libraries`, `list`, `mark_as_advanced`, `math`, `message`, `option`, `project`, `return`, `set`, `set_directory_properties`, `set_property`, `set_source_files_properties`, `set_target_properties`, `set_tests_properties`, `string`, `target_compile_definitions`, `target_compile_options`, `target_include_directories`, `target_link_directories`, `target_link_libraries`, `target_link_options`, `try_compile`, `unset`.
+The authoritative `FULL` set is the subset of rows in the command matrix above marked `FULL` (currently `66` commands).
 
-Commands currently documented as `PARTIAL`: `cmake_language`, `get_cmake_property`, `get_directory_property`, `get_property`, `get_source_file_property`, `get_target_property`, `get_test_property`, `remove_definitions`, `separate_arguments`.
+Commands currently documented as `PARTIAL` (`35`): `build_command`, `build_name`, `cmake_host_system_information`, `cmake_file_api`, `cmake_language`, `ctest_build`, `ctest_configure`, `ctest_coverage`, `ctest_empty_binary_directory`, `ctest_memcheck`, `ctest_read_custom_files`, `ctest_run_script`, `ctest_sleep`, `ctest_start`, `ctest_submit`, `ctest_test`, `ctest_update`, `ctest_upload`, `exec_program`, `export`, `get_cmake_property`, `get_directory_property`, `get_property`, `get_source_file_property`, `get_target_property`, `get_test_property`, `include_external_msproject`, `load_cache`, `remove_definitions`, `separate_arguments`, `source_group`, `target_compile_features`, `target_precompile_headers`, `target_sources`, `try_run`.
 
 ## 11.1 Full-scope summary
 
-- Dispatcher-backed built-ins tracked by this document: `72`.
+- Dispatcher-backed built-ins tracked by this document: `101`.
 - Additional structural commands implemented outside the dispatcher: `12` (`if`, `elseif`, `else`, `endif`, `foreach`, `endforeach`, `while`, `endwhile`, `function`, `endfunction`, `macro`, `endmacro`).
 - Full scoped command universe audited in `evaluator_v2_full_audit.md`: `131`.
-- Missing commands from that broader scope: `47`.
+- Missing commands from that broader scope: `18`.
 
 ## 12. Consistency checks required for future updates
 

@@ -41,7 +41,7 @@ Current built-ins include (non-exhaustive grouping):
 - Property wrappers: `set_directory_properties`, `set_source_files_properties`, `set_tests_properties`
 - Compatibility/project controls: `cmake_minimum_required`, `cmake_policy`, `cmake_path`
 - Filesystem and packaging: `file`, `aux_source_directory`, `configure_file`, `find_package`, `install`, `export`, `cmake_file_api`, CPack subset
-- Tests/custom/other: `enable_testing`, `add_test`, `create_test_sourcelist`, `include_external_msproject`, `add_custom_target`, `add_custom_command`, `execute_process`, `exec_program`, `try_compile`, `try_run`
+- Tests/custom/other: `enable_testing`, `add_test`, `create_test_sourcelist`, `ctest_*` command family, `include_external_msproject`, `add_custom_target`, `add_custom_command`, `execute_process`, `exec_program`, `try_compile`, `try_run`
 
 For authoritative command-level compatibility, see `evaluator_v2_coverage_status.md` and `eval_command_caps.c`.
 

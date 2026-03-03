@@ -3,6 +3,7 @@
 #include "evaluator_internal.h"
 #include "eval_cmake_path.h"
 #include "eval_cpack.h"
+#include "eval_ctest.h"
 #include "eval_custom.h"
 #include "eval_diag.h"
 #include "eval_directory.h"
@@ -57,6 +58,19 @@ static const Command_Entry DISPATCH[] = {
     {"cpack_add_component", eval_handle_cpack_add_component},
     {"cpack_add_component_group", eval_handle_cpack_add_component_group},
     {"cpack_add_install_type", eval_handle_cpack_add_install_type},
+    {"ctest_build", eval_handle_ctest_build},
+    {"ctest_configure", eval_handle_ctest_configure},
+    {"ctest_coverage", eval_handle_ctest_coverage},
+    {"ctest_empty_binary_directory", eval_handle_ctest_empty_binary_directory},
+    {"ctest_memcheck", eval_handle_ctest_memcheck},
+    {"ctest_read_custom_files", eval_handle_ctest_read_custom_files},
+    {"ctest_run_script", eval_handle_ctest_run_script},
+    {"ctest_sleep", eval_handle_ctest_sleep},
+    {"ctest_start", eval_handle_ctest_start},
+    {"ctest_submit", eval_handle_ctest_submit},
+    {"ctest_test", eval_handle_ctest_test},
+    {"ctest_update", eval_handle_ctest_update},
+    {"ctest_upload", eval_handle_ctest_upload},
     {"define_property", eval_handle_define_property},
     {"enable_language", eval_handle_enable_language},
     {"enable_testing", eval_handle_enable_testing},

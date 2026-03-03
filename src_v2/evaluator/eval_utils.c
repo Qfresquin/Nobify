@@ -471,6 +471,38 @@ bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View 
     return nob_write_entire_file(path_c, sb.items ? sb.items : "", sb.count);
 }
 
+bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_name, const SV_List *argv, String_View status) {
+    if (!ctx || command_name.count == 0 || !argv) return false;
+
+    String_View joined = eval_sv_join_semi_temp(ctx, argv->items, argv->count);
+    if (eval_should_stop(ctx)) return false;
+
+    size_t args_key_len = sizeof("NOBIFY_CTEST::") - 1 + command_name.count + sizeof("::ARGS") - 1;
+    size_t status_key_len = sizeof("NOBIFY_CTEST::") - 1 + command_name.count + sizeof("::STATUS") - 1;
+
+    char *args_key = (char*)arena_alloc(eval_temp_arena(ctx), args_key_len + 1);
+    char *status_key = (char*)arena_alloc(eval_temp_arena(ctx), status_key_len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, args_key, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, status_key, false);
+
+    int args_n = snprintf(args_key,
+                          args_key_len + 1,
+                          "NOBIFY_CTEST::%.*s::ARGS",
+                          (int)command_name.count,
+                          command_name.data ? command_name.data : "");
+    int status_n = snprintf(status_key,
+                            status_key_len + 1,
+                            "NOBIFY_CTEST::%.*s::STATUS",
+                            (int)command_name.count,
+                            command_name.data ? command_name.data : "");
+    if (args_n < 0 || status_n < 0) return ctx_oom(ctx);
+
+    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND"), command_name)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(args_key), joined)) return false;
+    if (!eval_var_set(ctx, nob_sv_from_cstr(status_key), status)) return false;
+    return true;
+}
+
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
     if (!ctx || !ctx->stream || test_name.count == 0) return false;
     for (size_t ei = 0; ei < ctx->stream->count; ei++) {

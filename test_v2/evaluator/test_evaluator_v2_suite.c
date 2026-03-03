@@ -4136,6 +4136,129 @@ TEST(evaluator_batch6_metadata_commands_reject_unsupported_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_bin"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe/sub"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_custom"));
+    ASSERT(nob_write_entire_file("ctest_bin/wipe/sub/junk.txt", "junk\n", strlen("junk\n")));
+    ASSERT(nob_write_entire_file("ctest_custom/CTestCustom.cmake",
+                                 "set(CTEST_CUSTOM_LOADED yes)\n",
+                                 strlen("set(CTEST_CUSTOM_LOADED yes)\n")));
+    ASSERT(nob_write_entire_file("ctest_script.cmake",
+                                 "set(CTEST_SCRIPT_LOADED 1)\n",
+                                 strlen("set(CTEST_SCRIPT_LOADED 1)\n")));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_bin)\n"
+        "ctest_start(Experimental TRACK Nightly APPEND)\n"
+        "ctest_configure(BUILD ctest_bin SOURCE . RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
+        "ctest_build(BUILD ctest_bin TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
+        "ctest_test(BUILD ctest_bin RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE PARALLEL_LEVEL 2 SCHEDULE_RANDOM)\n"
+        "ctest_coverage(BUILD ctest_bin LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE)\n"
+        "ctest_memcheck(BUILD ctest_bin RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS SCHEDULE_RANDOM)\n"
+        "ctest_update(SOURCE . RETURN_VALUE UPD_RV CAPTURE_CMAKE_ERROR UPD_CE QUIET)\n"
+        "ctest_submit(PARTS Start Build Test RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n"
+        "ctest_upload(FILES a.txt b.txt CAPTURE_CMAKE_ERROR UPLOAD_CE)\n"
+        "ctest_empty_binary_directory(wipe)\n"
+        "ctest_read_custom_files(ctest_custom)\n"
+        "ctest_run_script(ctest_script.cmake RETURN_VALUE SCRIPT_RV)\n"
+        "ctest_sleep(0.25)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND")),
+                     nob_sv_from_cstr("ctest_sleep")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TRACK")),
+                     nob_sv_from_cstr("Nightly")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::PARTS")),
+                     nob_sv_from_cstr("Start;Build;Test")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_empty_binary_directory::STATUS")),
+                     nob_sv_from_cstr("CLEARED")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CFG_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CFG_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BUILD_ERRS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BUILD_WARNS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SCRIPT_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_CUSTOM_LOADED")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_SCRIPT_LOADED")), nob_sv_from_cstr("1")));
+    ASSERT(!nob_file_exists("ctest_bin/wipe/sub/junk.txt"));
+    ASSERT(nob_file_exists("ctest_bin/wipe"));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_family_rejects_invalid_and_unsupported_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("safe_bin"));
+    ASSERT(nob_write_entire_file("ctest_script_bad.cmake",
+                                 "set(UNUSED 1)\n",
+                                 strlen("set(UNUSED 1)\n")));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR safe_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR safe_bin)\n"
+        "ctest_empty_binary_directory(../outside)\n"
+        "ctest_run_script(NEW_PROCESS ctest_script_bad.cmake)\n"
+        "ctest_sleep(1 2)\n"
+        "ctest_build(BUILD)\n");
+    ASSERT(evaluator_run(ctx, root));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -6642,6 +6765,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
     test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);
     test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);
+    test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
+    test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
