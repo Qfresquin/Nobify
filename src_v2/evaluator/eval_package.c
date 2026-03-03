@@ -17,6 +17,20 @@ static bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
     return nob_file_exists(path_c) != 0;
 }
 
+static bool find_package_diag_error(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    String_View cause,
+                                    String_View hint) {
+    if (!ctx || !node) return false;
+    return eval_emit_diag(ctx,
+                          EV_DIAG_ERROR,
+                          nob_sv_from_cstr("dispatcher"),
+                          node->as.cmd.name,
+                          eval_origin_from_node(ctx, node),
+                          cause,
+                          hint);
+}
+
 static String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
@@ -376,13 +390,11 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("dispatcher"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("find_*() requires an output variable and at least one name"),
-                             nob_sv_from_cstr("Usage: find_*(<VAR> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
+        (void)o;
+        (void)find_package_diag_error(ctx,
+                                      node,
+                                      nob_sv_from_cstr("find_*() requires an output variable and at least one name"),
+                                      nob_sv_from_cstr("Usage: find_*(<VAR> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
         return !eval_should_stop(ctx);
     }
 
@@ -957,13 +969,10 @@ static bool find_item_set_result(Evaluator_Context *ctx,
     String_View notfound = svu_concat_suffix_temp(ctx, opt->out_var, "-NOTFOUND");
     if (!eval_var_set(ctx, opt->out_var, notfound)) return false;
     if (opt->required) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("dispatcher"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("Required item not found"),
-                             opt->out_var);
+        (void)find_package_diag_error(ctx,
+                                      node,
+                                      nob_sv_from_cstr("Required item not found"),
+                                      opt->out_var);
         eval_request_stop_on_error(ctx);
     }
     return !eval_should_stop(ctx);

@@ -818,9 +818,8 @@ static bool posix_glob_collect(Evaluator_Context *ctx,
             globfree(&g);
             return false;
         }
-        if (!arena_arr_push(eval_temp_arena(ctx), *io_items, sv)) {
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), *io_items, sv)) {
             globfree(&g);
-            ctx_oom(ctx);
             return false;
         }
         *io_count = arena_arr_len(*io_items);

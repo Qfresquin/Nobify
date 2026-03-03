@@ -478,15 +478,14 @@ static bool flow_exec_is_keyword(String_View token) {
 
 static bool flow_exec_append_command_arg(Evaluator_Context *ctx, Flow_Exec_Command *cmd, String_View arg) {
     if (!ctx || !cmd) return false;
-    if (!arena_arr_push(ctx->arena, cmd->args, arg)) return ctx_oom(ctx);
-    return true;
+    return EVAL_ARR_PUSH(ctx, ctx->arena, cmd->args, arg);
 }
 
 static bool flow_exec_append_command(Evaluator_Context *ctx,
-                                     Flow_Exec_Command_List *commands,
-                                     Flow_Exec_Command cmd) {
+    Flow_Exec_Command_List *commands,
+    Flow_Exec_Command cmd) {
     if (!ctx || !commands) return false;
-    if (!arena_arr_push(ctx->arena, commands->items, cmd)) return ctx_oom(ctx);
+    if (!EVAL_ARR_PUSH(ctx, ctx->arena, commands->items, cmd)) return false;
     commands->count = arena_arr_len(commands->items);
     commands->capacity = arena_arr_cap(commands->items);
     return true;
@@ -1125,9 +1124,9 @@ static bool flow_clone_args_to_event_range(Evaluator_Context *ctx,
             Token t = in->items[k];
             t.text = sv_copy_to_event_arena(ctx, t.text);
             if (eval_should_stop(ctx)) return false;
-            if (!arena_arr_push(ctx->event_arena, out.items, t)) return ctx_oom(ctx);
+            if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, out.items, t)) return false;
         }
-        if (!arena_arr_push(ctx->event_arena, *dst, out)) return ctx_oom(ctx);
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, *dst, out)) return false;
     }
     return true;
 }
@@ -1297,7 +1296,7 @@ static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_Lis
     {
         SV_List tmp = NULL;
         for (size_t i = 0; i < call_arg_count; i++) {
-            if (!arena_arr_push(ctx->arena, tmp, call_args[i])) return ctx_oom(ctx);
+            if (!EVAL_ARR_PUSH(ctx, ctx->arena, tmp, call_args[i])) return false;
         }
         if (!flow_build_call_script(ctx, command_name, &tmp, &script)) return !eval_should_stop(ctx);
     }
