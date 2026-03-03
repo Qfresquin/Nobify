@@ -202,9 +202,7 @@ static bool try_compile_is_false(String_View v) {
 }
 
 static bool try_compile_sv_push(Evaluator_Context *ctx, SV_List *list, String_View item) {
-    if (!ctx || !list) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), *list, item)) return ctx_oom(ctx);
-    return true;
+    return eval_sv_arr_push_temp(ctx, list, item);
 }
 
 static bool try_compile_source_push(Evaluator_Context *ctx,
@@ -1509,9 +1507,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
 }
 
 static bool try_run_append_token(Evaluator_Context *ctx, SV_List *list, String_View item) {
-    if (!ctx || !list) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), *list, item)) return ctx_oom(ctx);
-    return true;
+    return eval_sv_arr_push_temp(ctx, list, item);
 }
 
 static bool try_run_parse_request(Evaluator_Context *ctx,

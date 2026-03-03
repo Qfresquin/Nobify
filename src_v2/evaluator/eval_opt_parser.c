@@ -18,9 +18,7 @@ static bool opt_sv_eq_ci_lit(String_View sv, const char *lit) {
 }
 
 static bool opt_sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
-    if (!ctx || !list) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), *list, sv)) return ctx_oom(ctx);
-    return true;
+    return eval_sv_arr_push_temp(ctx, list, sv);
 }
 
 static int opt_find_spec_idx(String_View tok, const Eval_Opt_Spec *specs, size_t spec_count) {

@@ -309,6 +309,11 @@ static inline void eval_clear_return_state(Evaluator_Context *ctx) {
 Arena *eval_temp_arena(Evaluator_Context *ctx);
 Arena *eval_event_arena(Evaluator_Context *ctx);
 
+static inline bool eval_sv_arr_push_temp(Evaluator_Context *ctx, String_View **arr, String_View sv) {
+    if (!ctx || !arr) return false;
+    return EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), *arr, sv);
+}
+
 String_View sv_copy_to_temp_arena(Evaluator_Context *ctx, String_View sv);
 String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv);
 String_View sv_copy_to_arena(Arena *arena, String_View sv);

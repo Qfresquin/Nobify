@@ -102,9 +102,7 @@ static bool parse_sv_eq_exact(String_View a, String_View b) {
 }
 
 static bool parse_sv_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View item) {
-    if (!ctx || !list) return false;
-    if (!arena_arr_push(eval_temp_arena(ctx), *list, item)) return ctx_oom(ctx);
-    return true;
+    return eval_sv_arr_push_temp(ctx, list, item);
 }
 
 static bool parse_strip_bracket_arg(String_View in, String_View *out) {
