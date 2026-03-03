@@ -61,6 +61,27 @@ static void builder_warn(const Cmake_Event *ev, const char *cause, const char *h
 static bool builder_push_directory_scope(Build_Model_Builder *builder, String_View source_dir, String_View binary_dir);
 static bool builder_pop_directory_scope(Build_Model_Builder *builder);
 
+#define BUILDER_TARGET_TYPE_MAP(X) \
+    X(EV_TARGET_EXECUTABLE, TARGET_EXECUTABLE) \
+    X(EV_TARGET_LIBRARY_STATIC, TARGET_STATIC_LIB) \
+    X(EV_TARGET_LIBRARY_SHARED, TARGET_SHARED_LIB) \
+    X(EV_TARGET_LIBRARY_MODULE, TARGET_SHARED_LIB) \
+    X(EV_TARGET_LIBRARY_INTERFACE, TARGET_INTERFACE_LIB) \
+    X(EV_TARGET_LIBRARY_OBJECT, TARGET_OBJECT_LIB) \
+    X(EV_TARGET_LIBRARY_UNKNOWN, TARGET_UTILITY)
+
+#define BUILDER_INSTALL_RULE_TYPE_MAP(X) \
+    X(EV_INSTALL_RULE_TARGET, INSTALL_RULE_TARGET) \
+    X(EV_INSTALL_RULE_FILE, INSTALL_RULE_FILE) \
+    X(EV_INSTALL_RULE_PROGRAM, INSTALL_RULE_PROGRAM) \
+    X(EV_INSTALL_RULE_DIRECTORY, INSTALL_RULE_DIRECTORY)
+
+#define BUILDER_VISIBILITY_MAP(X) \
+    X(EV_VISIBILITY_PUBLIC, VISIBILITY_PUBLIC) \
+    X(EV_VISIBILITY_INTERFACE, VISIBILITY_INTERFACE) \
+    X(EV_VISIBILITY_PRIVATE, VISIBILITY_PRIVATE) \
+    X(EV_VISIBILITY_UNSPECIFIED, VISIBILITY_PRIVATE)
+
 static void builder_warn_before_after_once(Build_Model_Builder *builder, const Cmake_Event *ev) {
     if (!builder || builder->warned_before_after_limitation) return;
     builder->warned_before_after_limitation = true;
@@ -236,23 +257,18 @@ static bool builder_pop_directory_scope(Build_Model_Builder *builder) {
 
 static Target_Type builder_target_type_from_event(Cmake_Target_Type type) {
     switch (type) {
-        case EV_TARGET_EXECUTABLE: return TARGET_EXECUTABLE;
-        case EV_TARGET_LIBRARY_STATIC: return TARGET_STATIC_LIB;
-        case EV_TARGET_LIBRARY_SHARED: return TARGET_SHARED_LIB;
-        case EV_TARGET_LIBRARY_MODULE: return TARGET_SHARED_LIB;
-        case EV_TARGET_LIBRARY_INTERFACE: return TARGET_INTERFACE_LIB;
-        case EV_TARGET_LIBRARY_OBJECT: return TARGET_OBJECT_LIB;
-        case EV_TARGET_LIBRARY_UNKNOWN: return TARGET_UTILITY;
+#define BUILDER_TARGET_TYPE_CASE(ev_type, bm_type) case ev_type: return bm_type;
+        BUILDER_TARGET_TYPE_MAP(BUILDER_TARGET_TYPE_CASE)
+#undef BUILDER_TARGET_TYPE_CASE
     }
     return TARGET_UTILITY;
 }
 
 static Install_Rule_Type builder_install_rule_type_from_event(Cmake_Install_Rule_Type type) {
     switch (type) {
-        case EV_INSTALL_RULE_TARGET: return INSTALL_RULE_TARGET;
-        case EV_INSTALL_RULE_FILE: return INSTALL_RULE_FILE;
-        case EV_INSTALL_RULE_PROGRAM: return INSTALL_RULE_PROGRAM;
-        case EV_INSTALL_RULE_DIRECTORY: return INSTALL_RULE_DIRECTORY;
+#define BUILDER_INSTALL_RULE_TYPE_CASE(ev_type, bm_type) case ev_type: return bm_type;
+        BUILDER_INSTALL_RULE_TYPE_MAP(BUILDER_INSTALL_RULE_TYPE_CASE)
+#undef BUILDER_INSTALL_RULE_TYPE_CASE
     }
     return INSTALL_RULE_FILE;
 }
@@ -264,10 +280,9 @@ static Visibility builder_visibility_from_event(const Build_Target *target,
     }
 
     switch (vis) {
-        case EV_VISIBILITY_PUBLIC: return VISIBILITY_PUBLIC;
-        case EV_VISIBILITY_INTERFACE: return VISIBILITY_INTERFACE;
-        case EV_VISIBILITY_PRIVATE: return VISIBILITY_PRIVATE;
-        case EV_VISIBILITY_UNSPECIFIED: return VISIBILITY_PRIVATE;
+#define BUILDER_VISIBILITY_CASE(ev_vis, bm_vis) case ev_vis: return bm_vis;
+        BUILDER_VISIBILITY_MAP(BUILDER_VISIBILITY_CASE)
+#undef BUILDER_VISIBILITY_CASE
     }
     return VISIBILITY_PRIVATE;
 }
