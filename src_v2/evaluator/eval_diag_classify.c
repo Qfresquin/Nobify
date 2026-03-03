@@ -1,6 +1,7 @@
 #include "eval_diag_classify.h"
 
 #include "evaluator_internal.h"
+#include "eval_diag_registry.h"
 
 #include <ctype.h>
 
@@ -61,20 +62,18 @@ void eval_diag_classify(String_View component,
 
 String_View eval_diag_code_to_sv(Eval_Diag_Code code) {
     switch (code) {
-        case EVAL_ERR_PARSE: return nob_sv_from_cstr("EVAL_ERR_PARSE");
-        case EVAL_ERR_SEMANTIC: return nob_sv_from_cstr("EVAL_ERR_SEMANTIC");
-        case EVAL_ERR_UNSUPPORTED: return nob_sv_from_cstr("EVAL_ERR_UNSUPPORTED");
-        case EVAL_WARN_LEGACY: return nob_sv_from_cstr("EVAL_WARN_LEGACY");
-        default: return nob_sv_from_cstr("EVAL_ERR_NONE");
+#define EVAL_DIAG_CODE_CASE(code, text) case code: return nob_sv_from_cstr(text);
+        EVAL_DIAG_CODE_LIST(EVAL_DIAG_CODE_CASE)
+#undef EVAL_DIAG_CODE_CASE
     }
+    return nob_sv_from_cstr("EVAL_ERR_NONE");
 }
 
 String_View eval_error_class_to_sv(Eval_Error_Class cls) {
     switch (cls) {
-        case EVAL_ERR_CLASS_INPUT_ERROR: return nob_sv_from_cstr("INPUT_ERROR");
-        case EVAL_ERR_CLASS_ENGINE_LIMITATION: return nob_sv_from_cstr("ENGINE_LIMITATION");
-        case EVAL_ERR_CLASS_IO_ENV_ERROR: return nob_sv_from_cstr("IO_ENV_ERROR");
-        case EVAL_ERR_CLASS_POLICY_CONFLICT: return nob_sv_from_cstr("POLICY_CONFLICT");
-        default: return nob_sv_from_cstr("NONE");
+#define EVAL_ERROR_CLASS_CASE(code, text) case code: return nob_sv_from_cstr(text);
+        EVAL_ERROR_CLASS_LIST(EVAL_ERROR_CLASS_CASE)
+#undef EVAL_ERROR_CLASS_CASE
     }
+    return nob_sv_from_cstr("NONE");
 }

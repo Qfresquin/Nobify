@@ -13,6 +13,7 @@
 #include "arena.h"        // Arena
 #include "parser.h"       // Ast_Root, Node, Args
 #include "../transpiler/event_ir.h"
+#include "eval_diag_registry.h"
 
 // -----------------------------------------------------------------------------
 // Evaluator API
@@ -27,19 +28,15 @@ typedef enum {
 } Eval_Compat_Profile;
 
 typedef enum {
-    EVAL_ERR_NONE = 0,
-    EVAL_ERR_PARSE,
-    EVAL_ERR_SEMANTIC,
-    EVAL_ERR_UNSUPPORTED,
-    EVAL_WARN_LEGACY,
+#define DECLARE_EVAL_DIAG_CODE(code, text) code,
+    EVAL_DIAG_CODE_LIST(DECLARE_EVAL_DIAG_CODE)
+#undef DECLARE_EVAL_DIAG_CODE
 } Eval_Diag_Code;
 
 typedef enum {
-    EVAL_ERR_CLASS_NONE = 0,
-    EVAL_ERR_CLASS_INPUT_ERROR,
-    EVAL_ERR_CLASS_ENGINE_LIMITATION,
-    EVAL_ERR_CLASS_IO_ENV_ERROR,
-    EVAL_ERR_CLASS_POLICY_CONFLICT,
+#define DECLARE_EVAL_ERROR_CLASS(code, text) code,
+    EVAL_ERROR_CLASS_LIST(DECLARE_EVAL_ERROR_CLASS)
+#undef DECLARE_EVAL_ERROR_CLASS
 } Eval_Error_Class;
 
 typedef enum {
