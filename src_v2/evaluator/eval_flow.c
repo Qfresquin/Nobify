@@ -1834,8 +1834,7 @@ bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return false;
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    String_View cmp0153 = eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0153));
-    if (eval_sv_eq_ci_lit(cmp0153, "NEW")) {
+    if (eval_policy_is_new(ctx, EVAL_POLICY_CMP0153)) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("flow"),
@@ -1957,8 +1956,7 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
 
     eval_clear_return_state(ctx);
 
-    String_View cmp0140 = eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0140));
-    bool cmp0140_new = eval_sv_eq_ci_lit(cmp0140, "NEW");
+    bool cmp0140_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0140);
     if (cmp0140_new && arena_arr_len(args) > 0) {
         if (!eval_sv_eq_ci_lit(args[0], "PROPAGATE")) {
             (void)eval_emit_diag(ctx,

@@ -602,7 +602,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
     SV_List items = NULL;
     String_View *items_ptr = NULL;
     size_t items_count = 0;
-    bool cmp0124_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0124)), "NEW");
+    bool cmp0124_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0124);
 
     if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "RANGE")) {
         idx++;

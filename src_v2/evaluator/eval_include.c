@@ -124,7 +124,7 @@ static bool include_try_module_search(Evaluator_Context *ctx,
         modules_dir = eval_sv_path_normalize_temp(ctx, modules_dir);
     }
 
-    bool cmp0017_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0017)), "NEW");
+    bool cmp0017_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0017);
     bool search_builtin_first = false;
     if (cmp0017_new && modules_dir.count > 0 && current_list_dir.count > 0) {
         String_View normalized_list_dir = eval_sv_path_normalize_temp(ctx, current_list_dir);

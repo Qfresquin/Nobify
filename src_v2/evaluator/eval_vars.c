@@ -300,7 +300,7 @@ static bool parse_build_prefixed_var_name(Evaluator_Context *ctx,
 static bool parse_single_empty_value_defines_var(Evaluator_Context *ctx) {
     if (!ctx) return false;
     if (!eval_policy_is_known(nob_sv_from_cstr(EVAL_POLICY_CMP0174))) return false;
-    return eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0174)), "NEW");
+    return eval_policy_is_new(ctx, EVAL_POLICY_CMP0174);
 }
 
 static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start_index, SV_List *out) {
@@ -876,8 +876,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
 
         Eval_Cache_Entry *existing = cache_find(ctx, var);
         bool should_write_cache = (existing == NULL) || force;
-        String_View cmp0126 = eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0126));
-        bool cmp0126_new = eval_sv_eq_ci_lit(cmp0126, "NEW");
+        bool cmp0126_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0126);
         bool remove_local_binding_old = (existing == NULL) || (existing && existing->value.type.count == 0) || force || is_internal;
 
         if (!cmp0126_new && remove_local_binding_old) (void)eval_var_unset(ctx, var);
@@ -1091,7 +1090,7 @@ bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
     String_View doc = a[1];
     String_View value = (arena_arr_len(a) >= 3) ? a[2] : nob_sv_from_cstr("OFF");
 
-    bool cmp0077_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0077)), "NEW");
+    bool cmp0077_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0077);
     bool has_normal_binding = scope_has_normal_binding(ctx, var);
     Eval_Cache_Entry *existing = cache_find(ctx, var);
     bool has_typed_cache = existing && existing->value.type.count > 0;
@@ -1135,7 +1134,7 @@ bool eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    bool cmp0102_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0102)), "NEW");
+    bool cmp0102_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0102);
     for (size_t i = start; i < arena_arr_len(a); i++) {
         String_View var_name = a[i];
         if (var_name.count == 0) continue;

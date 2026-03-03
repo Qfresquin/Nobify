@@ -901,7 +901,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     if (project_bin_dir.count == 0) project_bin_dir = ctx->binary_dir;
     bool is_top_level = nob_sv_eq(project_src_dir, ctx->source_dir) && nob_sv_eq(project_bin_dir, ctx->binary_dir);
     String_View is_top_level_sv = is_top_level ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
-    bool cmp0048_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0048)), "NEW");
+    bool cmp0048_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0048);
     bool should_apply_version_vars = has_version_arg || cmp0048_new;
 
     if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), name)) return !eval_should_stop(ctx);

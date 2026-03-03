@@ -281,6 +281,8 @@ Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx,
 bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effective_sev);
 String_View eval_compat_profile_to_sv(Eval_Compat_Profile profile);
 bool ctx_oom(Evaluator_Context *ctx);
+bool eval_sv_eq_ci_lit(String_View a, const char *lit);
+String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id);
 
 static inline size_t eval_scope_visible_depth(const Evaluator_Context *ctx) {
     return ctx ? ctx->visible_scope_depth : 0;
@@ -288,6 +290,19 @@ static inline size_t eval_scope_visible_depth(const Evaluator_Context *ctx) {
 
 static inline size_t eval_policy_visible_depth(const Evaluator_Context *ctx) {
     return ctx ? ctx->visible_policy_depth : 0;
+}
+
+static inline String_View eval_policy_effective_id(Evaluator_Context *ctx, const char *policy_id) {
+    if (!ctx || !policy_id) return nob_sv_from_cstr("");
+    return eval_policy_get_effective(ctx, nob_sv_from_cstr(policy_id));
+}
+
+static inline bool eval_policy_is_new(Evaluator_Context *ctx, const char *policy_id) {
+    return eval_sv_eq_ci_lit(eval_policy_effective_id(ctx, policy_id), "NEW");
+}
+
+static inline bool eval_policy_is_old(Evaluator_Context *ctx, const char *policy_id) {
+    return eval_sv_eq_ci_lit(eval_policy_effective_id(ctx, policy_id), "OLD");
 }
 
 static inline bool eval_scope_enter_parent(Evaluator_Context *ctx, size_t *saved_depth) {

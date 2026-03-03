@@ -204,7 +204,7 @@ static void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
     if (no_default_path || no_package_root_path) return;
 
     // CMP0074 controls whether find_package() honors <Pkg>_ROOT variables.
-    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0074)), "NEW")) return;
+    if (!eval_policy_is_new(ctx, EVAL_POLICY_CMP0074)) return;
 
     String_View names[16] = {0};
     size_t name_count = 0;
@@ -565,11 +565,11 @@ static bool find_item_append_package_roots(Evaluator_Context *ctx,
                                            SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs) return false;
     if (opt->no_default_path || opt->no_package_root_path || arena_arr_len(ctx->active_find_packages) == 0) return true;
-    if (!eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0074)), "NEW")) return true;
+    if (!eval_policy_is_new(ctx, EVAL_POLICY_CMP0074)) return true;
 
     String_View pkg = ctx->active_find_packages[arena_arr_len(ctx->active_find_packages) - 1];
     String_View mixed_root = svu_concat_suffix_temp(ctx, pkg, "_ROOT");
-    bool cmp0144_new = eval_sv_eq_ci_lit(eval_policy_get_effective(ctx, nob_sv_from_cstr(EVAL_POLICY_CMP0144)), "NEW");
+    bool cmp0144_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0144);
     String_View upper_root = cmp0144_new ? svu_concat_suffix_temp(ctx, sv_to_upper_temp(ctx, pkg), "_ROOT") : nob_sv_from_cstr("");
 
     String_View roots[4] = {0};
