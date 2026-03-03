@@ -82,28 +82,28 @@ static bool parser_consume_append_budget(Parser_Context *ctx) {
 static bool parser_append_token(Parser_Context *ctx, Arg *arg, Token tok) {
     if (!ctx || !arg) return false;
     if (!parser_consume_append_budget(ctx)) return parser_report_oom(ctx);
-    if (!arena_da_try_append(ctx->arena, arg, tok)) return parser_report_oom(ctx);
+    if (!arena_arr_push(ctx->arena, arg->items, tok)) return parser_report_oom(ctx);
     return true;
 }
 
 static bool parser_append_arg(Parser_Context *ctx, Args *args, Arg arg) {
     if (!ctx || !args) return false;
     if (!parser_consume_append_budget(ctx)) return parser_report_oom(ctx);
-    if (!arena_da_try_append(ctx->arena, args, arg)) return parser_report_oom(ctx);
+    if (!arena_arr_push(ctx->arena, *args, arg)) return parser_report_oom(ctx);
     return true;
 }
 
 static bool parser_append_node(Parser_Context *ctx, Node_List *list, Node node) {
     if (!ctx || !list) return false;
     if (!parser_consume_append_budget(ctx)) return parser_report_oom(ctx);
-    if (!arena_da_try_append(ctx->arena, list, node)) return parser_report_oom(ctx);
+    if (!arena_arr_push(ctx->arena, *list, node)) return parser_report_oom(ctx);
     return true;
 }
 
 static bool parser_append_elseif(Parser_Context *ctx, ElseIf_Clause_List *list, ElseIf_Clause clause) {
     if (!ctx || !list) return false;
     if (!parser_consume_append_budget(ctx)) return parser_report_oom(ctx);
-    if (!arena_da_try_append(ctx->arena, list, clause)) return parser_report_oom(ctx);
+    if (!arena_arr_push(ctx->arena, *list, clause)) return parser_report_oom(ctx);
     return true;
 }
 
@@ -120,8 +120,8 @@ static void parser_emit_unexpected_token(Token t, const char *hint) {
 
 static void parser_sync_after_statement_error(Token_List *tokens, size_t *cursor, size_t start_line) {
     if (!tokens || !cursor) return;
-    while (*cursor < tokens->count) {
-        Token t = tokens->items[*cursor];
+    while (*cursor < arena_arr_len(*tokens)) {
+        Token t = (*tokens)[*cursor];
         if (t.line != start_line) break;
         (*cursor)++;
     }
@@ -167,9 +167,9 @@ static bool sv_eq_ci_sv(String_View a, String_View b) {
 }
 
 static String_View parser_first_arg_text(const Args *args) {
-    if (!args || args->count == 0) return nob_sv_from_cstr("");
-    if (args->items[0].count == 0) return nob_sv_from_cstr("");
-    return args->items[0].items[0].text;
+    if (!args || arena_arr_len(*args) == 0) return nob_sv_from_cstr("");
+    if (arena_arr_len((*args)[0].items) == 0) return nob_sv_from_cstr("");
+    return (*args)[0].items[0].text;
 }
 
 static void parser_warn_end_mismatch(size_t line, size_t col, const char *kw, String_View expected, String_View got) {
@@ -207,8 +207,8 @@ static bool parser_append_new_arg_with_token(Parser_Context *ctx, Args *args, To
 
 static bool parser_append_to_last_or_new(Parser_Context *ctx, Args *args, Token tok, Arg_Kind kind) {
     if (!ctx || !args) return false;
-    if (args->count > 0 && !tok.has_space_left) {
-        if (!parser_append_token(ctx, &args->items[args->count - 1], tok)) return false;
+    if (arena_arr_len(*args) > 0 && !tok.has_space_left) {
+        if (!parser_append_token(ctx, &(*args)[arena_arr_len(*args) - 1], tok)) return false;
         return true;
     }
     return parser_append_new_arg_with_token(ctx, args, tok, kind);
@@ -218,11 +218,11 @@ static Arg_Kind parser_infer_arg_kind(Token tok);
 
 static bool parser_append_with_condition_merge_rules(Parser_Context *ctx, Args *args, Token tok) {
     if (!ctx || !args) return false;
-    bool can_merge = (args->count > 0 && !tok.has_space_left);
+    bool can_merge = (arena_arr_len(*args) > 0 && !tok.has_space_left);
     if (can_merge) {
-        Arg *last = &args->items[args->count - 1];
-        if (last->count > 0) {
-            Token prev = last->items[last->count - 1];
+        Arg *last = &(*args)[arena_arr_len(*args) - 1];
+        if (arena_arr_len(last->items) > 0) {
+            Token prev = last->items[arena_arr_len(last->items) - 1];
             if (prev.kind == TOKEN_LPAREN || prev.kind == TOKEN_RPAREN) {
                 can_merge = false;
             }
@@ -230,7 +230,7 @@ static bool parser_append_with_condition_merge_rules(Parser_Context *ctx, Args *
     }
 
     if (can_merge) {
-        if (!parser_append_token(ctx, &args->items[args->count - 1], tok)) return false;
+        if (!parser_append_token(ctx, &(*args)[arena_arr_len(*args) - 1], tok)) return false;
         return true;
     }
     return parser_append_new_arg_with_token(ctx, args, tok, parser_infer_arg_kind(tok));
@@ -250,7 +250,7 @@ static Args parse_args(Parser_Context *ctx,
                       size_t origin_line,
                       size_t origin_col,
                       bool *out_ok) {
-    Args args = {0};
+    Args args = NULL;
     bool ok = true;
     if (out_ok) *out_ok = true;
     PARSER_OOM_RETURN(ctx, args);
@@ -259,7 +259,7 @@ static Args parse_args(Parser_Context *ctx,
     size_t overflow_extra = 0;
     bool reported_paren_depth = false;
 
-    if (*cursor >= tokens->count || tokens->items[*cursor].kind != TOKEN_LPAREN) {
+    if (*cursor >= arena_arr_len(*tokens) || (*tokens)[*cursor].kind != TOKEN_LPAREN) {
         ok = false;
         if (out_ok) *out_ok = ok;
         return args;
@@ -267,8 +267,8 @@ static Args parse_args(Parser_Context *ctx,
     (*cursor)++; // Pula '('
     depth = 1;
 
-    while (*cursor < tokens->count) {
-        Token t = tokens->items[*cursor];
+    while (*cursor < arena_arr_len(*tokens)) {
+        Token t = (*tokens)[*cursor];
 
         if (overflow_extra > 0) {
             if (t.kind == TOKEN_LPAREN) overflow_extra++;
@@ -292,9 +292,9 @@ static Args parse_args(Parser_Context *ctx,
             }
             depth++;
             if (mode == ARGS_CONDITION_EXPR) {
-                if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+                if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return NULL;
             } else {
-                if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+                if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return NULL;
             }
             (*cursor)++;
             continue;
@@ -308,9 +308,9 @@ static Args parse_args(Parser_Context *ctx,
             }
             depth--;
             if (mode == ARGS_CONDITION_EXPR) {
-                if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+                if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return NULL;
             } else {
-                if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return (Args){0};
+                if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return NULL;
             }
             (*cursor)++;
             continue;
@@ -322,14 +322,14 @@ static Args parse_args(Parser_Context *ctx,
         }
 
         if (mode == ARGS_CONDITION_EXPR) {
-            if (!parser_append_with_condition_merge_rules(ctx, &args, t)) return (Args){0};
+            if (!parser_append_with_condition_merge_rules(ctx, &args, t)) return NULL;
         } else {
-            if (!parser_append_to_last_or_new(ctx, &args, t, parser_infer_arg_kind(t))) return (Args){0};
+            if (!parser_append_to_last_or_new(ctx, &args, t, parser_infer_arg_kind(t))) return NULL;
         }
         (*cursor)++;
     }
 
-    if (!closed && *cursor >= tokens->count) {
+    if (!closed && *cursor >= arena_arr_len(*tokens)) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", origin_line, origin_col, "args",
             "argumento nao fechado, esperado ')'", "feche parenteses no comando atual");
         ok = false;
@@ -399,7 +399,7 @@ static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, si
             diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "if",
                 "if sem terminador endif()", "adicione endif() ao bloco");
             return parser_make_empty_statement(line, col);
-        } else if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+        } else if (*cursor < arena_arr_len(*tokens) && (*tokens)[*cursor].kind == TOKEN_LPAREN) {
             bool end_args_ok = true;
             Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
             PARSER_OOM_RETURN(ctx, (Node){0});
@@ -411,7 +411,7 @@ static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, si
             }
         }
     } else if (sv_eq_ci_lit(found_term, "endif")) {
-        if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+        if (*cursor < arena_arr_len(*tokens) && (*tokens)[*cursor].kind == TOKEN_LPAREN) {
             bool end_args_ok = true;
             Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
             PARSER_OOM_RETURN(ctx, (Node){0});
@@ -452,7 +452,7 @@ static Node parse_foreach(Parser_Context *ctx, Token_List *tokens, size_t *curso
         return parser_make_empty_statement(line, col);
     }
 
-    if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+    if (*cursor < arena_arr_len(*tokens) && (*tokens)[*cursor].kind == TOKEN_LPAREN) {
         bool end_args_ok = true;
         Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
         PARSER_OOM_RETURN(ctx, (Node){0});
@@ -488,7 +488,7 @@ static Node parse_while(Parser_Context *ctx, Token_List *tokens, size_t *cursor,
         return parser_make_empty_statement(line, col);
     }
 
-    if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+    if (*cursor < arena_arr_len(*tokens) && (*tokens)[*cursor].kind == TOKEN_LPAREN) {
         bool end_args_ok = true;
         Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
         PARSER_OOM_RETURN(ctx, (Node){0});
@@ -514,13 +514,13 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
     PARSER_OOM_RETURN(ctx, (Node){0});
     if (!def_args_ok) return parser_make_empty_statement(line, col);
     
-    if (all_args.count > 0) {
-        if (all_args.items[0].count > 0) {
-            node.as.func_def.name = all_args.items[0].items[0].text;
+    if (arena_arr_len(all_args) > 0) {
+        if (arena_arr_len(all_args[0].items) > 0) {
+            node.as.func_def.name = all_args[0].items[0].text;
         }
-        node.as.func_def.params.items = all_args.items + 1;
-        node.as.func_def.params.count = all_args.count - 1;
-        node.as.func_def.params.capacity = all_args.count - 1;
+        for (size_t i = 1; i < arena_arr_len(all_args); ++i) {
+            if (!parser_append_arg(ctx, &node.as.func_def.params, all_args[i])) return (Node){0};
+        }
     }
 
     const char *terms[] = { is_macro ? "endmacro" : "endfunction" };
@@ -533,7 +533,7 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
         return parser_make_empty_statement(line, col);
     }
 
-    if (*cursor < tokens->count && tokens->items[*cursor].kind == TOKEN_LPAREN) {
+    if (*cursor < arena_arr_len(*tokens) && (*tokens)[*cursor].kind == TOKEN_LPAREN) {
         bool end_args_ok = true;
         Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
         PARSER_OOM_RETURN(ctx, (Node){0});
@@ -549,20 +549,20 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
 // --- Generic Block Parser ---
 
 static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cursor, const char **terminators, size_t term_count, String_View *found_terminator) {
-    Node_List list = {0};
-    PARSER_OOM_RETURN(ctx, (Node_List){0});
+    Node_List list = NULL;
+    PARSER_OOM_RETURN(ctx, NULL);
     if (ctx->block_depth >= ctx->max_block_depth) {
         size_t line = 0;
         size_t col = 0;
-        if (*cursor < tokens->count) {
-            line = tokens->items[*cursor].line;
-            col = tokens->items[*cursor].col;
+        if (*cursor < arena_arr_len(*tokens)) {
+            line = (*tokens)[*cursor].line;
+            col = (*tokens)[*cursor].col;
         }
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "depth",
             "profundidade maxima de blocos excedida",
             "reduza aninhamento ou ajuste CMK2NOB_PARSER_MAX_BLOCK_DEPTH");
-        while (*cursor < tokens->count) {
-            Token t = tokens->items[*cursor];
+        while (*cursor < arena_arr_len(*tokens)) {
+            Token t = (*tokens)[*cursor];
             if (t.kind == TOKEN_IDENTIFIER && terminators != NULL) {
                 for (size_t i = 0; i < term_count; ++i) {
                     if (match_token_text(t, terminators[i])) {
@@ -578,8 +578,8 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
     }
     ctx->block_depth++;
 
-    while (*cursor < tokens->count) {
-        Token t = tokens->items[*cursor];
+    while (*cursor < arena_arr_len(*tokens)) {
+        Token t = (*tokens)[*cursor];
 
         if (t.kind == TOKEN_LPAREN || t.kind == TOKEN_RPAREN) {
             parser_emit_unexpected_token(t, "parenteses no nivel de bloco exigem um comando valido");
@@ -601,7 +601,7 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
         Node node = parse_statement(ctx, tokens, cursor);
         if (ctx->oom) {
             ctx->block_depth--;
-            return (Node_List){0};
+            return NULL;
         }
         if (node.kind != NODE_COMMAND || node.as.cmd.name.count > 0) {
             if (!parser_append_node(ctx, &list, node)) {
@@ -619,11 +619,11 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
 
 static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cursor) {
     PARSER_OOM_RETURN(ctx, (Node){0});
-    if (*cursor >= tokens->count) {
+    if (*cursor >= arena_arr_len(*tokens)) {
         return parser_make_empty_statement(0, 0);
     }
     
-    Token t = tokens->items[*cursor];
+    Token t = (*tokens)[*cursor];
     
     if (t.kind != TOKEN_IDENTIFIER) {
         Node node = parser_make_empty_statement(t.line, t.col);
@@ -651,7 +651,7 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
         return node;
     }
 
-    if (*cursor >= tokens->count || tokens->items[*cursor].kind != TOKEN_LPAREN) {
+    if (*cursor >= arena_arr_len(*tokens) || (*tokens)[*cursor].kind != TOKEN_LPAREN) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "command",
             nob_temp_sprintf("comando sem parenteses: "SV_Fmt, SV_Arg(t.text)),
             "use sintaxe nome_do_comando(...)");
@@ -686,7 +686,7 @@ Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", 0, 0, "parse_tokens",
             "arena obrigatoria ausente",
             "inicialize Arena e passe ponteiro valido para parse_tokens");
-        Ast_Root empty = {0};
+        Ast_Root empty = NULL;
         return empty;
     }
     size_t cursor = 0;
@@ -699,7 +699,7 @@ Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
     ctx.max_paren_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_PAREN_DEPTH", PARSER_DEFAULT_MAX_PAREN_DEPTH, 1);
 
     Ast_Root root = parse_block(&ctx, &tokens, &cursor, NULL, 0, NULL);
-    if (ctx.oom) return (Ast_Root){0};
+    if (ctx.oom) return NULL;
     return root;
 }
 
@@ -721,12 +721,12 @@ void print_node(Node *node, int indent) {
         case NODE_COMMAND:
             printf("\x1b[36mCMD\x1b[0m "SV_Fmt" (L:%zu)\n", SV_Arg(node->as.cmd.name), node->line);
             // Mostrar os args de forma compacta para debug
-            for(size_t i=0; i < node->as.cmd.args.count; i++) {
+            for (size_t i = 0; i < arena_arr_len(node->as.cmd.args); i++) {
                 print_indent(indent + 1);
-                Arg a = node->as.cmd.args.items[i];
+                Arg a = node->as.cmd.args[i];
                 const char* k = (a.kind == ARG_QUOTED) ? "QUOTED" : (a.kind == ARG_BRACKET ? "BRACKET" : "UNQUOTED");
                 printf("- [%s] ", k);
-                for(size_t j=0; j < a.count; j++) {
+                for (size_t j = 0; j < arena_arr_len(a.items); j++) {
                     printf(SV_Fmt, SV_Arg(a.items[j].text));
                 }
                 printf("\n");
@@ -735,12 +735,12 @@ void print_node(Node *node, int indent) {
         case NODE_IF:
             printf("\x1b[35mIF\x1b[0m (L:%zu)\n", node->line);
             print_ast_list(node->as.if_stmt.then_block, indent + 1);
-            for (size_t i = 0; i < node->as.if_stmt.elseif_clauses.count; i++) {
+            for (size_t i = 0; i < arena_arr_len(node->as.if_stmt.elseif_clauses); i++) {
                 print_indent(indent);
                 printf("\x1b[35mELSEIF\x1b[0m\n");
-                print_ast_list(node->as.if_stmt.elseif_clauses.items[i].block, indent + 1);
+                print_ast_list(node->as.if_stmt.elseif_clauses[i].block, indent + 1);
             }
-            if (node->as.if_stmt.else_block.count > 0) {
+            if (arena_arr_len(node->as.if_stmt.else_block) > 0) {
                 print_indent(indent);
                 printf("\x1b[35mELSE\x1b[0m\n");
                 print_ast_list(node->as.if_stmt.else_block, indent + 1);
@@ -766,8 +766,8 @@ void print_node(Node *node, int indent) {
 }
 
 void print_ast_list(Node_List list, int indent) {
-    for (size_t i = 0; i < list.count; ++i) {
-        print_node(&list.items[i], indent);
+    for (size_t i = 0; i < arena_arr_len(list); ++i) {
+        print_node(&list[i], indent);
     }
 }
 

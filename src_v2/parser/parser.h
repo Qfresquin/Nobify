@@ -16,16 +16,10 @@ typedef enum {
 
 typedef struct {
     Token *items;
-    size_t count;
-    size_t capacity;
     Arg_Kind kind;    // Rastreia o tipo de quoting deste argumento
 } Arg;
 
-typedef struct {
-    Arg *items;
-    size_t count;
-    size_t capacity;
-} Args;
+typedef Arg *Args;
 
 // --- Estruturas da AST ---
 
@@ -39,23 +33,14 @@ typedef enum {
 } Node_Kind;
 
 typedef struct Node Node;
-
-typedef struct {
-    Node *items;
-    size_t count;
-    size_t capacity;
-} Node_List;
+typedef Node *Node_List;
 
 typedef struct {
     Args condition;
     Node_List block;
 } ElseIf_Clause;
 
-typedef struct {
-    ElseIf_Clause *items;
-    size_t count;
-    size_t capacity;
-} ElseIf_Clause_List;
+typedef ElseIf_Clause *ElseIf_Clause_List;
 
 struct Node {
     Node_Kind kind;

@@ -491,17 +491,17 @@ static bool sv_strip_cmake_bracket_arg(String_View in, String_View *out) {
 }
 
 static String_View arg_to_sv_flat(Evaluator_Context *ctx, const Arg *arg) {
-    if (!ctx || !arg || arg->count == 0) return nob_sv_from_cstr("");
+    if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
-    for (size_t i = 0; i < arg->count; i++) total += arg->items[i].text.count;
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) total += arg->items[i].text.count;
 
     // Flatten into temp arena; caller rewinds at statement boundary.
     char *buf = (char*)arena_alloc(ctx->arena, total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
 
     size_t off = 0;
-    for (size_t i = 0; i < arg->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) {
         String_View t = arg->items[i].text;
         if (t.count) {
             memcpy(buf + off, t.data, t.count);
@@ -519,8 +519,8 @@ static SV_List eval_resolve_args_impl(Evaluator_Context *ctx,
     SV_List out = {0};
     if (!ctx || !raw_args || eval_should_stop(ctx)) return out;
 
-    for (size_t i = 0; i < raw_args->count; i++) {
-        const Arg *arg = &raw_args->items[i];
+    for (size_t i = 0; i < arena_arr_len(*raw_args); i++) {
+        const Arg *arg = &(*raw_args)[i];
 
         String_View flat = arg_to_sv_flat(ctx, arg);
         String_View expanded = expand_vars ? eval_expand_vars(ctx, flat) : flat;
@@ -589,8 +589,8 @@ static bool eval_if(Evaluator_Context *ctx, const Node *node) {
     if (ctx->oom) return false;
     if (cond) return eval_node_list(ctx, &node->as.if_stmt.then_block);
 
-    for (size_t i = 0; i < node->as.if_stmt.elseif_clauses.count; i++) {
-        const ElseIf_Clause *cl = &node->as.if_stmt.elseif_clauses.items[i];
+    for (size_t i = 0; i < arena_arr_len(node->as.if_stmt.elseif_clauses); i++) {
+        const ElseIf_Clause *cl = &node->as.if_stmt.elseif_clauses[i];
         bool elseif_cond = eval_condition(ctx, &cl->condition);
         if (ctx->oom) return false;
         if (elseif_cond) return eval_node_list(ctx, &cl->block);
@@ -821,8 +821,8 @@ static bool eval_node(Evaluator_Context *ctx, const Node *node) {
 
 static bool eval_node_list(Evaluator_Context *ctx, const Node_List *list) {
     if (!ctx || !list) return false;
-    for (size_t i = 0; i < list->count; i++) {
-        if (!eval_node(ctx, &list->items[i])) return false;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (!eval_node(ctx, &(*list)[i])) return false;
         if (ctx->return_requested) {
             if (!eval_unwind_blocks_for_return(ctx)) return false;
             return true;
@@ -834,29 +834,21 @@ static bool eval_node_list(Evaluator_Context *ctx, const Node_List *list) {
 
 static bool clone_args_to_event(Evaluator_Context *ctx, const Args *src, Args *dst) {
     if (!ctx || !src || !dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (src->count == 0) return true;
+    *dst = NULL;
+    if (arena_arr_len(*src) == 0) return true;
 
-    dst->items = arena_alloc_array(ctx->event_arena, Arg, src->count);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
-    dst->count = src->count;
-    dst->capacity = src->count;
+    for (size_t i = 0; i < arena_arr_len(*src); i++) {
+        Arg copy = {0};
+        copy.kind = (*src)[i].kind;
 
-    for (size_t i = 0; i < src->count; i++) {
-        dst->items[i].kind = src->items[i].kind;
-        dst->items[i].count = src->items[i].count;
-        dst->items[i].capacity = src->items[i].count;
-        if (src->items[i].count == 0) continue;
-
-        dst->items[i].items = arena_alloc_array(ctx->event_arena, Token, src->items[i].count);
-        EVAL_OOM_RETURN_IF_NULL(ctx, dst->items[i].items, false);
-
-        for (size_t k = 0; k < src->items[i].count; k++) {
-            Token t = src->items[i].items[k];
+        for (size_t k = 0; k < arena_arr_len((*src)[i].items); k++) {
+            Token t = (*src)[i].items[k];
             t.text = sv_copy_to_event_arena(ctx, t.text);
             if (eval_should_stop(ctx)) return false;
-            dst->items[i].items[k] = t;
+            if (!arena_arr_push(ctx->event_arena, copy.items, t)) return ctx_oom(ctx);
         }
+
+        if (!arena_arr_push(ctx->event_arena, *dst, copy)) return ctx_oom(ctx);
     }
 
     return true;
@@ -902,33 +894,23 @@ static bool clone_node_to_event(Evaluator_Context *ctx, const Node *src, Node *d
 
 static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clause_List *src, ElseIf_Clause_List *dst) {
     if (!ctx || !src || !dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (src->count == 0) return true;
-
-    dst->items = arena_alloc_array(ctx->event_arena, ElseIf_Clause, src->count);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
-    dst->count = src->count;
-    dst->capacity = src->count;
-
-    for (size_t i = 0; i < src->count; i++) {
-        if (!clone_args_to_event(ctx, &src->items[i].condition, &dst->items[i].condition)) return false;
-        if (!clone_node_list_to_event(ctx, &src->items[i].block, &dst->items[i].block)) return false;
+    *dst = NULL;
+    for (size_t i = 0; i < arena_arr_len(*src); i++) {
+        ElseIf_Clause copy = {0};
+        if (!clone_args_to_event(ctx, &(*src)[i].condition, &copy.condition)) return false;
+        if (!clone_node_list_to_event(ctx, &(*src)[i].block, &copy.block)) return false;
+        if (!arena_arr_push(ctx->event_arena, *dst, copy)) return ctx_oom(ctx);
     }
     return true;
 }
 
 static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *src, Node_List *dst) {
     if (!ctx || !src || !dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (src->count == 0) return true;
-
-    dst->items = arena_alloc_array(ctx->event_arena, Node, src->count);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
-    dst->count = src->count;
-    dst->capacity = src->count;
-
-    for (size_t i = 0; i < src->count; i++) {
-        if (!clone_node_to_event(ctx, &src->items[i], &dst->items[i])) return false;
+    *dst = NULL;
+    for (size_t i = 0; i < arena_arr_len(*src); i++) {
+        Node copy = {0};
+        if (!clone_node_to_event(ctx, &(*src)[i], &copy)) return false;
+        if (!arena_arr_push(ctx->event_arena, *dst, copy)) return ctx_oom(ctx);
     }
     return true;
 }
@@ -944,14 +926,14 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     String_View name = sv_copy_to_event_arena(ctx, node->as.func_def.name);
     if (eval_should_stop(ctx)) return false;
 
-    size_t param_count = node->as.func_def.params.count;
+    size_t param_count = arena_arr_len(node->as.func_def.params);
     String_View *params = NULL;
     if (param_count > 0) {
         params = (String_View*)arena_alloc(ctx->event_arena, param_count * sizeof(String_View));
         EVAL_OOM_RETURN_IF_NULL(ctx, params, false);
         for (size_t i = 0; i < param_count; i++) {
-            const Arg *param = &node->as.func_def.params.items[i];
-            if (param->count == 0) {
+            const Arg *param = &node->as.func_def.params[i];
+            if (arena_arr_len(param->items) == 0) {
                 params[i] = nob_sv_from_cstr("");
                 continue;
             }
@@ -960,7 +942,7 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    Node_List body = {0};
+    Node_List body = NULL;
     if (!clone_node_list_to_event(ctx, &node->as.func_def.body, &body)) return false;
 
     // Store function/macro metadata in persistent arena.
@@ -1160,11 +1142,7 @@ static String_View get_dir_from_path(String_View path) {
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return false;
-    }
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 typedef struct {
@@ -1315,8 +1293,8 @@ bool eval_execute_file(Evaluator_Context *ctx,
     bool ok = false;
     char *path_c = NULL;
     String_View source_code = {0};
-    Token_List tokens = {0};
-    Ast_Root new_ast = {0};
+    Token_List tokens = NULL;
+    Ast_Root new_ast = NULL;
     External_Eval_State state = {0};
 
     if (!eval_read_external_source(ctx, file_path, &path_c, &source_code)) goto cleanup;

@@ -193,19 +193,15 @@ static bool flow_require_no_args(Evaluator_Context *ctx, const Node *node, Strin
 
 static bool flow_token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return false;
-    }
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 static bool flow_parse_inline_script(Evaluator_Context *ctx, String_View script, Ast_Root *out_ast) {
     if (!ctx || !out_ast) return false;
-    *out_ast = (Ast_Root){0};
+    *out_ast = NULL;
 
     Lexer lx = lexer_init(script);
-    Token_List toks = {0};
+    Token_List toks = NULL;
     for (;;) {
         Token t = lexer_next(&lx);
         if (t.kind == TOKEN_END) break;
@@ -1057,16 +1053,16 @@ static bool flow_strip_bracket_arg(String_View in, String_View *out) {
 }
 
 static String_View flow_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
-    if (!ctx || !arg || arg->count == 0) return nob_sv_from_cstr("");
+    if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
-    for (size_t i = 0; i < arg->count; i++) total += arg->items[i].text.count;
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) total += arg->items[i].text.count;
 
     char *buf = (char*)arena_alloc(ctx->arena, total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
 
     size_t off = 0;
-    for (size_t i = 0; i < arg->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) {
         String_View text = arg->items[i].text;
         if (text.count > 0) {
             memcpy(buf + off, text.data, text.count);
@@ -1103,30 +1099,20 @@ static bool flow_clone_args_to_event_range(Evaluator_Context *ctx,
                                            size_t begin,
                                            Args *dst) {
     if (!ctx || !src || !dst) return false;
-    memset(dst, 0, sizeof(*dst));
-    if (begin >= src->count) return true;
+    *dst = NULL;
+    if (begin >= arena_arr_len(*src)) return true;
 
-    size_t count = src->count - begin;
-    dst->items = arena_alloc_array(ctx->event_arena, Arg, count);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst->items, false);
-    dst->count = count;
-    dst->capacity = count;
-
-    for (size_t i = 0; i < count; i++) {
-        const Arg *in = &src->items[begin + i];
-        Arg *out = &dst->items[i];
-        out->kind = in->kind;
-        out->count = in->count;
-        out->capacity = in->count;
-        if (in->count == 0) continue;
-
-        out->items = arena_alloc_array(ctx->event_arena, Token, in->count);
-        EVAL_OOM_RETURN_IF_NULL(ctx, out->items, false);
-        for (size_t k = 0; k < in->count; k++) {
-            out->items[k] = in->items[k];
-            out->items[k].text = sv_copy_to_event_arena(ctx, in->items[k].text);
+    for (size_t i = begin; i < arena_arr_len(*src); i++) {
+        const Arg *in = &(*src)[i];
+        Arg out = {0};
+        out.kind = in->kind;
+        for (size_t k = 0; k < arena_arr_len(in->items); k++) {
+            Token t = in->items[k];
+            t.text = sv_copy_to_event_arena(ctx, t.text);
             if (eval_should_stop(ctx)) return false;
+            if (!arena_arr_push(ctx->event_arena, out.items, t)) return ctx_oom(ctx);
         }
+        if (!arena_arr_push(ctx->event_arena, *dst, out)) return ctx_oom(ctx);
     }
     return true;
 }
@@ -1254,10 +1240,8 @@ bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
         deferred.as.cmd.name = call.command_name;
         deferred.as.cmd.args = call.args;
 
-        Ast_Root ast = {0};
-        ast.items = &deferred;
-        ast.count = 1;
-        ast.capacity = 1;
+        Ast_Root ast = NULL;
+        if (!arena_arr_push(ctx->arena, ast, deferred)) return ctx_oom(ctx);
         if (!eval_run_ast_inline(ctx, ast)) return false;
 
         if (ctx->return_requested) ctx->return_requested = false;
@@ -1306,7 +1290,7 @@ static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_Lis
     String_View script = nob_sv_from_cstr("");
     if (!flow_build_call_script(ctx, command_name, &call_args, &script)) return !eval_should_stop(ctx);
 
-    Ast_Root ast = {0};
+    Ast_Root ast = NULL;
     if (!flow_parse_inline_script(ctx, script, &ast)) return !eval_should_stop(ctx);
     if (!eval_run_ast_inline(ctx, ast)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
@@ -1338,7 +1322,7 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
     buf[off] = '\0';
     String_View code = nob_sv_from_parts(buf, off);
 
-    Ast_Root ast = {0};
+    Ast_Root ast = NULL;
     if (!flow_parse_inline_script(ctx, code, &ast)) return !eval_should_stop(ctx);
     if (!eval_run_ast_inline(ctx, ast)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
@@ -1368,9 +1352,9 @@ static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
         nob_sb_free(sb);
         return ctx_oom(ctx);
     }
-    for (size_t i = 0; i < call->args.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(call->args); i++) {
         nob_sb_append(&sb, ';');
-        String_View item = flow_eval_arg_single(ctx, &call->args.items[i], false);
+        String_View item = flow_eval_arg_single(ctx, &call->args[i], false);
         if (eval_should_stop(ctx) || !flow_append_sv(&sb, item)) {
             nob_sb_free(sb);
             return ctx_oom(ctx);
@@ -1388,7 +1372,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
 
     const Args *raw = &node->as.cmd.args;
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    if (raw->count < 2) {
+    if (arena_arr_len(*raw) < 2) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("flow"),
@@ -1402,10 +1386,10 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     size_t i = 1;
     bool has_directory = false;
     String_View directory = nob_sv_from_cstr("");
-    String_View tok = flow_eval_arg_single(ctx, &raw->items[i], true);
+    String_View tok = flow_eval_arg_single(ctx, &(*raw)[i], true);
     if (eval_should_stop(ctx)) return false;
     if (eval_sv_eq_ci_lit(tok, "DIRECTORY")) {
-        if (i + 1 >= raw->count) {
+        if (i + 1 >= arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1416,10 +1400,10 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         has_directory = true;
-        directory = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        directory = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
         i += 2;
-        if (i >= raw->count) {
+        if (i >= arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1431,13 +1415,13 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    String_View subcmd = flow_eval_arg_single(ctx, &raw->items[i], true);
+    String_View subcmd = flow_eval_arg_single(ctx, &(*raw)[i], true);
     if (eval_should_stop(ctx)) return false;
     Eval_Deferred_Dir_Frame *frame = flow_resolve_defer_directory(ctx, node, has_directory, directory);
     if (!frame) return !eval_should_stop(ctx);
 
     if (eval_sv_eq_ci_lit(subcmd, "GET_CALL_IDS")) {
-        if (i + 2 != raw->count) {
+        if (i + 2 != arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1447,14 +1431,14 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL_IDS <out-var>)"));
             return !eval_should_stop(ctx);
         }
-        String_View out_var = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        String_View out_var = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
         (void)flow_set_var_to_deferred_ids(ctx, frame, out_var);
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(subcmd, "GET_CALL")) {
-        if (i + 3 != raw->count) {
+        if (i + 3 != arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1464,8 +1448,8 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL <id> <out-var>)"));
             return !eval_should_stop(ctx);
         }
-        String_View id = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
-        String_View out_var = flow_eval_arg_single(ctx, &raw->items[i + 2], true);
+        String_View id = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
+        String_View out_var = flow_eval_arg_single(ctx, &(*raw)[i + 2], true);
         if (eval_should_stop(ctx)) return false;
         Eval_Deferred_Call *call = flow_find_deferred_call(frame, id, NULL);
         if (!call) {
@@ -1483,7 +1467,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (eval_sv_eq_ci_lit(subcmd, "CANCEL_CALL")) {
-        if (i + 1 >= raw->count) {
+        if (i + 1 >= arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1493,8 +1477,8 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] CANCEL_CALL <id>...)"));
             return !eval_should_stop(ctx);
         }
-        for (size_t k = i + 1; k < raw->count; k++) {
-            String_View id = flow_eval_arg_single(ctx, &raw->items[k], true);
+        for (size_t k = i + 1; k < arena_arr_len(*raw); k++) {
+            String_View id = flow_eval_arg_single(ctx, &(*raw)[k], true);
             if (eval_should_stop(ctx)) return false;
             size_t idx = 0;
             if (!flow_find_deferred_call(frame, id, &idx)) continue;
@@ -1509,7 +1493,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     String_View explicit_id = nob_sv_from_cstr("");
     String_View id_var = nob_sv_from_cstr("");
     while (eval_sv_eq_ci_lit(subcmd, "ID") || eval_sv_eq_ci_lit(subcmd, "ID_VAR")) {
-        if (i + 1 >= raw->count) {
+        if (i + 1 >= arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1519,7 +1503,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  subcmd);
             return !eval_should_stop(ctx);
         }
-        String_View value = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+        String_View value = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
         if (eval_sv_eq_ci_lit(subcmd, "ID")) {
             explicit_id = value;
@@ -1527,7 +1511,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
             id_var = value;
         }
         i += 2;
-        if (i >= raw->count) {
+        if (i >= arena_arr_len(*raw)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
@@ -1537,7 +1521,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
             return !eval_should_stop(ctx);
         }
-        subcmd = flow_eval_arg_single(ctx, &raw->items[i], true);
+        subcmd = flow_eval_arg_single(ctx, &(*raw)[i], true);
         if (eval_should_stop(ctx)) return false;
     }
 
@@ -1551,7 +1535,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              subcmd);
         return !eval_should_stop(ctx);
     }
-    if (i + 1 >= raw->count) {
+    if (i + 1 >= arena_arr_len(*raw)) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("flow"),
@@ -1562,7 +1546,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View command_name = flow_eval_arg_single(ctx, &raw->items[i + 1], true);
+    String_View command_name = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
     if (eval_should_stop(ctx)) return false;
     if (!flow_is_valid_command_name(command_name)) {
         (void)eval_emit_diag(ctx,

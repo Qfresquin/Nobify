@@ -135,16 +135,16 @@ static bool parse_strip_bracket_arg(String_View in, String_View *out) {
 }
 
 static String_View parse_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
-    if (!ctx || !arg || arg->count == 0) return nob_sv_from_cstr("");
+    if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
-    for (size_t i = 0; i < arg->count; i++) total += arg->items[i].text.count;
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) total += arg->items[i].text.count;
 
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
 
     size_t off = 0;
-    for (size_t i = 0; i < arg->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) {
         String_View text = arg->items[i].text;
         if (text.count > 0) {
             memcpy(buf + off, text.data, text.count);
@@ -183,8 +183,8 @@ static bool parse_resolve_arg_range(Evaluator_Context *ctx,
     if (!ctx || !raw_args || !out) return false;
     *out = (SV_List){0};
 
-    for (size_t i = begin; i < raw_args->count; i++) {
-        const Arg *arg = &raw_args->items[i];
+    for (size_t i = begin; i < arena_arr_len(*raw_args); i++) {
+        const Arg *arg = &(*raw_args)[i];
         String_View value = parse_eval_arg_single(ctx, arg);
         if (eval_should_stop(ctx)) return false;
 
@@ -391,7 +391,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
 
     const Args *raw = &node->as.cmd.args;
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (raw->count < 4) {
+    if (arena_arr_len(*raw) < 4) {
         (void)eval_emit_diag(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("cmake_parse_arguments"),
@@ -404,7 +404,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
 
     bool use_parse_argv = false;
     size_t spec_index = 0;
-    String_View first = parse_eval_arg_single(ctx, &raw->items[0]);
+    String_View first = parse_eval_arg_single(ctx, &(*raw)[0]);
     if (eval_should_stop(ctx)) return false;
     if (eval_sv_eq_ci_lit(first, "PARSE_ARGV")) {
         use_parse_argv = true;
@@ -413,7 +413,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
     String_View prefix = nob_sv_from_cstr("");
     SV_List source_args = {0};
     if (use_parse_argv) {
-        if (raw->count < 6) {
+        if (arena_arr_len(*raw) < 6) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("cmake_parse_arguments"),
@@ -435,7 +435,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
         }
 
         size_t start_index = 0;
-        String_View index_sv = parse_eval_arg_single(ctx, &raw->items[1]);
+        String_View index_sv = parse_eval_arg_single(ctx, &(*raw)[1]);
         if (!parse_nonnegative_index(ctx, index_sv, &start_index)) {
             (void)eval_emit_diag(ctx,
                                  EV_DIAG_ERROR,
@@ -447,7 +447,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
             return !eval_should_stop(ctx);
         }
 
-        prefix = parse_eval_arg_single(ctx, &raw->items[2]);
+        prefix = parse_eval_arg_single(ctx, &(*raw)[2]);
         if (eval_should_stop(ctx)) return false;
         spec_index = 3;
         if (!parse_collect_parse_argv_source(ctx, start_index, &source_args)) {
@@ -467,8 +467,8 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
     }
 
     size_t max_specs = 0;
-    for (size_t i = spec_index; i < spec_index + 3 && i < raw->count; i++) {
-        String_View raw_list = parse_eval_arg_single(ctx, &raw->items[i]);
+    for (size_t i = spec_index; i < spec_index + 3 && i < arena_arr_len(*raw); i++) {
+        String_View raw_list = parse_eval_arg_single(ctx, &(*raw)[i]);
         if (eval_should_stop(ctx)) return false;
         if (raw_list.count == 0) continue;
 
@@ -484,13 +484,13 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
     }
     size_t spec_count = 0;
 
-    if (!parse_add_keyword_list(ctx, node, &raw->items[spec_index + 0], PARSE_KEYWORD_OPTION, specs, &spec_count, max_specs)) {
+    if (!parse_add_keyword_list(ctx, node, &(*raw)[spec_index + 0], PARSE_KEYWORD_OPTION, specs, &spec_count, max_specs)) {
         return !eval_should_stop(ctx);
     }
-    if (!parse_add_keyword_list(ctx, node, &raw->items[spec_index + 1], PARSE_KEYWORD_ONE, specs, &spec_count, max_specs)) {
+    if (!parse_add_keyword_list(ctx, node, &(*raw)[spec_index + 1], PARSE_KEYWORD_ONE, specs, &spec_count, max_specs)) {
         return !eval_should_stop(ctx);
     }
-    if (!parse_add_keyword_list(ctx, node, &raw->items[spec_index + 2], PARSE_KEYWORD_MULTI, specs, &spec_count, max_specs)) {
+    if (!parse_add_keyword_list(ctx, node, &(*raw)[spec_index + 2], PARSE_KEYWORD_MULTI, specs, &spec_count, max_specs)) {
         return !eval_should_stop(ctx);
     }
 

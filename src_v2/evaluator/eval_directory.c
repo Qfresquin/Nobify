@@ -1,6 +1,7 @@
 #include "eval_directory.h"
 
 #include "evaluator_internal.h"
+#include "arena_dyn.h"
 #include "sv_utils.h"
 
 #include <ctype.h>
@@ -298,7 +299,7 @@ static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *c
                                                             String_View item) {
     if (!ctx || !ctx->stream || item.count == 0) return false;
 
-    for (size_t i = 0; i < ctx->stream->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(ctx->stream->items); i++) {
         const Cmake_Event *existing = &ctx->stream->items[i];
         if (existing->kind != EV_TARGET_DECLARE) continue;
         if (!eval_sv_key_eq(existing->origin.file_path, origin.file_path)) continue;

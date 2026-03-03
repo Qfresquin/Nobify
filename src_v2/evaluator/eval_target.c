@@ -371,7 +371,7 @@ static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View tar
     *out_dir = nob_sv_from_cstr("");
     if (!ctx->stream) return true;
 
-    for (size_t i = 0; i < ctx->stream->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(ctx->stream->items); i++) {
         const Cmake_Event *ev = &ctx->stream->items[i];
         if (ev->kind != EV_TARGET_DECLARE) continue;
         if (!nob_sv_eq(ev->as.target_declare.name, target_name)) continue;
@@ -418,7 +418,7 @@ static String_View target_property_from_events_temp(Evaluator_Context *ctx,
     String_View current = nob_sv_from_cstr("");
     bool have = false;
 
-    for (size_t i = 0; i < ctx->stream->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(ctx->stream->items); i++) {
         const Cmake_Event *ev = &ctx->stream->items[i];
         String_View incoming = nob_sv_from_cstr("");
         Cmake_Target_Property_Op op = EV_PROP_APPEND_LIST;
@@ -1098,7 +1098,7 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(prop, "COMPONENTS")) {
         if (ctx->stream) {
-            for (size_t i = 0; i < ctx->stream->count; i++) {
+            for (size_t i = 0; i < arena_arr_len(ctx->stream->items); i++) {
                 const Cmake_Event *ev = &ctx->stream->items[i];
                 if (ev->kind != EV_CPACK_ADD_COMPONENT) continue;
                 if (!property_append_unique_temp(ctx, &values, ev->as.cpack_add_component.name)) {

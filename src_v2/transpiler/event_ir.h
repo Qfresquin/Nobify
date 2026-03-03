@@ -322,8 +322,6 @@ typedef struct {
 
 typedef struct {
     Cmake_Event *items;
-    size_t count;
-    size_t capacity;
 } Cmake_Event_Stream;
 
 typedef struct {

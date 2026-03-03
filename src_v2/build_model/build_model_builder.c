@@ -1352,7 +1352,7 @@ bool builder_apply_event(Build_Model_Builder *builder, const Cmake_Event *ev) {
 
 bool builder_apply_stream(Build_Model_Builder *builder, const Cmake_Event_Stream *stream) {
     if (!builder || !stream) return false;
-    for (size_t i = 0; i < stream->count; i++) {
+    for (size_t i = 0; i < arena_arr_len(stream->items); i++) {
         if (!builder_apply_event(builder, &stream->items[i])) return false;
     }
     return true;

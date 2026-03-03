@@ -225,15 +225,7 @@ static bool ev_deep_copy_payload(Arena *arena, Cmake_Event *ev) {
 bool event_stream_push(Arena *event_arena, Cmake_Event_Stream *stream, Cmake_Event ev) {
     if (!event_arena || !stream) return false;
     if (!ev_deep_copy_payload(event_arena, &ev)) return false;
-
-    if (!arena_da_reserve(event_arena,
-                          (void**)&stream->items,
-                          &stream->capacity,
-                          sizeof(stream->items[0]),
-                          stream->count + 1)) return false;
-
-    stream->items[stream->count++] = ev;
-    return true;
+    return arena_arr_push(event_arena, stream->items, ev);
 }
 
 Cmake_Event_Stream *event_stream_create(Arena *arena) {
@@ -251,7 +243,7 @@ Event_Stream_Iterator event_stream_iter(const Cmake_Event_Stream *stream) {
 
 bool event_stream_next(Event_Stream_Iterator *it) {
     if (!it || !it->stream) return false;
-    if (it->index >= it->stream->count) {
+    if (it->index >= arena_arr_len(it->stream->items)) {
         it->current = NULL;
         return false;
     }
@@ -319,8 +311,8 @@ void event_stream_dump(const Cmake_Event_Stream *stream) {
         return;
     }
 
-    printf("EventStream(count=%zu)\n", stream->count);
-    for (size_t i = 0; i < stream->count; i++) {
+    printf("EventStream(count=%zu)\n", arena_arr_len(stream->items));
+    for (size_t i = 0; i < arena_arr_len(stream->items); i++) {
         const Cmake_Event *ev = &stream->items[i];
         printf("[%zu] %s", i, ev_kind_name(ev->kind));
         ev_print_sv("file", ev->origin.file_path);

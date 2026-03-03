@@ -6,6 +6,7 @@
 #include "parser.h"
 #include "transpiler.h"
 #include "arena.h" // <--- Necessário agora
+#include "arena_dyn.h"
 #include "diagnostics.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,20 +64,19 @@ static void remove_test_tree(const char *path) {
 // Helper para parsear string de entrada (Agora recebe a Arena)
 static Ast_Root parse_cmake(Arena *arena, const char *input) {
     Lexer l = lexer_init(sv_from_cstr(input));
-    Token_List tokens = {0};
+    Token_List tokens = NULL;
     
     Token t = lexer_next(&l);
     while (t.kind != TOKEN_END) {
-        nob_da_append(&tokens, t);
+        if (!arena_arr_push(arena, tokens, t)) {
+            return NULL;
+        }
         t = lexer_next(&l);
     }
     
     // Passa a arena para o parser
     Ast_Root root = parse_tokens(arena, tokens);
     
-    // Os tokens foram alocados com malloc (nob_da_append no teste), então liberamos aqui.
-    // A AST fica na arena.
-    free(tokens.items); 
     return root;
 }
 

@@ -24,11 +24,7 @@ typedef struct {
     bool has_space_left; 
 } Token;
 
-typedef struct {
-    Token *items;
-    size_t count;
-    size_t capacity;
-} Token_List;
+typedef Token *Token_List;
 
 typedef struct {
     String_View content;

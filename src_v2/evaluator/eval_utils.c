@@ -525,7 +525,7 @@ bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, 
 
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
     if (!ctx || !ctx->stream || test_name.count == 0) return false;
-    for (size_t ei = 0; ei < ctx->stream->count; ei++) {
+    for (size_t ei = 0; ei < arena_arr_len(ctx->stream->items); ei++) {
         const Cmake_Event *ev = &ctx->stream->items[ei];
         if (ev->kind != EV_TEST_ADD) continue;
         if (!nob_sv_eq(ev->as.test_add.name, test_name)) continue;

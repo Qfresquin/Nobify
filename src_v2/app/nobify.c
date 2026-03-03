@@ -21,11 +21,7 @@ static void print_usage(const char *program) {
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) {
-        return false;
-    }
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 int main(int argc, char **argv) {
@@ -91,7 +87,7 @@ int main(int argc, char **argv) {
 
     String_View content = nob_sv_from_parts(content_cstr, strlen(content_cstr));
     Lexer lexer = lexer_init(content);
-    Token_List tokens = {0};
+    Token_List tokens = NULL;
 
     for (;;) {
         Token token = lexer_next(&lexer);
@@ -132,7 +128,7 @@ int main(int argc, char **argv) {
     }
 
     Ast_Root ast = parse_tokens(arena, tokens);
-    nob_log(NOB_INFO, "Parsed %zu tokens into %zu root nodes", tokens.count, ast.count);
+    nob_log(NOB_INFO, "Parsed %zu tokens into %zu root nodes", arena_arr_len(tokens), arena_arr_len(ast));
 
     if (print_ast_tree) {
         print_ast(ast, 0);
