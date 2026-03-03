@@ -8,8 +8,7 @@
 #include <string.h>
 
 static String_View test_current_bin_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
-    return v.count > 0 ? v : ctx->binary_dir;
+    return eval_current_binary_dir(ctx);
 }
 
 static String_View test_source_stem_temp(Evaluator_Context *ctx, String_View path) {

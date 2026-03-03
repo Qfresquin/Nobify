@@ -418,6 +418,30 @@ bool eval_cache_set(Evaluator_Context *ctx,
                     String_View type,
                     String_View doc);
 
+static inline String_View eval_current_source_dir(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+    if (v.count == 0 && ctx) v = ctx->source_dir;
+    return v;
+}
+
+static inline String_View eval_current_binary_dir(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
+    if (v.count == 0 && ctx) v = ctx->binary_dir;
+    return v;
+}
+
+static inline String_View eval_current_list_dir(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
+    if (v.count == 0 && ctx) v = ctx->source_dir;
+    return v;
+}
+
+static inline String_View eval_current_list_file(Evaluator_Context *ctx) {
+    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
+    if (v.count == 0 && ctx && ctx->current_file) v = nob_sv_from_cstr(ctx->current_file);
+    return v;
+}
+
 // ---- targets ----
 bool eval_target_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_register(Evaluator_Context *ctx, String_View name);

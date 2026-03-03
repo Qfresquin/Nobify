@@ -24,8 +24,7 @@ static bool host_capture_command_stdout(Evaluator_Context *ctx, String_View comm
     static size_t s_capture_counter = 0;
     s_capture_counter++;
 
-    String_View current_bin = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
-    if (current_bin.count == 0) current_bin = ctx->binary_dir;
+    String_View current_bin = eval_current_binary_dir(ctx);
 
     String_View file_name = sv_copy_to_temp_arena(
         ctx,

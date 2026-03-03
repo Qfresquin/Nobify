@@ -149,13 +149,11 @@ static bool mkdir_p_local(Evaluator_Context *ctx, const char *path) {
 }
 
 static String_View try_compile_current_src_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    return v.count > 0 ? v : ctx->source_dir;
+    return eval_current_source_dir(ctx);
 }
 
 static String_View try_compile_current_bin_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
-    return v.count > 0 ? v : ctx->binary_dir;
+    return eval_current_binary_dir(ctx);
 }
 
 static String_View try_compile_concat_prefix_temp(Evaluator_Context *ctx, const char *prefix, String_View tail) {

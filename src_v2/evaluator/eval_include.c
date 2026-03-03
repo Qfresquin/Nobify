@@ -167,10 +167,8 @@ static bool include_resolve_target(Evaluator_Context *ctx,
     *out_resolved = nob_sv_from_cstr("");
     if (file_or_module.count == 0) return false;
 
-    String_View current_list_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
-    if (current_list_dir.count == 0) current_list_dir = ctx->source_dir;
-    String_View current_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
-    if (current_src_dir.count == 0) current_src_dir = ctx->source_dir;
+    String_View current_list_dir = eval_current_list_dir(ctx);
+    String_View current_src_dir = eval_current_source_dir(ctx);
 
     if (eval_sv_is_abs_path(file_or_module)) {
         String_View path = eval_sv_path_normalize_temp(ctx, file_or_module);
@@ -316,13 +314,10 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    String_View current_file = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_FILE"));
-    if (current_file.count == 0 && ctx->current_file) {
-        current_file = nob_sv_from_cstr(ctx->current_file);
-    }
-    String_View current_source_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View current_file = eval_current_list_file(ctx);
+    String_View current_source_dir = eval_current_source_dir(ctx);
     if (current_source_dir.count == 0) {
-        current_source_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_DIR"));
+        current_source_dir = eval_current_list_dir(ctx);
     }
     if (current_source_dir.count == 0) current_source_dir = ctx->source_dir;
 

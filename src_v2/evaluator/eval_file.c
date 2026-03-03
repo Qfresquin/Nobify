@@ -26,13 +26,11 @@
 String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
 
 String_View eval_file_current_src_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    return v.count > 0 ? v : ctx->source_dir;
+    return eval_current_source_dir(ctx);
 }
 
 String_View eval_file_current_bin_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
-    return v.count > 0 ? v : ctx->binary_dir;
+    return eval_current_binary_dir(ctx);
 }
 
 bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
@@ -986,8 +984,7 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
     bool glob_strict = eval_var_truthy_or_default(ctx, EVAL_VAR_NOBIFY_FILE_GLOB_STRICT, false);
     size_t open_failures = 0;
 
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (current_src.count == 0) current_src = ctx->source_dir;
+    String_View current_src = eval_current_source_dir(ctx);
     if (has_relative && !eval_sv_is_abs_path(relative_base)) {
         relative_base = eval_sv_path_join(eval_temp_arena(ctx), current_src, relative_base);
     }

@@ -87,8 +87,7 @@ static bool find_package_try_module(Evaluator_Context *ctx,
                                     bool no_cmake_path,
                                     bool no_cmake_environment_path,
                                     String_View *out_path) {
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (current_src.count == 0) current_src = ctx->source_dir;
+    String_View current_src = eval_current_source_dir(ctx);
     String_View module_paths[64] = {0};
     size_t module_count = 0;
     find_package_push_prefix(module_paths, &module_count, NOB_ARRAY_LEN(module_paths), extra_paths);
@@ -905,7 +904,7 @@ static bool find_item_search(Evaluator_Context *ctx,
             if (dir.count == 0 || name.count == 0) continue;
 
             if (!eval_sv_is_abs_path(dir)) {
-                dir = eval_path_resolve_for_cmake_arg(ctx, dir, eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR)), false);
+                dir = eval_path_resolve_for_cmake_arg(ctx, dir, eval_current_source_dir(ctx), false);
                 if (eval_should_stop(ctx)) return false;
             }
 
@@ -1069,8 +1068,7 @@ static bool find_package_try_config(Evaluator_Context *ctx,
                                     bool no_cmake_system_path,
                                     bool no_cmake_install_prefix,
                                     String_View *out_path) {
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (current_src.count == 0) current_src = ctx->source_dir;
+    String_View current_src = eval_current_source_dir(ctx);
 
     String_View names[16] = {0};
     size_t name_count = 0;

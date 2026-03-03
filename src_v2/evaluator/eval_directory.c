@@ -217,8 +217,7 @@ static bool gfc_resolve_program_full_path(Evaluator_Context *ctx,
     *out_program = token;
     if (token.count == 0) return true;
 
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (current_src.count == 0) current_src = ctx->source_dir;
+    String_View current_src = eval_current_source_dir(ctx);
 
     if (eval_sv_is_abs_path(token) || gfc_contains_path_sep(token)) {
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, token, current_src, false);
@@ -632,8 +631,7 @@ bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (cur_src.count == 0) cur_src = ctx->source_dir;
+    String_View cur_src = eval_current_source_dir(ctx);
 
     bool is_system = false;
     bool is_before = false;
@@ -670,8 +668,7 @@ bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-    String_View cur_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (cur_src.count == 0) cur_src = ctx->source_dir;
+    String_View cur_src = eval_current_source_dir(ctx);
 
     bool is_before = false;
     for (size_t i = 0; i < arena_arr_len(a); i++) {
@@ -720,8 +717,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
     String_View mode = a[2];
     bool cache_result = false;
 
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    if (current_src.count == 0) current_src = ctx->source_dir;
+    String_View current_src = eval_current_source_dir(ctx);
 
     String_View result = nob_sv_from_cstr("");
     if (eval_sv_eq_ci_lit(mode, "DIRECTORY") || eval_sv_eq_ci_lit(mode, "PATH")) {

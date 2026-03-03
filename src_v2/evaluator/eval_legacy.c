@@ -21,8 +21,7 @@ static bool legacy_emit_diag(Evaluator_Context *ctx,
 }
 
 static String_View legacy_current_binary_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
-    return v.count > 0 ? v : ctx->binary_dir;
+    return eval_current_binary_dir(ctx);
 }
 
 static String_View legacy_resolve_binary_path(Evaluator_Context *ctx, String_View raw) {
