@@ -12,12 +12,7 @@ static void cmk_path_error(Evaluator_Context *ctx,
                            Cmake_Event_Origin o,
                            const char *cause,
                            String_View hint) {
-    eval_emit_diag(ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("dispatcher"),
-                   node->as.cmd.name,
-                   o,
-                   nob_sv_from_cstr(cause),
+    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr(cause),
                    hint);
 }
 

@@ -194,12 +194,7 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     } else if (mode == MSG_MODE_CHECK_PASS || mode == MSG_MODE_CHECK_FAIL) {
         String_View start_msg = {0};
         if (!msg_check_stack_pop(ctx, &start_msg)) {
-            if (!eval_emit_diag(ctx,
-                                EV_DIAG_ERROR,
-                                nob_sv_from_cstr("message"),
-                                node->as.cmd.name,
-                                o,
-                                nob_sv_from_cstr("message(CHECK_PASS/CHECK_FAIL) requires a preceding CHECK_START"),
+            if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "message", nob_sv_from_cstr("message(CHECK_PASS/CHECK_FAIL) requires a preceding CHECK_START"),
                                 nob_sv_from_cstr("Use message(CHECK_START ...) before CHECK_PASS/CHECK_FAIL"))) {
                 return false;
             }
@@ -239,13 +234,13 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (mode == MSG_MODE_FATAL_ERROR || mode == MSG_MODE_SEND_ERROR) {
-        if (!eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("message"), node->as.cmd.name, o, msg, nob_sv_from_cstr(""))) {
+        if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "message", msg, nob_sv_from_cstr(""))) {
             return false;
         }
         return !eval_should_stop(ctx);
     }
     if (mode == MSG_MODE_WARNING || mode == MSG_MODE_AUTHOR_WARNING || mode == MSG_MODE_DEPRECATION) {
-        if (!eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("message"), node->as.cmd.name, o, msg, nob_sv_from_cstr(""))) {
+        if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "message", msg, nob_sv_from_cstr(""))) {
             return false;
         }
     }

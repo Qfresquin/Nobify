@@ -386,12 +386,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
     const Args *raw = &node->as.cmd.args;
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(*raw) < 4) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("cmake_parse_arguments"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("cmake_parse_arguments() requires at least four arguments"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments() requires at least four arguments"),
                              nob_sv_from_cstr("Usage: cmake_parse_arguments(<prefix> <options> <one_value_keywords> <multi_value_keywords> <args>...)"));
         return !eval_should_stop(ctx);
     }
@@ -408,22 +403,12 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
     SV_List source_args = NULL;
     if (use_parse_argv) {
         if (arena_arr_len(*raw) < 6) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("cmake_parse_arguments"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires index, prefix and three keyword lists"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires index, prefix and three keyword lists"),
                                  nob_sv_from_cstr("Usage: cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one_value_keywords> <multi_value_keywords>)"));
             return !eval_should_stop(ctx);
         }
         if (ctx->function_eval_depth == 0 || arena_arr_len(ctx->macro_frames) > 0) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("cmake_parse_arguments"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) may only be used in function() scope"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) may only be used in function() scope"),
                                  nob_sv_from_cstr("Use the direct signature in macro() or top-level scope"));
             return !eval_should_stop(ctx);
         }
@@ -431,12 +416,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
         size_t start_index = 0;
         String_View index_sv = parse_eval_arg_single(ctx, &(*raw)[1]);
         if (!parse_nonnegative_index(ctx, index_sv, &start_index)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("cmake_parse_arguments"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires a non-negative integer index"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires a non-negative integer index"),
                                  index_sv);
             return !eval_should_stop(ctx);
         }
@@ -445,12 +425,7 @@ bool eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node)
         if (eval_should_stop(ctx)) return false;
         spec_index = 3;
         if (!parse_collect_parse_argv_source(ctx, start_index, &source_args)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("cmake_parse_arguments"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) could not read ARGV values"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) could not read ARGV values"),
                                  nob_sv_from_cstr("Ensure the command is called from function() scope"));
             return !eval_should_stop(ctx);
         }
@@ -797,22 +772,12 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         // CMake: set(ENV{var} [value]) uses only first value arg and warns on extras.
         String_View env_value = (arena_arr_len(a) >= 2) ? a[1] : nob_sv_from_cstr("");
         if (arena_arr_len(a) > 2) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_WARNING,
-                                 nob_sv_from_cstr("set"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("set(ENV{...}) ignores extra arguments after value"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "set", nob_sv_from_cstr("set(ENV{...}) ignores extra arguments after value"),
                                  nob_sv_from_cstr("Only the first value argument is used"));
         }
 
         if (!set_process_env(ctx, env_name, env_value)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("set"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("Failed to set environment variable"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "set", nob_sv_from_cstr("Failed to set environment variable"),
                                  env_name);
         }
         return !eval_should_stop(ctx);
@@ -829,12 +794,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (cache_idx < arena_arr_len(a)) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         if (cache_idx + 2 >= arena_arr_len(a)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("set"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("set(... CACHE ...) requires <type> and <docstring>"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "set", nob_sv_from_cstr("set(... CACHE ...) requires <type> and <docstring>"),
                                  nob_sv_from_cstr("Usage: set(<var> <value>... CACHE <type> <doc> [FORCE])"));
             return !eval_should_stop(ctx);
         }
@@ -843,12 +803,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         String_View cache_type = {0};
         bool is_internal = false;
         if (!parse_cache_type(cache_type_raw, &cache_type, &is_internal)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("set"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("set(... CACHE ...) received invalid cache type"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "set", nob_sv_from_cstr("set(... CACHE ...) received invalid cache type"),
                                  cache_type_raw);
             return !eval_should_stop(ctx);
         }
@@ -859,12 +814,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
             if (cache_idx + 3 == arena_arr_len(a) - 1 && eval_sv_eq_ci_lit(a[cache_idx + 3], "FORCE")) {
                 force = true;
             } else {
-                (void)eval_emit_diag(ctx,
-                                     EV_DIAG_ERROR,
-                                     nob_sv_from_cstr("set"),
-                                     node->as.cmd.name,
-                                     o,
-                                     nob_sv_from_cstr("set(... CACHE ...) received unsupported trailing arguments"),
+                (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "set", nob_sv_from_cstr("set(... CACHE ...) received unsupported trailing arguments"),
                                      nob_sv_from_cstr("Only optional FORCE is accepted after <docstring>"));
                 return !eval_should_stop(ctx);
             }
@@ -929,12 +879,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         }
         else {
             Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-            if (!eval_emit_diag(ctx,
-                                EV_DIAG_ERROR,
-                                nob_sv_from_cstr("set"),
-                                node->as.cmd.name,
-                                o,
-                                nob_sv_from_cstr("PARENT_SCOPE used without a parent scope"),
+            if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "set", nob_sv_from_cstr("PARENT_SCOPE used without a parent scope"),
                                 nob_sv_from_cstr("Use PARENT_SCOPE only inside function/subscope"))) {
                 return false;
             }
@@ -952,23 +897,13 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return false;
     if (arena_arr_len(a) == 0) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("unset"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("unset() requires variable name"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "unset", nob_sv_from_cstr("unset() requires variable name"),
                              nob_sv_from_cstr("Usage: unset(<var> [CACHE|PARENT_SCOPE])"));
         return !eval_should_stop(ctx);
     }
     if (arena_arr_len(a) > 2) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("unset"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("unset() accepts at most one option"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "unset", nob_sv_from_cstr("unset() accepts at most one option"),
                              nob_sv_from_cstr("Supported options: CACHE, PARENT_SCOPE"));
         return !eval_should_stop(ctx);
     }
@@ -978,22 +913,12 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     if (parse_env_var_name(var, &env_name)) {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         if (arena_arr_len(a) > 1) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("unset"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("unset(ENV{...}) does not accept options"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "unset", nob_sv_from_cstr("unset(ENV{...}) does not accept options"),
                                  nob_sv_from_cstr("Usage: unset(ENV{<var>})"));
             return !eval_should_stop(ctx);
         }
         if (!unset_process_env(ctx, env_name)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("unset"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("Failed to unset environment variable"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "unset", nob_sv_from_cstr("Failed to unset environment variable"),
                                  env_name);
         }
         return !eval_should_stop(ctx);
@@ -1008,12 +933,7 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
             parent_scope = true;
         } else {
             Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("unset"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("unset() received unsupported option"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "unset", nob_sv_from_cstr("unset() received unsupported option"),
                                  a[1]);
             return !eval_should_stop(ctx);
         }
@@ -1035,12 +955,7 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     if (parent_scope) {
         if (eval_scope_visible_depth(ctx) <= 1) {
             Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("unset"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("PARENT_SCOPE used without a parent scope"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "unset", nob_sv_from_cstr("PARENT_SCOPE used without a parent scope"),
                                  nob_sv_from_cstr("Use PARENT_SCOPE only inside function/subscope"));
             return !eval_should_stop(ctx);
         }
@@ -1065,24 +980,14 @@ bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (arena_arr_len(a) < 2 || arena_arr_len(a) > 3) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("option"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("option() requires <variable> <help_text> [value]"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "option", nob_sv_from_cstr("option() requires <variable> <help_text> [value]"),
                              nob_sv_from_cstr("Usage: option(<variable> <help_text> [value])"));
         return !eval_should_stop(ctx);
     }
 
     String_View var = a[0];
     if (var.count == 0) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("option"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("option() requires a non-empty variable name"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "option", nob_sv_from_cstr("option() requires a non-empty variable name"),
                              nob_sv_from_cstr("Provide a cache variable identifier"));
         return !eval_should_stop(ctx);
     }
@@ -1124,12 +1029,7 @@ bool eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (start >= arena_arr_len(a)) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("mark_as_advanced"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("mark_as_advanced() requires at least one variable name"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "mark_as_advanced", nob_sv_from_cstr("mark_as_advanced() requires at least one variable name"),
                              nob_sv_from_cstr("Usage: mark_as_advanced([CLEAR|FORCE] <var>...)"));
         return !eval_should_stop(ctx);
     }
@@ -1165,12 +1065,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (arena_arr_len(a) == 0) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("separate_arguments"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("separate_arguments() requires an output variable"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "separate_arguments", nob_sv_from_cstr("separate_arguments() requires an output variable"),
                              nob_sv_from_cstr("Usage: separate_arguments(<var> [UNIX_COMMAND|WINDOWS_COMMAND|NATIVE_COMMAND] <args>...)"));
         return !eval_should_stop(ctx);
     }
@@ -1206,23 +1101,13 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (explicit_mode && input_index >= arena_arr_len(a)) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("separate_arguments"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("separate_arguments() mode form requires an input command line"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "separate_arguments", nob_sv_from_cstr("separate_arguments() mode form requires an input command line"),
                              nob_sv_from_cstr("Add the command string after the parsing mode"));
         return !eval_should_stop(ctx);
     }
 
     if (explicit_mode && input_index < arena_arr_len(a) && eval_sv_eq_ci_lit(a[input_index], "PROGRAM")) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("separate_arguments"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "separate_arguments", nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"),
                              nob_sv_from_cstr("Supported in this batch: UNIX_COMMAND, WINDOWS_COMMAND, NATIVE_COMMAND, and one-argument list form"));
         return !eval_should_stop(ctx);
     }

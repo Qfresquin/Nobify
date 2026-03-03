@@ -140,12 +140,7 @@ static void file_transfer_fail(Evaluator_Context *ctx,
     file_transfer_set_log_sv(ctx, opt->log_var, log_message);
     if (opt->status_var.count > 0) return;
 
-    eval_emit_diag(ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("eval_file"),
-                   node->as.cmd.name,
-                   o,
-                   cause,
+    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", cause,
                    hint.count > 0 ? hint : msg);
 }
 
@@ -161,22 +156,19 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
     for (size_t i = start; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "STATUS")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() STATUS requires an output variable"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() STATUS requires an output variable"), args[i]);
                 return false;
             }
             out->status_var = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "LOG")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() LOG requires an output variable"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() LOG requires an output variable"), args[i]);
                 return false;
             }
             out->log_var = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "RANGE_START")) {
             if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->range_start)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(DOWNLOAD) invalid RANGE_START"),
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(DOWNLOAD) invalid RANGE_START"),
                                (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
@@ -184,8 +176,7 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             i++;
         } else if (eval_sv_eq_ci_lit(args[i], "RANGE_END")) {
             if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->range_end)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(DOWNLOAD) invalid RANGE_END"),
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(DOWNLOAD) invalid RANGE_END"),
                                (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
@@ -193,8 +184,7 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             i++;
         } else if (eval_sv_eq_ci_lit(args[i], "TIMEOUT")) {
             if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->timeout_sec)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() invalid TIMEOUT"),
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() invalid TIMEOUT"),
                                (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
@@ -202,8 +192,7 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             i++;
         } else if (eval_sv_eq_ci_lit(args[i], "INACTIVITY_TIMEOUT")) {
             if (i + 1 >= arena_arr_len(args) || !eval_file_parse_size_sv(args[i + 1], &out->inactivity_timeout_sec)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() invalid INACTIVITY_TIMEOUT"),
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() invalid INACTIVITY_TIMEOUT"),
                                (i + 1 < arena_arr_len(args)) ? args[i + 1] : args[i]);
                 return false;
             }
@@ -211,44 +200,38 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             i++;
         } else if (eval_sv_eq_ci_lit(args[i], "EXPECTED_HASH")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_HASH requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_HASH requires a value"), args[i]);
                 return false;
             }
             out->expected_hash = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "EXPECTED_MD5")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_MD5 requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(DOWNLOAD) EXPECTED_MD5 requires a value"), args[i]);
                 return false;
             }
             out->expected_md5 = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "USERPWD")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() USERPWD requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() USERPWD requires a value"), args[i]);
                 return false;
             }
             out->userpwd = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "TLS_CAINFO")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() TLS_CAINFO requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() TLS_CAINFO requires a value"), args[i]);
                 return false;
             }
             out->tls_cainfo = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "TLS_VERIFY")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() TLS_VERIFY requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() TLS_VERIFY requires a value"), args[i]);
                 return false;
             }
             out->has_tls_verify = true;
             out->tls_verify = eval_truthy(ctx, args[++i]);
         } else if (eval_sv_eq_ci_lit(args[i], "HTTPHEADER")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() HTTPHEADER requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() HTTPHEADER requires a value"), args[i]);
                 return false;
             }
             if (out->http_headers_count < NOB_ARRAY_LEN(out->http_headers)) {
@@ -258,8 +241,7 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             }
         } else if (eval_sv_eq_ci_lit(args[i], "NETRC")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() NETRC requires one of IGNORED/OPTIONAL/REQUIRED"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() NETRC requires one of IGNORED/OPTIONAL/REQUIRED"), args[i]);
                 return false;
             }
             String_View mode = args[++i];
@@ -267,22 +249,19 @@ static bool file_transfer_parse_options(Evaluator_Context *ctx,
             else if (eval_sv_eq_ci_lit(mode, "OPTIONAL")) out->netrc_mode = EVAL_FILE_NETRC_OPTIONAL;
             else if (eval_sv_eq_ci_lit(mode, "REQUIRED")) out->netrc_mode = EVAL_FILE_NETRC_REQUIRED;
             else {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() NETRC requires IGNORED/OPTIONAL/REQUIRED"), mode);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() NETRC requires IGNORED/OPTIONAL/REQUIRED"), mode);
                 return false;
             }
         } else if (eval_sv_eq_ci_lit(args[i], "NETRC_FILE")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("file() NETRC_FILE requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() NETRC_FILE requires a value"), args[i]);
                 return false;
             }
             out->netrc_file = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "SHOW_PROGRESS")) {
             out->show_progress = true;
         } else {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file() received unknown transfer option"), args[i]);
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file() received unknown transfer option"), args[i]);
             return false;
         }
     }
@@ -645,8 +624,7 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
 static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(DOWNLOAD) requires at least URL/path"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(DOWNLOAD) requires at least URL/path"),
                        nob_sv_from_cstr("Usage: file(DOWNLOAD <url> [<file>] [STATUS var] [LOG var])"));
         return true;
     }
@@ -840,8 +818,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
 static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(UPLOAD) requires source file and URL/path"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(UPLOAD) requires source file and URL/path"),
                        nob_sv_from_cstr("Usage: file(UPLOAD <file> <url> [STATUS var] [LOG var])"));
         return true;
     }

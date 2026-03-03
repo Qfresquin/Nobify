@@ -295,23 +295,20 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (arena_arr_len(a) < 1) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("math() requires a subcommand"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math() requires a subcommand"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return !eval_should_stop(ctx);
     }
 
     if (!eval_sv_eq_ci_lit(a[0], "EXPR")) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("Unsupported math() subcommand"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("Unsupported math() subcommand"),
                        nob_sv_from_cstr("Implemented: EXPR"));
         eval_request_stop_on_error(ctx);
         return !eval_should_stop(ctx);
     }
 
     if (arena_arr_len(a) < 3) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return !eval_should_stop(ctx);
     }
@@ -330,20 +327,17 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
 
     if (output_format_idx < arena_arr_len(a)) {
         if (output_format_idx + 1 >= arena_arr_len(a)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"),
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"),
                            nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
             return !eval_should_stop(ctx);
         }
         if (!math_parse_output_format_sv(a[output_format_idx + 1], &out_fmt)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"),
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"),
                            a[output_format_idx + 1]);
             return !eval_should_stop(ctx);
         }
         if (output_format_idx + 2 != arena_arr_len(a)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"),
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"),
                            nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
             return !eval_should_stop(ctx);
         }
@@ -357,8 +351,7 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (expr_end <= expr_begin) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("math"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return !eval_should_stop(ctx);
     }

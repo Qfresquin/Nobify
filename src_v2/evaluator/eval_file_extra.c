@@ -73,8 +73,7 @@ static void file_append_configure_value(Nob_String_Builder *out, String_View val
 static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) != 3) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(<HASH>) requires filename and output variable"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(<HASH>) requires filename and output variable"),
                        nob_sv_from_cstr("Usage: file(<HASH> <filename> <out-var>)"));
         return true;
     }
@@ -92,8 +91,7 @@ static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List a
 
     Nob_String_Builder data = {0};
     if (!file_read_bytes(ctx, in_path, &data)) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(<HASH>) failed to read file"), in_path);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(<HASH>) failed to read file"), in_path);
         return true;
     }
 
@@ -102,8 +100,7 @@ static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List a
     bool ok = eval_hash_compute_hex_temp(ctx, args[0], payload, &digest);
     nob_sb_free(data);
     if (!ok) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("Unsupported hash algorithm"), args[0]);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("Unsupported hash algorithm"), args[0]);
         return true;
     }
 
@@ -369,8 +366,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (arena_arr_len(args) < 2) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file() requires input and output paths"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() requires input and output paths"),
                        nob_sv_from_cstr("Usage: configure_file(<input> <output> [COPYONLY] [@ONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE <style>] [NO_SOURCE_PERMISSIONS|USE_SOURCE_PERMISSIONS|FILE_PERMISSIONS <perms>...])"));
         return !eval_should_stop(ctx);
     }
@@ -399,8 +395,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
         }
         if (eval_sv_eq_ci_lit(args[i], "NEWLINE_STYLE")) {
             if (i + 1 >= arena_arr_len(args)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                               nob_sv_from_cstr("configure_file(NEWLINE_STYLE) requires a value"), args[i]);
+                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(NEWLINE_STYLE) requires a value"), args[i]);
                 return !eval_should_stop(ctx);
             }
             newline_style = args[++i];
@@ -418,8 +413,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
             saw_file_permissions = true;
             for (i = i + 1; i < arena_arr_len(args) && !configure_file_keyword(args[i]); i++) {
                 if (!configure_file_perm_add_token(&file_mode, args[i])) {
-                    eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                                   nob_sv_from_cstr("configure_file() unknown FILE_PERMISSIONS token"), args[i]);
+                    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() unknown FILE_PERMISSIONS token"), args[i]);
                     return !eval_should_stop(ctx);
                 }
             }
@@ -427,33 +421,28 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
             continue;
         }
 
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file() received unexpected argument"), args[i]);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() received unexpected argument"), args[i]);
         return !eval_should_stop(ctx);
     }
 
     if (newline_style.count > 0 && !configure_file_valid_newline_style(newline_style)) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file(NEWLINE_STYLE) received invalid value"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(NEWLINE_STYLE) received invalid value"),
                        newline_style);
         return !eval_should_stop(ctx);
     }
 
     if (copyonly && newline_style.count > 0) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file(COPYONLY) cannot be combined with NEWLINE_STYLE"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(COPYONLY) cannot be combined with NEWLINE_STYLE"),
                        nob_sv_from_cstr("COPYONLY preserves the input bytes and therefore cannot rewrite line endings"));
         return !eval_should_stop(ctx);
     }
     if ((saw_use_source_permissions ? 1 : 0) + (saw_no_source_permissions ? 1 : 0) + (saw_file_permissions ? 1 : 0) > 1) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file() received conflicting permission options"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() received conflicting permission options"),
                        nob_sv_from_cstr("Use only one of USE_SOURCE_PERMISSIONS, NO_SOURCE_PERMISSIONS, or FILE_PERMISSIONS"));
         return !eval_should_stop(ctx);
     }
     if (saw_file_permissions && file_mode == 0) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file(FILE_PERMISSIONS) requires at least one valid permission token"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(FILE_PERMISSIONS) requires at least one valid permission token"),
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
@@ -474,8 +463,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
 
     struct stat src_st = {0};
     if (stat(in_c, &src_st) != 0 || !S_ISREG(src_st.st_mode)) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file() input must name an existing regular file"), in_path);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() input must name an existing regular file"), in_path);
         return !eval_should_stop(ctx);
     }
 
@@ -487,8 +475,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
 
     Nob_String_Builder src_buf = {0};
     if (!file_read_bytes(ctx, in_path, &src_buf)) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("configure_file() failed to read input file"), in_path);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() failed to read input file"), in_path);
         return !eval_should_stop(ctx);
     }
 
@@ -504,8 +491,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
     if (!file_same_content(ctx, out_path, out_text, &same)) return !eval_should_stop(ctx);
     if (!same) {
         if (!file_write_bytes(ctx, out_path, out_text.data, out_text.count)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("configure_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("configure_file() failed to write output file"), out_path);
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() failed to write output file"), out_path);
             return !eval_should_stop(ctx);
         }
     }
@@ -568,15 +554,13 @@ static bool handle_file_configure(Evaluator_Context *ctx, const Node *node, SV_L
         } else if (eval_sv_eq_ci_lit(args[i], "ESCAPE_QUOTES")) {
             escape_quotes = true;
         } else {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(CONFIGURE) received unexpected argument"), args[i]);
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CONFIGURE) received unexpected argument"), args[i]);
             return true;
         }
     }
 
     if (output.count == 0 || content.count == 0) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(CONFIGURE) requires OUTPUT and CONTENT"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CONFIGURE) requires OUTPUT and CONTENT"),
                        nob_sv_from_cstr("Usage: file(CONFIGURE OUTPUT <out> CONTENT <text> [@ONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE <style>])"));
         return true;
     }
@@ -600,8 +584,7 @@ static bool handle_file_configure(Evaluator_Context *ctx, const Node *node, SV_L
     if (same) return true;
 
     if (!file_write_bytes(ctx, out_path, expanded.data, expanded.count)) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(CONFIGURE) failed to write OUTPUT"), out_path);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CONFIGURE) failed to write OUTPUT"), out_path);
     }
     return true;
 }
@@ -634,8 +617,7 @@ static bool file_copy_file_do(Evaluator_Context *ctx, String_View src, String_Vi
 static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(COPY_FILE) requires source and destination"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY_FILE) requires source and destination"),
                        nob_sv_from_cstr("Usage: file(COPY_FILE <old> <new> [RESULT <var>] [ONLY_IF_DIFFERENT] [INPUT_MAY_BE_RECENT])"));
         return true;
     }
@@ -650,8 +632,7 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
         } else if (eval_sv_eq_ci_lit(args[i], "RESULT") && i + 1 < arena_arr_len(args)) {
             result_var = args[++i];
         } else {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(COPY_FILE) received unexpected argument"), args[i]);
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY_FILE) received unexpected argument"), args[i]);
             return true;
         }
     }
@@ -684,8 +665,7 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
     }
 
     if (!ok) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(COPY_FILE) failed"), src);
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY_FILE) failed"), src);
     }
     return true;
 }
@@ -711,8 +691,7 @@ static bool file_touch_one(Evaluator_Context *ctx, String_View path, bool create
 static bool handle_file_touch(Evaluator_Context *ctx, const Node *node, SV_List args, bool nocreate) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nocreate ? nob_sv_from_cstr("file(TOUCH_NOCREATE) requires at least one file")
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nocreate ? nob_sv_from_cstr("file(TOUCH_NOCREATE) requires at least one file")
                                 : nob_sv_from_cstr("file(TOUCH) requires at least one file"),
                        nocreate ? nob_sv_from_cstr("Usage: file(TOUCH_NOCREATE <file>...)")
                                 : nob_sv_from_cstr("Usage: file(TOUCH <file>...)"));
@@ -731,8 +710,7 @@ static bool handle_file_touch(Evaluator_Context *ctx, const Node *node, SV_List 
             return true;
         }
         if (!file_touch_one(ctx, path, !nocreate)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nocreate ? nob_sv_from_cstr("file(TOUCH_NOCREATE) failed")
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nocreate ? nob_sv_from_cstr("file(TOUCH_NOCREATE) failed")
                                     : nob_sv_from_cstr("file(TOUCH) failed"),
                            path);
             return true;
@@ -904,8 +882,7 @@ static bool runtime_match_any_regex(Evaluator_Context *ctx,
         regex_t re = {0};
         int rc = regcomp(&re, rx_c, REG_EXTENDED);
         if (rc != 0) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                           nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) invalid regex"),
+            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) invalid regex"),
                            regexes[i]);
             return false;
         }
@@ -1189,15 +1166,13 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
             continue;
         }
 
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) received unexpected argument"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) received unexpected argument"),
                        args[i]);
         return true;
     }
 
     if (rd.resolved_var.count == 0 && rd.unresolved_var.count == 0) {
-        eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), node->as.cmd.name, o,
-                       nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) requires RESOLVED_DEPENDENCIES_VAR or UNRESOLVED_DEPENDENCIES_VAR"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(GET_RUNTIME_DEPENDENCIES) requires RESOLVED_DEPENDENCIES_VAR or UNRESOLVED_DEPENDENCIES_VAR"),
                        nob_sv_from_cstr("Provide at least one output variable"));
         return true;
     }

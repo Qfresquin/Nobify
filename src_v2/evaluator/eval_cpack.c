@@ -223,12 +223,7 @@ bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (arena_arr_len(a) < 1) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cpack_add_install_type() missing name"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_install_type() missing name"),
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
@@ -276,12 +271,7 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (arena_arr_len(a) < 1) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cpack_add_component_group() missing name"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_component_group() missing name"),
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }
@@ -341,12 +331,7 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     if (arena_arr_len(a) < 1) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("cpack_add_component() missing name"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_component() missing name"),
                        nob_sv_from_cstr(""));
         return !eval_should_stop(ctx);
     }

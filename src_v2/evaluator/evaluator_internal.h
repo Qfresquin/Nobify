@@ -342,6 +342,24 @@ static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr
 #define EVAL_ARR_PUSH(ctx, arena, arr, value) \
     (arena_arr_push((arena), (arr), (value)) ? true : ctx_oom((ctx)))
 
+#define EVAL_NODE_ORIGIN_DIAG(ctx, node, origin, severity, component_lit, cause, hint) \
+    eval_emit_diag((ctx),                                                       \
+                   (severity),                                                  \
+                   nob_sv_from_cstr((component_lit)),                           \
+                   (node)->as.cmd.name,                                         \
+                   (origin),                                                    \
+                   (cause),                                                     \
+                   (hint))
+
+#define EVAL_NODE_DIAG(ctx, node, severity, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG((ctx),                                         \
+                          (node),                                        \
+                          eval_origin_from_node((ctx), (node)),          \
+                          (severity),                                    \
+                          (component_lit),                               \
+                          (cause),                                       \
+                          (hint))
+
 static inline void eval_clear_return_state(Evaluator_Context *ctx) {
     if (!ctx) return;
     ctx->return_requested = false;

@@ -95,12 +95,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(*args) == 0) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("build_command() requires an output variable"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_command() requires an output variable"),
                              nob_sv_from_cstr("Usage: build_command(<out-var> [CONFIGURATION <cfg>] [TARGET <tgt>])"));
         return false;
     }
@@ -122,12 +117,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
     }
 
     if (positional_count > 3) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("build_command() received too many positional arguments"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_command() received too many positional arguments"),
                              nob_sv_from_cstr("Supported legacy positionals: <makecommand> [makefile_name] [target]"));
         return false;
     }
@@ -137,12 +127,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
     while (index < arena_arr_len(*args)) {
         String_View key = (*args)[index++];
         if (index >= arena_arr_len(*args)) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("host"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("build_command() keyword requires a value"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_command() keyword requires a value"),
                                  key);
             return false;
         }
@@ -158,12 +143,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
             out_opt->project_name = value;
             out_opt->saw_project_name = true;
         } else {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("host"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("build_command() received an unsupported argument"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_command() received an unsupported argument"),
                                  key);
             return false;
         }
@@ -310,12 +290,7 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
     if (arena_arr_len(args) < 4 ||
         !eval_sv_eq_ci_lit(args[0], "RESULT") ||
         !eval_sv_eq_ci_lit(args[2], "QUERY")) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("cmake_host_system_information() requires RESULT and QUERY clauses"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("cmake_host_system_information() requires RESULT and QUERY clauses"),
                              nob_sv_from_cstr("Usage: cmake_host_system_information(RESULT <var> QUERY <key>...)"));
         return !eval_should_stop(ctx);
     }
@@ -330,12 +305,7 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
         bool supported = false;
         if (!host_info_query_value(ctx, args[i], &value, &supported)) return false;
         if (!supported) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("host"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"),
                                  args[i]);
             value = nob_sv_from_cstr("");
         }
@@ -356,12 +326,7 @@ bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (arena_arr_len(args) != 1) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("site_name() requires exactly one output variable"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("site_name() requires exactly one output variable"),
                              nob_sv_from_cstr("Usage: site_name(<out-var>)"));
         return !eval_should_stop(ctx);
     }
@@ -371,23 +336,13 @@ bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
     if (hostname_command.count > 0) {
         if (!host_capture_command_stdout(ctx, hostname_command, &value)) return false;
         if (value.count == 0) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_WARNING,
-                                 nob_sv_from_cstr("host"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("site_name() HOSTNAME helper command produced no output"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "host", nob_sv_from_cstr("site_name() HOSTNAME helper command produced no output"),
                                  hostname_command);
         }
     } else {
         if (!eval_host_hostname_temp(ctx, &value)) return false;
         if (value.count == 0) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_WARNING,
-                                 nob_sv_from_cstr("host"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("site_name() could not determine host name"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "host", nob_sv_from_cstr("site_name() could not determine host name"),
                                  nob_sv_from_cstr("Result variable set to empty string"));
         }
     }
@@ -404,23 +359,13 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (arena_arr_len(args) != 1) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("build_name() requires exactly one output variable"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_name() requires exactly one output variable"),
                              nob_sv_from_cstr("Usage: build_name(<out-var>)"));
         return !eval_should_stop(ctx);
     }
 
     if (eval_policy_is_new(ctx, EVAL_POLICY_CMP0036)) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("build_name() is disallowed by CMP0036"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_name() is disallowed by CMP0036"),
                              nob_sv_from_cstr("Set CMP0036 to OLD only for legacy compatibility"));
         return !eval_should_stop(ctx);
     }
@@ -454,12 +399,7 @@ bool eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
     if (!host_build_command_parse(ctx, node, &args, &out_var, &opt)) return !eval_should_stop(ctx);
 
     if (opt.saw_project_name) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_WARNING,
-                             nob_sv_from_cstr("host"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("build_command(PROJECT_NAME ...) is parsed but ignored by evaluator v2"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "host", nob_sv_from_cstr("build_command(PROJECT_NAME ...) is parsed but ignored by evaluator v2"),
                              opt.project_name);
     }
 

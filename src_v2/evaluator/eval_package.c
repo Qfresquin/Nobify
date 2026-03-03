@@ -481,12 +481,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
         }
         if (find_item_keyword_eq(key, "REGISTRY_VIEW")) {
             if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
-                (void)eval_emit_diag(ctx,
-                                     EV_DIAG_ERROR,
-                                     nob_sv_from_cstr("dispatcher"),
-                                     node->as.cmd.name,
-                                     o,
-                                     nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"),
+                (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"),
                                      nob_sv_from_cstr("Usage: find_*(... REGISTRY_VIEW <view>)"));
                 return !eval_should_stop(ctx);
             }
@@ -496,12 +491,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
         }
         if (find_item_keyword_eq(key, "VALIDATOR")) {
             if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
-                (void)eval_emit_diag(ctx,
-                                     EV_DIAG_ERROR,
-                                     nob_sv_from_cstr("dispatcher"),
-                                     node->as.cmd.name,
-                                     o,
-                                     nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"),
+                (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"),
                                      nob_sv_from_cstr("Usage: find_*(... VALIDATOR <function>)"));
                 return !eval_should_stop(ctx);
             }
@@ -512,12 +502,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
     }
 
     if (arena_arr_len(out_opt->names) == 0) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("dispatcher"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("find_*() requires at least one search name"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_*() requires at least one search name"),
                              nob_sv_from_cstr("Provide a legacy name after <VAR> or use NAMES <name>..."));
         return !eval_should_stop(ctx);
     }
@@ -1790,21 +1775,11 @@ static void find_package_emit_result(Evaluator_Context *ctx,
                                      bool found,
                                      String_View found_path) {
     if (!found && opt->required) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("Required package not found"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("Required package not found"),
                        opt->pkg);
         eval_request_stop_on_error(ctx);
     } else if (!found && !opt->quiet) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("Package not found"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("Package not found"),
                        opt->pkg);
     }
 
@@ -1825,24 +1800,14 @@ bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
     if (arena_arr_len(a) < 1) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("find_package() missing package name"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_package() missing package name"),
                        nob_sv_from_cstr("Usage: find_package(<Pkg> [REQUIRED] [MODULE|CONFIG])"));
         return !eval_should_stop(ctx);
     }
 
     Find_Package_Options opt = find_package_parse_options(ctx, a);
     if (opt.exact_version && opt.requested_version.count == 0) {
-        eval_emit_diag(ctx,
-                       EV_DIAG_WARNING,
-                       nob_sv_from_cstr("dispatcher"),
-                       node->as.cmd.name,
-                       o,
-                       nob_sv_from_cstr("find_package() EXACT specified without version"),
+        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("find_package() EXACT specified without version"),
                        nob_sv_from_cstr("EXACT is ignored when no version is requested"));
     }
     String_View found_path = nob_sv_from_cstr("");

@@ -1619,24 +1619,14 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
 
     if (arena_arr_len(args) == 0) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("flow"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("cmake_language() requires a subcommand"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language() requires a subcommand"),
                              nob_sv_from_cstr("Supported here: CALL, EVAL CODE, DEFER, GET_MESSAGE_LOG_LEVEL"));
         return !eval_should_stop(ctx);
     }
 
     if (eval_sv_eq_ci_lit(args[0], "CALL")) {
         if (arena_arr_len(args) < 2) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("flow"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_language(CALL) requires a command name"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language(CALL) requires a command name"),
                                  nob_sv_from_cstr("Usage: cmake_language(CALL <command> [<arg>...])"));
             return !eval_should_stop(ctx);
         }
@@ -1645,12 +1635,7 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(args[0], "EVAL")) {
         if (arena_arr_len(args) < 2 || !eval_sv_eq_ci_lit(args[1], "CODE")) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("flow"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_language(EVAL) requires CODE"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language(EVAL) requires CODE"),
                                  nob_sv_from_cstr("Usage: cmake_language(EVAL CODE <code>...)"));
             return !eval_should_stop(ctx);
         }
@@ -1659,12 +1644,7 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(args[0], "GET_MESSAGE_LOG_LEVEL")) {
         if (arena_arr_len(args) != 2) {
-            (void)eval_emit_diag(ctx,
-                                 EV_DIAG_ERROR,
-                                 nob_sv_from_cstr("flow"),
-                                 node->as.cmd.name,
-                                 o,
-                                 nob_sv_from_cstr("cmake_language(GET_MESSAGE_LOG_LEVEL) expects one output variable"),
+            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language(GET_MESSAGE_LOG_LEVEL) expects one output variable"),
                                  nob_sv_from_cstr("Usage: cmake_language(GET_MESSAGE_LOG_LEVEL <out-var>)"));
             return !eval_should_stop(ctx);
         }
@@ -1678,22 +1658,12 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (eval_sv_eq_ci_lit(args[0], "SET_DEPENDENCY_PROVIDER")) {
-        (void)eval_emit_diag(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("flow"),
-                             node->as.cmd.name,
-                             o,
-                             nob_sv_from_cstr("cmake_language() subcommand not implemented yet"),
+        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language() subcommand not implemented yet"),
                              args[0]);
         return !eval_should_stop(ctx);
     }
 
-    (void)eval_emit_diag(ctx,
-                         EV_DIAG_ERROR,
-                         nob_sv_from_cstr("flow"),
-                         node->as.cmd.name,
-                         o,
-                         nob_sv_from_cstr("Unsupported cmake_language() subcommand"),
+    (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("Unsupported cmake_language() subcommand"),
                          args[0]);
     return !eval_should_stop(ctx);
 }
