@@ -188,7 +188,7 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
     }
     if (ok) {
         Cmake_Event_Origin origin = {0};
-        ok = eval_emit_diag(ctx,
+        ok = EVAL_DIAG(ctx,
                             EV_DIAG_WARNING,
                             nob_sv_from_cstr("eval_legacy"),
                             nob_sv_from_cstr("variable_watch"),
@@ -607,7 +607,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
     if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "RANGE")) {
         idx++;
         if (arena_arr_len(a) - idx < 1 || arena_arr_len(a) - idx > 3) {
-            (void)eval_emit_diag(ctx,
+            (void)EVAL_DIAG(ctx,
                                  EV_DIAG_ERROR,
                                  nob_sv_from_cstr("flow"),
                                  nob_sv_from_cstr("foreach"),
@@ -625,7 +625,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
             if (arena_arr_len(a) - idx == 3 && !sv_parse_long(a[idx + 2], &step)) return false;
         }
         if (step == 0) {
-            (void)eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"),
+            (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"),
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("foreach(RANGE ...) step must be non-zero"),
                                  nob_sv_from_cstr(""));
@@ -764,7 +764,7 @@ static bool eval_while(Evaluator_Context *ctx, const Node *node) {
     ctx->loop_depth--;
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_ERROR,
                    nob_sv_from_cstr("while"),
                    nob_sv_from_cstr("while"),
@@ -1182,7 +1182,7 @@ static bool eval_lex_external_tokens(Evaluator_Context *ctx,
             o.file_path = nob_sv_from_cstr(path_c);
             o.line = token.line;
             o.col = token.col;
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("lexer"),
                            nob_sv_from_cstr("parse"),

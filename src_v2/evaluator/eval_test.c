@@ -76,7 +76,7 @@ static bool add_test_on_option(Evaluator_Context *ctx,
     }
     if (id == ADD_TEST_OPT_CONFIGURATIONS) {
         if (arena_arr_len(values) == 0) {
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_test"),
                            st->command_name,
@@ -97,7 +97,7 @@ static bool add_test_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_ERROR,
                    nob_sv_from_cstr("eval_test"),
                    st->command_name,

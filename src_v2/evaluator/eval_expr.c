@@ -475,7 +475,7 @@ String_View eval_expand_vars(struct Evaluator_Context *ctx, String_View input) {
         // Proper cycle detection: any repeated expansion state means cycle.
         for (size_t j = 0; j < seen_count; j++) {
             if (sv_eq(next, seen[j])) {
-                (void)eval_emit_diag(ctx,
+                (void)EVAL_DIAG(ctx,
                                      EV_DIAG_WARNING,
                                      nob_sv_from_cstr("eval_expr"),
                                      nob_sv_from_cstr("expand_vars"),
@@ -490,7 +490,7 @@ String_View eval_expand_vars(struct Evaluator_Context *ctx, String_View input) {
         cur = next;
     }
 
-    (void)eval_emit_diag(ctx,
+    (void)EVAL_DIAG(ctx,
                          EV_DIAG_WARNING,
                          nob_sv_from_cstr("eval_expr"),
                          nob_sv_from_cstr("expand_vars"),
@@ -522,7 +522,7 @@ static bool parse_primary(Expr *e) {
         if (expr_has(e) && eval_sv_eq_ci_lit(expr_peek(e), ")")) {
             expr_next(e);
         } else {
-            eval_emit_diag(e->ctx,
+            EVAL_DIAG(e->ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_expr"),
                            nob_sv_from_cstr("if"),
@@ -836,7 +836,7 @@ bool eval_condition(struct Evaluator_Context *ctx, const Args *raw_condition) {
     bool v = parse_expr(&e);
 
     if (e.pos != e.count) {
-        eval_emit_diag(ctx,
+        EVAL_DIAG(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("eval_expr"),
                        nob_sv_from_cstr("if"),

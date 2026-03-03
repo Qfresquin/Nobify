@@ -1352,7 +1352,7 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
             eval_sv_eq_ci_lit(tok, "SOURCE_DIR") ||
             eval_sv_eq_ci_lit(tok, "BINARY_DIR") ||
             eval_sv_eq_ci_lit(tok, "TARGET")) {
-            return eval_emit_diag(ctx,
+            return EVAL_DIAG(ctx,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("dispatcher"),
                                   node->as.cmd.name,
@@ -1386,7 +1386,7 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
                                                   Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 2) {
-        return eval_emit_diag(ctx,
+        return EVAL_DIAG(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
@@ -1411,7 +1411,7 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
 
     if (!try_compile_parse_source_options(ctx, node, args, opt_start, out_req)) return false;
     if (out_req->source_items.count == 0) {
-        return eval_emit_diag(ctx,
+        return EVAL_DIAG(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
@@ -1429,7 +1429,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
                                       Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 2) {
-        return eval_emit_diag(ctx,
+        return EVAL_DIAG(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
@@ -1480,7 +1480,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
         }
 
         if (out_req->source_dir.count == 0) {
-            return eval_emit_diag(ctx,
+            return EVAL_DIAG(ctx,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("dispatcher"),
                                   node->as.cmd.name,
@@ -1506,7 +1506,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                   Try_Run_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 4) {
-        return eval_emit_diag(ctx,
+        return EVAL_DIAG(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
@@ -1520,7 +1520,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
     };
 
     if (eval_sv_eq_ci_lit((*args)[2], "PROJECT")) {
-        return eval_emit_diag(ctx,
+        return EVAL_DIAG(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
@@ -1530,7 +1530,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
     }
 
     if (try_compile_is_keyword((*args)[2])) {
-        return eval_emit_diag(ctx,
+        return EVAL_DIAG(ctx,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("dispatcher"),
                               node->as.cmd.name,
@@ -1546,7 +1546,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         String_View tok = (*args)[i];
 
         if (eval_sv_eq_ci_lit(tok, "PROJECT")) {
-            return eval_emit_diag(ctx,
+            return EVAL_DIAG(ctx,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("dispatcher"),
                                   node->as.cmd.name,
@@ -1557,7 +1557,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
 
         if (eval_sv_eq_ci_lit(tok, "COMPILE_OUTPUT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return eval_emit_diag(ctx,
+                return EVAL_DIAG(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
                                       node->as.cmd.name,
@@ -1570,7 +1570,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return eval_emit_diag(ctx,
+                return EVAL_DIAG(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
                                       node->as.cmd.name,
@@ -1583,7 +1583,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDOUT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return eval_emit_diag(ctx,
+                return EVAL_DIAG(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
                                       node->as.cmd.name,
@@ -1596,7 +1596,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDERR_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return eval_emit_diag(ctx,
+                return EVAL_DIAG(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
                                       node->as.cmd.name,
@@ -1609,7 +1609,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         }
         if (eval_sv_eq_ci_lit(tok, "WORKING_DIRECTORY")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return eval_emit_diag(ctx,
+                return EVAL_DIAG(ctx,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("dispatcher"),
                                       node->as.cmd.name,
@@ -1748,7 +1748,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
 
     String_View cross_compiling = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
     if (cross_compiling.count > 0 && !try_compile_is_false(cross_compiling)) {
-        (void)eval_emit_diag(ctx,
+        (void)EVAL_DIAG(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("dispatcher"),
                              node->as.cmd.name,
@@ -1761,7 +1761,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (exec_res.artifact_path.count == 0) {
-        (void)eval_emit_diag(ctx,
+        (void)EVAL_DIAG(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("dispatcher"),
                              node->as.cmd.name,
@@ -1806,7 +1806,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     if (!eval_process_run_capture(ctx, &proc_req, &proc_res)) return false;
 
     if (!proc_res.started) {
-        (void)eval_emit_diag(ctx,
+        (void)EVAL_DIAG(ctx,
                              EV_DIAG_ERROR,
                              nob_sv_from_cstr("dispatcher"),
                              node->as.cmd.name,

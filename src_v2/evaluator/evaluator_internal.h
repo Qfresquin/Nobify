@@ -360,6 +360,9 @@ static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr
                           (cause),                                       \
                           (hint))
 
+#define EVAL_DIAG(ctx, severity, component, command, origin, cause, hint) \
+    eval_emit_diag((ctx), (severity), (component), (command), (origin), (cause), (hint))
+
 static inline void eval_clear_return_state(Evaluator_Context *ctx) {
     if (!ctx) return;
     ctx->return_requested = false;

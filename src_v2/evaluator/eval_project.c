@@ -87,7 +87,7 @@ static bool add_target_name_must_be_new(Evaluator_Context *ctx,
                                         Cmake_Event_Origin o,
                                         String_View target_name) {
     if (!eval_target_known(ctx, target_name)) return true;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_ERROR,
                    nob_sv_from_cstr("dispatcher"),
                    cmd_name,
@@ -103,7 +103,7 @@ static bool add_alias_target_validate(Evaluator_Context *ctx,
                                       String_View alias_name,
                                       String_View real_target) {
     if (!eval_target_known(ctx, real_target)) {
-        eval_emit_diag(ctx,
+        EVAL_DIAG(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        cmd_name,
@@ -113,7 +113,7 @@ static bool add_alias_target_validate(Evaluator_Context *ctx,
         return false;
     }
     if (eval_target_alias_known(ctx, real_target)) {
-        eval_emit_diag(ctx,
+        EVAL_DIAG(ctx,
                        EV_DIAG_ERROR,
                        nob_sv_from_cstr("dispatcher"),
                        cmd_name,
@@ -490,7 +490,7 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
     for (size_t i = 0; i < arena_arr_len(*requested); i++) {
         String_View lang = (*requested)[i];
         if (!language_token_is_known(lang)) {
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            cmd_name,

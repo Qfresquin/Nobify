@@ -8,7 +8,7 @@ static bool require_cpack_component_module(Evaluator_Context *ctx,
                                            Cmake_Event_Origin origin) {
     if (!ctx) return false;
     if (ctx->cpack_component_module_loaded) return true;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_ERROR,
                    nob_sv_from_cstr("dispatcher"),
                    command,
@@ -48,7 +48,7 @@ static bool cpack_install_type_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_WARNING,
                    nob_sv_from_cstr("dispatcher"),
                    st->command_name,
@@ -113,7 +113,7 @@ static bool cpack_group_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_WARNING,
                    nob_sv_from_cstr("dispatcher"),
                    st->command_name,
@@ -207,7 +207,7 @@ static bool cpack_component_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_WARNING,
                    nob_sv_from_cstr("dispatcher"),
                    st->command_name,

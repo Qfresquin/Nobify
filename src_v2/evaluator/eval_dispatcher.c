@@ -75,7 +75,7 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
 
     Cmake_Diag_Severity sev = EV_DIAG_WARNING;
     if (ctx->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    sev,
                    nob_sv_from_cstr("dispatcher"),
                    node->as.cmd.name,

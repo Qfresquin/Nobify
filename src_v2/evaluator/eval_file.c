@@ -40,7 +40,7 @@ static bool file_diag(Evaluator_Context *ctx,
                       String_View cause,
                       String_View hint) {
     if (!ctx || !node) return false;
-    return eval_emit_diag(ctx,
+    return EVAL_DIAG(ctx,
                           severity,
                           nob_sv_from_cstr("eval_file"),
                           node->as.cmd.name,
@@ -476,7 +476,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
 
     if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
         if (!is_path_safe(input_path)) {
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_file"),
                            node->as.cmd.name,
@@ -502,7 +502,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
     if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
         if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
             !scope_path_has_prefix(path, ctx->source_dir, ci)) {
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_file"),
                            node->as.cmd.name,
@@ -531,7 +531,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
 
         if (!scope_path_has_prefix(resolved_probe, binary_scope, ci) &&
             !scope_path_has_prefix(resolved_probe, source_scope, ci)) {
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("eval_file"),
                            node->as.cmd.name,
@@ -917,7 +917,7 @@ static void file_glob_walk(Evaluator_Context *ctx,
             cause = nob_sv_from_cstr(nob_temp_sprintf("file(GLOB) failed to open directory: %s", err));
         }
         if (io_open_failures) (*io_open_failures)++;
-        eval_emit_diag(ctx,
+        EVAL_DIAG(ctx,
                        strict_failures ? EV_DIAG_ERROR : EV_DIAG_WARNING,
                        nob_sv_from_cstr("eval_file"),
                        node ? node->as.cmd.name : nob_sv_from_cstr("file"),
@@ -1868,13 +1868,13 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
     }
     if (id == COPY_KEY_PATTERN || id == COPY_KEY_REGEX) {
         if (arena_arr_len(values) == 0) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+            EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                            nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"),
                            token);
             return false;
         }
         if (st->filter_count >= NOB_ARRAY_LEN(st->filters)) {
-            eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+            EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                            nob_sv_from_cstr("file(COPY) filter limit reached; extra filters ignored"),
                            token);
             return true;
@@ -1886,7 +1886,7 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
     }
     if (id == COPY_KEY_EXCLUDE) {
         if (st->filter_count == 0) {
-            eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+            EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                            nob_sv_from_cstr("file(COPY) EXCLUDE without a previous PATTERN/REGEX is ignored"),
                            token);
         } else {
@@ -1917,13 +1917,13 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
                 has_any = true;
             } else {
                 st->saw_unknown_permission_token = true;
-                eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+                EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                                nob_sv_from_cstr("file(COPY) unknown permission token"),
                                values[i]);
             }
         }
         if (!has_any) {
-            eval_emit_diag(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
+            EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
                            nob_sv_from_cstr("file(COPY) permission list has no valid tokens"),
                            token);
         } else if (id == COPY_KEY_PERMISSIONS) {

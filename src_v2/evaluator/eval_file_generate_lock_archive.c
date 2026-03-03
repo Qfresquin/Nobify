@@ -397,7 +397,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
         const Eval_File_Generate_Job *job = &ctx->file_generate_jobs[i];
         if (job->has_condition && !eval_truthy(ctx, job->condition)) continue;
         if (job->has_target && !eval_target_known(ctx, job->target)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+            EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
                            nob_sv_from_cstr("file(GENERATE) TARGET does not name an existing target"),
                            job->target);
             continue;
@@ -408,7 +408,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
         bool have_input_st = false;
         if (job->has_input) {
             if (!file_read_content_temp(ctx, job->input_path, &final_content, &in_st, &have_input_st)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
                                nob_sv_from_cstr("file(GENERATE) failed to read INPUT"), job->input_path);
                 continue;
             }
@@ -426,7 +426,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
         }
         if (seen_idx >= 0) {
             if (!nob_sv_eq(seen[seen_idx].content, final_content)) {
-                eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+                EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
                                nob_sv_from_cstr("file(GENERATE) duplicate OUTPUT requires identical content"),
                                job->output_path);
             }
@@ -444,7 +444,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
         seen_count = arena_arr_len(seen);
 
         if (!eval_file_mkdir_p(ctx, svu_dirname(job->output_path))) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+            EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
                            nob_sv_from_cstr("file(GENERATE) failed to create output directory"), job->output_path);
             continue;
         }
@@ -456,7 +456,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
         char *out_c = eval_sv_to_cstr_temp(ctx, job->output_path);
         EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
         if (!nob_write_entire_file(out_c, final_content.data, final_content.count)) {
-            eval_emit_diag(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
+            EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), job->command_name, job->origin,
                            nob_sv_from_cstr("file(GENERATE) failed to write OUTPUT"), job->output_path);
             continue;
         }

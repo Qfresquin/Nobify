@@ -16,7 +16,7 @@ static bool target_diag(Evaluator_Context *ctx,
                         String_View cause,
                         String_View hint) {
     if (!ctx || !node) return false;
-    return eval_emit_diag(ctx,
+    return EVAL_DIAG(ctx,
                           severity,
                           nob_sv_from_cstr("dispatcher"),
                           node->as.cmd.name,

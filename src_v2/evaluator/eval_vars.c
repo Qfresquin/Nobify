@@ -15,7 +15,7 @@ static bool load_cache_emit_diag(Evaluator_Context *ctx,
                                  Cmake_Diag_Severity severity,
                                  String_View cause,
                                  String_View hint) {
-    return eval_emit_diag(ctx,
+    return EVAL_DIAG(ctx,
                           severity,
                           nob_sv_from_cstr("load_cache"),
                           node->as.cmd.name,
@@ -209,7 +209,7 @@ static Parse_Keyword_Spec *parse_find_keyword(Parse_Keyword_Spec *specs, size_t 
 }
 
 static bool parse_warn_duplicate_keyword(Evaluator_Context *ctx, const Node *node, String_View keyword) {
-    return eval_emit_diag(ctx,
+    return EVAL_DIAG(ctx,
                           EV_DIAG_WARNING,
                           nob_sv_from_cstr("cmake_parse_arguments"),
                           node->as.cmd.name,

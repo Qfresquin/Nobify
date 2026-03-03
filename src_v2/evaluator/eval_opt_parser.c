@@ -49,7 +49,7 @@ bool eval_opt_parse_walk(Evaluator_Context *ctx,
             if (cfg.unknown_as_positional) {
                 if (on_positional && !on_positional(ctx, userdata, tok, i)) return false;
             } else if (cfg.warn_unknown) {
-                eval_emit_diag(ctx,
+                EVAL_DIAG(ctx,
                                EV_DIAG_WARNING,
                                cfg.component,
                                cfg.command,
@@ -69,7 +69,7 @@ bool eval_opt_parse_walk(Evaluator_Context *ctx,
 
         if (spec->kind == EVAL_OPT_SINGLE) {
             if (i >= arena_arr_len(args)) {
-                eval_emit_diag(ctx,
+                EVAL_DIAG(ctx,
                                EV_DIAG_ERROR,
                                cfg.component,
                                cfg.command,

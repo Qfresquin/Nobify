@@ -268,7 +268,7 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         return true;
     case CUSTOM_CMD_OPT_IMPLICIT_DEPENDS:
         if (arena_arr_len(values) == 0 || (arena_arr_len(values) % 2) != 0) {
-            eval_emit_diag(ctx,
+            EVAL_DIAG(ctx,
                            EV_DIAG_ERROR,
                            nob_sv_from_cstr("dispatcher"),
                            st->command_name,
@@ -281,7 +281,7 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
         for (size_t i = 0; i < arena_arr_len(values); i += 2) {
             if (!eval_sv_eq_ci_lit(values[i], "C") &&
                 !eval_sv_eq_ci_lit(values[i], "CXX")) {
-                eval_emit_diag(ctx,
+                EVAL_DIAG(ctx,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("dispatcher"),
                                st->command_name,
@@ -354,7 +354,7 @@ static bool add_custom_error_positional_parse_ctx(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Add_Custom_Command_Parse_Context *st = (Add_Custom_Command_Parse_Context*)userdata;
-    eval_emit_diag(ctx,
+    EVAL_DIAG(ctx,
                    EV_DIAG_ERROR,
                    st->positional.component,
                    st->positional.command,

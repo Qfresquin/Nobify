@@ -30,7 +30,7 @@ static void math_skip_ws(Math_Parser *p) {
 }
 
 static bool math_emit_error(Math_Parser *p, const char *cause) {
-    eval_emit_diag(p->ctx,
+    EVAL_DIAG(p->ctx,
                    EV_DIAG_ERROR,
                    nob_sv_from_cstr("math"),
                    p->command,
