@@ -330,7 +330,7 @@ Isso preserva:
 
 Criar:
 
-- [`docs/evaluator/event_ir_coverage_matrix.md`](/home/pedro/Nobify/docs/evaluator/event_ir_coverage_matrix.md)
+- [`docs/Evaluator/event_ir_coverage_matrix.md`](/home/pedro/Nobify/docs/Evaluator/event_ir_coverage_matrix.md)
 
 Esse documento vira a fonte de controle da migração.
 
@@ -537,7 +537,7 @@ O próximo passo correto é:
 - [`src_v2/transpiler/event_ir.c`](/home/pedro/Nobify/src_v2/transpiler/event_ir.c)
 
 4. criar:
-- [`docs/evaluator/event_ir_coverage_matrix.md`](/home/pedro/Nobify/docs/evaluator/event_ir_coverage_matrix.md)
+- [`docs/Evaluator/event_ir_coverage_matrix.md`](/home/pedro/Nobify/docs/Evaluator/event_ir_coverage_matrix.md)
 
 Essa é a forma correta de aumentar o escopo de verdade sem transformar o IR novo em “mais uma versão acumulada” do legado.
 </proposed_plan>
