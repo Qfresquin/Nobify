@@ -59,7 +59,7 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    Event_Origin o = eval_origin_from_node(ctx, node);
     eval_refresh_runtime_compat(ctx);
     User_Command *user = eval_user_cmd_find(ctx, node->as.cmd.name);
     if (user) {
@@ -73,7 +73,7 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    Cmake_Diag_Severity sev = EV_DIAG_WARNING;
+    Event_Diag_Severity sev = EV_DIAG_WARNING;
     if (ctx->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
     EVAL_DIAG(ctx,
                    sev,

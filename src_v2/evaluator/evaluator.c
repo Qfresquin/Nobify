@@ -41,8 +41,8 @@ String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv) {
     return out;
 }
 
-Cmake_Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = {0};
+Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node) {
+    Event_Origin o = {0};
     o.file_path = (ctx && ctx->current_file) ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr("<input>");
     if (node) {
         o.line = node->line;
@@ -85,10 +85,10 @@ bool eval_should_stop(Evaluator_Context *ctx) {
 // -----------------------------------------------------------------------------
 
 bool eval_emit_diag(Evaluator_Context *ctx,
-                    Cmake_Diag_Severity sev,
+                    Event_Diag_Severity sev,
                     String_View component,
                     String_View command,
-                    Cmake_Event_Origin origin,
+                    Event_Origin origin,
                     String_View cause,
                     String_View hint) {
     if (!ctx || eval_should_stop(ctx)) return false;
@@ -98,7 +98,7 @@ bool eval_emit_diag(Evaluator_Context *ctx,
     Eval_Error_Class cls = EVAL_ERR_CLASS_NONE;
     eval_diag_classify(component, cause, sev, &code, &cls);
 
-    Cmake_Diag_Severity effective_sev = eval_compat_effective_severity(ctx, sev);
+    Event_Diag_Severity effective_sev = eval_compat_effective_severity(ctx, sev);
 
     diag_log(effective_sev == EV_DIAG_ERROR ? DIAG_SEV_ERROR : DIAG_SEV_WARNING,
              "evaluator",
@@ -109,9 +109,11 @@ bool eval_emit_diag(Evaluator_Context *ctx,
              cause.data ? cause.data : "",
              hint.data ? hint.data : "");
 
-    Cmake_Event ev = {0};
-    ev.kind = EV_DIAGNOSTIC;
-    ev.origin = origin;
+    Event ev = {0};
+    ev.h.kind = EVENT_DIAG;
+    ev.h.origin = origin;
+    ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
+    ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
     ev.as.diag.severity = effective_sev;
     ev.as.diag.component = sv_copy_to_event_arena(ctx, component);
     ev.as.diag.command = sv_copy_to_event_arena(ctx, command);
@@ -411,15 +413,14 @@ bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_
         if (!eval_sv_eq_ci_lit(def->scope_upper, "TARGET")) continue;
         if (!def->has_initialize_from_variable) continue;
         if (!eval_var_defined(ctx, def->initialize_from_variable)) continue;
-
-        Cmake_Event ev = {0};
-        ev.kind = EV_TARGET_PROP_SET;
-        ev.origin = origin;
-        ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
-        ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, def->property_upper);
-        ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, eval_var_get(ctx, def->initialize_from_variable));
-        ev.as.target_prop_set.op = EV_PROP_SET;
-        if (!event_stream_push(ctx->event_arena, ctx->stream, ev)) return ctx_oom(ctx);
+        if (!eval_emit_target_prop_set(ctx,
+                                       origin,
+                                       target_name,
+                                       def->property_upper,
+                                       eval_var_get(ctx, def->initialize_from_variable),
+                                       EV_PROP_SET)) {
+            return false;
+        }
     }
 
     return !eval_should_stop(ctx);

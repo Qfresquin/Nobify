@@ -1782,16 +1782,7 @@ static void find_package_emit_result(Evaluator_Context *ctx,
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("Package not found"),
                        opt->pkg);
     }
-
-    Cmake_Event ev = {0};
-    ev.kind = EV_FIND_PACKAGE;
-    ev.origin = o;
-    ev.as.find_package.package_name = sv_copy_to_event_arena(ctx, opt->pkg);
-    ev.as.find_package.mode = sv_copy_to_event_arena(ctx, opt->mode);
-    ev.as.find_package.required = opt->required;
-    ev.as.find_package.found = found;
-    ev.as.find_package.location = sv_copy_to_event_arena(ctx, found_path);
-    (void)emit_event(ctx, ev);
+    (void)found_path;
 }
 
 bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
@@ -1814,6 +1805,7 @@ bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     bool found = find_package_resolve(ctx, &opt, &found_path);
     find_package_publish_vars(ctx, &opt, &found, found_path);
     find_package_emit_result(ctx, node, o, &opt, found, found_path);
+    if (!eval_should_stop(ctx) && !eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 

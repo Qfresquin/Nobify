@@ -1,52 +1,97 @@
-// Event IR v2
-// Boundary contract between evaluator and downstream builder/codegen stages.
+// Canonical semantic Event IR.
 #ifndef EVENT_IR_H_
 #define EVENT_IR_H_
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "nob.h"
 #include "arena.h"
 
-#define CMAKE_EVENT_KIND_LIST(X) \
-    X(EV_DIAGNOSTIC, "diagnostic") \
-    X(EV_PROJECT_DECLARE, "project") \
-    X(EV_VAR_SET, "set") \
-    X(EV_SET_CACHE_ENTRY, "set(cache)") \
-    X(EV_TARGET_DECLARE, "add_target") \
-    X(EV_TARGET_ADD_SOURCE, "target_sources") \
-    X(EV_TARGET_ADD_DEPENDENCY, "add_dependencies") \
-    X(EV_TARGET_PROP_SET, "set_target_properties") \
-    X(EV_TARGET_INCLUDE_DIRECTORIES, "target_include_directories") \
-    X(EV_TARGET_COMPILE_DEFINITIONS, "target_compile_definitions") \
-    X(EV_TARGET_COMPILE_OPTIONS, "target_compile_options") \
-    X(EV_TARGET_LINK_LIBRARIES, "target_link_libraries") \
-    X(EV_TARGET_LINK_OPTIONS, "target_link_options") \
-    X(EV_TARGET_LINK_DIRECTORIES, "target_link_directories") \
-    X(EV_CUSTOM_COMMAND_TARGET, "add_custom_command(TARGET)") \
-    X(EV_CUSTOM_COMMAND_OUTPUT, "add_custom_command(OUTPUT)") \
-    X(EV_DIR_PUSH, "dir_push") \
-    X(EV_DIR_POP, "dir_pop") \
-    X(EV_DIRECTORY_INCLUDE_DIRECTORIES, "include_directories") \
-    X(EV_DIRECTORY_LINK_DIRECTORIES, "link_directories") \
-    X(EV_GLOBAL_COMPILE_DEFINITIONS, "add_compile_definitions") \
-    X(EV_GLOBAL_COMPILE_OPTIONS, "add_compile_options") \
-    X(EV_GLOBAL_LINK_OPTIONS, "add_link_options") \
-    X(EV_GLOBAL_LINK_LIBRARIES, "link_libraries") \
-    X(EV_TESTING_ENABLE, "enable_testing") \
-    X(EV_TEST_ADD, "add_test") \
-    X(EV_INSTALL_ADD_RULE, "install") \
-    X(EV_CPACK_ADD_INSTALL_TYPE, "cpack_add_install_type") \
-    X(EV_CPACK_ADD_COMPONENT_GROUP, "cpack_add_component_group") \
-    X(EV_CPACK_ADD_COMPONENT, "cpack_add_component") \
-    X(EV_FIND_PACKAGE, "find_package")
+#define EVENT_FAMILY_LIST(X) \
+    X(EVENT_FAMILY_TRACE, "trace") \
+    X(EVENT_FAMILY_DIAG, "diag") \
+    X(EVENT_FAMILY_FLOW, "flow") \
+    X(EVENT_FAMILY_SCOPE, "scope") \
+    X(EVENT_FAMILY_POLICY, "policy") \
+    X(EVENT_FAMILY_VAR, "var") \
+    X(EVENT_FAMILY_FS, "fs") \
+    X(EVENT_FAMILY_PROC, "proc") \
+    X(EVENT_FAMILY_STRING, "string") \
+    X(EVENT_FAMILY_LIST, "list") \
+    X(EVENT_FAMILY_MATH, "math") \
+    X(EVENT_FAMILY_PATH, "path") \
+    X(EVENT_FAMILY_PROJECT, "project") \
+    X(EVENT_FAMILY_TARGET, "target") \
+    X(EVENT_FAMILY_TEST, "test") \
+    X(EVENT_FAMILY_INSTALL, "install") \
+    X(EVENT_FAMILY_CPACK, "cpack") \
+    X(EVENT_FAMILY_PACKAGE, "package") \
+    X(EVENT_FAMILY_META, "meta")
 
 typedef enum {
-#define DECLARE_CMAKE_EVENT_KIND(kind, builder_name) kind,
-    CMAKE_EVENT_KIND_LIST(DECLARE_CMAKE_EVENT_KIND)
-#undef DECLARE_CMAKE_EVENT_KIND
-} Cmake_Event_Kind;
+#define DECLARE_EVENT_FAMILY(kind, label) kind,
+    EVENT_FAMILY_LIST(DECLARE_EVENT_FAMILY)
+#undef DECLARE_EVENT_FAMILY
+} Event_Family;
+
+#define EVENT_KIND_LIST(X) \
+    X(EVENT_TRACE_COMMAND_BEGIN, EVENT_FAMILY_TRACE, "trace_command_begin") \
+    X(EVENT_TRACE_COMMAND_END, EVENT_FAMILY_TRACE, "trace_command_end") \
+    X(EVENT_DIAG, EVENT_FAMILY_DIAG, "diag") \
+    X(EVENT_VAR_SET, EVENT_FAMILY_VAR, "var_set") \
+    X(EVENT_VAR_UNSET, EVENT_FAMILY_VAR, "var_unset") \
+    X(EVENT_SCOPE_PUSH, EVENT_FAMILY_SCOPE, "scope_push") \
+    X(EVENT_SCOPE_POP, EVENT_FAMILY_SCOPE, "scope_pop") \
+    X(EVENT_POLICY_PUSH, EVENT_FAMILY_POLICY, "policy_push") \
+    X(EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop") \
+    X(EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set") \
+    X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return")
+
+typedef enum {
+#define DECLARE_EVENT_KIND(kind, family, label) kind,
+    EVENT_KIND_LIST(DECLARE_EVENT_KIND)
+#undef DECLARE_EVENT_KIND
+} Event_Kind;
+
+typedef enum {
+    EVENT_DIAG_SEVERITY_NOTE = 0,
+    EVENT_DIAG_SEVERITY_WARNING,
+    EVENT_DIAG_SEVERITY_ERROR,
+} Event_Diag_Severity;
+
+typedef enum {
+    EVENT_SCOPE_KIND_DIRECTORY = 0,
+    EVENT_SCOPE_KIND_FUNCTION,
+    EVENT_SCOPE_KIND_MACRO,
+    EVENT_SCOPE_KIND_BLOCK,
+    EVENT_SCOPE_KIND_LOOP,
+    EVENT_SCOPE_KIND_CALL,
+} Event_Scope_Kind;
+
+typedef enum {
+    EVENT_POLICY_VALUE_UNSPECIFIED = 0,
+    EVENT_POLICY_VALUE_OLD,
+    EVENT_POLICY_VALUE_NEW,
+    EVENT_POLICY_VALUE_WARN,
+    EVENT_POLICY_VALUE_REQUIRED,
+} Event_Policy_Value;
+
+typedef enum {
+    EVENT_RETURN_CONTEXT_FUNCTION = 0,
+    EVENT_RETURN_CONTEXT_BLOCK,
+    EVENT_RETURN_CONTEXT_DIRECTORY,
+    EVENT_RETURN_CONTEXT_TOP_LEVEL,
+} Event_Return_Context;
+
+// Transitional legacy enums still referenced by evaluator modules that have not
+// yet been migrated off the frozen structural contract.
+typedef enum {
+    EV_PROP_SET = 0,
+    EV_PROP_APPEND_LIST,
+    EV_PROP_APPEND_STRING,
+} Cmake_Target_Property_Op;
 
 typedef enum {
     EV_VISIBILITY_UNSPECIFIED = 0,
@@ -54,12 +99,6 @@ typedef enum {
     EV_VISIBILITY_PUBLIC,
     EV_VISIBILITY_INTERFACE,
 } Cmake_Visibility;
-
-typedef enum {
-    EV_PROP_SET = 0,
-    EV_PROP_APPEND_LIST,
-    EV_PROP_APPEND_STRING,
-} Cmake_Target_Property_Op;
 
 typedef enum {
     EV_TARGET_EXECUTABLE = 0,
@@ -72,11 +111,6 @@ typedef enum {
 } Cmake_Target_Type;
 
 typedef enum {
-    EV_DIAG_WARNING = 0,
-    EV_DIAG_ERROR,
-} Cmake_Diag_Severity;
-
-typedef enum {
     EV_INSTALL_RULE_TARGET = 0,
     EV_INSTALL_RULE_FILE,
     EV_INSTALL_RULE_PROGRAM,
@@ -87,242 +121,136 @@ typedef struct {
     String_View file_path;
     size_t line;
     size_t col;
-} Cmake_Event_Origin;
+} Event_Origin;
 
 typedef struct {
-    Cmake_Event_Kind kind;
-    Cmake_Event_Origin origin;
+    String_View command_name;
+    String_View *resolved_args;
+    size_t resolved_arg_count;
+} Event_Trace_Command_Begin;
 
+typedef struct {
+    String_View command_name;
+    bool completed;
+    bool failed;
+} Event_Trace_Command_End;
+
+typedef struct {
+    Event_Diag_Severity severity;
+    String_View component;
+    String_View command;
+    String_View code;
+    String_View error_class;
+    String_View cause;
+    String_View hint;
+} Event_Diag;
+
+typedef struct {
+    String_View key;
+    String_View value;
+    Event_Scope_Kind scope_kind;
+    bool is_cache;
+    bool is_env;
+} Event_Var_Set;
+
+typedef struct {
+    String_View key;
+    Event_Scope_Kind scope_kind;
+    bool is_cache;
+    bool is_env;
+} Event_Var_Unset;
+
+typedef struct {
+    Event_Scope_Kind scope_kind;
+    uint32_t depth_before;
+    uint32_t depth_after;
+} Event_Scope_Push;
+
+typedef struct {
+    Event_Scope_Kind scope_kind;
+    uint32_t depth_before;
+    uint32_t depth_after;
+} Event_Scope_Pop;
+
+typedef struct {
+    uint32_t depth_before;
+    uint32_t depth_after;
+} Event_Policy_Push;
+
+typedef struct {
+    uint32_t depth_before;
+    uint32_t depth_after;
+} Event_Policy_Pop;
+
+typedef struct {
+    String_View policy_id;
+    Event_Policy_Value value;
+} Event_Policy_Set;
+
+typedef struct {
+    Event_Return_Context return_context;
+    bool has_propagate;
+    String_View *propagate_vars;
+    size_t propagate_count;
+} Event_Flow_Return;
+
+typedef struct {
+    Event_Family family;
+    uint16_t kind;
+    uint16_t version;
+    uint32_t flags;
+    uint64_t seq;
+    uint32_t scope_depth;
+    uint32_t policy_depth;
+    Event_Origin origin;
+} Event_Header;
+
+typedef struct {
+    Event_Header h;
     union {
-        struct {
-            Cmake_Diag_Severity severity;
-            String_View component;
-            String_View command;
-            String_View code;
-            String_View error_class;
-            String_View cause;
-            String_View hint;
-        } diag;
-
-        struct {
-            String_View name;
-            String_View version;
-            String_View description;
-            String_View languages; // semi-separated list
-        } project_declare;
-
-        struct {
-            String_View key;
-            String_View value;
-        } var_set;
-
-        struct {
-            String_View key;
-            String_View value;
-        } cache_entry;
-
-        struct {
-            String_View name;
-            Cmake_Target_Type type;
-        } target_declare;
-
-        struct {
-            String_View target_name;
-            String_View path;
-        } target_add_source;
-
-        struct {
-            String_View target_name;
-            String_View dependency_name;
-        } target_add_dependency;
-
-        struct {
-            String_View target_name;
-            String_View key;
-            String_View value;
-            Cmake_Target_Property_Op op;
-        } target_prop_set;
-
-        struct {
-            String_View target_name;
-            Cmake_Visibility visibility;
-            String_View path;
-            bool is_system;
-            bool is_before;
-        } target_include_directories;
-
-        struct {
-            String_View target_name;
-            Cmake_Visibility visibility;
-            String_View item;
-        } target_compile_definitions;
-
-        struct {
-            String_View target_name;
-            Cmake_Visibility visibility;
-            String_View item;
-            bool is_before;
-        } target_compile_options;
-
-        struct {
-            String_View target_name;
-            Cmake_Visibility visibility;
-            String_View item;
-        } target_link_libraries;
-
-        struct {
-            String_View target_name;
-            Cmake_Visibility visibility;
-            String_View item;
-            bool is_before;
-        } target_link_options;
-
-        struct {
-            String_View target_name;
-            Cmake_Visibility visibility;
-            String_View path;
-        } target_link_directories;
-
-        struct {
-            String_View target_name;
-            bool pre_build;
-            String_View *commands;
-            size_t command_count;
-            String_View working_dir;
-            String_View comment;
-            String_View outputs; // semi-separated list
-            String_View byproducts; // semi-separated list
-            String_View depends; // semi-separated list
-            String_View main_dependency;
-            String_View depfile;
-            bool append;
-            bool verbatim;
-            bool uses_terminal;
-            bool command_expand_lists;
-            bool depends_explicit_only;
-            bool codegen;
-        } custom_command_target;
-
-        struct {
-            String_View *commands;
-            size_t command_count;
-            String_View working_dir;
-            String_View comment;
-            String_View outputs; // semi-separated list
-            String_View byproducts; // semi-separated list
-            String_View depends; // semi-separated list
-            String_View main_dependency;
-            String_View depfile;
-            bool append;
-            bool verbatim;
-            bool uses_terminal;
-            bool command_expand_lists;
-            bool depends_explicit_only;
-            bool codegen;
-        } custom_command_output;
-
-        struct {
-            String_View source_dir;
-            String_View binary_dir;
-        } dir_push;
-
-        struct {
-            String_View path;
-            bool is_system;
-            bool is_before;
-        } directory_include_directories;
-
-        struct {
-            String_View path;
-            bool is_before;
-        } directory_link_directories;
-
-        struct {
-            String_View item;
-        } global_compile_definitions;
-
-        struct {
-            String_View item;
-        } global_compile_options;
-
-        struct {
-            String_View item;
-        } global_link_options;
-
-        struct {
-            String_View item;
-        } global_link_libraries;
-
-        struct {
-            bool enabled;
-        } testing_enable;
-
-        struct {
-            String_View name;
-            String_View command;
-            String_View working_dir;
-            bool command_expand_lists;
-        } test_add;
-
-        struct {
-            Cmake_Install_Rule_Type rule_type;
-            String_View item;
-            String_View destination;
-        } install_add_rule;
-
-        struct {
-            String_View name;
-            String_View display_name;
-        } cpack_add_install_type;
-
-        struct {
-            String_View name;
-            String_View display_name;
-            String_View description;
-            String_View parent_group;
-            bool expanded;
-            bool bold_title;
-        } cpack_add_component_group;
-
-        struct {
-            String_View name;
-            String_View display_name;
-            String_View description;
-            String_View group;
-            String_View depends; // semi-separated list
-            String_View install_types; // semi-separated list
-            String_View archive_file;
-            String_View plist;
-            bool required;
-            bool hidden;
-            bool disabled;
-            bool downloaded;
-        } cpack_add_component;
-
-        struct {
-            String_View package_name;
-            String_View mode; // MODULE / CONFIG / AUTO
-            bool required;
-            bool found;
-            String_View location;
-        } find_package;
+        Event_Trace_Command_Begin trace_command_begin;
+        Event_Trace_Command_End trace_command_end;
+        Event_Diag diag;
+        Event_Var_Set var_set;
+        Event_Var_Unset var_unset;
+        Event_Scope_Push scope_push;
+        Event_Scope_Pop scope_pop;
+        Event_Policy_Push policy_push;
+        Event_Policy_Pop policy_pop;
+        Event_Policy_Set policy_set;
+        Event_Flow_Return flow_return;
     } as;
-} Cmake_Event;
+} Event;
 
 typedef struct {
-    Cmake_Event *items;
-} Cmake_Event_Stream;
+    Event *items;
+} Event_Stream;
 
 typedef struct {
-    const Cmake_Event *current;
+    const Event_Stream *stream;
     size_t index;
-    const Cmake_Event_Stream *stream;
+    const Event *current;
 } Event_Stream_Iterator;
 
-Cmake_Event_Stream *event_stream_create(Arena *arena);
-bool event_stream_push(Arena *event_arena, Cmake_Event_Stream *stream, Cmake_Event ev);
-Event_Stream_Iterator event_stream_iter(const Cmake_Event_Stream *stream);
+// Transitional compatibility aliases while evaluator modules migrate from the
+// frozen structural IR to the semantic contract.
+typedef Event_Origin Cmake_Event_Origin;
+typedef Event_Stream Cmake_Event_Stream;
+typedef Event_Stream_Iterator Cmake_Event_Stream_Iterator;
+typedef Event_Diag_Severity Cmake_Diag_Severity;
+
+#define EV_DIAG_NOTE EVENT_DIAG_SEVERITY_NOTE
+#define EV_DIAG_WARNING EVENT_DIAG_SEVERITY_WARNING
+#define EV_DIAG_ERROR EVENT_DIAG_SEVERITY_ERROR
+
+Event_Stream *event_stream_create(Arena *arena);
+bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event ev);
+Event_Stream_Iterator event_stream_iter(const Event_Stream *stream);
 bool event_stream_next(Event_Stream_Iterator *it);
-void event_stream_dump(const Cmake_Event_Stream *stream);
+
+Event_Family event_kind_family(Event_Kind kind);
+const char *event_family_name(Event_Family family);
+const char *event_kind_name(Event_Kind kind);
+void event_stream_dump(const Event_Stream *stream);
 
 #endif // EVENT_IR_H_

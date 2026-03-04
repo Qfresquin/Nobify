@@ -663,13 +663,7 @@ static bool emit_cache_entry_write(Evaluator_Context *ctx,
                                    Cmake_Event_Origin origin,
                                    String_View key,
                                    String_View value) {
-    if (!ctx) return false;
-    Cmake_Event ev = {0};
-    ev.kind = EV_SET_CACHE_ENTRY;
-    ev.origin = origin;
-    ev.as.cache_entry.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.cache_entry.value = sv_copy_to_event_arena(ctx, value);
-    return emit_event(ctx, ev);
+    return eval_emit_var_set_cache(ctx, origin, key, value);
 }
 
 static bool option_cache_write(Evaluator_Context *ctx,
@@ -833,13 +827,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
 
         if (should_write_cache) {
             if (!cache_upsert(ctx, var, value, cache_type, cache_doc)) return false;
-
-            Cmake_Event ce = {0};
-            ce.kind = EV_SET_CACHE_ENTRY;
-            ce.origin = o;
-            ce.as.cache_entry.key = sv_copy_to_event_arena(ctx, var);
-            ce.as.cache_entry.value = sv_copy_to_event_arena(ctx, value);
-            if (!emit_event(ctx, ce)) return false;
+            if (!eval_emit_var_set_cache(ctx, o, var, value)) return false;
         } else if (existing->value.type.count == 0) {
             if (!cache_promote_untyped_path_value_if_needed(ctx, existing, cache_type)) return false;
             existing->value.type = sv_copy_to_event_arena(ctx, cache_type);
@@ -940,15 +928,9 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (cache_mode) {
-        // Pragmatic cache behavior: emit a cache-entry mutation to empty value.
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
         (void)cache_remove(ctx, var);
-        Cmake_Event ce = {0};
-        ce.kind = EV_SET_CACHE_ENTRY;
-        ce.origin = o;
-        ce.as.cache_entry.key = sv_copy_to_event_arena(ctx, var);
-        ce.as.cache_entry.value = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
-        if (!emit_event(ctx, ce)) return false;
+        if (!eval_emit_var_unset_cache(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 

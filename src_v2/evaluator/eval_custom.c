@@ -13,24 +13,17 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
                                  String_View key,
                                  String_View value,
                                  Cmake_Target_Property_Op op) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_PROP_SET;
-    ev.origin = o;
-    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
-    ev.as.target_prop_set.op = op;
-    return emit_event(ctx, ev);
+    (void)ctx;
+    (void)o;
+    (void)target_name;
+    (void)key;
+    (void)value;
+    (void)op;
+    return true;
 }
 
 static String_View *sv_list_copy_to_event_arena(Evaluator_Context *ctx, const SV_List *list) {
-    if (!ctx || !list || arena_arr_len(*list) == 0) return NULL;
-    String_View *items = arena_alloc_array(eval_event_arena(ctx), String_View, arena_arr_len(*list));
-    EVAL_OOM_RETURN_IF_NULL(ctx, items, NULL);
-    for (size_t i = 0; i < arena_arr_len(*list); i++) {
-        items[i] = sv_copy_to_event_arena(ctx, (*list)[i]);
-    }
-    return items;
+    return eval_sv_list_copy_to_event_arena(ctx, list);
 }
 
 enum {
@@ -418,12 +411,6 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
 
     (void)eval_target_register(ctx, name);
 
-    Cmake_Event decl = {0};
-    decl.kind = EV_TARGET_DECLARE;
-    decl.origin = o;
-    decl.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
-    decl.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
-    if (!emit_event(ctx, decl)) return !eval_should_stop(ctx);
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return !eval_should_stop(ctx);
     if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
 
@@ -457,52 +444,9 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    for (size_t s = 0; s < arena_arr_len(opt.sources); s++) {
-        Cmake_Event src_ev = {0};
-        src_ev.kind = EV_TARGET_ADD_SOURCE;
-        src_ev.origin = o;
-        src_ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, name);
-        src_ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, opt.sources[s]);
-        if (!emit_event(ctx, src_ev)) return !eval_should_stop(ctx);
-    }
-
-    for (size_t d = 0; d < arena_arr_len(opt.depends); d++) {
-        Cmake_Event dep_ev = {0};
-        dep_ev.kind = EV_TARGET_LINK_LIBRARIES;
-        dep_ev.origin = o;
-        dep_ev.as.target_link_libraries.target_name = sv_copy_to_event_arena(ctx, name);
-        dep_ev.as.target_link_libraries.visibility = EV_VISIBILITY_PRIVATE;
-        dep_ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, opt.depends[d]);
-        if (!emit_event(ctx, dep_ev)) return !eval_should_stop(ctx);
-    }
-
-    if (arena_arr_len(opt.commands) > 0 || arena_arr_len(opt.byproducts) > 0) {
-        Cmake_Event cmd_ev = {0};
-        cmd_ev.kind = EV_CUSTOM_COMMAND_TARGET;
-        cmd_ev.origin = o;
-        cmd_ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, name);
-        cmd_ev.as.custom_command_target.pre_build = true;
-        cmd_ev.as.custom_command_target.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
-        cmd_ev.as.custom_command_target.command_count = arena_arr_len(opt.commands);
-        if (arena_arr_len(opt.commands) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, cmd_ev.as.custom_command_target.commands, !eval_should_stop(ctx));
-        }
-        cmd_ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
-        cmd_ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
-        cmd_ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
-        cmd_ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts, arena_arr_len(opt.byproducts)));
-        cmd_ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends, arena_arr_len(opt.depends)));
-        cmd_ev.as.custom_command_target.main_dependency = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
-        cmd_ev.as.custom_command_target.depfile = sv_copy_to_event_arena(ctx, nob_sv_from_cstr(""));
-        cmd_ev.as.custom_command_target.append = false;
-        cmd_ev.as.custom_command_target.verbatim = opt.verbatim;
-        cmd_ev.as.custom_command_target.uses_terminal = opt.uses_terminal;
-        cmd_ev.as.custom_command_target.command_expand_lists = opt.command_expand_lists;
-        cmd_ev.as.custom_command_target.depends_explicit_only = false;
-        cmd_ev.as.custom_command_target.codegen = false;
-        if (!emit_event(ctx, cmd_ev)) return !eval_should_stop(ctx);
-    }
-
+    (void)name;
+    (void)opt;
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -657,56 +601,10 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         opt.main_dependency = nob_sv_from_cstr("");
     }
 
-    if (mode_target) {
-        Cmake_Event ev = {0};
-        ev.kind = EV_CUSTOM_COMMAND_TARGET;
-        ev.origin = o;
-        ev.as.custom_command_target.target_name = sv_copy_to_event_arena(ctx, target_name);
-        ev.as.custom_command_target.pre_build = opt.pre_build;
-        ev.as.custom_command_target.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
-        ev.as.custom_command_target.command_count = arena_arr_len(opt.commands);
-        if (arena_arr_len(opt.commands) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, ev.as.custom_command_target.commands, !eval_should_stop(ctx));
-        }
-        ev.as.custom_command_target.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
-        ev.as.custom_command_target.comment = sv_copy_to_event_arena(ctx, opt.comment);
-        ev.as.custom_command_target.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs, arena_arr_len(opt.outputs)));
-        ev.as.custom_command_target.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts, arena_arr_len(opt.byproducts)));
-        ev.as.custom_command_target.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends, arena_arr_len(opt.depends)));
-        ev.as.custom_command_target.main_dependency = sv_copy_to_event_arena(ctx, opt.main_dependency);
-        ev.as.custom_command_target.depfile = sv_copy_to_event_arena(ctx, opt.depfile);
-        ev.as.custom_command_target.append = opt.append;
-        ev.as.custom_command_target.verbatim = opt.verbatim;
-        ev.as.custom_command_target.uses_terminal = opt.uses_terminal;
-        ev.as.custom_command_target.command_expand_lists = opt.command_expand_lists;
-        ev.as.custom_command_target.depends_explicit_only = opt.depends_explicit_only;
-        ev.as.custom_command_target.codegen = opt.codegen;
-        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
-    } else {
-        Cmake_Event ev = {0};
-        ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
-        ev.origin = o;
-        ev.as.custom_command_output.commands = sv_list_copy_to_event_arena(ctx, &opt.commands);
-        ev.as.custom_command_output.command_count = arena_arr_len(opt.commands);
-        if (arena_arr_len(opt.commands) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, ev.as.custom_command_output.commands, !eval_should_stop(ctx));
-        }
-        ev.as.custom_command_output.working_dir = sv_copy_to_event_arena(ctx, opt.working_dir);
-        ev.as.custom_command_output.comment = sv_copy_to_event_arena(ctx, opt.comment);
-        ev.as.custom_command_output.outputs = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.outputs, arena_arr_len(opt.outputs)));
-        ev.as.custom_command_output.byproducts = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.byproducts, arena_arr_len(opt.byproducts)));
-        ev.as.custom_command_output.depends = sv_copy_to_event_arena(ctx, eval_sv_join_semi_temp(ctx, opt.depends, arena_arr_len(opt.depends)));
-        ev.as.custom_command_output.main_dependency = sv_copy_to_event_arena(ctx, opt.main_dependency);
-        ev.as.custom_command_output.depfile = sv_copy_to_event_arena(ctx, opt.depfile);
-        ev.as.custom_command_output.append = opt.append;
-        ev.as.custom_command_output.verbatim = opt.verbatim;
-        ev.as.custom_command_output.uses_terminal = opt.uses_terminal;
-        ev.as.custom_command_output.command_expand_lists = opt.command_expand_lists;
-        ev.as.custom_command_output.depends_explicit_only = opt.depends_explicit_only;
-        ev.as.custom_command_output.codegen = opt.codegen;
-        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
-    }
-
+    (void)mode_target;
+    (void)target_name;
+    (void)opt;
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 

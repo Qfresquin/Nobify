@@ -284,34 +284,16 @@ static bool gfc_set_output_value(Evaluator_Context *ctx,
     if (!ctx) return false;
     if (!cache_result) return eval_var_set(ctx, out_var, value);
     if (!eval_cache_set(ctx, out_var, value, nob_sv_from_cstr(""), nob_sv_from_cstr(""))) return false;
-
-    Cmake_Event ev = {0};
-    ev.kind = EV_SET_CACHE_ENTRY;
-    ev.origin = origin;
-    ev.as.cache_entry.key = sv_copy_to_event_arena(ctx, out_var);
-    ev.as.cache_entry.value = sv_copy_to_event_arena(ctx, value);
-    return emit_event(ctx, ev);
+    return eval_emit_var_set_cache(ctx, origin, out_var, value);
 }
 
 static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *ctx,
                                                             Cmake_Event_Origin origin,
                                                             String_View item) {
-    if (!ctx || !ctx->stream || item.count == 0) return false;
-
-    for (size_t i = 0; i < arena_arr_len(ctx->stream->items); i++) {
-        const Cmake_Event *existing = &ctx->stream->items[i];
-        if (existing->kind != EV_TARGET_DECLARE) continue;
-        if (!eval_sv_key_eq(existing->origin.file_path, origin.file_path)) continue;
-
-        Cmake_Event ev = {0};
-        ev.kind = EV_TARGET_COMPILE_DEFINITIONS;
-        ev.origin = origin;
-        ev.as.target_compile_definitions.target_name = sv_copy_to_event_arena(ctx, existing->as.target_declare.name);
-        ev.as.target_compile_definitions.visibility = EV_VISIBILITY_UNSPECIFIED;
-        ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
-        if (!emit_event(ctx, ev)) return false;
-    }
-
+    (void)ctx;
+    (void)origin;
+    (void)item;
+    // Target fanout will return when the TARGET family exists in the semantic Event IR.
     return true;
 }
 
@@ -418,12 +400,9 @@ bool eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return false;
         if (!added) continue;
-        Cmake_Event ev = {0};
-        ev.kind = EV_GLOBAL_COMPILE_OPTIONS;
-        ev.origin = o;
-        ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, unique[i]);
-        if (!emit_event(ctx, ev)) return false;
+        (void)o;
     }
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -445,14 +424,10 @@ bool eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *nod
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique[i], &added)) return false;
         if (!added) continue;
 
-        Cmake_Event ev = {0};
-        ev.kind = EV_GLOBAL_COMPILE_DEFINITIONS;
-        ev.origin = o;
-        ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, unique[i]);
-        if (!emit_event(ctx, ev)) return false;
+        (void)o;
         if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return false;
     }
-
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -471,23 +446,14 @@ bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
             bool added = false;
             if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return false;
             if (!added) continue;
-            Cmake_Event ev = {0};
-            ev.kind = EV_GLOBAL_COMPILE_DEFINITIONS;
-            ev.origin = o;
-            ev.as.global_compile_definitions.item = sv_copy_to_event_arena(ctx, definition);
-            if (!emit_event(ctx, ev)) return false;
             continue;
         }
 
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return false;
         if (!added) continue;
-        Cmake_Event ev = {0};
-        ev.kind = EV_GLOBAL_COMPILE_OPTIONS;
-        ev.origin = o;
-        ev.as.global_compile_options.item = sv_copy_to_event_arena(ctx, item);
-        if (!emit_event(ctx, ev)) return false;
     }
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -557,12 +523,9 @@ bool eval_handle_add_link_options(Evaluator_Context *ctx, const Node *node) {
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_link_opts_var), unique[i], &added)) return false;
         if (!added) continue;
-        Cmake_Event ev = {0};
-        ev.kind = EV_GLOBAL_LINK_OPTIONS;
-        ev.origin = o;
-        ev.as.global_link_options.item = sv_copy_to_event_arena(ctx, unique[i]);
-        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+        (void)o;
     }
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -596,11 +559,6 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
                                                          nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
         }
 
-        Cmake_Event ev = {0};
-        ev.kind = EV_GLOBAL_LINK_LIBRARIES;
-        ev.origin = o;
-        ev.as.global_link_libraries.item = sv_copy_to_event_arena(ctx, item);
-        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
         qualifier = nob_sv_from_cstr("");
     }
 
@@ -608,6 +566,7 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"),
                        qualifier);
     }
+    if (!eval_should_stop(ctx) && !eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -634,17 +593,13 @@ bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
             continue;
         }
 
-        Cmake_Event ev = {0};
-        ev.kind = EV_DIRECTORY_INCLUDE_DIRECTORIES;
-        ev.origin = o;
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-        ev.as.directory_include_directories.path = sv_copy_to_event_arena(ctx, resolved);
-        ev.as.directory_include_directories.is_system = is_system;
-        ev.as.directory_include_directories.is_before = is_before;
-        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+        (void)resolved;
+        (void)is_system;
+        (void)is_before;
     }
-
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -666,16 +621,12 @@ bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
             continue;
         }
 
-        Cmake_Event ev = {0};
-        ev.kind = EV_DIRECTORY_LINK_DIRECTORIES;
-        ev.origin = o;
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-        ev.as.directory_link_directories.path = sv_copy_to_event_arena(ctx, resolved);
-        ev.as.directory_link_directories.is_before = is_before;
-        if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+        (void)resolved;
+        (void)is_before;
     }
-
+    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 

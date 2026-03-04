@@ -390,7 +390,7 @@ static inline bool eval_sv_arr_push_event(Evaluator_Context *ctx, String_View **
 }
 
 // ---- rastreio de origem (NOVO) ----
-Cmake_Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node);
+Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node);
 
 // ---- args e expansão (NOVO COMPORTAMENTO) ----
 // Retorna a lista expandida e dividida por ';' (alocada na TEMP ARENA)
@@ -398,76 +398,154 @@ SV_List eval_resolve_args(Evaluator_Context *ctx, const Args *raw_args);
 SV_List eval_resolve_args_literal(Evaluator_Context *ctx, const Args *raw_args);
 
 // ---- diagnostics / events ----
-bool event_stream_push(Arena *event_arena, Cmake_Event_Stream *stream, Cmake_Event ev);
-bool eval_emit_event(Evaluator_Context *ctx, Cmake_Event ev);
-static inline bool emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
+bool eval_emit_event(Evaluator_Context *ctx, Event ev);
+static inline bool emit_event(Evaluator_Context *ctx, Event ev) {
     return eval_emit_event(ctx, ev);
 }
+
+static inline String_View *eval_sv_list_copy_to_event_arena(Evaluator_Context *ctx, const SV_List *list) {
+    if (!ctx || !list || arena_arr_len(*list) == 0) return NULL;
+    String_View *items = arena_alloc_array(eval_event_arena(ctx), String_View, arena_arr_len(*list));
+    EVAL_OOM_RETURN_IF_NULL(ctx, items, NULL);
+    for (size_t i = 0; i < arena_arr_len(*list); ++i) {
+        items[i] = sv_copy_to_event_arena(ctx, (*list)[i]);
+        if (eval_should_stop(ctx)) return NULL;
+    }
+    return items;
+}
+
+static inline bool eval_emit_trace_begin(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View command_name,
+                                         const SV_List *resolved_args) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TRACE_COMMAND_BEGIN;
+    ev.h.origin = origin;
+    ev.as.trace_command_begin.command_name = sv_copy_to_event_arena(ctx, command_name);
+    if (eval_should_stop(ctx)) return false;
+    if (resolved_args) {
+        ev.as.trace_command_begin.resolved_args = eval_sv_list_copy_to_event_arena(ctx, resolved_args);
+        if (arena_arr_len(*resolved_args) > 0 && !ev.as.trace_command_begin.resolved_args) return false;
+        ev.as.trace_command_begin.resolved_arg_count = arena_arr_len(*resolved_args);
+    }
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_trace_end(Evaluator_Context *ctx,
+                                       Event_Origin origin,
+                                       String_View command_name,
+                                       bool completed,
+                                       bool failed) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TRACE_COMMAND_END;
+    ev.h.origin = origin;
+    ev.as.trace_command_end.command_name = sv_copy_to_event_arena(ctx, command_name);
+    ev.as.trace_command_end.completed = completed;
+    ev.as.trace_command_end.failed = failed;
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_trace_command(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           String_View command_name,
+                                           const SV_List *resolved_args,
+                                           bool completed,
+                                           bool failed) {
+    if (!eval_emit_trace_begin(ctx, origin, command_name, resolved_args)) return false;
+    return eval_emit_trace_end(ctx, origin, command_name, completed, failed);
+}
+
 static inline bool eval_emit_target_prop_set(Evaluator_Context *ctx,
-                                             Cmake_Event_Origin origin,
+                                             Event_Origin origin,
                                              String_View target_name,
                                              String_View key,
                                              String_View value,
                                              Cmake_Target_Property_Op op) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_PROP_SET;
-    ev.origin = origin;
-    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
-    ev.as.target_prop_set.op = op;
-    return emit_event(ctx, ev);
+    (void) ctx;
+    (void) origin;
+    (void) target_name;
+    (void) key;
+    (void) value;
+    (void) op;
+    return true;
 }
 static inline bool eval_emit_var_set(Evaluator_Context *ctx,
-                                     Cmake_Event_Origin origin,
+                                     Event_Origin origin,
                                      String_View key,
                                      String_View value) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_VAR_SET;
-    ev.origin = origin;
+    Event ev = {0};
+    ev.h.kind = EVENT_VAR_SET;
+    ev.h.origin = origin;
     ev.as.var_set.key = sv_copy_to_event_arena(ctx, key);
     ev.as.var_set.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.var_set.scope_kind = EVENT_SCOPE_KIND_DIRECTORY;
+    ev.as.var_set.is_cache = false;
+    ev.as.var_set.is_env = false;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_var_set_cache(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           String_View key,
+                                           String_View value) {
+    Event ev = {0};
+    ev.h.kind = EVENT_VAR_SET;
+    ev.h.origin = origin;
+    ev.as.var_set.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.var_set.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.var_set.scope_kind = EVENT_SCOPE_KIND_DIRECTORY;
+    ev.as.var_set.is_cache = true;
+    ev.as.var_set.is_env = false;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_var_unset_cache(Evaluator_Context *ctx,
+                                             Event_Origin origin,
+                                             String_View key) {
+    Event ev = {0};
+    ev.h.kind = EVENT_VAR_UNSET;
+    ev.h.origin = origin;
+    ev.as.var_unset.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.var_unset.scope_kind = EVENT_SCOPE_KIND_DIRECTORY;
+    ev.as.var_unset.is_cache = true;
+    ev.as.var_unset.is_env = false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_dependency(Evaluator_Context *ctx,
-                                               Cmake_Event_Origin origin,
+                                               Event_Origin origin,
                                                String_View target_name,
                                                String_View dependency_name) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_ADD_DEPENDENCY;
-    ev.origin = origin;
-    ev.as.target_add_dependency.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_add_dependency.dependency_name = sv_copy_to_event_arena(ctx, dependency_name);
-    return emit_event(ctx, ev);
+    (void) ctx;
+    (void) origin;
+    (void) target_name;
+    (void) dependency_name;
+    return true;
 }
 static inline bool eval_emit_target_add_source(Evaluator_Context *ctx,
-                                               Cmake_Event_Origin origin,
+                                               Event_Origin origin,
                                                String_View target_name,
                                                String_View path) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_ADD_SOURCE;
-    ev.origin = origin;
-    ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, path);
-    return emit_event(ctx, ev);
+    (void) ctx;
+    (void) origin;
+    (void) target_name;
+    (void) path;
+    return true;
 }
 bool eval_emit_diag(Evaluator_Context *ctx,
-                    Cmake_Diag_Severity sev,
+                    Event_Diag_Severity sev,
                     String_View component,
                     String_View command,
-                    Cmake_Event_Origin origin,
+                    Event_Origin origin,
                     String_View cause,
                     String_View hint);
 void eval_diag_classify(String_View component,
                         String_View cause,
-                        Cmake_Diag_Severity sev,
+                        Event_Diag_Severity sev,
                         Eval_Diag_Code *out_code,
                         Eval_Error_Class *out_class);
 String_View eval_diag_code_to_sv(Eval_Diag_Code code);
 String_View eval_error_class_to_sv(Eval_Error_Class cls);
 void eval_report_reset(Evaluator_Context *ctx);
 void eval_report_record_diag(Evaluator_Context *ctx,
-                             Cmake_Diag_Severity sev,
+                             Event_Diag_Severity sev,
                              Eval_Diag_Code code,
                              Eval_Error_Class cls);
 void eval_report_finalize(Evaluator_Context *ctx);
@@ -518,7 +596,7 @@ bool eval_target_alias_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
 bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name);
-bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_Origin origin, String_View target_name);
+bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Event_Origin origin, String_View target_name);
 
 // ---- user commands ----
 bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node);

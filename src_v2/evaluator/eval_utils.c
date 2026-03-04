@@ -41,8 +41,10 @@ char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
     return buf;
 }
 
-bool eval_emit_event(Evaluator_Context *ctx, Cmake_Event ev) {
-    if (!ctx) return false;
+bool eval_emit_event(Evaluator_Context *ctx, Event ev) {
+    if (!ctx || eval_should_stop(ctx)) return false;
+    ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
+    ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
     if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
         return ctx_oom(ctx);
     }
@@ -522,15 +524,12 @@ bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, 
 }
 
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
-    if (!ctx || !ctx->stream || test_name.count == 0) return false;
-    for (size_t ei = 0; ei < arena_arr_len(ctx->stream->items); ei++) {
-        const Cmake_Event *ev = &ctx->stream->items[ei];
-        if (ev->kind != EV_TEST_ADD) continue;
-        if (!nob_sv_eq(ev->as.test_add.name, test_name)) continue;
-        String_View ev_dir = eval_file_parent_dir_view(ev->origin.file_path);
-        if (eval_path_norm_eq_temp(ctx, ev_dir, scope_dir)) return true;
-        if (eval_should_stop(ctx)) return false;
-    }
+    (void) ctx;
+    (void) test_name;
+    (void) scope_dir;
+    // The semantic Event IR nucleus does not yet expose test-add events.
+    // Until the TEST family is migrated, this legacy structural query remains
+    // intentionally disabled.
     return false;
 }
 

@@ -9,9 +9,6 @@
 #include "diagnostics.h"
 #include "evaluator.h"
 #include "event_ir.h"
-#include "build_model_builder.h"
-#include "build_model_freeze.h"
-#include "build_model_query.h"
 
 #include <string.h>
 
@@ -136,20 +133,17 @@ int main(int argc, char **argv) {
 
     Arena *eval_arena = arena_create(8 * 1024 * 1024);
     Arena *event_arena = arena_create(16 * 1024 * 1024);
-    Arena *model_arena = arena_create(16 * 1024 * 1024);
-    if (!eval_arena || !event_arena || !model_arena) {
-        nob_log(NOB_ERROR, "Failed to allocate evaluator/build-model arenas");
+    if (!eval_arena || !event_arena) {
+        nob_log(NOB_ERROR, "Failed to allocate evaluator arenas");
         arena_destroy(eval_arena);
         arena_destroy(event_arena);
-        arena_destroy(model_arena);
         arena_destroy(arena);
         return 1;
     }
 
-    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    Event_Stream *stream = event_stream_create(event_arena);
     if (!stream) {
         nob_log(NOB_ERROR, "Failed to create event stream");
-        arena_destroy(model_arena);
         arena_destroy(event_arena);
         arena_destroy(eval_arena);
         arena_destroy(arena);
@@ -167,7 +161,6 @@ int main(int argc, char **argv) {
     Evaluator_Context *eval_ctx = evaluator_create(&eval_init);
     if (!eval_ctx) {
         nob_log(NOB_ERROR, "Failed to create evaluator context");
-        arena_destroy(model_arena);
         arena_destroy(event_arena);
         arena_destroy(eval_arena);
         arena_destroy(arena);
@@ -177,7 +170,6 @@ int main(int argc, char **argv) {
     if (!evaluator_run(eval_ctx, ast)) {
         nob_log(NOB_ERROR, "Evaluator failed while processing AST");
         evaluator_destroy(eval_ctx);
-        arena_destroy(model_arena);
         arena_destroy(event_arena);
         arena_destroy(eval_arena);
         arena_destroy(arena);
@@ -188,48 +180,17 @@ int main(int argc, char **argv) {
     if (print_events) {
         event_stream_dump(stream);
     }
-
-    Build_Model_Builder *builder = builder_create(event_arena, NULL);
-    if (!builder) {
-        nob_log(NOB_ERROR, "Failed to create Build Model builder");
-        arena_destroy(model_arena);
-        arena_destroy(event_arena);
-        arena_destroy(eval_arena);
-        arena_destroy(arena);
-        return 1;
-    }
-
-    if (!builder_apply_stream(builder, stream)) {
-        nob_log(NOB_ERROR, "Failed to apply evaluator event stream to Build Model");
-        arena_destroy(model_arena);
-        arena_destroy(event_arena);
-        arena_destroy(eval_arena);
-        arena_destroy(arena);
-        return 1;
-    }
-
-    const Build_Model *model = build_model_freeze(builder, model_arena);
-    if (!model) {
-        nob_log(NOB_ERROR, "Failed to freeze Build Model");
-        arena_destroy(model_arena);
-        arena_destroy(event_arena);
-        arena_destroy(eval_arena);
-        arena_destroy(arena);
-        return 1;
-    }
-
     nob_log(NOB_INFO,
-            "Build Model ready: project='%.*s' targets=%zu packages=%zu tests=%zu",
-            SV_Arg(bm_query_project_name(model)),
-            model->target_count,
-            model->package_count,
-            model->test_count);
+            "Semantic Event IR ready: events=%zu",
+            arena_arr_len(stream->items));
 
     diag_telemetry_emit_summary();
     (void)diag_telemetry_write_report("nobify_v2_unsupported_commands.log", input_path);
 
     if (diag_has_errors()) {
         nob_log(NOB_ERROR, "Finished with %zu error(s) and %zu warning(s)", diag_error_count(), diag_warning_count());
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
         arena_destroy(arena);
         return 1;
     }
@@ -239,8 +200,11 @@ int main(int argc, char **argv) {
     } else {
         nob_log(NOB_INFO, "Finished without diagnostics");
     }
+    arena_destroy(event_arena);
+    arena_destroy(eval_arena);
+    arena_destroy(arena);
+    return 0;
 
-    arena_destroy(model_arena);
     arena_destroy(event_arena);
     arena_destroy(eval_arena);
     arena_destroy(arena);

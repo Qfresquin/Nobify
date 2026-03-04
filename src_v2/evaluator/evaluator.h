@@ -3,7 +3,7 @@
 
 // Evaluator v2
 // - Input:  Ast_Root (parser.h)
-// - Output: Cmake_Event_Stream (append-only)
+// - Output: Event_Stream (append-only semantic IR)
 // - Strict boundary: does NOT include or depend on build_model.h
 
 #include <stddef.h>
@@ -84,7 +84,7 @@ typedef struct {
 typedef struct {
     Arena *arena;        // temporary expansions (rewound frequently)
     Arena *event_arena;  // persistent strings + event stream storage
-    Cmake_Event_Stream *stream;
+    Event_Stream *stream;
 
     String_View source_dir; // CMAKE_SOURCE_DIR
     String_View binary_dir; // CMAKE_BINARY_DIR
