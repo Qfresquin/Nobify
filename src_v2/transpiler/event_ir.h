@@ -10,7 +10,6 @@
 #include "arena.h"
 
 #define EVENT_FAMILY_LIST(X) \
-    X(EVENT_FAMILY_TRACE, "trace") \
     X(EVENT_FAMILY_DIAG, "diag") \
     X(EVENT_FAMILY_FLOW, "flow") \
     X(EVENT_FAMILY_SCOPE, "scope") \
@@ -37,8 +36,6 @@ typedef enum {
 } Event_Family;
 
 #define EVENT_KIND_LIST(X) \
-    X(EVENT_TRACE_COMMAND_BEGIN, EVENT_FAMILY_TRACE, "trace_command_begin") \
-    X(EVENT_TRACE_COMMAND_END, EVENT_FAMILY_TRACE, "trace_command_end") \
     X(EVENT_DIAG, EVENT_FAMILY_DIAG, "diag") \
     X(EVENT_VAR_SET, EVENT_FAMILY_VAR, "var_set") \
     X(EVENT_VAR_UNSET, EVENT_FAMILY_VAR, "var_unset") \
@@ -189,18 +186,6 @@ typedef struct {
     size_t line;
     size_t col;
 } Event_Origin;
-
-typedef struct {
-    String_View command_name;
-    String_View *resolved_args;
-    size_t resolved_arg_count;
-} Event_Trace_Command_Begin;
-
-typedef struct {
-    String_View command_name;
-    bool completed;
-    bool failed;
-} Event_Trace_Command_End;
 
 typedef struct {
     Event_Diag_Severity severity;
@@ -632,8 +617,6 @@ typedef struct {
 typedef struct {
     Event_Header h;
     union {
-        Event_Trace_Command_Begin trace_command_begin;
-        Event_Trace_Command_End trace_command_end;
         Event_Diag diag;
         Event_Var_Set var_set;
         Event_Var_Unset var_unset;

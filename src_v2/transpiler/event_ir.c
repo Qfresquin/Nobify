@@ -42,17 +42,6 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
     if (!event_copy_sv_inplace(arena, &ev->h.origin.file_path)) return false;
 
     switch ((Event_Kind) ev->h.kind) {
-        case EVENT_TRACE_COMMAND_BEGIN:
-            if (!event_copy_sv_inplace(arena, &ev->as.trace_command_begin.command_name)) return false;
-            if (!event_copy_sv_array_inplace(arena,
-                                             &ev->as.trace_command_begin.resolved_args,
-                                             ev->as.trace_command_begin.resolved_arg_count)) return false;
-            break;
-
-        case EVENT_TRACE_COMMAND_END:
-            if (!event_copy_sv_inplace(arena, &ev->as.trace_command_end.command_name)) return false;
-            break;
-
         case EVENT_DIAG:
             if (!event_copy_sv_inplace(arena, &ev->as.diag.component)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.diag.command)) return false;
@@ -404,7 +393,7 @@ Event_Family event_kind_family(Event_Kind kind) {
 #undef EVENT_KIND_FAMILY_CASE
     }
 
-    return EVENT_FAMILY_TRACE;
+    return EVENT_FAMILY_DIAG;
 }
 
 const char *event_family_name(Event_Family family) {
@@ -440,21 +429,6 @@ static void event_dump_one(const Event *ev) {
            ev->h.origin.col);
 
     switch ((Event_Kind) ev->h.kind) {
-        case EVENT_TRACE_COMMAND_BEGIN:
-            printf(" cmd=%.*s argc=%zu",
-                   (int) ev->as.trace_command_begin.command_name.count,
-                   ev->as.trace_command_begin.command_name.data ? ev->as.trace_command_begin.command_name.data : "",
-                   ev->as.trace_command_begin.resolved_arg_count);
-            break;
-
-        case EVENT_TRACE_COMMAND_END:
-            printf(" cmd=%.*s completed=%s failed=%s",
-                   (int) ev->as.trace_command_end.command_name.count,
-                   ev->as.trace_command_end.command_name.data ? ev->as.trace_command_end.command_name.data : "",
-                   ev->as.trace_command_end.completed ? "true" : "false",
-                   ev->as.trace_command_end.failed ? "true" : "false");
-            break;
-
         case EVENT_DIAG:
             printf(" severity=%d code=%.*s",
                    (int) ev->as.diag.severity,

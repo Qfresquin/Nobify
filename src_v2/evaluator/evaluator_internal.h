@@ -414,47 +414,6 @@ static inline String_View *eval_sv_list_copy_to_event_arena(Evaluator_Context *c
     return items;
 }
 
-static inline bool eval_emit_trace_begin(Evaluator_Context *ctx,
-                                         Event_Origin origin,
-                                         String_View command_name,
-                                         const SV_List *resolved_args) {
-    Event ev = {0};
-    ev.h.kind = EVENT_TRACE_COMMAND_BEGIN;
-    ev.h.origin = origin;
-    ev.as.trace_command_begin.command_name = sv_copy_to_event_arena(ctx, command_name);
-    if (eval_should_stop(ctx)) return false;
-    if (resolved_args) {
-        ev.as.trace_command_begin.resolved_args = eval_sv_list_copy_to_event_arena(ctx, resolved_args);
-        if (arena_arr_len(*resolved_args) > 0 && !ev.as.trace_command_begin.resolved_args) return false;
-        ev.as.trace_command_begin.resolved_arg_count = arena_arr_len(*resolved_args);
-    }
-    return emit_event(ctx, ev);
-}
-
-static inline bool eval_emit_trace_end(Evaluator_Context *ctx,
-                                       Event_Origin origin,
-                                       String_View command_name,
-                                       bool completed,
-                                       bool failed) {
-    Event ev = {0};
-    ev.h.kind = EVENT_TRACE_COMMAND_END;
-    ev.h.origin = origin;
-    ev.as.trace_command_end.command_name = sv_copy_to_event_arena(ctx, command_name);
-    ev.as.trace_command_end.completed = completed;
-    ev.as.trace_command_end.failed = failed;
-    return emit_event(ctx, ev);
-}
-
-static inline bool eval_emit_trace_command(Evaluator_Context *ctx,
-                                           Event_Origin origin,
-                                           String_View command_name,
-                                           const SV_List *resolved_args,
-                                           bool completed,
-                                           bool failed) {
-    if (!eval_emit_trace_begin(ctx, origin, command_name, resolved_args)) return false;
-    return eval_emit_trace_end(ctx, origin, command_name, completed, failed);
-}
-
 static inline bool eval_emit_target_prop_set(Evaluator_Context *ctx,
                                              Event_Origin origin,
                                              String_View target_name,
