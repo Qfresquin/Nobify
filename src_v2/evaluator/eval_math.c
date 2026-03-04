@@ -390,5 +390,13 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
         snprintf(out_buf, sizeof(out_buf), "%lld", value);
     }
     (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_buf));
+    if (!eval_emit_math_expr(ctx,
+                             o,
+                             out_var,
+                             out_fmt == MATH_OUTPUT_HEXADECIMAL
+                                 ? nob_sv_from_cstr("HEXADECIMAL")
+                                 : nob_sv_from_cstr("DECIMAL"))) {
+        return false;
+    }
     return !eval_should_stop(ctx);
 }

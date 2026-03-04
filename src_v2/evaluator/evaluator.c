@@ -579,21 +579,34 @@ static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *sr
 static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clause_List *src, ElseIf_Clause_List *dst);
 
 static bool eval_if(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     bool cond = eval_condition(ctx, &node->as.if_stmt.condition);
     if (ctx->oom) return false;
-    if (cond) return eval_node_list(ctx, &node->as.if_stmt.then_block);
+    if (!eval_emit_flow_if_eval(ctx, origin, cond)) return false;
+    if (cond) {
+        if (!eval_emit_flow_branch_taken(ctx, origin, nob_sv_from_cstr("then"))) return false;
+        return eval_node_list(ctx, &node->as.if_stmt.then_block);
+    }
 
     for (size_t i = 0; i < arena_arr_len(node->as.if_stmt.elseif_clauses); i++) {
         const ElseIf_Clause *cl = &node->as.if_stmt.elseif_clauses[i];
         bool elseif_cond = eval_condition(ctx, &cl->condition);
         if (ctx->oom) return false;
-        if (elseif_cond) return eval_node_list(ctx, &cl->block);
+        if (!eval_emit_flow_if_eval(ctx, origin, elseif_cond)) return false;
+        if (elseif_cond) {
+            if (!eval_emit_flow_branch_taken(ctx, origin, nob_sv_from_cstr("elseif"))) return false;
+            return eval_node_list(ctx, &cl->block);
+        }
     }
 
+    if (arena_arr_len(node->as.if_stmt.else_block) > 0) {
+        if (!eval_emit_flow_branch_taken(ctx, origin, nob_sv_from_cstr("else"))) return false;
+    }
     return eval_node_list(ctx, &node->as.if_stmt.else_block);
 }
 
 static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.foreach_stmt.args);
     if (ctx->oom) return false;
     if (arena_arr_len(a) == 0) return true;
@@ -698,9 +711,12 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
 
     String_View loop_old = eval_var_get(ctx, var);
     bool loop_old_defined = eval_var_defined(ctx, var);
+    size_t iter_count = 0;
 
+    if (!eval_emit_flow_loop_begin(ctx, origin, nob_sv_from_cstr("foreach"))) return false;
     ctx->loop_depth++;
     for (size_t ii = 0; ii < items_count; ii++) {
+        iter_count++;
         if (!eval_var_set(ctx, var, items_ptr[ii])) {
             ctx->loop_depth--;
             return false;
@@ -723,6 +739,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
         }
     }
     ctx->loop_depth--;
+    if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("foreach"), (uint32_t)iter_count)) return false;
     if (cmp0124_new) {
         if (loop_old_defined) (void)eval_var_set(ctx, var, loop_old);
         else (void)eval_var_unset(ctx, var);
@@ -733,6 +750,9 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
 static bool eval_while(Evaluator_Context *ctx, const Node *node) {
     // Hard guard against infinite loops during transpilation.
     const size_t kMaxIter = 10000;
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    size_t iter_count = 0;
+    if (!eval_emit_flow_loop_begin(ctx, origin, nob_sv_from_cstr("while"))) return false;
     ctx->loop_depth++;
     for (size_t iter = 0; iter < kMaxIter; iter++) {
         bool cond = eval_condition(ctx, &node->as.while_stmt.condition);
@@ -740,10 +760,16 @@ static bool eval_while(Evaluator_Context *ctx, const Node *node) {
             ctx->loop_depth--;
             return false;
         }
+        if (!eval_emit_flow_if_eval(ctx, origin, cond)) {
+            ctx->loop_depth--;
+            return false;
+        }
         if (!cond) {
             ctx->loop_depth--;
+            if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("while"), (uint32_t)iter_count)) return false;
             return true;
         }
+        iter_count++;
         if (!eval_node_list(ctx, &node->as.while_stmt.body)) {
             ctx->loop_depth--;
             return false;
@@ -759,12 +785,12 @@ static bool eval_while(Evaluator_Context *ctx, const Node *node) {
         if (ctx->break_requested) {
             ctx->break_requested = false;
             ctx->loop_depth--;
+            if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("while"), (uint32_t)iter_count)) return false;
             return true;
         }
     }
     ctx->loop_depth--;
 
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     EVAL_DIAG(ctx,
                    EV_DIAG_ERROR,
                    nob_sv_from_cstr("while"),

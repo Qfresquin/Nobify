@@ -398,6 +398,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         if (existing.count == 0) {
             (void)eval_var_set(ctx, var, incoming);
+            if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return false;
             return !eval_should_stop(ctx);
         }
 
@@ -411,6 +412,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         memcpy(buf + left.count + 1, right.data, right.count);
         buf[total] = '\0';
         (void)eval_var_set(ctx, var, nob_sv_from_cstr(buf));
+        if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -450,6 +452,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         for (size_t i = index; i < arena_arr_len(items); i++) out_items[off++] = items[i];
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
+        if (!eval_emit_list_insert(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -510,6 +513,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set(ctx, var, nob_sv_from_cstr(buf));
+        if (!eval_emit_list_remove(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -551,6 +555,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
+        if (!eval_emit_list_remove(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -585,6 +590,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
+        if (!eval_emit_list_remove(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -867,6 +873,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             items[arena_arr_len(items) - 1 - i] = tmp;
         }
         (void)list_set_var_from_items(ctx, var, items, arena_arr_len(items));
+        if (!eval_emit_list_sort(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -1198,10 +1205,12 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         if (replace_ready) regfree(&replace_re);
         if (has_output_var) {
             (void)list_set_var_from_items(ctx, out_var, items, arena_arr_len(items));
+            if (!eval_emit_list_transform(ctx, o, var)) return false;
             return !eval_should_stop(ctx);
         }
         if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
         (void)list_set_var_from_items(ctx, var, items, arena_arr_len(items));
+        if (!eval_emit_list_transform(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
 

@@ -48,6 +48,14 @@ typedef enum {
     X(EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop") \
     X(EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set") \
     X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return") \
+    X(EVENT_FLOW_IF_EVAL, EVENT_FAMILY_FLOW, "flow_if_eval") \
+    X(EVENT_FLOW_BRANCH_TAKEN, EVENT_FAMILY_FLOW, "flow_branch_taken") \
+    X(EVENT_FLOW_LOOP_BEGIN, EVENT_FAMILY_FLOW, "flow_loop_begin") \
+    X(EVENT_FLOW_LOOP_END, EVENT_FAMILY_FLOW, "flow_loop_end") \
+    X(EVENT_FLOW_BREAK, EVENT_FAMILY_FLOW, "flow_break") \
+    X(EVENT_FLOW_CONTINUE, EVENT_FAMILY_FLOW, "flow_continue") \
+    X(EVENT_FLOW_DEFER_QUEUE, EVENT_FAMILY_FLOW, "flow_defer_queue") \
+    X(EVENT_FLOW_DEFER_FLUSH, EVENT_FAMILY_FLOW, "flow_defer_flush") \
     X(EVENT_FS_WRITE_FILE, EVENT_FAMILY_FS, "fs_write_file") \
     X(EVENT_FS_APPEND_FILE, EVENT_FAMILY_FS, "fs_append_file") \
     X(EVENT_FS_READ_FILE, EVENT_FAMILY_FS, "fs_read_file") \
@@ -64,6 +72,21 @@ typedef enum {
     X(EVENT_FS_TRANSFER_UPLOAD, EVENT_FAMILY_FS, "fs_transfer_upload") \
     X(EVENT_PROC_EXEC_REQUEST, EVENT_FAMILY_PROC, "proc_exec_request") \
     X(EVENT_PROC_EXEC_RESULT, EVENT_FAMILY_PROC, "proc_exec_result") \
+    X(EVENT_STRING_REPLACE, EVENT_FAMILY_STRING, "string_replace") \
+    X(EVENT_STRING_CONFIGURE, EVENT_FAMILY_STRING, "string_configure") \
+    X(EVENT_STRING_REGEX, EVENT_FAMILY_STRING, "string_regex") \
+    X(EVENT_STRING_HASH, EVENT_FAMILY_STRING, "string_hash") \
+    X(EVENT_STRING_TIMESTAMP, EVENT_FAMILY_STRING, "string_timestamp") \
+    X(EVENT_LIST_APPEND, EVENT_FAMILY_LIST, "list_append") \
+    X(EVENT_LIST_PREPEND, EVENT_FAMILY_LIST, "list_prepend") \
+    X(EVENT_LIST_INSERT, EVENT_FAMILY_LIST, "list_insert") \
+    X(EVENT_LIST_REMOVE, EVENT_FAMILY_LIST, "list_remove") \
+    X(EVENT_LIST_TRANSFORM, EVENT_FAMILY_LIST, "list_transform") \
+    X(EVENT_LIST_SORT, EVENT_FAMILY_LIST, "list_sort") \
+    X(EVENT_MATH_EXPR, EVENT_FAMILY_MATH, "math_expr") \
+    X(EVENT_PATH_NORMALIZE, EVENT_FAMILY_PATH, "path_normalize") \
+    X(EVENT_PATH_COMPARE, EVENT_FAMILY_PATH, "path_compare") \
+    X(EVENT_PATH_CONVERT, EVENT_FAMILY_PATH, "path_convert") \
     X(EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable") \
     X(EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add") \
     X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add") \
@@ -239,6 +262,40 @@ typedef struct {
 } Event_Flow_Return;
 
 typedef struct {
+    bool result;
+} Event_Flow_If_Eval;
+
+typedef struct {
+    String_View branch_kind;
+} Event_Flow_Branch_Taken;
+
+typedef struct {
+    String_View loop_kind;
+} Event_Flow_Loop_Begin;
+
+typedef struct {
+    String_View loop_kind;
+    uint32_t iterations;
+} Event_Flow_Loop_End;
+
+typedef struct {
+    uint32_t loop_depth;
+} Event_Flow_Break;
+
+typedef struct {
+    uint32_t loop_depth;
+} Event_Flow_Continue;
+
+typedef struct {
+    String_View defer_id;
+    String_View command_name;
+} Event_Flow_Defer_Queue;
+
+typedef struct {
+    uint32_t call_count;
+} Event_Flow_Defer_Flush;
+
+typedef struct {
     String_View path;
 } Event_Fs_Write_File;
 
@@ -318,6 +375,69 @@ typedef struct {
     String_View stderr_text;
     bool had_error;
 } Event_Proc_Exec_Result;
+
+typedef struct {
+    String_View out_var;
+} Event_String_Replace;
+
+typedef struct {
+    String_View out_var;
+} Event_String_Configure;
+
+typedef struct {
+    String_View mode;
+    String_View out_var;
+} Event_String_Regex;
+
+typedef struct {
+    String_View algorithm;
+    String_View out_var;
+} Event_String_Hash;
+
+typedef struct {
+    String_View out_var;
+} Event_String_Timestamp;
+
+typedef struct {
+    String_View list_var;
+} Event_List_Append;
+
+typedef struct {
+    String_View list_var;
+} Event_List_Prepend;
+
+typedef struct {
+    String_View list_var;
+} Event_List_Insert;
+
+typedef struct {
+    String_View list_var;
+} Event_List_Remove;
+
+typedef struct {
+    String_View list_var;
+} Event_List_Transform;
+
+typedef struct {
+    String_View list_var;
+} Event_List_Sort;
+
+typedef struct {
+    String_View out_var;
+    String_View format;
+} Event_Math_Expr;
+
+typedef struct {
+    String_View out_var;
+} Event_Path_Normalize;
+
+typedef struct {
+    String_View out_var;
+} Event_Path_Compare;
+
+typedef struct {
+    String_View out_var;
+} Event_Path_Convert;
 
 typedef struct {
     bool enabled;
@@ -523,6 +643,14 @@ typedef struct {
         Event_Policy_Pop policy_pop;
         Event_Policy_Set policy_set;
         Event_Flow_Return flow_return;
+        Event_Flow_If_Eval flow_if_eval;
+        Event_Flow_Branch_Taken flow_branch_taken;
+        Event_Flow_Loop_Begin flow_loop_begin;
+        Event_Flow_Loop_End flow_loop_end;
+        Event_Flow_Break flow_break;
+        Event_Flow_Continue flow_continue;
+        Event_Flow_Defer_Queue flow_defer_queue;
+        Event_Flow_Defer_Flush flow_defer_flush;
         Event_Fs_Write_File fs_write_file;
         Event_Fs_Append_File fs_append_file;
         Event_Fs_Read_File fs_read_file;
@@ -539,6 +667,21 @@ typedef struct {
         Event_Fs_Transfer_Upload fs_transfer_upload;
         Event_Proc_Exec_Request proc_exec_request;
         Event_Proc_Exec_Result proc_exec_result;
+        Event_String_Replace string_replace;
+        Event_String_Configure string_configure;
+        Event_String_Regex string_regex;
+        Event_String_Hash string_hash;
+        Event_String_Timestamp string_timestamp;
+        Event_List_Append list_append;
+        Event_List_Prepend list_prepend;
+        Event_List_Insert list_insert;
+        Event_List_Remove list_remove;
+        Event_List_Transform list_transform;
+        Event_List_Sort list_sort;
+        Event_Math_Expr math_expr;
+        Event_Path_Normalize path_normalize;
+        Event_Path_Compare path_compare;
+        Event_Path_Convert path_convert;
         Event_Test_Enable test_enable;
         Event_Test_Add test_add;
         Event_Install_Rule_Add install_rule_add;

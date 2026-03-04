@@ -1058,6 +1058,223 @@ static inline bool eval_emit_proc_exec_result(Evaluator_Context *ctx,
     ev.as.proc_exec_result.had_error = had_error;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_flow_if_eval(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          bool result) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_IF_EVAL;
+    ev.h.origin = origin;
+    ev.as.flow_if_eval.result = result;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_branch_taken(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View branch_kind) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_BRANCH_TAKEN;
+    ev.h.origin = origin;
+    ev.as.flow_branch_taken.branch_kind = sv_copy_to_event_arena(ctx, branch_kind);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_loop_begin(Evaluator_Context *ctx,
+                                             Event_Origin origin,
+                                             String_View loop_kind) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_LOOP_BEGIN;
+    ev.h.origin = origin;
+    ev.as.flow_loop_begin.loop_kind = sv_copy_to_event_arena(ctx, loop_kind);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_loop_end(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           String_View loop_kind,
+                                           uint32_t iterations) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_LOOP_END;
+    ev.h.origin = origin;
+    ev.as.flow_loop_end.loop_kind = sv_copy_to_event_arena(ctx, loop_kind);
+    ev.as.flow_loop_end.iterations = iterations;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_break(Evaluator_Context *ctx,
+                                        Event_Origin origin,
+                                        uint32_t loop_depth) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_BREAK;
+    ev.h.origin = origin;
+    ev.as.flow_break.loop_depth = loop_depth;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_continue(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           uint32_t loop_depth) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_CONTINUE;
+    ev.h.origin = origin;
+    ev.as.flow_continue.loop_depth = loop_depth;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_defer_queue(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              String_View defer_id,
+                                              String_View command_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_DEFER_QUEUE;
+    ev.h.origin = origin;
+    ev.as.flow_defer_queue.defer_id = sv_copy_to_event_arena(ctx, defer_id);
+    ev.as.flow_defer_queue.command_name = sv_copy_to_event_arena(ctx, command_name);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_defer_flush(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              uint32_t call_count) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_DEFER_FLUSH;
+    ev.h.origin = origin;
+    ev.as.flow_defer_flush.call_count = call_count;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_string_replace(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_STRING_REPLACE;
+    ev.h.origin = origin;
+    ev.as.string_replace.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_string_configure(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_STRING_CONFIGURE;
+    ev.h.origin = origin;
+    ev.as.string_configure.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_string_regex(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          String_View mode,
+                                          String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_STRING_REGEX;
+    ev.h.origin = origin;
+    ev.as.string_regex.mode = sv_copy_to_event_arena(ctx, mode);
+    ev.as.string_regex.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_string_hash(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View algorithm,
+                                         String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_STRING_HASH;
+    ev.h.origin = origin;
+    ev.as.string_hash.algorithm = sv_copy_to_event_arena(ctx, algorithm);
+    ev.as.string_hash.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_string_timestamp(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_STRING_TIMESTAMP;
+    ev.h.origin = origin;
+    ev.as.string_timestamp.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_list_append(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_APPEND;
+    ev.h.origin = origin;
+    ev.as.list_append.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_list_prepend(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_PREPEND;
+    ev.h.origin = origin;
+    ev.as.list_prepend.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_list_insert(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_INSERT;
+    ev.h.origin = origin;
+    ev.as.list_insert.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_list_remove(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_REMOVE;
+    ev.h.origin = origin;
+    ev.as.list_remove.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_list_transform(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_TRANSFORM;
+    ev.h.origin = origin;
+    ev.as.list_transform.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_list_sort(Evaluator_Context *ctx,
+                                       Event_Origin origin,
+                                       String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_SORT;
+    ev.h.origin = origin;
+    ev.as.list_sort.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_math_expr(Evaluator_Context *ctx,
+                                       Event_Origin origin,
+                                       String_View out_var,
+                                       String_View format) {
+    Event ev = {0};
+    ev.h.kind = EVENT_MATH_EXPR;
+    ev.h.origin = origin;
+    ev.as.math_expr.out_var = sv_copy_to_event_arena(ctx, out_var);
+    ev.as.math_expr.format = sv_copy_to_event_arena(ctx, format);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_path_normalize(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PATH_NORMALIZE;
+    ev.h.origin = origin;
+    ev.as.path_normalize.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_path_compare(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PATH_COMPARE;
+    ev.h.origin = origin;
+    ev.as.path_compare.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_path_convert(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PATH_CONVERT;
+    ev.h.origin = origin;
+    ev.as.path_convert.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Event_Diag_Severity sev,
                     String_View component,

@@ -1980,6 +1980,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         (void)eval_var_set(ctx, a[2], out);
+        if (!eval_emit_string_configure(ctx, o, a[2])) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -2133,6 +2134,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         (void)eval_var_set(ctx, out_var, string_timestamp_format_temp(ctx, fmt, utc));
+        if (!eval_emit_string_timestamp(ctx, o, out_var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -2218,6 +2220,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         (void)eval_var_set(ctx, a[1], hash);
+        if (!eval_emit_string_hash(ctx, o, a[0], a[1])) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -2278,6 +2281,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+        if (!eval_emit_string_replace(ctx, o, out_var)) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -2400,6 +2404,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             } else {
                 (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(""));
             }
+            if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("MATCH"), out_var)) return false;
             return !eval_should_stop(ctx);
         }
 
@@ -2485,6 +2490,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             out_buf[sb.count] = '\0';
             nob_sb_free(sb);
             (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_buf));
+            if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("REPLACE"), out_var)) return false;
             return !eval_should_stop(ctx);
         }
 

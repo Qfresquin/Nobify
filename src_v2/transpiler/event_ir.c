@@ -86,6 +86,24 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
                                              &ev->as.flow_return.propagate_vars,
                                              ev->as.flow_return.propagate_count)) return false;
             break;
+        case EVENT_FLOW_IF_EVAL:
+        case EVENT_FLOW_BREAK:
+        case EVENT_FLOW_CONTINUE:
+        case EVENT_FLOW_DEFER_FLUSH:
+            break;
+        case EVENT_FLOW_BRANCH_TAKEN:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_branch_taken.branch_kind)) return false;
+            break;
+        case EVENT_FLOW_LOOP_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_loop_begin.loop_kind)) return false;
+            break;
+        case EVENT_FLOW_LOOP_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_loop_end.loop_kind)) return false;
+            break;
+        case EVENT_FLOW_DEFER_QUEUE:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_defer_queue.defer_id)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_defer_queue.command_name)) return false;
+            break;
 
         case EVENT_FS_WRITE_FILE:
             if (!event_copy_sv_inplace(arena, &ev->as.fs_write_file.path)) return false;
@@ -146,6 +164,54 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.result_code)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.stdout_text)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.stderr_text)) return false;
+            break;
+        case EVENT_STRING_REPLACE:
+            if (!event_copy_sv_inplace(arena, &ev->as.string_replace.out_var)) return false;
+            break;
+        case EVENT_STRING_CONFIGURE:
+            if (!event_copy_sv_inplace(arena, &ev->as.string_configure.out_var)) return false;
+            break;
+        case EVENT_STRING_REGEX:
+            if (!event_copy_sv_inplace(arena, &ev->as.string_regex.mode)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.string_regex.out_var)) return false;
+            break;
+        case EVENT_STRING_HASH:
+            if (!event_copy_sv_inplace(arena, &ev->as.string_hash.algorithm)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.string_hash.out_var)) return false;
+            break;
+        case EVENT_STRING_TIMESTAMP:
+            if (!event_copy_sv_inplace(arena, &ev->as.string_timestamp.out_var)) return false;
+            break;
+        case EVENT_LIST_APPEND:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_append.list_var)) return false;
+            break;
+        case EVENT_LIST_PREPEND:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_prepend.list_var)) return false;
+            break;
+        case EVENT_LIST_INSERT:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_insert.list_var)) return false;
+            break;
+        case EVENT_LIST_REMOVE:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_remove.list_var)) return false;
+            break;
+        case EVENT_LIST_TRANSFORM:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_transform.list_var)) return false;
+            break;
+        case EVENT_LIST_SORT:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_sort.list_var)) return false;
+            break;
+        case EVENT_MATH_EXPR:
+            if (!event_copy_sv_inplace(arena, &ev->as.math_expr.out_var)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.math_expr.format)) return false;
+            break;
+        case EVENT_PATH_NORMALIZE:
+            if (!event_copy_sv_inplace(arena, &ev->as.path_normalize.out_var)) return false;
+            break;
+        case EVENT_PATH_COMPARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.path_compare.out_var)) return false;
+            break;
+        case EVENT_PATH_CONVERT:
+            if (!event_copy_sv_inplace(arena, &ev->as.path_convert.out_var)) return false;
             break;
 
         case EVENT_TEST_ENABLE:
@@ -423,6 +489,36 @@ static void event_dump_one(const Event *ev) {
         case EVENT_FLOW_RETURN:
             printf(" propagate=%zu", ev->as.flow_return.propagate_count);
             break;
+        case EVENT_FLOW_IF_EVAL:
+            printf(" result=%s", ev->as.flow_if_eval.result ? "true" : "false");
+            break;
+        case EVENT_FLOW_BRANCH_TAKEN:
+            printf(" branch=%.*s",
+                   (int) ev->as.flow_branch_taken.branch_kind.count,
+                   ev->as.flow_branch_taken.branch_kind.data ? ev->as.flow_branch_taken.branch_kind.data : "");
+            break;
+        case EVENT_FLOW_LOOP_BEGIN:
+            printf(" loop=%.*s",
+                   (int) ev->as.flow_loop_begin.loop_kind.count,
+                   ev->as.flow_loop_begin.loop_kind.data ? ev->as.flow_loop_begin.loop_kind.data : "");
+            break;
+        case EVENT_FLOW_LOOP_END:
+            printf(" iterations=%u", (unsigned) ev->as.flow_loop_end.iterations);
+            break;
+        case EVENT_FLOW_BREAK:
+            printf(" depth=%u", (unsigned) ev->as.flow_break.loop_depth);
+            break;
+        case EVENT_FLOW_CONTINUE:
+            printf(" depth=%u", (unsigned) ev->as.flow_continue.loop_depth);
+            break;
+        case EVENT_FLOW_DEFER_QUEUE:
+            printf(" command=%.*s",
+                   (int) ev->as.flow_defer_queue.command_name.count,
+                   ev->as.flow_defer_queue.command_name.data ? ev->as.flow_defer_queue.command_name.data : "");
+            break;
+        case EVENT_FLOW_DEFER_FLUSH:
+            printf(" count=%u", (unsigned) ev->as.flow_defer_flush.call_count);
+            break;
 
         case EVENT_FS_WRITE_FILE:
             printf(" path=%.*s",
@@ -504,6 +600,81 @@ static void event_dump_one(const Event *ev) {
                    (int) ev->as.proc_exec_result.command.count,
                    ev->as.proc_exec_result.command.data ? ev->as.proc_exec_result.command.data : "",
                    ev->as.proc_exec_result.had_error ? "true" : "false");
+            break;
+        case EVENT_STRING_REPLACE:
+            printf(" out=%.*s",
+                   (int) ev->as.string_replace.out_var.count,
+                   ev->as.string_replace.out_var.data ? ev->as.string_replace.out_var.data : "");
+            break;
+        case EVENT_STRING_CONFIGURE:
+            printf(" out=%.*s",
+                   (int) ev->as.string_configure.out_var.count,
+                   ev->as.string_configure.out_var.data ? ev->as.string_configure.out_var.data : "");
+            break;
+        case EVENT_STRING_REGEX:
+            printf(" mode=%.*s",
+                   (int) ev->as.string_regex.mode.count,
+                   ev->as.string_regex.mode.data ? ev->as.string_regex.mode.data : "");
+            break;
+        case EVENT_STRING_HASH:
+            printf(" algo=%.*s",
+                   (int) ev->as.string_hash.algorithm.count,
+                   ev->as.string_hash.algorithm.data ? ev->as.string_hash.algorithm.data : "");
+            break;
+        case EVENT_STRING_TIMESTAMP:
+            printf(" out=%.*s",
+                   (int) ev->as.string_timestamp.out_var.count,
+                   ev->as.string_timestamp.out_var.data ? ev->as.string_timestamp.out_var.data : "");
+            break;
+        case EVENT_LIST_APPEND:
+            printf(" list=%.*s",
+                   (int) ev->as.list_append.list_var.count,
+                   ev->as.list_append.list_var.data ? ev->as.list_append.list_var.data : "");
+            break;
+        case EVENT_LIST_PREPEND:
+            printf(" list=%.*s",
+                   (int) ev->as.list_prepend.list_var.count,
+                   ev->as.list_prepend.list_var.data ? ev->as.list_prepend.list_var.data : "");
+            break;
+        case EVENT_LIST_INSERT:
+            printf(" list=%.*s",
+                   (int) ev->as.list_insert.list_var.count,
+                   ev->as.list_insert.list_var.data ? ev->as.list_insert.list_var.data : "");
+            break;
+        case EVENT_LIST_REMOVE:
+            printf(" list=%.*s",
+                   (int) ev->as.list_remove.list_var.count,
+                   ev->as.list_remove.list_var.data ? ev->as.list_remove.list_var.data : "");
+            break;
+        case EVENT_LIST_TRANSFORM:
+            printf(" list=%.*s",
+                   (int) ev->as.list_transform.list_var.count,
+                   ev->as.list_transform.list_var.data ? ev->as.list_transform.list_var.data : "");
+            break;
+        case EVENT_LIST_SORT:
+            printf(" list=%.*s",
+                   (int) ev->as.list_sort.list_var.count,
+                   ev->as.list_sort.list_var.data ? ev->as.list_sort.list_var.data : "");
+            break;
+        case EVENT_MATH_EXPR:
+            printf(" out=%.*s",
+                   (int) ev->as.math_expr.out_var.count,
+                   ev->as.math_expr.out_var.data ? ev->as.math_expr.out_var.data : "");
+            break;
+        case EVENT_PATH_NORMALIZE:
+            printf(" out=%.*s",
+                   (int) ev->as.path_normalize.out_var.count,
+                   ev->as.path_normalize.out_var.data ? ev->as.path_normalize.out_var.data : "");
+            break;
+        case EVENT_PATH_COMPARE:
+            printf(" out=%.*s",
+                   (int) ev->as.path_compare.out_var.count,
+                   ev->as.path_compare.out_var.data ? ev->as.path_compare.out_var.data : "");
+            break;
+        case EVENT_PATH_CONVERT:
+            printf(" out=%.*s",
+                   (int) ev->as.path_convert.out_var.count,
+                   ev->as.path_convert.out_var.data ? ev->as.path_convert.out_var.data : "");
             break;
 
         case EVENT_TEST_ENABLE:

@@ -1237,6 +1237,11 @@ bool eval_defer_pop_directory(Evaluator_Context *ctx) {
 bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
     Eval_Deferred_Dir_Frame *frame = flow_current_defer_dir(ctx);
     if (!ctx || !frame) return true;
+    if (arena_arr_len(frame->calls) > 0) {
+        Event_Origin origin = {0};
+        origin.file_path = nob_sv_from_cstr(ctx->current_file ? ctx->current_file : "");
+        if (!eval_emit_flow_defer_flush(ctx, origin, (uint32_t)arena_arr_len(frame->calls))) return false;
+    }
 
     while (arena_arr_len(frame->calls) > 0) {
         Eval_Deferred_Call call = {0};
@@ -1607,6 +1612,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return false;
     if (!flow_clone_args_to_event_range(ctx, raw, i + 2, &call.args)) return false;
     if (!flow_append_defer_queue(ctx, frame, call)) return false;
+    if (!eval_emit_flow_defer_queue(ctx, origin, call.id, call.command_name)) return false;
     if (id_var.count > 0 && !eval_var_set(ctx, id_var, call.id)) return false;
     return !eval_should_stop(ctx);
 }
@@ -1919,6 +1925,7 @@ bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
     ctx->break_requested = true;
+    if (!eval_emit_flow_break(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return false;
     return true;
 }
 
@@ -1936,6 +1943,7 @@ bool eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
     ctx->continue_requested = true;
+    if (!eval_emit_flow_continue(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return false;
     return true;
 }
 

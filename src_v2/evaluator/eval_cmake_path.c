@@ -1026,12 +1026,58 @@ bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
     if (eval_sv_eq_ci_lit(mode, "REPLACE_FILENAME")) return handle_replace_filename(ctx, node, o, a);
     if (eval_sv_eq_ci_lit(mode, "REMOVE_EXTENSION")) return handle_extension_common(ctx, node, o, a, false);
     if (eval_sv_eq_ci_lit(mode, "REPLACE_EXTENSION")) return handle_extension_common(ctx, node, o, a, true);
-    if (eval_sv_eq_ci_lit(mode, "NORMAL_PATH")) return handle_normal_path(ctx, node, o, a);
+    if (eval_sv_eq_ci_lit(mode, "NORMAL_PATH")) {
+        bool ok = handle_normal_path(ctx, node, o, a);
+        if (ok && !eval_should_stop(ctx)) {
+            String_View out_var = (arena_arr_len(a) == 4 && eval_sv_eq_ci_lit(a[2], "OUTPUT_VARIABLE")) ? a[3] : nob_sv_from_cstr("");
+            if (!eval_emit_path_normalize(ctx, o, out_var)) return false;
+        }
+        return ok;
+    }
     if (eval_sv_eq_ci_lit(mode, "RELATIVE_PATH")) return handle_relative_path(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "ABSOLUTE_PATH")) return handle_absolute_path(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "NATIVE_PATH")) return handle_native_path(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "CONVERT")) return handle_convert(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "COMPARE")) return handle_compare(ctx, node, o, a);
+    if (eval_sv_eq_ci_lit(mode, "ABSOLUTE_PATH")) {
+        bool ok = handle_absolute_path(ctx, node, o, a);
+        if (ok && !eval_should_stop(ctx)) {
+            String_View out_var = nob_sv_from_cstr("");
+            for (size_t i = 2; i + 1 < arena_arr_len(a); ++i) {
+                if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
+                    out_var = a[i + 1];
+                    break;
+                }
+            }
+            if (!eval_emit_path_normalize(ctx, o, out_var)) return false;
+        }
+        return ok;
+    }
+    if (eval_sv_eq_ci_lit(mode, "NATIVE_PATH")) {
+        bool ok = handle_native_path(ctx, node, o, a);
+        if (ok && !eval_should_stop(ctx)) {
+            String_View out_var = arena_arr_len(a) >= 3 ? a[arena_arr_len(a) - 1] : nob_sv_from_cstr("");
+            if (!eval_emit_path_normalize(ctx, o, out_var)) return false;
+        }
+        return ok;
+    }
+    if (eval_sv_eq_ci_lit(mode, "CONVERT")) {
+        bool ok = handle_convert(ctx, node, o, a);
+        if (ok && !eval_should_stop(ctx)) {
+            String_View out_var = nob_sv_from_cstr("");
+            for (size_t i = 3; i < arena_arr_len(a); ++i) {
+                if (eval_sv_eq_ci_lit(a[i], "NORMALIZE")) continue;
+                out_var = a[i];
+                break;
+            }
+            if (!eval_emit_path_convert(ctx, o, out_var)) return false;
+        }
+        return ok;
+    }
+    if (eval_sv_eq_ci_lit(mode, "COMPARE")) {
+        bool ok = handle_compare(ctx, node, o, a);
+        if (ok && !eval_should_stop(ctx)) {
+            String_View out_var = arena_arr_len(a) == 5 ? a[4] : nob_sv_from_cstr("");
+            if (!eval_emit_path_compare(ctx, o, out_var)) return false;
+        }
+        return ok;
+    }
 
     if (svu_has_prefix_ci_lit(mode, "HAS_")) return handle_has_component(ctx, node, o, a, mode);
     if (svu_has_prefix_ci_lit(mode, "IS_")) return handle_is_absolute(ctx, node, o, a, mode);
