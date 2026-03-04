@@ -37,11 +37,7 @@ bool eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    Cmake_Event ev = {0};
-    ev.kind = EV_TESTING_ENABLE;
-    ev.origin = o;
-    ev.as.testing_enable.enabled = true;
-    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_emit_test_enable(ctx, o)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
 
@@ -186,13 +182,6 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         command = svu_join_space_temp(ctx, &a[1], arena_arr_len(a) - 1);
     }
 
-    Cmake_Event ev = {0};
-    ev.kind = EV_TEST_ADD;
-    ev.origin = o;
-    ev.as.test_add.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.test_add.command = sv_copy_to_event_arena(ctx, command);
-    ev.as.test_add.working_dir = sv_copy_to_event_arena(ctx, working_dir);
-    ev.as.test_add.command_expand_lists = command_expand_lists;
     {
         size_t total = strlen("NOBIFY_TEST::") + name.count;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
@@ -202,7 +191,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         buf[total] = '\0';
         (void)eval_var_set(ctx, nob_sv_from_cstr(buf), nob_sv_from_cstr("1"));
     }
-    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_emit_test_add(ctx, o, name, command, working_dir, command_expand_lists)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
 

@@ -10,19 +10,13 @@ static bool emit_dir_push_event(Evaluator_Context *ctx,
                                 Cmake_Event_Origin origin,
                                 String_View source_dir,
                                 String_View binary_dir) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_DIR_PUSH;
-    ev.origin = origin;
-    ev.as.dir_push.source_dir = sv_copy_to_event_arena(ctx, source_dir);
-    ev.as.dir_push.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
-    return emit_event(ctx, ev);
+    (void)source_dir;
+    (void)binary_dir;
+    return eval_emit_trace_begin(ctx, origin, nob_sv_from_cstr("dir_push"), NULL);
 }
 
 static bool emit_dir_pop_event(Evaluator_Context *ctx, Cmake_Event_Origin origin) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_DIR_POP;
-    ev.origin = origin;
-    return emit_event(ctx, ev);
+    return eval_emit_trace_end(ctx, origin, nob_sv_from_cstr("dir_pop"), true, false);
 }
 
 static bool include_enables_cpack_component_commands(String_View arg) {

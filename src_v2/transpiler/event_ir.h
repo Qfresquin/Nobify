@@ -47,7 +47,13 @@ typedef enum {
     X(EVENT_POLICY_PUSH, EVENT_FAMILY_POLICY, "policy_push") \
     X(EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop") \
     X(EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set") \
-    X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return")
+    X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return") \
+    X(EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable") \
+    X(EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add") \
+    X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add") \
+    X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type") \
+    X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group") \
+    X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component")
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label) kind,
@@ -195,6 +201,52 @@ typedef struct {
 } Event_Flow_Return;
 
 typedef struct {
+    bool enabled;
+} Event_Test_Enable;
+
+typedef struct {
+    String_View name;
+    String_View command;
+    String_View working_dir;
+    bool command_expand_lists;
+} Event_Test_Add;
+
+typedef struct {
+    Cmake_Install_Rule_Type rule_type;
+    String_View item;
+    String_View destination;
+} Event_Install_Rule_Add;
+
+typedef struct {
+    String_View name;
+    String_View display_name;
+} Event_Cpack_Add_Install_Type;
+
+typedef struct {
+    String_View name;
+    String_View display_name;
+    String_View description;
+    String_View parent_group;
+    bool expanded;
+    bool bold_title;
+} Event_Cpack_Add_Component_Group;
+
+typedef struct {
+    String_View name;
+    String_View display_name;
+    String_View description;
+    String_View group;
+    String_View depends;
+    String_View install_types;
+    String_View archive_file;
+    String_View plist;
+    bool required;
+    bool hidden;
+    bool disabled;
+    bool downloaded;
+} Event_Cpack_Add_Component;
+
+typedef struct {
     Event_Family family;
     uint16_t kind;
     uint16_t version;
@@ -219,6 +271,12 @@ typedef struct {
         Event_Policy_Pop policy_pop;
         Event_Policy_Set policy_set;
         Event_Flow_Return flow_return;
+        Event_Test_Enable test_enable;
+        Event_Test_Add test_add;
+        Event_Install_Rule_Add install_rule_add;
+        Event_Cpack_Add_Install_Type cpack_add_install_type;
+        Event_Cpack_Add_Component_Group cpack_add_component_group;
+        Event_Cpack_Add_Component cpack_add_component;
     } as;
 } Event;
 

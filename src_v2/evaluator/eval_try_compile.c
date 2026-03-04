@@ -1,9 +1,5 @@
 #include "eval_try_compile.h"
 
-#include "../build_model/build_model_builder.h"
-#include "../build_model/build_model_collections.h"
-#include "../build_model/build_model_core.h"
-
 #include "evaluator_internal.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
@@ -167,6 +163,7 @@ static String_View try_compile_concat_prefix_temp(Evaluator_Context *ctx, const 
     return nob_sv_from_cstr(buf);
 }
 
+#if 0
 static String_View try_compile_concat_sv_temp(Evaluator_Context *ctx, String_View a, String_View b) {
     if (!ctx) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), a.count + b.count + 1);
@@ -176,6 +173,7 @@ static String_View try_compile_concat_sv_temp(Evaluator_Context *ctx, String_Vie
     buf[a.count + b.count] = '\0';
     return nob_sv_from_cstr(buf);
 }
+#endif
 
 static String_View try_compile_basename(String_View path) {
     size_t start = 0;
@@ -395,6 +393,7 @@ static bool try_compile_collect_until_keyword(Evaluator_Context *ctx,
     return true;
 }
 
+#if 0
 static bool try_compile_parse_cmake_flag_define_token(String_View def, String_View *out_key, String_View *out_value) {
     if (out_key) *out_key = nob_sv_from_cstr("");
     if (out_value) *out_value = nob_sv_from_cstr("");
@@ -421,6 +420,7 @@ static bool try_compile_parse_cmake_flag_define_token(String_View def, String_Vi
     if (out_value) *out_value = value;
     return true;
 }
+#endif
 
 static bool try_compile_cache_upsert(Evaluator_Context *ctx, String_View key, String_View value) {
     if (!ctx) return false;
@@ -460,12 +460,7 @@ static bool try_compile_publish_result(Evaluator_Context *ctx,
         if (!eval_var_set(ctx, req->result_var, result)) return false;
     } else {
         if (!try_compile_cache_upsert(ctx, req->result_var, result)) return false;
-        Cmake_Event ev = {0};
-        ev.kind = EV_SET_CACHE_ENTRY;
-        ev.origin = origin;
-        ev.as.cache_entry.key = sv_copy_to_event_arena(ctx, req->result_var);
-        ev.as.cache_entry.value = sv_copy_to_event_arena(ctx, result);
-        if (!emit_event(ctx, ev)) return false;
+        if (!eval_emit_var_set_cache(ctx, origin, req->result_var, result)) return false;
     }
     if (req->output_var.count > 0) {
         if (!eval_var_set(ctx, req->output_var, output_text)) return false;
@@ -915,10 +910,11 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
     return true;
 }
 
+#if 0
 static bool try_compile_resolve_project_target_sources(Evaluator_Context *ctx,
                                                        String_View source_dir,
                                                        String_View binary_dir,
-                                                       const String_List *raw_sources,
+                                                       const SV_List *raw_sources,
                                                        Try_Compile_Source_List *out_sources) {
     if (!ctx || !raw_sources || !out_sources) return false;
     for (size_t i = 0; i < arena_arr_len(*raw_sources); i++) {
@@ -938,76 +934,25 @@ static bool try_compile_resolve_project_target_sources(Evaluator_Context *ctx,
 
 static bool try_compile_build_target(Evaluator_Context *ctx,
                                      const Try_Compile_Request *base_req,
-                                     Build_Target *target,
-                                     const Build_Model *model,
+                                     void *target,
+                                     const void *model,
                                      const Try_Compile_Target_Artifact *artifacts,
                                      size_t artifact_count,
                                      Try_Compile_Execution_Result *out_res) {
-    if (!ctx || !base_req || !target || !out_res) return false;
-    *out_res = (Try_Compile_Execution_Result){0};
-
-    Try_Compile_Request req = *base_req;
-    req.source_items = (Try_Compile_Source_List){0};
-    req.compile_definitions = (SV_List){0};
-    req.link_options = (SV_List){0};
-    req.link_libraries = (SV_List){0};
-    req.linker_language = base_req->linker_language;
-
-    const String_List *global_defs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_DEFINITIONS);
-    const String_List *global_link_opts = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_OPTIONS);
-    const String_List *global_link_libs = build_model_get_string_list(model, BUILD_MODEL_LIST_GLOBAL_LINK_LIBRARIES);
-
-    for (size_t i = 0; i < arena_arr_len(*global_defs); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &req.compile_definitions, (*global_defs)[i])) return false;
-    }
-    for (size_t i = 0; i < arena_arr_len(*global_link_opts); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &req.link_options, (*global_link_opts)[i])) return false;
-    }
-    for (size_t i = 0; i < arena_arr_len(*global_link_libs); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &req.link_libraries, (*global_link_libs)[i])) return false;
-    }
-
-    String_List local = NULL;
-    string_list_init(&local);
-    build_target_collect_effective_compile_definitions(target, eval_temp_arena(ctx), NULL, &local);
-    for (size_t i = 0; i < arena_arr_len(local); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &req.compile_definitions, local[i])) return false;
-    }
-
-    local = NULL;
-    string_list_init(&local);
-    build_target_collect_effective_link_options(target, eval_temp_arena(ctx), NULL, &local);
-    for (size_t i = 0; i < arena_arr_len(local); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &req.link_options, local[i])) return false;
-    }
-
-    local = NULL;
-    string_list_init(&local);
-    build_target_collect_effective_link_libraries(target, eval_temp_arena(ctx), NULL, &local);
-    for (size_t i = 0; i < arena_arr_len(local); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &req.link_libraries, local[i])) return false;
-    }
-
-    const String_List *target_sources = build_target_get_string_list(target, BUILD_TARGET_LIST_SOURCES);
-    if (!try_compile_resolve_project_target_sources(ctx, base_req->source_dir, base_req->binary_dir, target_sources, &req.source_items)) {
-        return false;
-    }
-
-    Target_Type target_type = build_target_get_type(target);
-    if (target_type == TARGET_OBJECT_LIB) {
-        req.linker_language = base_req->linker_language;
-    }
-    if (!try_compile_execute_source_request(ctx, &req, out_res)) return false;
-    if (!out_res->ok || target_type == TARGET_EXECUTABLE) return true;
-
-    if (target_type == TARGET_STATIC_LIB) return true;
-    if (target_type == TARGET_SHARED_LIB) return true;
-    if (target_type == TARGET_OBJECT_LIB) return true;
-
+    (void)ctx;
+    (void)base_req;
+    (void)target;
+    (void)model;
     (void)artifacts;
     (void)artifact_count;
+    if (out_res) {
+        *out_res = (Try_Compile_Execution_Result){0};
+        out_res->ok = false;
+        out_res->output = nob_sv_from_cstr("try_compile(PROJECT) target build is disabled while the semantic Event IR replaces the legacy build model pipeline");
+    }
     return true;
 }
+#endif
 
 static bool try_compile_execute_project_request(Evaluator_Context *ctx,
                                                 const Node *node,
@@ -1016,195 +961,8 @@ static bool try_compile_execute_project_request(Evaluator_Context *ctx,
     if (!ctx || !req || !out_res) return false;
     (void)node;
     *out_res = (Try_Compile_Execution_Result){0};
-
-    String_View cmakelists = eval_sv_path_join(eval_temp_arena(ctx), req->source_dir, nob_sv_from_cstr("CMakeLists.txt"));
-    if (!file_exists_sv(ctx, cmakelists)) {
-        out_res->output = try_compile_concat_sv_temp(
-            ctx,
-            nob_sv_from_cstr("try_compile project source directory missing CMakeLists.txt: "),
-            req->source_dir);
-        out_res->ok = false;
-        return true;
-    }
-
-    Arena *child_temp = arena_create(2 * 1024 * 1024);
-    Arena *child_event = arena_create(4 * 1024 * 1024);
-    if (!child_temp || !child_event) {
-        if (child_temp) arena_destroy(child_temp);
-        if (child_event) arena_destroy(child_event);
-        return ctx_oom(ctx);
-    }
-
-    Cmake_Event_Stream *child_stream = event_stream_create(child_event);
-    if (!child_stream) {
-        arena_destroy(child_temp);
-        arena_destroy(child_event);
-        return ctx_oom(ctx);
-    }
-
-    Evaluator_Init init = {0};
-    init.arena = child_temp;
-    init.event_arena = child_event;
-    init.stream = child_stream;
-    init.source_dir = req->source_dir;
-    init.binary_dir = req->binary_dir;
-    init.current_file = "CMakeLists.txt";
-
-    Evaluator_Context *child = evaluator_create(&init);
-    if (!child) {
-        arena_destroy(child_temp);
-        arena_destroy(child_event);
-        return ctx_oom(ctx);
-    }
-
-    static const char *k_forward_vars[] = {
-        "CMAKE_C_COMPILER",
-        "CMAKE_CXX_COMPILER",
-        "CMAKE_C_COMPILER_ID",
-        "CMAKE_CXX_COMPILER_ID",
-        "CMAKE_SYSTEM_NAME",
-        "CMAKE_HOST_SYSTEM_NAME",
-        "CMAKE_SYSTEM_PROCESSOR",
-        "CMAKE_REQUIRED_DEFINITIONS",
-        "CMAKE_REQUIRED_FLAGS",
-        "CMAKE_REQUIRED_INCLUDES",
-        "CMAKE_REQUIRED_LINK_OPTIONS",
-        "CMAKE_REQUIRED_LINK_DIRECTORIES",
-        "CMAKE_REQUIRED_LIBRARIES",
-        "CMAKE_TRY_COMPILE_TARGET_TYPE",
-        "CMAKE_TRY_COMPILE_CONFIGURATION",
-    };
-    for (size_t i = 0; i < NOB_ARRAY_LEN(k_forward_vars); i++) {
-        String_View key = nob_sv_from_cstr(k_forward_vars[i]);
-        String_View value = eval_var_get(ctx, key);
-        if (value.count > 0 && !eval_var_set(child, key, value)) {
-            evaluator_destroy(child);
-            arena_destroy(child_temp);
-            arena_destroy(child_event);
-            return false;
-        }
-    }
-
-    String_View platform_vars = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_PLATFORM_VARIABLES"));
-    if (platform_vars.count > 0) {
-        SV_List names = NULL;
-        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), platform_vars, &names)) {
-            evaluator_destroy(child);
-            arena_destroy(child_temp);
-            arena_destroy(child_event);
-            return false;
-        }
-        for (size_t i = 0; i < arena_arr_len(names); i++) {
-            String_View value = eval_var_get(ctx, names[i]);
-            if (value.count > 0 && !eval_var_set(child, names[i], value)) {
-                evaluator_destroy(child);
-                arena_destroy(child_temp);
-                arena_destroy(child_event);
-                return false;
-            }
-        }
-    }
-
-    for (size_t i = 0; i < arena_arr_len(req->cmake_flags); i++) {
-        String_View key = nob_sv_from_cstr("");
-        String_View value = nob_sv_from_cstr("");
-        if (!try_compile_parse_cmake_flag_define_token(req->cmake_flags[i], &key, &value)) continue;
-        if (!eval_var_set(child, key, value)) {
-            evaluator_destroy(child);
-            arena_destroy(child_temp);
-            arena_destroy(child_event);
-            return false;
-        }
-    }
-
-    bool child_ok = eval_execute_file(child, cmakelists, false, req->binary_dir);
-    if (!child_ok || eval_should_stop(child)) {
-        out_res->ok = false;
-        out_res->output = nob_sv_from_cstr("try_compile(PROJECT) failed while evaluating the child project");
-        evaluator_destroy(child);
-        arena_destroy(child_temp);
-        arena_destroy(child_event);
-        return true;
-    }
-
-    Build_Model_Builder *builder = builder_create(child_event, NULL);
-    if (!builder || !builder_apply_stream(builder, child_stream)) {
-        out_res->ok = false;
-        out_res->output = nob_sv_from_cstr("try_compile(PROJECT) failed while building the child model");
-        evaluator_destroy(child);
-        arena_destroy(child_temp);
-        arena_destroy(child_event);
-        return true;
-    }
-
-    Build_Model *model = builder_finish(builder);
-    if (!model) {
-        out_res->ok = false;
-        out_res->output = nob_sv_from_cstr("try_compile(PROJECT) failed while finalizing the child model");
-        evaluator_destroy(child);
-        arena_destroy(child_temp);
-        arena_destroy(child_event);
-        return true;
-    }
-
-    size_t target_count = build_model_get_target_count(model);
-    Try_Compile_Target_Artifact *artifacts = NULL;
-    size_t artifact_count = 0;
-    if (target_count > 0) {
-        artifacts = (Try_Compile_Target_Artifact*)arena_alloc(eval_temp_arena(ctx), target_count * sizeof(*artifacts));
-        EVAL_OOM_RETURN_IF_NULL(ctx, artifacts, false);
-    }
-
-    bool any_selected = false;
-    bool all_ok = true;
-    Nob_String_Builder combined_log = {0};
-    for (size_t i = 0; i < target_count; i++) {
-        Build_Target *target = build_model_get_target_at(model, i);
-        if (!target) continue;
-        Target_Type type = build_target_get_type(target);
-        if (type == TARGET_IMPORTED || type == TARGET_ALIAS || type == TARGET_INTERFACE_LIB || type == TARGET_UTILITY) {
-            continue;
-        }
-        if (req->target_name.count > 0 && !nob_sv_eq(build_target_get_name(target), req->target_name)) continue;
-        if (req->target_name.count == 0 && build_target_is_exclude_from_all(target)) continue;
-
-        any_selected = true;
-        Try_Compile_Execution_Result one = {0};
-        if (!try_compile_build_target(ctx, req, target, model, artifacts, artifact_count, &one)) {
-            evaluator_destroy(child);
-            arena_destroy(child_temp);
-            arena_destroy(child_event);
-            nob_sb_free(combined_log);
-            return false;
-        }
-        if (one.output.count > 0) {
-            nob_sb_append_buf(&combined_log, one.output.data, one.output.count);
-            if (combined_log.count > 0 && combined_log.items[combined_log.count - 1] != '\n') nob_sb_append(&combined_log, '\n');
-        }
-        if (!one.ok) all_ok = false;
-        if (one.ok && one.artifact_path.count > 0 && artifact_count < target_count) {
-            artifacts[artifact_count].key = build_target_get_name(target);
-            artifacts[artifact_count].value = one.artifact_path;
-            artifact_count++;
-        }
-        if (!one.ok && req->target_name.count > 0) break;
-    }
-
-    if (!any_selected) {
-        out_res->ok = true;
-        out_res->output = nob_sv_from_cstr("");
-    } else {
-        out_res->ok = all_ok;
-        out_res->output = try_compile_finish_log(ctx, &combined_log);
-    }
-
-    if (!out_res->ok && out_res->output.count == 0) {
-        out_res->output = nob_sv_from_cstr("try_compile(PROJECT) failed to build the requested targets");
-    }
-
-    evaluator_destroy(child);
-    arena_destroy(child_temp);
-    arena_destroy(child_event);
+    out_res->ok = false;
+    out_res->output = nob_sv_from_cstr("try_compile(PROJECT) is temporarily disabled while the semantic Event IR replaces the legacy build model pipeline");
     return true;
 }
 

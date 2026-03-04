@@ -26,8 +26,7 @@ static void append_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/diagnostics",
         "-Isrc_v2/transpiler",
         "-Isrc_v2/evaluator",
-        "-Isrc_v2/genex",
-        "-Isrc_v2/build_model");
+        "-Isrc_v2/genex");
 
     const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
     const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
@@ -89,16 +88,6 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_vars.c");
 }
 
-static void append_build_model_sources(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "src_v2/build_model/build_model.c",
-        "src_v2/build_model/build_model_builder.c",
-        "src_v2/build_model/build_model_validate.c",
-        "src_v2/build_model/build_model_freeze.c",
-        "src_v2/build_model/build_model_query.c",
-        "src_v2/build_model/build_logic.c");
-}
-
 // No Linux, não compilamos PCRE manualmente, apenas linkamos a lib do sistema.
 static void append_linker_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd, "-lpcre2-posix");
@@ -130,7 +119,6 @@ static bool build_app(void) {
     
     // 3. Fontes do projeto
     append_evaluator_sources(&cmd);
-    append_build_model_sources(&cmd);
     
     // 4. Libs externas (Linker)
     append_linker_flags(&cmd);

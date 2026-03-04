@@ -22,10 +22,6 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View *sv_list_copy_to_event_arena(Evaluator_Context *ctx, const SV_List *list) {
-    return eval_sv_list_copy_to_event_arena(ctx, list);
-}
-
 enum {
     CUSTOM_TARGET_OPT_DEPENDS = 1,
     CUSTOM_TARGET_OPT_BYPRODUCTS,

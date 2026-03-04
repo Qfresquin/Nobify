@@ -367,14 +367,6 @@ static String_View eval_file_parent_dir_view(String_View file_path) {
     return nob_sv_from_parts(file_path.data, slash);
 }
 
-static bool eval_path_norm_eq_temp(Evaluator_Context *ctx, String_View a, String_View b) {
-    String_View an = eval_sv_path_normalize_temp(ctx, a);
-    if (eval_should_stop(ctx)) return false;
-    String_View bn = eval_sv_path_normalize_temp(ctx, b);
-    if (eval_should_stop(ctx)) return false;
-    return svu_eq_ci_sv(an, bn);
-}
-
 static bool eval_source_extension_allowed(String_View path) {
     if (path.count == 0 || !path.data) return false;
     size_t dot = SIZE_MAX;

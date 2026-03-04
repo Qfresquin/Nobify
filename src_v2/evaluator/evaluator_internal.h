@@ -509,6 +509,103 @@ static inline bool eval_emit_var_unset_cache(Evaluator_Context *ctx,
     ev.as.var_unset.is_env = false;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_test_enable(Evaluator_Context *ctx,
+                                         Event_Origin origin) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TEST_ENABLE;
+    ev.h.origin = origin;
+    ev.as.test_enable.enabled = true;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_test_add(Evaluator_Context *ctx,
+                                      Event_Origin origin,
+                                      String_View name,
+                                      String_View command,
+                                      String_View working_dir,
+                                      bool command_expand_lists) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TEST_ADD;
+    ev.h.origin = origin;
+    ev.as.test_add.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.test_add.command = sv_copy_to_event_arena(ctx, command);
+    ev.as.test_add.working_dir = sv_copy_to_event_arena(ctx, working_dir);
+    ev.as.test_add.command_expand_lists = command_expand_lists;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_install_rule_add(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              Cmake_Install_Rule_Type rule_type,
+                                              String_View item,
+                                              String_View destination) {
+    Event ev = {0};
+    ev.h.kind = EVENT_INSTALL_RULE_ADD;
+    ev.h.origin = origin;
+    ev.as.install_rule_add.rule_type = rule_type;
+    ev.as.install_rule_add.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.install_rule_add.destination = sv_copy_to_event_arena(ctx, destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cpack_add_install_type(Evaluator_Context *ctx,
+                                                    Event_Origin origin,
+                                                    String_View name,
+                                                    String_View display_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CPACK_ADD_INSTALL_TYPE;
+    ev.h.origin = origin;
+    ev.as.cpack_add_install_type.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.cpack_add_install_type.display_name = sv_copy_to_event_arena(ctx, display_name);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cpack_add_component_group(Evaluator_Context *ctx,
+                                                       Event_Origin origin,
+                                                       String_View name,
+                                                       String_View display_name,
+                                                       String_View description,
+                                                       String_View parent_group,
+                                                       bool expanded,
+                                                       bool bold_title) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CPACK_ADD_COMPONENT_GROUP;
+    ev.h.origin = origin;
+    ev.as.cpack_add_component_group.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.cpack_add_component_group.display_name = sv_copy_to_event_arena(ctx, display_name);
+    ev.as.cpack_add_component_group.description = sv_copy_to_event_arena(ctx, description);
+    ev.as.cpack_add_component_group.parent_group = sv_copy_to_event_arena(ctx, parent_group);
+    ev.as.cpack_add_component_group.expanded = expanded;
+    ev.as.cpack_add_component_group.bold_title = bold_title;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cpack_add_component(Evaluator_Context *ctx,
+                                                 Event_Origin origin,
+                                                 String_View name,
+                                                 String_View display_name,
+                                                 String_View description,
+                                                 String_View group,
+                                                 String_View depends,
+                                                 String_View install_types,
+                                                 String_View archive_file,
+                                                 String_View plist,
+                                                 bool required,
+                                                 bool hidden,
+                                                 bool disabled,
+                                                 bool downloaded) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CPACK_ADD_COMPONENT;
+    ev.h.origin = origin;
+    ev.as.cpack_add_component.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.cpack_add_component.display_name = sv_copy_to_event_arena(ctx, display_name);
+    ev.as.cpack_add_component.description = sv_copy_to_event_arena(ctx, description);
+    ev.as.cpack_add_component.group = sv_copy_to_event_arena(ctx, group);
+    ev.as.cpack_add_component.depends = sv_copy_to_event_arena(ctx, depends);
+    ev.as.cpack_add_component.install_types = sv_copy_to_event_arena(ctx, install_types);
+    ev.as.cpack_add_component.archive_file = sv_copy_to_event_arena(ctx, archive_file);
+    ev.as.cpack_add_component.plist = sv_copy_to_event_arena(ctx, plist);
+    ev.as.cpack_add_component.required = required;
+    ev.as.cpack_add_component.hidden = hidden;
+    ev.as.cpack_add_component.disabled = disabled;
+    ev.as.cpack_add_component.downloaded = downloaded;
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_target_dependency(Evaluator_Context *ctx,
                                                Event_Origin origin,
                                                String_View target_name,

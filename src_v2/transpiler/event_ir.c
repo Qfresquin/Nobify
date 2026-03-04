@@ -86,6 +86,43 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
                                              &ev->as.flow_return.propagate_vars,
                                              ev->as.flow_return.propagate_count)) return false;
             break;
+
+        case EVENT_TEST_ENABLE:
+            break;
+
+        case EVENT_TEST_ADD:
+            if (!event_copy_sv_inplace(arena, &ev->as.test_add.name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.test_add.command)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.test_add.working_dir)) return false;
+            break;
+
+        case EVENT_INSTALL_RULE_ADD:
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.item)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.destination)) return false;
+            break;
+
+        case EVENT_CPACK_ADD_INSTALL_TYPE:
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.display_name)) return false;
+            break;
+
+        case EVENT_CPACK_ADD_COMPONENT_GROUP:
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.display_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.description)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.parent_group)) return false;
+            break;
+
+        case EVENT_CPACK_ADD_COMPONENT:
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.display_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.description)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.group)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.depends)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.install_types)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.archive_file)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.plist)) return false;
+            break;
     }
 
     return true;
@@ -214,6 +251,38 @@ static void event_dump_one(const Event *ev) {
 
         case EVENT_FLOW_RETURN:
             printf(" propagate=%zu", ev->as.flow_return.propagate_count);
+            break;
+
+        case EVENT_TEST_ENABLE:
+            printf(" enabled=%s", ev->as.test_enable.enabled ? "true" : "false");
+            break;
+
+        case EVENT_TEST_ADD:
+            printf(" name=%.*s",
+                   (int) ev->as.test_add.name.count,
+                   ev->as.test_add.name.data ? ev->as.test_add.name.data : "");
+            break;
+
+        case EVENT_INSTALL_RULE_ADD:
+            printf(" rule=%d", (int) ev->as.install_rule_add.rule_type);
+            break;
+
+        case EVENT_CPACK_ADD_INSTALL_TYPE:
+            printf(" name=%.*s",
+                   (int) ev->as.cpack_add_install_type.name.count,
+                   ev->as.cpack_add_install_type.name.data ? ev->as.cpack_add_install_type.name.data : "");
+            break;
+
+        case EVENT_CPACK_ADD_COMPONENT_GROUP:
+            printf(" name=%.*s",
+                   (int) ev->as.cpack_add_component_group.name.count,
+                   ev->as.cpack_add_component_group.name.data ? ev->as.cpack_add_component_group.name.data : "");
+            break;
+
+        case EVENT_CPACK_ADD_COMPONENT:
+            printf(" name=%.*s",
+                   (int) ev->as.cpack_add_component.name.count,
+                   ev->as.cpack_add_component.name.data ? ev->as.cpack_add_component.name.data : "");
             break;
     }
 

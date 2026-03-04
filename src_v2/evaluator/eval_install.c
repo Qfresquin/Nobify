@@ -25,13 +25,7 @@ static bool install_emit_rule(Evaluator_Context *ctx,
                               Cmake_Install_Rule_Type rule_type,
                               String_View item,
                               String_View destination) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_INSTALL_ADD_RULE;
-    ev.origin = o;
-    ev.as.install_add_rule.rule_type = rule_type;
-    ev.as.install_add_rule.item = sv_copy_to_event_arena(ctx, item);
-    ev.as.install_add_rule.destination = sv_copy_to_event_arena(ctx, destination);
-    return emit_event(ctx, ev);
+    return eval_emit_install_rule_add(ctx, o, rule_type, item, destination);
 }
 
 static bool install_is_files_like_keyword(String_View tok) {

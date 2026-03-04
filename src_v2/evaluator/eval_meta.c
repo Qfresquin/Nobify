@@ -359,12 +359,6 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
     }
 
     if (!eval_target_register(ctx, name)) return !eval_should_stop(ctx);
-    Cmake_Event ev = {0};
-    ev.kind = EV_TARGET_DECLARE;
-    ev.origin = eval_origin_from_node(ctx, node);
-    ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
-    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
 
     String_View deps_joined = eval_sv_join_semi_temp(ctx, deps, arena_arr_len(deps));
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
@@ -373,6 +367,7 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::GUID"), project_guid)) return !eval_should_stop(ctx);
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::PLATFORM"), platform)) return !eval_should_stop(ctx);
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::DEPENDENCIES"), deps_joined)) return !eval_should_stop(ctx);
+    if (!eval_emit_trace_command(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 

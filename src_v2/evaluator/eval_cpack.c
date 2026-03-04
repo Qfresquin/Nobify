@@ -256,12 +256,7 @@ bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
 
-    Cmake_Event ev = {0};
-    ev.kind = EV_CPACK_ADD_INSTALL_TYPE;
-    ev.origin = o;
-    ev.as.cpack_add_install_type.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.cpack_add_install_type.display_name = sv_copy_to_event_arena(ctx, opt.display_name);
-    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_emit_cpack_add_install_type(ctx, o, name, opt.display_name)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -312,16 +307,16 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
         return !eval_should_stop(ctx);
     }
 
-    Cmake_Event ev = {0};
-    ev.kind = EV_CPACK_ADD_COMPONENT_GROUP;
-    ev.origin = o;
-    ev.as.cpack_add_component_group.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.cpack_add_component_group.display_name = sv_copy_to_event_arena(ctx, opt.display_name);
-    ev.as.cpack_add_component_group.description = sv_copy_to_event_arena(ctx, opt.description);
-    ev.as.cpack_add_component_group.parent_group = sv_copy_to_event_arena(ctx, opt.parent_group);
-    ev.as.cpack_add_component_group.expanded = opt.expanded;
-    ev.as.cpack_add_component_group.bold_title = opt.bold_title;
-    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_emit_cpack_add_component_group(ctx,
+                                             o,
+                                             name,
+                                             opt.display_name,
+                                             opt.description,
+                                             opt.parent_group,
+                                             opt.expanded,
+                                             opt.bold_title)) {
+        return false;
+    }
     return !eval_should_stop(ctx);
 }
 
@@ -384,21 +379,21 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    Cmake_Event ev = {0};
-    ev.kind = EV_CPACK_ADD_COMPONENT;
-    ev.origin = o;
-    ev.as.cpack_add_component.name = sv_copy_to_event_arena(ctx, name);
-    ev.as.cpack_add_component.display_name = sv_copy_to_event_arena(ctx, opt.display_name);
-    ev.as.cpack_add_component.description = sv_copy_to_event_arena(ctx, opt.description);
-    ev.as.cpack_add_component.group = sv_copy_to_event_arena(ctx, opt.group);
-    ev.as.cpack_add_component.depends = sv_copy_to_event_arena(ctx, opt.depends);
-    ev.as.cpack_add_component.install_types = sv_copy_to_event_arena(ctx, opt.install_types);
-    ev.as.cpack_add_component.archive_file = sv_copy_to_event_arena(ctx, opt.archive_file);
-    ev.as.cpack_add_component.plist = sv_copy_to_event_arena(ctx, opt.plist);
-    ev.as.cpack_add_component.required = opt.required;
-    ev.as.cpack_add_component.hidden = opt.hidden;
-    ev.as.cpack_add_component.disabled = opt.disabled;
-    ev.as.cpack_add_component.downloaded = opt.downloaded;
-    if (!emit_event(ctx, ev)) return !eval_should_stop(ctx);
+    if (!eval_emit_cpack_add_component(ctx,
+                                       o,
+                                       name,
+                                       opt.display_name,
+                                       opt.description,
+                                       opt.group,
+                                       opt.depends,
+                                       opt.install_types,
+                                       opt.archive_file,
+                                       opt.plist,
+                                       opt.required,
+                                       opt.hidden,
+                                       opt.disabled,
+                                       opt.downloaded)) {
+        return false;
+    }
     return !eval_should_stop(ctx);
 }

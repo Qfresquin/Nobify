@@ -33,13 +33,15 @@ static bool legacy_emit_install_rule(Evaluator_Context *ctx,
                                      Cmake_Install_Rule_Type rule_type,
                                      String_View item,
                                      String_View destination) {
-    Cmake_Event ev = {0};
-    ev.kind = EV_INSTALL_ADD_RULE;
-    ev.origin = eval_origin_from_node(ctx, node);
-    ev.as.install_add_rule.rule_type = rule_type;
-    ev.as.install_add_rule.item = sv_copy_to_event_arena(ctx, item);
-    ev.as.install_add_rule.destination = sv_copy_to_event_arena(ctx, destination);
-    return emit_event(ctx, ev);
+    (void)rule_type;
+    (void)item;
+    (void)destination;
+    return eval_emit_trace_command(ctx,
+                                   eval_origin_from_node(ctx, node),
+                                   node ? node->as.cmd.name : nob_sv_from_cstr("install"),
+                                   NULL,
+                                   true,
+                                   false);
 }
 
 static String_View legacy_stem_from_path(String_View path) {
