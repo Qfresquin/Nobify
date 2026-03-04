@@ -54,6 +54,7 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
 
     for (size_t i = 0; i < DISPATCH_COUNT; i++) {
         if (eval_sv_eq_ci_lit(node->as.cmd.name, DISPATCH[i].name)) {
+            if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return false;
             if (!DISPATCH[i].fn(ctx, node)) return false;
             return !eval_should_stop(ctx);
         }
@@ -67,6 +68,7 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
             ? eval_resolve_args_literal(ctx, &node->as.cmd.args)
             : eval_resolve_args(ctx, &node->as.cmd.args);
         if (eval_should_stop(ctx)) return false;
+        if (!eval_emit_command_call(ctx, o, node->as.cmd.name)) return false;
         if (eval_user_cmd_invoke(ctx, node->as.cmd.name, &args, o)) {
             return true;
         }

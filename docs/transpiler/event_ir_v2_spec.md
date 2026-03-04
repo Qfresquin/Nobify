@@ -13,6 +13,7 @@ Defined in `src_v2/transpiler/event_ir.h` through `EVENT_KIND_LIST(...)`.
 *   **Structure:** `EVENT_PROJECT_DECLARE`, `EVENT_TARGET_DECLARE`, `EVENT_TARGET_ADD_SOURCE`, `EVENT_TARGET_LINK_LIBRARIES`, `EVENT_TARGET_INCLUDE_DIRECTORIES`, `EVENT_TARGET_COMPILE_DEFINITIONS`, `EVENT_TARGET_COMPILE_OPTIONS`, `EVENT_TARGET_PROP_SET`.
 *   **Scope/Flow:** `EVENT_SCOPE_PUSH`, `EVENT_SCOPE_POP`, `EVENT_DIR_PUSH`, `EVENT_DIR_POP`, `EVENT_FLOW_*`.
 *   **Variables:** `EVENT_VAR_SET`, `EVENT_VAR_UNSET`.
+*   **Meta bridge:** `EVENT_COMMAND_CALL`, `EVENT_CMAKE_LANGUAGE_*`.
 *   **Diagnostics:** `EVENT_DIAG`.
 
 ### 2.2. Event Payload (`Event`)
@@ -38,6 +39,7 @@ typedef struct {
         Event_Target_Prop_Set target_prop_set;
         Event_Dir_Push dir_push;
         Event_Dir_Pop dir_pop;
+        Event_Command_Call command_call;
         ...
     } as;
 } Event;
@@ -52,6 +54,8 @@ typedef struct {
     Event_Var_Target_Kind target_kind; // current, cache, env
 } Event_Var_Set;
 ```
+
+`Event_Command_Call` is the universal command-level breadcrumb emitted for every dispatched command.
 
 ### 2.3. Event Stream (`Event_Stream`)
 A simple dynamic array.

@@ -818,6 +818,15 @@ static inline bool eval_emit_dir_pop(Evaluator_Context *ctx,
     ev.as.dir_pop.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_command_call(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          String_View command_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_COMMAND_CALL;
+    ev.h.origin = origin;
+    ev.as.command_call.command_name = sv_copy_to_event_arena(ctx, command_name);
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_cmake_language_call(Evaluator_Context *ctx,
                                                  Event_Origin origin,
                                                  String_View command_name) {

@@ -50,6 +50,7 @@ Examples of canonical kinds:
 - `EVENT_SCOPE_POP`
 - `EVENT_POLICY_SET`
 - `EVENT_FLOW_RETURN`
+- `EVENT_COMMAND_CALL`
 - `EVENT_PROJECT_DECLARE`
 - `EVENT_TARGET_DECLARE`
 - `EVENT_TEST_ADD`
@@ -88,6 +89,7 @@ Payload mapping (`Event.as.*`):
 | `EVENT_TARGET_LINK_DIRECTORIES` | `target_link_directories` | `target_name`, `visibility`, `path`, `is_before` |
 | `EVENT_DIR_PUSH` | `dir_push` | `source_dir`, `binary_dir` |
 | `EVENT_DIR_POP` | `dir_pop` | `source_dir`, `binary_dir` |
+| `EVENT_COMMAND_CALL` | `command_call` | `command_name` |
 | `EVENT_TEST_ENABLE` | `test_enable` | `enabled` |
 | `EVENT_TEST_ADD` | `test_add` | `name`, `command`, `working_dir`, `command_expand_lists` |
 | `EVENT_INSTALL_RULE_ADD` | `install_rule_add` | `rule_type`, `item`, `destination` |
@@ -97,6 +99,8 @@ Payload mapping (`Event.as.*`):
 | `EVENT_PACKAGE_FIND_RESULT` | `package_find_result` | `package_name`, `mode`, `required`, `found`, `found_path` |
 
 `commands*` indicates dynamic `String_View` arrays plus `command_count`.
+
+`EVENT_COMMAND_CALL` is emitted for every dispatched command before any handler-specific semantic events.
 
 ## 5. Stream and API Contract
 

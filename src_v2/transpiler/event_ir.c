@@ -361,6 +361,10 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.dir_pop.binary_dir)) return false;
             break;
 
+        case EVENT_COMMAND_CALL:
+            if (!event_copy_sv_inplace(arena, &ev->as.command_call.command_name)) return false;
+            break;
+
         case EVENT_CMAKE_LANGUAGE_CALL:
             if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_call.command_name)) return false;
             break;
@@ -859,6 +863,12 @@ static void event_dump_one(const Event *ev) {
             printf(" src=%.*s",
                    (int) ev->as.dir_pop.source_dir.count,
                    ev->as.dir_pop.source_dir.data ? ev->as.dir_pop.source_dir.data : "");
+            break;
+
+        case EVENT_COMMAND_CALL:
+            printf(" command=%.*s",
+                   (int) ev->as.command_call.command_name.count,
+                   ev->as.command_call.command_name.data ? ev->as.command_call.command_name.data : "");
             break;
 
         case EVENT_CMAKE_LANGUAGE_CALL:

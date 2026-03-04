@@ -115,6 +115,7 @@ typedef enum {
     X(EVENT_ADD_SUBDIRECTORY_END, EVENT_FAMILY_META, "add_subdirectory_end") \
     X(EVENT_DIR_PUSH, EVENT_FAMILY_META, "dir_push") \
     X(EVENT_DIR_POP, EVENT_FAMILY_META, "dir_pop") \
+    X(EVENT_COMMAND_CALL, EVENT_FAMILY_META, "command_call") \
     X(EVENT_CMAKE_LANGUAGE_CALL, EVENT_FAMILY_META, "cmake_language_call") \
     X(EVENT_CMAKE_LANGUAGE_EVAL, EVENT_FAMILY_META, "cmake_language_eval") \
     X(EVENT_CMAKE_LANGUAGE_DEFER_QUEUE, EVENT_FAMILY_META, "cmake_language_defer_queue")
@@ -631,6 +632,10 @@ typedef struct {
 
 typedef struct {
     String_View command_name;
+} Event_Command_Call;
+
+typedef struct {
+    String_View command_name;
 } Event_Cmake_Language_Call;
 
 typedef struct {
@@ -735,6 +740,7 @@ typedef struct {
         Event_Add_Subdirectory_End add_subdirectory_end;
         Event_Dir_Push dir_push;
         Event_Dir_Pop dir_pop;
+        Event_Command_Call command_call;
         Event_Cmake_Language_Call cmake_language_call;
         Event_Cmake_Language_Eval cmake_language_eval;
         Event_Cmake_Language_Defer_Queue cmake_language_defer_queue;

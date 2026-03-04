@@ -5,8 +5,7 @@ canonical semantic Event IR.
 
 Status vocabulary:
 - `legacy_structural`: emitted only through the obsolete structural contract
-- `evaluator_local`: handled in evaluator state/diag only, with no explicit semantic event yet
-- `partial`: some semantic handling exists, but not on the new Event IR
+- `partial`: some semantic handling exists; all dispatched commands now emit `EVENT_COMMAND_CALL`, and many commands also emit richer domain-specific events
 - `planned`: target family and events are defined, migration not started
 
 | Command | Module | Handler Status | Current Emission | Target Family | Target Events | Priority | Notes |
@@ -40,64 +39,64 @@ Status vocabulary:
 | `cmake_path(...)` | `eval_cmake_path.c` | complete | `partial` | `PATH` | `EVENT_PATH_NORMALIZE`, `EVENT_PATH_COMPARE`, `EVENT_PATH_CONVERT` | medium | Normalization/compare/convert now emit semantic path events. |
 | `cpack_add_install_type` / `cpack_add_component_group` / `cpack_add_component` | `eval_cpack.c` | complete | `partial` | `CPACK`, `DIAG` | `EVENT_CPACK_ADD_INSTALL_TYPE`, `EVENT_CPACK_ADD_COMPONENT_GROUP`, `EVENT_CPACK_ADD_COMPONENT`, `EVENT_DIAG` | medium | Core CPACK payloads now exist; broader packaging semantics can expand later. |
 | `enable_testing` | `eval_test.c` | complete | `partial` | `TEST` | `EVENT_TEST_ENABLE` | high | Already emitted semantically; split out explicitly from `add_test` for full registry coverage. |
-| `ctest_build` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_BUILD` | medium | Currently modeled via metadata publication only; should emit a semantic CTest operation event. |
-| `ctest_configure` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_CONFIGURE` | medium | Currently modeled via metadata publication only. |
-| `ctest_coverage` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_COVERAGE` | medium | Coverage intent exists but is not yet represented on the Event IR. |
-| `ctest_empty_binary_directory` | `eval_ctest.c` | partial | `evaluator_local` | `TEST`, `FS`, `DIAG` | `planned: EVENT_CTEST_EMPTY_BINARY_DIRECTORY`, `planned: EVENT_FS_REMOVE`, `EVENT_DIAG` | medium | Semantically important because it mutates the build tree; should become explicit. |
-| `ctest_memcheck` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_MEMCHECK` | medium | Metadata-modeled today; no semantic event yet. |
-| `ctest_read_custom_files` | `eval_ctest.c` | partial | `evaluator_local` | `TEST`, `FS`, `DIAG` | `planned: EVENT_CTEST_READ_CUSTOM_FILES`, `EVENT_DIAG` | medium | Reads configuration-like metadata from directories; should be represented explicitly. |
-| `ctest_run_script` | `eval_ctest.c` | partial | `evaluator_local` | `TEST`, `META`, `DIAG` | `planned: EVENT_CTEST_RUN_SCRIPT`, `EVENT_DIAG` | medium | Script invocation intent exists but is not yet semantic. |
-| `ctest_sleep` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_SLEEP` | low | Operational intent only; still part of evaluator execution surface. |
-| `ctest_start` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_START` | medium | Start metadata should become explicit. |
-| `ctest_submit` | `eval_ctest.c` | partial | `evaluator_local` | `TEST`, `PROC` | `planned: EVENT_CTEST_SUBMIT` | medium | Submission intent should be modeled before any deeper transport detail. |
-| `ctest_test` | `eval_ctest.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_CTEST_TEST` | medium | Core CTest test-run intent is still missing from the Event IR. |
-| `ctest_update` | `eval_ctest.c` | partial | `evaluator_local` | `TEST`, `PROC` | `planned: EVENT_CTEST_UPDATE` | medium | Update intent exists only as metadata today. |
-| `ctest_upload` | `eval_ctest.c` | partial | `evaluator_local` | `TEST`, `PROC` | `planned: EVENT_CTEST_UPLOAD` | medium | Upload intent should become explicit once CTest coverage is expanded. |
-| `add_compile_definitions` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_COMPILE_DEFINITIONS` or `EVENT_TARGET_COMPILE_DEFINITIONS` fanout | medium | Currently applied as evaluator state only; still outside semantic Event IR. |
-| `add_compile_options` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_COMPILE_OPTIONS` or target fanout events | medium | Not yet represented semantically. |
-| `add_definitions` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_COMPILE_DEFINITIONS` | medium | Legacy directory/global compile-definitions path still lacks a domain event. |
-| `add_link_options` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_LINK_OPTIONS` or target fanout events | medium | Evaluator state only at the moment. |
-| `include_directories` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_INCLUDE_DIRECTORIES` or target fanout events | medium | No semantic directory/global event yet. |
-| `link_directories` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_LINK_DIRECTORIES` or target fanout events | medium | No semantic directory/global event yet. |
-| `link_libraries` | `eval_directory.c` | complete | `evaluator_local` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_LINK_LIBRARIES` or target fanout events | medium | Global link state is not yet explicit in the Event IR. |
-| `set_directory_properties` | `eval_directory.c` | complete | `evaluator_local` | `SCOPE`, `META` | `planned: EVENT_DIRECTORY_PROPERTY_SET` | medium | Directory property mutation is still evaluator-local. |
-| `get_directory_property` | `eval_directory.c` | partial | `evaluator_local` | `SCOPE`, `META` | `planned: EVENT_DIRECTORY_PROPERTY_GET` | low | Query semantics are not yet represented. |
-| `define_property` | `eval_vars.c` | complete | `evaluator_local` | `META` | `planned: EVENT_PROPERTY_DEFINE` | medium | Property definition affects later semantics and should become explicit. |
+| `ctest_build` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_BUILD` | medium | Currently modeled via metadata publication only; should emit a semantic CTest operation event. |
+| `ctest_configure` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_CONFIGURE` | medium | Currently modeled via metadata publication only. |
+| `ctest_coverage` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_COVERAGE` | medium | Coverage intent exists but is not yet represented on the Event IR. |
+| `ctest_empty_binary_directory` | `eval_ctest.c` | partial | `partial` | `TEST`, `FS`, `DIAG` | `planned: EVENT_CTEST_EMPTY_BINARY_DIRECTORY`, `planned: EVENT_FS_REMOVE`, `EVENT_DIAG` | medium | Semantically important because it mutates the build tree; should become explicit. |
+| `ctest_memcheck` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_MEMCHECK` | medium | Metadata-modeled today; no semantic event yet. |
+| `ctest_read_custom_files` | `eval_ctest.c` | partial | `partial` | `TEST`, `FS`, `DIAG` | `planned: EVENT_CTEST_READ_CUSTOM_FILES`, `EVENT_DIAG` | medium | Reads configuration-like metadata from directories; should be represented explicitly. |
+| `ctest_run_script` | `eval_ctest.c` | partial | `partial` | `TEST`, `META`, `DIAG` | `planned: EVENT_CTEST_RUN_SCRIPT`, `EVENT_DIAG` | medium | Script invocation intent exists but is not yet semantic. |
+| `ctest_sleep` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_SLEEP` | low | Operational intent only; still part of evaluator execution surface. |
+| `ctest_start` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_START` | medium | Start metadata should become explicit. |
+| `ctest_submit` | `eval_ctest.c` | partial | `partial` | `TEST`, `PROC` | `planned: EVENT_CTEST_SUBMIT` | medium | Submission intent should be modeled before any deeper transport detail. |
+| `ctest_test` | `eval_ctest.c` | partial | `partial` | `TEST` | `planned: EVENT_CTEST_TEST` | medium | Core CTest test-run intent is still missing from the Event IR. |
+| `ctest_update` | `eval_ctest.c` | partial | `partial` | `TEST`, `PROC` | `planned: EVENT_CTEST_UPDATE` | medium | Update intent exists only as metadata today. |
+| `ctest_upload` | `eval_ctest.c` | partial | `partial` | `TEST`, `PROC` | `planned: EVENT_CTEST_UPLOAD` | medium | Upload intent should become explicit once CTest coverage is expanded. |
+| `add_compile_definitions` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_COMPILE_DEFINITIONS` or `EVENT_TARGET_COMPILE_DEFINITIONS` fanout | medium | Currently applied as evaluator state only; still outside semantic Event IR. |
+| `add_compile_options` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_COMPILE_OPTIONS` or target fanout events | medium | Not yet represented semantically. |
+| `add_definitions` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_COMPILE_DEFINITIONS` | medium | Legacy directory/global compile-definitions path still lacks a domain event. |
+| `add_link_options` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_LINK_OPTIONS` or target fanout events | medium | Evaluator state only at the moment. |
+| `include_directories` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_INCLUDE_DIRECTORIES` or target fanout events | medium | No semantic directory/global event yet. |
+| `link_directories` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_LINK_DIRECTORIES` or target fanout events | medium | No semantic directory/global event yet. |
+| `link_libraries` | `eval_directory.c` | complete | `partial` | `TARGET`, `SCOPE` | `planned: EVENT_DIRECTORY_LINK_LIBRARIES` or target fanout events | medium | Global link state is not yet explicit in the Event IR. |
+| `set_directory_properties` | `eval_directory.c` | complete | `partial` | `SCOPE`, `META` | `planned: EVENT_DIRECTORY_PROPERTY_SET` | medium | Directory property mutation now has generic command coverage, but still lacks a dedicated directory-property event. |
+| `get_directory_property` | `eval_directory.c` | partial | `partial` | `SCOPE`, `META` | `planned: EVENT_DIRECTORY_PROPERTY_GET` | low | Query semantics are not yet represented. |
+| `define_property` | `eval_vars.c` | complete | `partial` | `META` | `planned: EVENT_PROPERTY_DEFINE` | medium | Property definition affects later semantics and should become explicit. |
 | `set_property` | `eval_target.c` | complete | `partial` | `TARGET`, `META` | `EVENT_TARGET_PROP_SET`, `planned: EVENT_DIRECTORY_PROPERTY_SET`, `planned: EVENT_TEST_PROPERTY_SET` | medium | Target coverage exists; non-target scopes still need explicit events. |
-| `get_property` | `eval_target.c` | partial | `evaluator_local` | `TARGET`, `META` | `planned: EVENT_PROPERTY_GET` | low | Query path is still evaluator-local. |
+| `get_property` | `eval_target.c` | partial | `partial` | `TARGET`, `META` | `planned: EVENT_PROPERTY_GET` | low | Query path now has generic command coverage, but still lacks a dedicated property-get event. |
 | `set_target_properties` | `eval_target.c` | complete | `partial` | `TARGET` | `EVENT_TARGET_PROP_SET` | medium | Already covered semantically through property-set emission, but listed explicitly for registry completeness. |
-| `get_target_property` | `eval_target.c` | partial | `evaluator_local` | `TARGET` | `planned: EVENT_TARGET_PROPERTY_GET` | low | Query semantics not yet emitted. |
-| `set_source_files_properties` | `eval_target.c` | complete | `evaluator_local` | `META` | `planned: EVENT_SOURCE_FILE_PROPERTY_SET` | medium | Source-file property scope remains unmodeled. |
-| `get_source_file_property` | `eval_target.c` | partial | `evaluator_local` | `META` | `planned: EVENT_SOURCE_FILE_PROPERTY_GET` | low | Query semantics not yet explicit. |
-| `set_tests_properties` | `eval_test.c` | complete | `evaluator_local` | `TEST` | `planned: EVENT_TEST_PROPERTY_SET` | medium | Test property mutation is not yet represented semantically. |
-| `get_test_property` | `eval_test.c` | partial | `evaluator_local` | `TEST` | `planned: EVENT_TEST_PROPERTY_GET` | low | Query semantics not yet explicit. |
-| `get_cmake_property` | `eval_meta.c` | partial | `evaluator_local` | `META` | `planned: EVENT_CMAKE_PROPERTY_GET` | low | Query semantics only. |
-| `find_file` / `find_library` / `find_path` / `find_program` | `eval_package.c` | complete | `evaluator_local` | `PACKAGE`, `DIAG` | `planned: EVENT_PACKAGE_FIND_ITEM_RESULT`, `EVENT_DIAG` | high | These are core discovery commands and should join `find_package` in the semantic package family. |
-| `configure_file` | `eval_file.c` | complete | `evaluator_local` | `FS`, `META`, `DIAG` | `planned: EVENT_FS_CONFIGURE_FILE`, `EVENT_DIAG` | high | Important for transpilation/generation; still missing as an explicit event. |
-| `write_file` | `eval_legacy.c` | partial | `evaluator_local` | `FS`, `DIAG` | `planned: EVENT_FS_WRITE_FILE`, `EVENT_DIAG` | medium | Legacy spelling should still map to semantic FS output. |
-| `make_directory` | `eval_legacy.c` | complete | `evaluator_local` | `FS`, `DIAG` | `planned: EVENT_FS_MKDIR`, `EVENT_DIAG` | medium | Legacy wrapper still lacks explicit FS emission. |
-| `get_filename_component` | `eval_legacy.c` | complete | `evaluator_local` | `PATH` | `planned: EVENT_PATH_COMPONENT` | medium | Path decomposition semantics are not yet explicit. |
-| `cmake_parse_arguments` | `eval_vars.c` | complete | `evaluator_local` | `META`, `VAR` | `planned: EVENT_CMAKE_PARSE_ARGUMENTS` | medium | Affects argument semantics and generated variables, but is not yet represented. |
-| `separate_arguments` | `eval_string.c` | partial | `evaluator_local` | `STRING`, `VAR` | `planned: EVENT_STRING_SEPARATE_ARGUMENTS` | medium | Important because it transforms argument structure, not just text. |
+| `get_target_property` | `eval_target.c` | partial | `partial` | `TARGET` | `planned: EVENT_TARGET_PROPERTY_GET` | low | Query semantics not yet emitted. |
+| `set_source_files_properties` | `eval_target.c` | complete | `partial` | `META` | `planned: EVENT_SOURCE_FILE_PROPERTY_SET` | medium | Source-file property scope remains unmodeled. |
+| `get_source_file_property` | `eval_target.c` | partial | `partial` | `META` | `planned: EVENT_SOURCE_FILE_PROPERTY_GET` | low | Query semantics not yet explicit. |
+| `set_tests_properties` | `eval_test.c` | complete | `partial` | `TEST` | `planned: EVENT_TEST_PROPERTY_SET` | medium | Test property mutation is not yet represented semantically. |
+| `get_test_property` | `eval_test.c` | partial | `partial` | `TEST` | `planned: EVENT_TEST_PROPERTY_GET` | low | Query semantics not yet explicit. |
+| `get_cmake_property` | `eval_meta.c` | partial | `partial` | `META` | `planned: EVENT_CMAKE_PROPERTY_GET` | low | Query semantics only. |
+| `find_file` / `find_library` / `find_path` / `find_program` | `eval_package.c` | complete | `partial` | `PACKAGE`, `DIAG` | `planned: EVENT_PACKAGE_FIND_ITEM_RESULT`, `EVENT_DIAG` | high | These are core discovery commands and should join `find_package` in the semantic package family. |
+| `configure_file` | `eval_file.c` | complete | `partial` | `FS`, `META`, `DIAG` | `planned: EVENT_FS_CONFIGURE_FILE`, `EVENT_DIAG` | high | Important for transpilation/generation; still missing as an explicit event. |
+| `write_file` | `eval_legacy.c` | partial | `partial` | `FS`, `DIAG` | `planned: EVENT_FS_WRITE_FILE`, `EVENT_DIAG` | medium | Legacy spelling should still map to semantic FS output. |
+| `make_directory` | `eval_legacy.c` | complete | `partial` | `FS`, `DIAG` | `planned: EVENT_FS_MKDIR`, `EVENT_DIAG` | medium | Legacy wrapper still lacks explicit FS emission. |
+| `get_filename_component` | `eval_legacy.c` | complete | `partial` | `PATH` | `planned: EVENT_PATH_COMPONENT` | medium | Path decomposition semantics are not yet explicit. |
+| `cmake_parse_arguments` | `eval_vars.c` | complete | `partial` | `META`, `VAR` | `planned: EVENT_CMAKE_PARSE_ARGUMENTS` | medium | Affects argument semantics and generated variables, but is not yet represented. |
+| `separate_arguments` | `eval_string.c` | partial | `partial` | `STRING`, `VAR` | `planned: EVENT_STRING_SEPARATE_ARGUMENTS` | medium | Important because it transforms argument structure, not just text. |
 | `message` | `eval_diag.c` | complete | `partial` | `DIAG` | `EVENT_DIAG` | medium | Already reaches the Event IR through diagnostics, but it is not tracked explicitly as a command row today. |
-| `mark_as_advanced` | `eval_vars.c` | complete | `evaluator_local` | `VAR`, `META` | `planned: EVENT_CACHE_MARK_ADVANCED` | low | Cache metadata only, but still part of evaluator semantics. |
-| `site_name` | `eval_legacy.c` | complete | `evaluator_local` | `VAR` | `planned: EVENT_VAR_SET` | low | Currently only affects variables. |
-| `enable_language` | `eval_project.c` | complete | `evaluator_local` | `PROJECT` | `planned: EVENT_PROJECT_ENABLE_LANGUAGE` | high | This is core project semantics and should become explicit. |
-| `include_guard` | `eval_include.c` | complete | `evaluator_local` | `META` | `planned: EVENT_INCLUDE_GUARD` | medium | Guard semantics affect include behavior and should be observable. |
-| `include_regular_expression` | `eval_include.c` | complete | `evaluator_local` | `META` | `planned: EVENT_INCLUDE_REGEX_SET` | low | Mostly metadata, but still part of include semantics. |
+| `mark_as_advanced` | `eval_vars.c` | complete | `partial` | `VAR`, `META` | `planned: EVENT_CACHE_MARK_ADVANCED` | low | Cache metadata only, but still part of evaluator semantics. |
+| `site_name` | `eval_legacy.c` | complete | `partial` | `VAR` | `planned: EVENT_VAR_SET` | low | Currently only affects variables. |
+| `enable_language` | `eval_project.c` | complete | `partial` | `PROJECT` | `planned: EVENT_PROJECT_ENABLE_LANGUAGE` | high | This is core project semantics and should become explicit. |
+| `include_guard` | `eval_include.c` | complete | `partial` | `META` | `planned: EVENT_INCLUDE_GUARD` | medium | Guard semantics affect include behavior and should be observable. |
+| `include_regular_expression` | `eval_include.c` | complete | `partial` | `META` | `planned: EVENT_INCLUDE_REGEX_SET` | low | Mostly metadata, but still part of include semantics. |
 | `include_external_msproject` | `eval_meta.c` | partial | `partial` | `TARGET`, `META` | `EVENT_TARGET_DECLARE`, `planned: EVENT_INCLUDE_EXTERNAL_MSPROJECT` | medium | Target declaration exists; the include/meta aspect is still missing. |
-| `cmake_file_api` | `eval_meta.c` | partial | `evaluator_local` | `META`, `FS` | `planned: EVENT_CMAKE_FILE_API_QUERY` | medium | Query intent should be represented even if execution remains partial. |
-| `export` / `export_library_dependencies` | `eval_meta.c` / `eval_legacy.c` | partial | `evaluator_local` | `META`, `FS` | `planned: EVENT_EXPORT_REQUEST` | low | Export intent exists but is not yet semantic. |
-| `try_compile` | `eval_try_compile.c` | partial | `evaluator_local` | `PROC`, `FS`, `TARGET`, `PROJECT`, `DIAG` | `planned: EVENT_TRY_COMPILE_REQUEST`, `EVENT_DIAG` | high | Important for transpilation correctness; still mostly local/stubbed. |
-| `try_run` | `eval_try_compile.c` | partial | `evaluator_local` | `PROC`, `FS`, `DIAG` | `planned: EVENT_TRY_RUN_REQUEST`, `EVENT_DIAG` | high | Same rationale as `try_compile`; currently not semantically represented. |
-| `build_command` / `build_name` | `eval_legacy.c` | partial | `evaluator_local` | `PROJECT`, `VAR` | `planned: EVENT_BUILD_TOOL_QUERY` | low | Legacy metadata/query commands only. |
-| `exec_program` | `eval_legacy.c` | partial | `evaluator_local` | `PROC`, `DIAG` | `planned: EVENT_PROC_EXEC_REQUEST`, `planned: EVENT_PROC_EXEC_RESULT`, `EVENT_DIAG` | low | Legacy process command still lacks semantic PROC coverage. |
-| `load_command` / `load_cache` | `eval_legacy.c` | partial | `evaluator_local` | `META`, `VAR`, `DIAG` | `planned: EVENT_LEGACY_LOAD`, `EVENT_DIAG` | low | Legacy compatibility commands; still should have an explicit compatibility event if kept. |
-| `output_required_files` | `eval_legacy.c` | partial | `evaluator_local` | `FS`, `DIAG` | `planned: EVENT_FS_OUTPUT_REQUIRED_FILES`, `EVENT_DIAG` | low | Legacy file-generation metadata path. |
-| `qt_wrap_cpp` / `qt_wrap_ui` / `fltk_wrap_ui` | `eval_legacy.c` | partial | `evaluator_local` | `FS`, `TARGET`, `DIAG` | `planned: EVENT_WRAP_TOOL_REQUEST`, `EVENT_DIAG` | low | Tooling wrappers are still unmodeled semantically. |
-| `remove` / `remove_definitions` | `eval_legacy.c` / `eval_directory.c` | partial | `evaluator_local` | `VAR`, `TARGET`, `DIAG` | `planned: EVENT_REMOVE_REQUEST`, `EVENT_DIAG` | low | Legacy mutators with no semantic event yet. |
-| `source_group` | `eval_target.c` | partial | `evaluator_local` | `TARGET`, `META` | `planned: EVENT_SOURCE_GROUP_SET` | low | Source grouping is metadata but should still be explicit if preserved. |
-| `subdir_depends` / `subdirs` | `eval_legacy.c` | partial | `evaluator_local` | `META`, `SCOPE`, `DIAG` | `planned: EVENT_SUBDIR_REQUEST`, `EVENT_DIAG` | low | Legacy directory composition paths; currently not semantically modeled. |
-| `target_compile_features` / `target_precompile_headers` | `eval_target.c` | partial | `evaluator_local` | `TARGET` | `planned: EVENT_TARGET_COMPILE_FEATURES`, `planned: EVENT_TARGET_PRECOMPILE_HEADERS` | medium | Important target semantics still missing from the current target family. |
+| `cmake_file_api` | `eval_meta.c` | partial | `partial` | `META`, `FS` | `planned: EVENT_CMAKE_FILE_API_QUERY` | medium | Query intent should be represented even if execution remains partial. |
+| `export` / `export_library_dependencies` | `eval_meta.c` / `eval_legacy.c` | partial | `partial` | `META`, `FS` | `planned: EVENT_EXPORT_REQUEST` | low | Export intent exists but is not yet semantic. |
+| `try_compile` | `eval_try_compile.c` | partial | `partial` | `PROC`, `FS`, `TARGET`, `PROJECT`, `DIAG` | `planned: EVENT_TRY_COMPILE_REQUEST`, `EVENT_DIAG` | high | Important for transpilation correctness; still mostly local/stubbed. |
+| `try_run` | `eval_try_compile.c` | partial | `partial` | `PROC`, `FS`, `DIAG` | `planned: EVENT_TRY_RUN_REQUEST`, `EVENT_DIAG` | high | Same rationale as `try_compile`; currently not semantically represented. |
+| `build_command` / `build_name` | `eval_legacy.c` | partial | `partial` | `PROJECT`, `VAR` | `planned: EVENT_BUILD_TOOL_QUERY` | low | Legacy metadata/query commands only. |
+| `exec_program` | `eval_legacy.c` | partial | `partial` | `PROC`, `DIAG` | `planned: EVENT_PROC_EXEC_REQUEST`, `planned: EVENT_PROC_EXEC_RESULT`, `EVENT_DIAG` | low | Legacy process command still lacks semantic PROC coverage. |
+| `load_command` / `load_cache` | `eval_legacy.c` | partial | `partial` | `META`, `VAR`, `DIAG` | `planned: EVENT_LEGACY_LOAD`, `EVENT_DIAG` | low | Legacy compatibility commands; still should have an explicit compatibility event if kept. |
+| `output_required_files` | `eval_legacy.c` | partial | `partial` | `FS`, `DIAG` | `planned: EVENT_FS_OUTPUT_REQUIRED_FILES`, `EVENT_DIAG` | low | Legacy file-generation metadata path. |
+| `qt_wrap_cpp` / `qt_wrap_ui` / `fltk_wrap_ui` | `eval_legacy.c` | partial | `partial` | `FS`, `TARGET`, `DIAG` | `planned: EVENT_WRAP_TOOL_REQUEST`, `EVENT_DIAG` | low | Tooling wrappers are still unmodeled semantically. |
+| `remove` / `remove_definitions` | `eval_legacy.c` / `eval_directory.c` | partial | `partial` | `VAR`, `TARGET`, `DIAG` | `planned: EVENT_REMOVE_REQUEST`, `EVENT_DIAG` | low | Legacy mutators with no semantic event yet. |
+| `source_group` | `eval_target.c` | partial | `partial` | `TARGET`, `META` | `planned: EVENT_SOURCE_GROUP_SET` | low | Source grouping is metadata but should still be explicit if preserved. |
+| `subdir_depends` / `subdirs` | `eval_legacy.c` | partial | `partial` | `META`, `SCOPE`, `DIAG` | `planned: EVENT_SUBDIR_REQUEST`, `EVENT_DIAG` | low | Legacy directory composition paths; currently not semantically modeled. |
+| `target_compile_features` / `target_precompile_headers` | `eval_target.c` | partial | `partial` | `TARGET` | `planned: EVENT_TARGET_COMPILE_FEATURES`, `planned: EVENT_TARGET_PRECOMPILE_HEADERS` | medium | Important target semantics still missing from the current target family. |
 | `target_sources` | `eval_target.c` | partial | `partial` | `TARGET` | `EVENT_TARGET_ADD_SOURCE` | medium | The family exists, but registry status is still partial and should be tightened. |
-| `use_mangled_mesa` / `utility_source` / `variable_requires` / `variable_watch` | `eval_legacy.c` / `eval_vars.c` | partial | `evaluator_local` | `VAR`, `DIAG`, `META` | `planned: EVENT_LEGACY_COMPAT`, `EVENT_DIAG` | low | Compatibility/legacy helpers still need an explicit semantic or compat-layer event if they remain supported. |
+| `use_mangled_mesa` / `utility_source` / `variable_requires` / `variable_watch` | `eval_legacy.c` / `eval_vars.c` | partial | `partial` | `VAR`, `DIAG`, `META` | `planned: EVENT_LEGACY_COMPAT`, `EVENT_DIAG` | low | Compatibility/legacy helpers still need an explicit semantic or compat-layer event if they remain supported. |
