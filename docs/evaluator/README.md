@@ -4,9 +4,9 @@ This folder is the active workspace for the new evaluator documentation rewrite.
 
 ## Intent
 
-- `docs/Evaluator/` keeps the previous evaluator documentation set preserved as the legacy baseline.
+- `docs/Evaluatorr/` keeps the previous evaluator documentation set preserved as the legacy baseline.
 - `docs/evaluator/` is where the replacement documentation should be written.
-- When the rewrite is complete and validated, `docs/Evaluator/` can be removed.
+- When the rewrite is complete and validated, `docs/Evaluatorr/` can be removed.
 
 ## Current Migration Rule
 
