@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The `build_model_builder.c` module implements the mutable state machine that constructs the Build Model. It consumes a linear stream of atomic events (`Cmake_Event`) and updates the internal structures (`Build_Model_Builder`) accordingly.
+The `build_model_builder.c` module implements the mutable state machine that constructs the Build Model. It consumes a linear stream of atomic events (`Event`) and updates the internal structures (`Build_Model_Builder`) accordingly.
 
 **Key Characteristics:**
 1.  **Mutable:** The builder state changes with every event.
@@ -33,44 +33,44 @@ typedef struct {
 ```
 
 ### 2.2. Event Handlers Map
-The builder uses a switch/dispatch mechanism based on `Cmake_Event_Kind` to route events to specific update logic.
+The builder uses a switch/dispatch mechanism based on `Event_Kind` to route events to specific update logic.
 
 ## 3. Event Handling Logic
 
 ### 3.1. Project & Targets
-*   `EV_PROJECT_DECLARE`:
+*   `EVENT_PROJECT_DECLARE`:
     *   Updates `model->project_name`, `model->project_version`, etc.
     *   Resets/Initializes global build flags if needed.
-*   `EV_TARGET_DECLARE`:
+*   `EVENT_TARGET_DECLARE`:
     *   Creates a new `Build_Target` in `model->targets`.
     *   Sets `target->type` (EXECUTABLE, STATIC_LIBRARY, etc.).
     *   Initializes empty lists for sources, dependencies, etc.
     *   **Validation:** Checks for duplicate target names (error if exists).
 
 ### 3.2. Sources & Properties
-*   `EV_TARGET_ADD_SOURCE`:
+*   `EVENT_TARGET_ADD_SOURCE`:
     *   Finds the target by name.
     *   Appends the source path to `target->sources`.
     *   **Deduplication:** Uses a hash set (or linear scan for small lists) to avoid duplicate sources.
-*   `EV_TARGET_PROP_SET`:
+*   `EVENT_TARGET_PROP_SET`:
     *   Finds the target.
     *   Updates the specific property (e.g., `OUTPUT_NAME`, `CXX_STANDARD`).
     *   Supports custom properties via a key-value map.
 
 ### 3.3. Dependencies & Linking
-*   `EV_TARGET_LINK_LIBRARIES`:
+*   `EVENT_TARGET_LINK_LIBRARIES`:
     *   Finds the target.
     *   Parses the item (target name vs. file path vs. flag).
     *   Adds to `target->link_libraries` (and potentially `target->dependencies` if it's a known target).
     *   Handles `PUBLIC`, `PRIVATE`, `INTERFACE` visibility propagation.
-*   `EV_TARGET_INCLUDE_DIRECTORIES`:
+*   `EVENT_TARGET_INCLUDE_DIRECTORIES`:
     *   Adds to `target->include_directories`.
     *   Handles visibility.
 
 ### 3.4. Directory Scope (Inheritance)
-*   `EV_DIRECTORY_scope_ENTER`: Push a new scope frame (copy current state).
-*   `EV_DIRECTORY_SCOPE_EXIT`: Pop the top scope frame.
-*   `EV_DIRECTORY_INCLUDE_DIRECTORIES`: Adds to the *current* scope's include list.
+*   `EVENT_DIR_PUSH`: Push a new scope/frame of directory context.
+*   `EVENT_DIR_POP`: Pop the top directory context frame.
+*   `EVENT_TARGET_INCLUDE_DIRECTORIES` or a future directory-scoped event: adds to the active include context.
     *   **Effect:** Any target declared *after* this event (within the same scope) inherits these includes.
 
 ## 4. Validation During Build
@@ -90,7 +90,7 @@ Build_Model_Builder* builder_create(Arena *arena, Diag_Sink *diags);
 
 // Applies a single event to the builder state.
 // Returns false on fatal error (e.g., out of memory).
-bool builder_apply_event(Build_Model_Builder *builder, const Cmake_Event *ev);
+bool builder_apply_event(Build_Model_Builder *builder, const Event *ev);
 
 // Finalizes the build process and returns the constructed model.
 // The returned model is still mutable until frozen.

@@ -4,11 +4,11 @@ Status: Normative for evaluator v2 behavior currently implemented in `src_v2/eva
 
 ## 1. Scope and Boundary
 
-The evaluator executes CMake-language semantics over AST input and emits an append-only `Cmake_Event_Stream`.
+The evaluator executes CMake-language semantics over AST input and emits an append-only `Event_Stream`.
 
 Boundary contract:
 - Input: `Ast_Root` from parser.
-- Output: `Cmake_Event_Stream` from Event IR.
+- Output: `Event_Stream` from Event IR.
 - Prohibited dependency: evaluator does not depend on Build Model internals.
 
 This document is canonical. Supporting annexes:
@@ -68,6 +68,9 @@ Evaluator uses two arenas:
 - `function()` pushes variable scope.
 - `macro()` uses macro-frame bindings in caller scope model.
 - `block()` can push variable scope and/or policy scope depending on options.
+- Variable reads are explicit internally: `eval_var_get_visible(...)` and `eval_var_defined_visible(...)` traverse visible scopes.
+- Variable writes are explicit internally: `eval_var_set_current(...)` and `eval_var_unset_current(...)` mutate only the current scope.
+- Temporary scope-window changes are explicit internally: `eval_scope_use_parent_view(...)`, `eval_scope_use_global_view(...)`, and `eval_scope_restore_view(...)`.
 - `set(... PARENT_SCOPE)` and `unset(... PARENT_SCOPE)` mutate parent scope when available.
 
 ### 4.3 Control Flow Execution
@@ -116,6 +119,7 @@ Key guarantees:
 - Events are append-only during evaluation.
 - Origin metadata (`file_path`, `line`, `col`) is attached per emitted event.
 - Event payload strings are deep-copied into `event_arena` by `event_stream_push(...)`.
+- Variable mutation events encode their target explicitly: `EVENT_VAR_SET` and `EVENT_VAR_UNSET` use `target_kind` (`current`, `cache`, `env`).
 
 See `event_ir_v2_spec.md` for full schema contract.
 

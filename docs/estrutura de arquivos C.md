@@ -42,7 +42,7 @@ Aqui estão os arquivos que você deve criar/manter para implementar essa pipeli
 
 #### Módulo 3: Event IR (A Fronteira)
 *A nova camada de contrato.*
-*   `src/transpiler/event_ir.c`: Funções para criar, armazenar e iterar sobre o `Cmake_Event_Stream`. Define as structs dos eventos.
+*   `src_v2/transpiler/event_ir.c`: Funções para criar, armazenar e iterar sobre o `Event_Stream`. Define as structs dos eventos.
 
 #### Módulo 4: Build Model (O Banco de Dados)
 *Separado em Escrita (Builder) e Leitura (Model).*

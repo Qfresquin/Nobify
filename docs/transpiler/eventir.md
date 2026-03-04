@@ -290,7 +290,7 @@ O payload deve representar:
 Não deve ser uma simples cópia do payload estrutural antigo.
 
 Exemplo:
-- `Event_Var_Set { key, value, scope_kind, scope_depth }`
+- `Event_Var_Set { key, value, target_kind }`
 - `Event_Flow_Return { has_propagate, propagate_vars, return_context }`
 - `Event_Fs_Copy { sources, destination, mode_flags }`
 
