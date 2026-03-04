@@ -1,4 +1,6 @@
-# Evaluator v2 Coverage Status
+# Evaluator v2 Coverage Status (Annex)
+
+Status: Analytical annex for evaluator command-surface coverage against the current v2 implementation.
 
 Status snapshot sources:
 - `src_v2/evaluator/eval_command_caps.c`

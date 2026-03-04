@@ -12,11 +12,19 @@ Boundary contract:
 - Prohibited dependency: evaluator does not depend on Build Model internals.
 
 This document is canonical. Supporting annexes:
-- `eval_dispatcher_v2_spec.md`
-- `eval_expr_v2_spec.md`
-- `event_ir_v2_spec.md`
-- `evaluator_v2_compat_architecture.md`
-- `evaluator_v2_coverage_status.md`
+- Runtime annexes:
+  - `eval_dispatcher_v2_spec.md`
+  - `eval_expr_v2_spec.md`
+  - `event_ir_v2_spec.md`
+- Compatibility and diagnostic-shaping annex:
+  - `evaluator_v2_compat_architecture.md`
+- Analytical annexes:
+  - `evaluator_v2_coverage_status.md`
+  - `evaluator_v2_full_audit.md`
+  - `event_ir_coverage_matrix.md`
+
+This document is the only canonical evaluator document in this folder.
+All annexes are subordinate to it and must not redefine evaluator guarantees.
 
 ## 2. Source of Truth
 

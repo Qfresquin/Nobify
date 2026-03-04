@@ -1,6 +1,6 @@
-# Evaluator v2 Compatibility Architecture (Permissive-First)
+# Evaluator v2 Compatibility Architecture (Annex)
 
-Status: Normative compatibility architecture for current evaluator v2 runtime.
+Status: Normative annex for compatibility controls, evaluator-side diagnostic shaping, and run-control behavior.
 
 ## 1. Intent
 

@@ -1,4 +1,6 @@
-# Event IR Coverage Matrix
+# Event IR Coverage Matrix (Annex)
+
+Status: Analytical annex for tracking evaluator-to-Event-IR migration coverage.
 
 This matrix tracks the migration from the frozen structural Event IR to the new
 canonical semantic Event IR.

@@ -1,6 +1,6 @@
-# Evaluator v2 Full Audit
+# Evaluator v2 Full Audit (Annex)
 
-Status: Documentation-driven audit snapshot against CMake 3.28.6 command and policy docs.
+Status: Analytical annex with a documentation-driven audit snapshot against CMake 3.28.6 command and policy docs.
 
 ## 1. Audit scope and baseline
 

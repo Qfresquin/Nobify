@@ -57,7 +57,8 @@ Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 
 The implementation-level contracts for v2 live in focused docs under `docs/`.
 
-- `docs/Evaluator/`: evaluator runtime, command routing, and event IR contracts.
+- `docs/evaluator/`: active evaluator documentation rewrite.
+- `docs/Evaluator/`: archived evaluator documentation baseline kept during the rewrite.
 - `docs/build_model/`: build model ingestion, validation, freeze, and query contracts.
 - `docs/diagnostics/`: shared diagnostic logging, counters, and telemetry contract.
 - `docs/lexer/`: lexer tokenization and source-position contract.
