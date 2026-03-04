@@ -989,7 +989,6 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name) {
 }
 
 bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_List *args, Cmake_Event_Origin origin) {
-    (void)origin;
     if (eval_should_stop(ctx)) return false;
 
     User_Command *cmd = eval_user_cmd_find(ctx, name);
@@ -998,6 +997,7 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     // function() creates scope; macro() executes in caller scope.
     bool is_function = (cmd->kind == USER_CMD_FUNCTION);
     bool is_macro = (cmd->kind == USER_CMD_MACRO);
+    size_t arg_count = args ? arena_arr_len(*args) : 0;
     Eval_Return_Context saved_return_ctx = ctx->return_context;
     size_t entered_function_depth = 0;
     bool scope_pushed = false;
@@ -1007,14 +1007,24 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
         entered_function_depth = ++ctx->function_eval_depth;
         ctx->return_context = EVAL_RETURN_CTX_FUNCTION;
         scope_pushed = true;
+        if (!eval_emit_flow_function_begin(ctx, origin, name, (uint32_t) arg_count)) {
+            eval_scope_pop(ctx);
+            if (ctx->function_eval_depth > 0) ctx->function_eval_depth--;
+            ctx->return_context = saved_return_ctx;
+            return false;
+        }
     } else if (is_macro) {
         if (!eval_macro_frame_push(ctx)) return false;
         ctx->return_context = EVAL_RETURN_CTX_MACRO;
         macro_pushed = true;
+        if (!eval_emit_flow_macro_begin(ctx, origin, name, (uint32_t) arg_count)) {
+            eval_macro_frame_pop(ctx);
+            ctx->return_context = saved_return_ctx;
+            return false;
+        }
     }
 
     bool ok = false;
-    size_t arg_count = args ? arena_arr_len(*args) : 0;
     for (size_t i = 0; i < arena_arr_len(cmd->params); i++) {
         String_View val = nob_sv_from_cstr("");
         if (i < arg_count) val = (*args)[i];
@@ -1074,6 +1084,7 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
 
     ok = eval_node_list(ctx, &cmd->body);
 cleanup:
+    bool did_return = ctx->return_requested;
     if (ctx->return_requested && arena_arr_len(ctx->return_propagate_vars) > 0 && is_function && eval_scope_visible_depth(ctx) > 1) {
         for (size_t i = 0; i < arena_arr_len(ctx->return_propagate_vars); i++) {
             String_View key = ctx->return_propagate_vars[i];
@@ -1099,6 +1110,11 @@ cleanup:
         eval_scope_pop(ctx);
     } else if (macro_pushed) {
         eval_macro_frame_pop(ctx);
+    }
+    if (is_function) {
+        if (!eval_emit_flow_function_end(ctx, origin, name, did_return)) return false;
+    } else if (is_macro) {
+        if (!eval_emit_flow_macro_end(ctx, origin, name, did_return)) return false;
     }
 
     return ok;

@@ -156,11 +156,12 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
     return true;
 }
 
-static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return) {
+static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return, Block_Frame *out_frame) {
     if (!ctx || arena_arr_len(ctx->block_frames) == 0) return true;
 
     Block_Frame frame = ctx->block_frames[arena_arr_len(ctx->block_frames) - 1];
     arena_arr_set_len(ctx->block_frames, arena_arr_len(ctx->block_frames) - 1);
+    if (out_frame) *out_frame = frame;
 
     bool should_propagate = !for_return || frame.propagate_on_return;
     if (should_propagate) {
@@ -1906,7 +1907,14 @@ bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     if (!ctx) return false;
     while (arena_arr_len(ctx->block_frames) > 0) {
-        if (!block_pop_frame(ctx, NULL, true)) return false;
+        Block_Frame ended = {0};
+        if (!block_pop_frame(ctx, NULL, true, &ended)) return false;
+        if (!eval_emit_flow_block_end(ctx,
+                                      (Event_Origin){0},
+                                      ended.propagate_on_return,
+                                      arena_arr_len(ended.propagate_vars) > 0)) {
+            return false;
+        }
     }
     return true;
 }
@@ -2021,6 +2029,13 @@ bool eval_handle_block(Evaluator_Context *ctx, const Node *node) {
         if (frame.variable_scope_pushed) eval_scope_pop(ctx);
         return !eval_should_stop(ctx);
     }
+    if (!eval_emit_flow_block_begin(ctx,
+                                    eval_origin_from_node(ctx, node),
+                                    frame.variable_scope_pushed,
+                                    frame.policy_scope_pushed,
+                                    arena_arr_len(frame.propagate_vars) > 0)) {
+        return !eval_should_stop(ctx);
+    }
 
     return !eval_should_stop(ctx);
 }
@@ -2040,7 +2055,14 @@ bool eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (!block_pop_frame(ctx, node, false)) return !eval_should_stop(ctx);
+    Block_Frame ended = {0};
+    if (!block_pop_frame(ctx, node, false, &ended)) return !eval_should_stop(ctx);
+    if (!eval_emit_flow_block_end(ctx,
+                                  eval_origin_from_node(ctx, node),
+                                  ended.propagate_on_return,
+                                  arena_arr_len(ended.propagate_vars) > 0)) {
+        return !eval_should_stop(ctx);
+    }
 
     return !eval_should_stop(ctx);
 }

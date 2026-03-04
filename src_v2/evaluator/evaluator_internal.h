@@ -1093,6 +1093,74 @@ static inline bool eval_emit_flow_defer_flush(Evaluator_Context *ctx,
     ev.as.flow_defer_flush.call_count = call_count;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_flow_block_begin(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              bool variable_scope_pushed,
+                                              bool policy_scope_pushed,
+                                              bool has_propagate_vars) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_BLOCK_BEGIN;
+    ev.h.origin = origin;
+    ev.as.flow_block_begin.variable_scope_pushed = variable_scope_pushed;
+    ev.as.flow_block_begin.policy_scope_pushed = policy_scope_pushed;
+    ev.as.flow_block_begin.has_propagate_vars = has_propagate_vars;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_block_end(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            bool propagate_on_return,
+                                            bool had_propagate_vars) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_BLOCK_END;
+    ev.h.origin = origin;
+    ev.as.flow_block_end.propagate_on_return = propagate_on_return;
+    ev.as.flow_block_end.had_propagate_vars = had_propagate_vars;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_function_begin(Evaluator_Context *ctx,
+                                                 Event_Origin origin,
+                                                 String_View name,
+                                                 uint32_t argc) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_FUNCTION_BEGIN;
+    ev.h.origin = origin;
+    ev.as.flow_function_begin.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.flow_function_begin.argc = argc;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_function_end(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View name,
+                                               bool returned) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_FUNCTION_END;
+    ev.h.origin = origin;
+    ev.as.flow_function_end.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.flow_function_end.returned = returned;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_macro_begin(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              String_View name,
+                                              uint32_t argc) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_MACRO_BEGIN;
+    ev.h.origin = origin;
+    ev.as.flow_macro_begin.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.flow_macro_begin.argc = argc;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_flow_macro_end(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View name,
+                                            bool returned) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FLOW_MACRO_END;
+    ev.h.origin = origin;
+    ev.as.flow_macro_end.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.flow_macro_end.returned = returned;
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_string_replace(Evaluator_Context *ctx,
                                             Event_Origin origin,
                                             String_View out_var) {

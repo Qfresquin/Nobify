@@ -79,6 +79,8 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_FLOW_BREAK:
         case EVENT_FLOW_CONTINUE:
         case EVENT_FLOW_DEFER_FLUSH:
+        case EVENT_FLOW_BLOCK_BEGIN:
+        case EVENT_FLOW_BLOCK_END:
             break;
         case EVENT_FLOW_BRANCH_TAKEN:
             if (!event_copy_sv_inplace(arena, &ev->as.flow_branch_taken.branch_kind)) return false;
@@ -92,6 +94,18 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_FLOW_DEFER_QUEUE:
             if (!event_copy_sv_inplace(arena, &ev->as.flow_defer_queue.defer_id)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.flow_defer_queue.command_name)) return false;
+            break;
+        case EVENT_FLOW_FUNCTION_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_function_begin.name)) return false;
+            break;
+        case EVENT_FLOW_FUNCTION_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_function_end.name)) return false;
+            break;
+        case EVENT_FLOW_MACRO_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_macro_begin.name)) return false;
+            break;
+        case EVENT_FLOW_MACRO_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.flow_macro_end.name)) return false;
             break;
 
         case EVENT_FS_WRITE_FILE:
@@ -492,6 +506,41 @@ static void event_dump_one(const Event *ev) {
             break;
         case EVENT_FLOW_DEFER_FLUSH:
             printf(" count=%u", (unsigned) ev->as.flow_defer_flush.call_count);
+            break;
+        case EVENT_FLOW_BLOCK_BEGIN:
+            printf(" var_scope=%s policy_scope=%s propagate=%s",
+                   ev->as.flow_block_begin.variable_scope_pushed ? "true" : "false",
+                   ev->as.flow_block_begin.policy_scope_pushed ? "true" : "false",
+                   ev->as.flow_block_begin.has_propagate_vars ? "true" : "false");
+            break;
+        case EVENT_FLOW_BLOCK_END:
+            printf(" propagate_on_return=%s propagate=%s",
+                   ev->as.flow_block_end.propagate_on_return ? "true" : "false",
+                   ev->as.flow_block_end.had_propagate_vars ? "true" : "false");
+            break;
+        case EVENT_FLOW_FUNCTION_BEGIN:
+            printf(" name=%.*s argc=%u",
+                   (int) ev->as.flow_function_begin.name.count,
+                   ev->as.flow_function_begin.name.data ? ev->as.flow_function_begin.name.data : "",
+                   (unsigned) ev->as.flow_function_begin.argc);
+            break;
+        case EVENT_FLOW_FUNCTION_END:
+            printf(" name=%.*s returned=%s",
+                   (int) ev->as.flow_function_end.name.count,
+                   ev->as.flow_function_end.name.data ? ev->as.flow_function_end.name.data : "",
+                   ev->as.flow_function_end.returned ? "true" : "false");
+            break;
+        case EVENT_FLOW_MACRO_BEGIN:
+            printf(" name=%.*s argc=%u",
+                   (int) ev->as.flow_macro_begin.name.count,
+                   ev->as.flow_macro_begin.name.data ? ev->as.flow_macro_begin.name.data : "",
+                   (unsigned) ev->as.flow_macro_begin.argc);
+            break;
+        case EVENT_FLOW_MACRO_END:
+            printf(" name=%.*s returned=%s",
+                   (int) ev->as.flow_macro_end.name.count,
+                   ev->as.flow_macro_end.name.data ? ev->as.flow_macro_end.name.data : "",
+                   ev->as.flow_macro_end.returned ? "true" : "false");
             break;
 
         case EVENT_FS_WRITE_FILE:

@@ -53,6 +53,12 @@ typedef enum {
     X(EVENT_FLOW_CONTINUE, EVENT_FAMILY_FLOW, "flow_continue") \
     X(EVENT_FLOW_DEFER_QUEUE, EVENT_FAMILY_FLOW, "flow_defer_queue") \
     X(EVENT_FLOW_DEFER_FLUSH, EVENT_FAMILY_FLOW, "flow_defer_flush") \
+    X(EVENT_FLOW_BLOCK_BEGIN, EVENT_FAMILY_FLOW, "flow_block_begin") \
+    X(EVENT_FLOW_BLOCK_END, EVENT_FAMILY_FLOW, "flow_block_end") \
+    X(EVENT_FLOW_FUNCTION_BEGIN, EVENT_FAMILY_FLOW, "flow_function_begin") \
+    X(EVENT_FLOW_FUNCTION_END, EVENT_FAMILY_FLOW, "flow_function_end") \
+    X(EVENT_FLOW_MACRO_BEGIN, EVENT_FAMILY_FLOW, "flow_macro_begin") \
+    X(EVENT_FLOW_MACRO_END, EVENT_FAMILY_FLOW, "flow_macro_end") \
     X(EVENT_FS_WRITE_FILE, EVENT_FAMILY_FS, "fs_write_file") \
     X(EVENT_FS_APPEND_FILE, EVENT_FAMILY_FS, "fs_append_file") \
     X(EVENT_FS_READ_FILE, EVENT_FAMILY_FS, "fs_read_file") \
@@ -279,6 +285,37 @@ typedef struct {
 typedef struct {
     uint32_t call_count;
 } Event_Flow_Defer_Flush;
+
+typedef struct {
+    bool variable_scope_pushed;
+    bool policy_scope_pushed;
+    bool has_propagate_vars;
+} Event_Flow_Block_Begin;
+
+typedef struct {
+    bool propagate_on_return;
+    bool had_propagate_vars;
+} Event_Flow_Block_End;
+
+typedef struct {
+    String_View name;
+    uint32_t argc;
+} Event_Flow_Function_Begin;
+
+typedef struct {
+    String_View name;
+    bool returned;
+} Event_Flow_Function_End;
+
+typedef struct {
+    String_View name;
+    uint32_t argc;
+} Event_Flow_Macro_Begin;
+
+typedef struct {
+    String_View name;
+    bool returned;
+} Event_Flow_Macro_End;
 
 typedef struct {
     String_View path;
@@ -634,6 +671,12 @@ typedef struct {
         Event_Flow_Continue flow_continue;
         Event_Flow_Defer_Queue flow_defer_queue;
         Event_Flow_Defer_Flush flow_defer_flush;
+        Event_Flow_Block_Begin flow_block_begin;
+        Event_Flow_Block_End flow_block_end;
+        Event_Flow_Function_Begin flow_function_begin;
+        Event_Flow_Function_End flow_function_end;
+        Event_Flow_Macro_Begin flow_macro_begin;
+        Event_Flow_Macro_End flow_macro_end;
         Event_Fs_Write_File fs_write_file;
         Event_Fs_Append_File fs_append_file;
         Event_Fs_Read_File fs_read_file;
