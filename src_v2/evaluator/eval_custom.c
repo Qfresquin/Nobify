@@ -13,13 +13,7 @@ static bool emit_target_prop_set(Evaluator_Context *ctx,
                                  String_View key,
                                  String_View value,
                                  Cmake_Target_Property_Op op) {
-    (void)ctx;
-    (void)o;
-    (void)target_name;
-    (void)key;
-    (void)value;
-    (void)op;
-    return true;
+    return eval_emit_target_prop_set(ctx, o, target_name, key, value, op);
 }
 
 enum {
@@ -440,9 +434,16 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    (void)name;
     (void)opt;
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
+    if (!eval_emit_target_declare(ctx,
+                                  o,
+                                  name,
+                                  EV_TARGET_LIBRARY_UNKNOWN,
+                                  false,
+                                  false,
+                                  nob_sv_from_cstr(""))) {
+        return false;
+    }
     return !eval_should_stop(ctx);
 }
 

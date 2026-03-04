@@ -823,12 +823,27 @@ bool eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    (void)source_start;
-
     if (!is_imported) {
         (void)apply_global_compile_state_to_target(ctx, o, name);
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
+    if (!eval_emit_target_declare(ctx,
+                                  o,
+                                  name,
+                                  EV_TARGET_EXECUTABLE,
+                                  is_imported,
+                                  false,
+                                  nob_sv_from_cstr(""))) {
+        return false;
+    }
+    if (!is_imported) {
+        String_View cur_src = eval_current_source_dir_for_paths(ctx);
+        for (size_t i = source_start; i < arena_arr_len(a); ++i) {
+            if (a[i].count == 0) continue;
+            String_View path = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (!eval_emit_target_add_source(ctx, o, name, path)) return !eval_should_stop(ctx);
+        }
+    }
     return !eval_should_stop(ctx);
 }
 
@@ -920,7 +935,6 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    (void)ty;
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return !eval_should_stop(ctx);
     if (is_imported) {
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return !eval_should_stop(ctx);
@@ -934,12 +948,27 @@ bool eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    (void)i;
-
     if (!is_imported) {
         (void)apply_global_compile_state_to_target(ctx, o, name);
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
+    if (!eval_emit_target_declare(ctx,
+                                  o,
+                                  name,
+                                  ty,
+                                  is_imported,
+                                  false,
+                                  nob_sv_from_cstr(""))) {
+        return false;
+    }
+    if (!is_imported && ty != EV_TARGET_LIBRARY_INTERFACE) {
+        String_View cur_src = eval_current_source_dir_for_paths(ctx);
+        for (size_t si = i; si < arena_arr_len(a); ++si) {
+            if (a[si].count == 0) continue;
+            String_View path = eval_path_resolve_for_cmake_arg(ctx, a[si], cur_src, true);
+            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (!eval_emit_target_add_source(ctx, o, name, path)) return !eval_should_stop(ctx);
+        }
+    }
     return !eval_should_stop(ctx);
 }
 

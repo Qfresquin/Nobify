@@ -129,6 +129,57 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.mode)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.found_path)) return false;
             break;
+
+        case EVENT_TARGET_DECLARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_declare.name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_declare.alias_of)) return false;
+            break;
+
+        case EVENT_TARGET_ADD_SOURCE:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.path)) return false;
+            break;
+
+        case EVENT_TARGET_ADD_DEPENDENCY:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.dependency_name)) return false;
+            break;
+
+        case EVENT_TARGET_PROP_SET:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.value)) return false;
+            break;
+
+        case EVENT_TARGET_LINK_LIBRARIES:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.item)) return false;
+            break;
+
+        case EVENT_TARGET_LINK_OPTIONS:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.item)) return false;
+            break;
+
+        case EVENT_TARGET_LINK_DIRECTORIES:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_directories.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_directories.path)) return false;
+            break;
+
+        case EVENT_TARGET_INCLUDE_DIRECTORIES:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_include_directories.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_include_directories.path)) return false;
+            break;
+
+        case EVENT_TARGET_COMPILE_DEFINITIONS:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_compile_definitions.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_compile_definitions.item)) return false;
+            break;
+
+        case EVENT_TARGET_COMPILE_OPTIONS:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.item)) return false;
+            break;
     }
 
     return true;
@@ -296,6 +347,66 @@ static void event_dump_one(const Event *ev) {
                    (int) ev->as.package_find_result.package_name.count,
                    ev->as.package_find_result.package_name.data ? ev->as.package_find_result.package_name.data : "",
                    ev->as.package_find_result.found ? "true" : "false");
+            break;
+
+        case EVENT_TARGET_DECLARE:
+            printf(" name=%.*s",
+                   (int) ev->as.target_declare.name.count,
+                   ev->as.target_declare.name.data ? ev->as.target_declare.name.data : "");
+            break;
+
+        case EVENT_TARGET_ADD_SOURCE:
+            printf(" target=%.*s",
+                   (int) ev->as.target_add_source.target_name.count,
+                   ev->as.target_add_source.target_name.data ? ev->as.target_add_source.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_ADD_DEPENDENCY:
+            printf(" target=%.*s",
+                   (int) ev->as.target_add_dependency.target_name.count,
+                   ev->as.target_add_dependency.target_name.data ? ev->as.target_add_dependency.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_PROP_SET:
+            printf(" target=%.*s",
+                   (int) ev->as.target_prop_set.target_name.count,
+                   ev->as.target_prop_set.target_name.data ? ev->as.target_prop_set.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_LINK_LIBRARIES:
+            printf(" target=%.*s",
+                   (int) ev->as.target_link_libraries.target_name.count,
+                   ev->as.target_link_libraries.target_name.data ? ev->as.target_link_libraries.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_LINK_OPTIONS:
+            printf(" target=%.*s",
+                   (int) ev->as.target_link_options.target_name.count,
+                   ev->as.target_link_options.target_name.data ? ev->as.target_link_options.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_LINK_DIRECTORIES:
+            printf(" target=%.*s",
+                   (int) ev->as.target_link_directories.target_name.count,
+                   ev->as.target_link_directories.target_name.data ? ev->as.target_link_directories.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_INCLUDE_DIRECTORIES:
+            printf(" target=%.*s",
+                   (int) ev->as.target_include_directories.target_name.count,
+                   ev->as.target_include_directories.target_name.data ? ev->as.target_include_directories.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_COMPILE_DEFINITIONS:
+            printf(" target=%.*s",
+                   (int) ev->as.target_compile_definitions.target_name.count,
+                   ev->as.target_compile_definitions.target_name.data ? ev->as.target_compile_definitions.target_name.data : "");
+            break;
+
+        case EVENT_TARGET_COMPILE_OPTIONS:
+            printf(" target=%.*s",
+                   (int) ev->as.target_compile_options.target_name.count,
+                   ev->as.target_compile_options.target_name.data ? ev->as.target_compile_options.target_name.data : "");
             break;
     }
 

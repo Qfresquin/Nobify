@@ -54,7 +54,17 @@ typedef enum {
     X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type") \
     X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group") \
     X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component") \
-    X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result")
+    X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result") \
+    X(EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare") \
+    X(EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source") \
+    X(EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency") \
+    X(EVENT_TARGET_PROP_SET, EVENT_FAMILY_TARGET, "target_prop_set") \
+    X(EVENT_TARGET_LINK_LIBRARIES, EVENT_FAMILY_TARGET, "target_link_libraries") \
+    X(EVENT_TARGET_LINK_OPTIONS, EVENT_FAMILY_TARGET, "target_link_options") \
+    X(EVENT_TARGET_LINK_DIRECTORIES, EVENT_FAMILY_TARGET, "target_link_directories") \
+    X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories") \
+    X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions") \
+    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options")
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label) kind,
@@ -257,6 +267,71 @@ typedef struct {
 } Event_Package_Find_Result;
 
 typedef struct {
+    String_View name;
+    Cmake_Target_Type target_type;
+    bool imported;
+    bool alias;
+    String_View alias_of;
+} Event_Target_Declare;
+
+typedef struct {
+    String_View target_name;
+    String_View path;
+} Event_Target_Add_Source;
+
+typedef struct {
+    String_View target_name;
+    String_View dependency_name;
+} Event_Target_Add_Dependency;
+
+typedef struct {
+    String_View target_name;
+    String_View key;
+    String_View value;
+    Cmake_Target_Property_Op op;
+} Event_Target_Prop_Set;
+
+typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View item;
+} Event_Target_Link_Libraries;
+
+typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View item;
+    bool is_before;
+} Event_Target_Link_Options;
+
+typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View path;
+} Event_Target_Link_Directories;
+
+typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View path;
+    bool is_system;
+    bool is_before;
+} Event_Target_Include_Directories;
+
+typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View item;
+} Event_Target_Compile_Definitions;
+
+typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View item;
+    bool is_before;
+} Event_Target_Compile_Options;
+
+typedef struct {
     Event_Family family;
     uint16_t kind;
     uint16_t version;
@@ -288,6 +363,16 @@ typedef struct {
         Event_Cpack_Add_Component_Group cpack_add_component_group;
         Event_Cpack_Add_Component cpack_add_component;
         Event_Package_Find_Result package_find_result;
+        Event_Target_Declare target_declare;
+        Event_Target_Add_Source target_add_source;
+        Event_Target_Add_Dependency target_add_dependency;
+        Event_Target_Prop_Set target_prop_set;
+        Event_Target_Link_Libraries target_link_libraries;
+        Event_Target_Link_Options target_link_options;
+        Event_Target_Link_Directories target_link_directories;
+        Event_Target_Include_Directories target_include_directories;
+        Event_Target_Compile_Definitions target_compile_definitions;
+        Event_Target_Compile_Options target_compile_options;
     } as;
 } Event;
 

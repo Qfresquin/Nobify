@@ -461,13 +461,139 @@ static inline bool eval_emit_target_prop_set(Evaluator_Context *ctx,
                                              String_View key,
                                              String_View value,
                                              Cmake_Target_Property_Op op) {
-    (void) ctx;
-    (void) origin;
-    (void) target_name;
-    (void) key;
-    (void) value;
-    (void) op;
-    return true;
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_PROP_SET;
+    ev.h.origin = origin;
+    ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.target_prop_set.op = op;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_declare(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View name,
+                                            Cmake_Target_Type target_type,
+                                            bool imported,
+                                            bool alias,
+                                            String_View alias_of) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_DECLARE;
+    ev.h.origin = origin;
+    ev.as.target_declare.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.target_declare.target_type = target_type;
+    ev.as.target_declare.imported = imported;
+    ev.as.target_declare.alias = alias;
+    ev.as.target_declare.alias_of = sv_copy_to_event_arena(ctx, alias_of);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_dependency(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View target_name,
+                                               String_View dependency_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_ADD_DEPENDENCY;
+    ev.h.origin = origin;
+    ev.as.target_add_dependency.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_add_dependency.dependency_name = sv_copy_to_event_arena(ctx, dependency_name);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_add_source(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View target_name,
+                                               String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_ADD_SOURCE;
+    ev.h.origin = origin;
+    ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_link_libraries(Evaluator_Context *ctx,
+                                                   Event_Origin origin,
+                                                   String_View target_name,
+                                                   Cmake_Visibility visibility,
+                                                   String_View item) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_LINK_LIBRARIES;
+    ev.h.origin = origin;
+    ev.as.target_link_libraries.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_link_libraries.visibility = visibility;
+    ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, item);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_link_options(Evaluator_Context *ctx,
+                                                 Event_Origin origin,
+                                                 String_View target_name,
+                                                 Cmake_Visibility visibility,
+                                                 String_View item,
+                                                 bool is_before) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_LINK_OPTIONS;
+    ev.h.origin = origin;
+    ev.as.target_link_options.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_link_options.visibility = visibility;
+    ev.as.target_link_options.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_link_options.is_before = is_before;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_link_directories(Evaluator_Context *ctx,
+                                                     Event_Origin origin,
+                                                     String_View target_name,
+                                                     Cmake_Visibility visibility,
+                                                     String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_LINK_DIRECTORIES;
+    ev.h.origin = origin;
+    ev.as.target_link_directories.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_link_directories.visibility = visibility;
+    ev.as.target_link_directories.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_include_directories(Evaluator_Context *ctx,
+                                                        Event_Origin origin,
+                                                        String_View target_name,
+                                                        Cmake_Visibility visibility,
+                                                        String_View path,
+                                                        bool is_system,
+                                                        bool is_before) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_INCLUDE_DIRECTORIES;
+    ev.h.origin = origin;
+    ev.as.target_include_directories.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_include_directories.visibility = visibility;
+    ev.as.target_include_directories.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.target_include_directories.is_system = is_system;
+    ev.as.target_include_directories.is_before = is_before;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_compile_definitions(Evaluator_Context *ctx,
+                                                        Event_Origin origin,
+                                                        String_View target_name,
+                                                        Cmake_Visibility visibility,
+                                                        String_View item) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_COMPILE_DEFINITIONS;
+    ev.h.origin = origin;
+    ev.as.target_compile_definitions.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_compile_definitions.visibility = visibility;
+    ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_compile_options(Evaluator_Context *ctx,
+                                                    Event_Origin origin,
+                                                    String_View target_name,
+                                                    Cmake_Visibility visibility,
+                                                    String_View item,
+                                                    bool is_before) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_COMPILE_OPTIONS;
+    ev.h.origin = origin;
+    ev.as.target_compile_options.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_compile_options.visibility = visibility;
+    ev.as.target_compile_options.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_compile_options.is_before = is_before;
+    return emit_event(ctx, ev);
 }
 static inline bool eval_emit_var_set(Evaluator_Context *ctx,
                                      Event_Origin origin,
@@ -624,26 +750,6 @@ static inline bool eval_emit_package_find_result(Evaluator_Context *ctx,
     ev.as.package_find_result.required = required;
     ev.as.package_find_result.quiet = quiet;
     return emit_event(ctx, ev);
-}
-static inline bool eval_emit_target_dependency(Evaluator_Context *ctx,
-                                               Event_Origin origin,
-                                               String_View target_name,
-                                               String_View dependency_name) {
-    (void) ctx;
-    (void) origin;
-    (void) target_name;
-    (void) dependency_name;
-    return true;
-}
-static inline bool eval_emit_target_add_source(Evaluator_Context *ctx,
-                                               Event_Origin origin,
-                                               String_View target_name,
-                                               String_View path) {
-    (void) ctx;
-    (void) origin;
-    (void) target_name;
-    (void) path;
-    return true;
 }
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Event_Diag_Severity sev,

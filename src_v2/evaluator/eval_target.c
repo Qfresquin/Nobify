@@ -1359,6 +1359,7 @@ bool eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node)
         if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("LINK_LIBRARIES"), item, EV_PROP_APPEND_LIST)) {
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_target_link_libraries(ctx, o, tgt, vis, item)) return !eval_should_stop(ctx);
         qualifier = nob_sv_from_cstr("");
     }
 
@@ -1407,6 +1408,7 @@ bool eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
         if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("LINK_OPTIONS"), a[i], EV_PROP_APPEND_LIST)) {
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_target_link_options(ctx, o, tgt, vis, a[i], is_before)) return !eval_should_stop(ctx);
     }
 
     return !eval_should_stop(ctx);
@@ -1447,6 +1449,7 @@ bool eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *nod
         if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("LINK_DIRECTORIES"), resolved, EV_PROP_APPEND_LIST)) {
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_target_link_directories(ctx, o, tgt, vis, resolved)) return !eval_should_stop(ctx);
     }
 
     return !eval_should_stop(ctx);
@@ -1504,6 +1507,9 @@ bool eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *
         if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("INCLUDE_DIRECTORIES"), resolved, EV_PROP_APPEND_LIST)) {
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_target_include_directories(ctx, o, tgt, vis, resolved, is_system, is_before)) {
+            return !eval_should_stop(ctx);
+        }
     }
 
     return !eval_should_stop(ctx);
@@ -1544,6 +1550,7 @@ bool eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *
         if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("COMPILE_DEFINITIONS"), item, EV_PROP_APPEND_LIST)) {
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_target_compile_definitions(ctx, o, tgt, vis, item)) return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
 }
@@ -1586,6 +1593,7 @@ bool eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node
         if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("COMPILE_OPTIONS"), a[i], EV_PROP_APPEND_LIST)) {
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_target_compile_options(ctx, o, tgt, vis, a[i], is_before)) return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
 }
