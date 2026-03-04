@@ -141,6 +141,12 @@ typedef enum {
 } Event_Scope_Kind;
 
 typedef enum {
+    EVENT_VAR_TARGET_CURRENT = 0,
+    EVENT_VAR_TARGET_CACHE,
+    EVENT_VAR_TARGET_ENV,
+} Event_Var_Target_Kind;
+
+typedef enum {
     EVENT_POLICY_VALUE_UNSPECIFIED = 0,
     EVENT_POLICY_VALUE_OLD,
     EVENT_POLICY_VALUE_NEW,
@@ -206,16 +212,12 @@ typedef struct {
 typedef struct {
     String_View key;
     String_View value;
-    Event_Scope_Kind scope_kind;
-    bool is_cache;
-    bool is_env;
+    Event_Var_Target_Kind target_kind;
 } Event_Var_Set;
 
 typedef struct {
     String_View key;
-    Event_Scope_Kind scope_kind;
-    bool is_cache;
-    bool is_env;
+    Event_Var_Target_Kind target_kind;
 } Event_Var_Unset;
 
 typedef struct {

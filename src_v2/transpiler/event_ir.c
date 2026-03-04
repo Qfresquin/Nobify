@@ -37,6 +37,16 @@ static bool event_copy_sv_array_inplace(Arena *arena, String_View **items, size_
     return true;
 }
 
+static const char *event_var_target_name(Event_Var_Target_Kind target_kind) {
+    switch (target_kind) {
+        case EVENT_VAR_TARGET_CURRENT: return "current";
+        case EVENT_VAR_TARGET_CACHE: return "cache";
+        case EVENT_VAR_TARGET_ENV: return "env";
+    }
+
+    return "unknown";
+}
+
 static bool event_deep_copy_payload(Arena *arena, Event *ev) {
     if (!arena || !ev) return false;
     if (!event_copy_sv_inplace(arena, &ev->h.origin.file_path)) return false;
@@ -451,15 +461,17 @@ static void event_dump_one(const Event *ev) {
             break;
 
         case EVENT_VAR_SET:
-            printf(" key=%.*s",
+            printf(" key=%.*s target=%s",
                    (int) ev->as.var_set.key.count,
-                   ev->as.var_set.key.data ? ev->as.var_set.key.data : "");
+                   ev->as.var_set.key.data ? ev->as.var_set.key.data : "",
+                   event_var_target_name(ev->as.var_set.target_kind));
             break;
 
         case EVENT_VAR_UNSET:
-            printf(" key=%.*s",
+            printf(" key=%.*s target=%s",
                    (int) ev->as.var_unset.key.count,
-                   ev->as.var_unset.key.data ? ev->as.var_unset.key.data : "");
+                   ev->as.var_unset.key.data ? ev->as.var_unset.key.data : "",
+                   event_var_target_name(ev->as.var_unset.target_kind));
             break;
 
         case EVENT_SCOPE_PUSH:

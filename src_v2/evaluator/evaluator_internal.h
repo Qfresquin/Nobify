@@ -554,18 +554,28 @@ static inline bool eval_emit_target_compile_options(Evaluator_Context *ctx,
     ev.as.target_compile_options.is_before = is_before;
     return emit_event(ctx, ev);
 }
-static inline bool eval_emit_var_set(Evaluator_Context *ctx,
-                                     Event_Origin origin,
-                                     String_View key,
-                                     String_View value) {
+static inline bool eval_emit_var_set_current(Evaluator_Context *ctx,
+                                             Event_Origin origin,
+                                             String_View key,
+                                             String_View value) {
     Event ev = {0};
     ev.h.kind = EVENT_VAR_SET;
+    ev.h.version = 2;
     ev.h.origin = origin;
     ev.as.var_set.key = sv_copy_to_event_arena(ctx, key);
     ev.as.var_set.value = sv_copy_to_event_arena(ctx, value);
-    ev.as.var_set.scope_kind = EVENT_SCOPE_KIND_DIRECTORY;
-    ev.as.var_set.is_cache = false;
-    ev.as.var_set.is_env = false;
+    ev.as.var_set.target_kind = EVENT_VAR_TARGET_CURRENT;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_var_unset_current(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View key) {
+    Event ev = {0};
+    ev.h.kind = EVENT_VAR_UNSET;
+    ev.h.version = 2;
+    ev.h.origin = origin;
+    ev.as.var_unset.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.var_unset.target_kind = EVENT_VAR_TARGET_CURRENT;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_var_set_cache(Evaluator_Context *ctx,
@@ -574,12 +584,11 @@ static inline bool eval_emit_var_set_cache(Evaluator_Context *ctx,
                                            String_View value) {
     Event ev = {0};
     ev.h.kind = EVENT_VAR_SET;
+    ev.h.version = 2;
     ev.h.origin = origin;
     ev.as.var_set.key = sv_copy_to_event_arena(ctx, key);
     ev.as.var_set.value = sv_copy_to_event_arena(ctx, value);
-    ev.as.var_set.scope_kind = EVENT_SCOPE_KIND_DIRECTORY;
-    ev.as.var_set.is_cache = true;
-    ev.as.var_set.is_env = false;
+    ev.as.var_set.target_kind = EVENT_VAR_TARGET_CACHE;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_var_unset_cache(Evaluator_Context *ctx,
@@ -587,11 +596,10 @@ static inline bool eval_emit_var_unset_cache(Evaluator_Context *ctx,
                                              String_View key) {
     Event ev = {0};
     ev.h.kind = EVENT_VAR_UNSET;
+    ev.h.version = 2;
     ev.h.origin = origin;
     ev.as.var_unset.key = sv_copy_to_event_arena(ctx, key);
-    ev.as.var_unset.scope_kind = EVENT_SCOPE_KIND_DIRECTORY;
-    ev.as.var_unset.is_cache = true;
-    ev.as.var_unset.is_env = false;
+    ev.as.var_unset.target_kind = EVENT_VAR_TARGET_CACHE;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_test_enable(Evaluator_Context *ctx,

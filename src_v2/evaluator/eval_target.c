@@ -96,7 +96,7 @@ static bool source_group_emit_assignment(Evaluator_Context *ctx,
     String_View key = svu_join_no_sep_temp(ctx, key_parts, 3);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set_current(ctx, key, group_name)) return false;
-    return eval_emit_var_set(ctx, o, key, group_name);
+    return eval_emit_var_set_current(ctx, o, key, group_name);
 }
 
 static String_View source_group_dirname(String_View path) {
@@ -188,7 +188,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     String_View key = svu_join_no_sep_temp(ctx, key_parts, 5);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set_current(ctx, key, regex_value)) return false;
-    if (!eval_emit_var_set(ctx, o, key, regex_value)) return false;
+    if (!eval_emit_var_set_current(ctx, o, key, regex_value)) return false;
 
     String_View name_key_parts[3] = {
         key,
@@ -198,7 +198,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     String_View name_key = svu_join_no_sep_temp(ctx, name_key_parts, 3);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set_current(ctx, name_key, group_name)) return false;
-    return eval_emit_var_set(ctx, o, name_key, group_name);
+    return eval_emit_var_set_current(ctx, o, name_key, group_name);
 }
 
 static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
@@ -274,7 +274,7 @@ static bool set_non_target_property(Evaluator_Context *ctx,
     if (eval_should_stop(ctx)) return false;
 
     if (!eval_var_set_current(ctx, store_key, merged)) return false;
-    if (!eval_emit_var_set(ctx, o, store_key, merged)) return false;
+    if (!eval_emit_var_set_current(ctx, o, store_key, merged)) return false;
 
     // Bridge common DIRECTORY properties to existing evaluator behavior.
     if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY") && is_current_directory_object(ctx, object_id)) {
