@@ -1066,6 +1066,8 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
     }
 
     (void)eval_var_set(ctx, out_var, joined);
+    String_View base_dir = pat_idx < arena_arr_len(args) ? glob_base_dir(args[pat_idx]) : eval_current_source_dir(ctx);
+    (void)eval_emit_fs_glob(ctx, o, out_var, base_dir, recurse);
 }
 
 static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List args) {
@@ -1119,6 +1121,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
         fwrite(args[i].data, 1, args[i].count, f);
     }
     fclose(f);
+    (void)eval_emit_fs_write_file(ctx, o, path);
 }
 
 static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node, SV_List args) {
@@ -1144,6 +1147,7 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
                             path);
             return;
         }
+        (void)eval_emit_fs_mkdir(ctx, o, path);
     }
 }
 
@@ -1203,6 +1207,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
         String_View content = nob_sv_from_parts(sb.items + begin, n);
         (void)eval_var_set(ctx, out_var, content);
         nob_sb_free(sb);
+        (void)eval_emit_fs_read_file(ctx, o, path, out_var);
         return;
     }
 
@@ -1220,6 +1225,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
     hex_buf[n * 2] = '\0';
     (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(hex_buf));
     nob_sb_free(sb);
+    (void)eval_emit_fs_read_file(ctx, o, path, out_var);
 }
 
 static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_List args) {
@@ -2142,11 +2148,28 @@ bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
     } else if (eval_sv_eq_ci_lit(subcmd, "MAKE_DIRECTORY")) {
         handle_file_make_directory(ctx, node, args);
     } else if (eval_file_handle_fsops(ctx, node, args)) {
-        // handled in eval_file_fsops.c
+        Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+        if (!eval_should_stop(ctx) && arena_arr_len(args) >= 2) {
+            if (eval_sv_eq_ci_lit(subcmd, "APPEND")) (void)eval_emit_fs_append_file(ctx, o, args[1]);
+            else if (eval_sv_eq_ci_lit(subcmd, "RENAME") && arena_arr_len(args) >= 3) (void)eval_emit_fs_rename(ctx, o, args[1], args[2]);
+            else if (eval_sv_eq_ci_lit(subcmd, "REMOVE")) (void)eval_emit_fs_remove(ctx, o, args[1], false);
+            else if (eval_sv_eq_ci_lit(subcmd, "REMOVE_RECURSE")) (void)eval_emit_fs_remove(ctx, o, args[1], true);
+            else if (eval_sv_eq_ci_lit(subcmd, "CREATE_LINK") && arena_arr_len(args) >= 3) (void)eval_emit_fs_create_link(ctx, o, args[1], args[2], true);
+            else if (eval_sv_eq_ci_lit(subcmd, "CHMOD")) (void)eval_emit_fs_chmod(ctx, o, args[1], false);
+            else if (eval_sv_eq_ci_lit(subcmd, "CHMOD_RECURSE")) (void)eval_emit_fs_chmod(ctx, o, args[1], true);
+        }
     } else if (eval_file_handle_transfer(ctx, node, args)) {
-        // handled in eval_file_transfer.c
+        Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+        if (!eval_should_stop(ctx) && arena_arr_len(args) >= 3) {
+            if (eval_sv_eq_ci_lit(subcmd, "DOWNLOAD")) (void)eval_emit_fs_transfer_download(ctx, o, args[1], args[2]);
+            else if (eval_sv_eq_ci_lit(subcmd, "UPLOAD")) (void)eval_emit_fs_transfer_upload(ctx, o, args[1], args[2]);
+        }
     } else if (eval_file_handle_generate_lock_archive(ctx, node, args)) {
-        // handled in eval_file_generate_lock_archive.c
+        Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+        if (!eval_should_stop(ctx) && arena_arr_len(args) >= 2) {
+            if (eval_sv_eq_ci_lit(subcmd, "ARCHIVE_CREATE")) (void)eval_emit_fs_archive_create(ctx, o, args[1]);
+            else if (eval_sv_eq_ci_lit(subcmd, "ARCHIVE_EXTRACT")) (void)eval_emit_fs_archive_extract(ctx, o, args[1], nob_sv_from_cstr(""));
+        }
     } else if (eval_file_handle_extra(ctx, node, args)) {
         // handled in eval_file_extra.c
     } else {

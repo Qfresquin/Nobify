@@ -1690,9 +1690,20 @@ bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
 
     Flow_Exec_Options opt = {0};
     if (!flow_exec_parse_options(ctx, node, args, &opt)) return !eval_should_stop(ctx);
+    String_View request_cmd = nob_sv_from_cstr("");
+    if (opt.commands.count > 0 && arena_arr_len(opt.commands.items[0].args) > 0) {
+        request_cmd = opt.commands.items[0].args[0];
+    }
+    if (!eval_emit_proc_exec_request(ctx,
+                                     o,
+                                     request_cmd,
+                                     opt.has_working_directory ? opt.working_directory : nob_sv_from_cstr(""))) {
+        return false;
+    }
 
     String_View stdout_text = nob_sv_from_cstr("");
     String_View stderr_text = nob_sv_from_cstr("");
@@ -1707,6 +1718,10 @@ bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
                                    &results_joined,
                                    &had_error)) {
         return !eval_should_stop(ctx);
+    }
+
+    if (!eval_emit_proc_exec_result(ctx, o, request_cmd, last_result, stdout_text, stderr_text, had_error)) {
+        return false;
     }
 
     return flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error);

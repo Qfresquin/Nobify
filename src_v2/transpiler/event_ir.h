@@ -48,6 +48,22 @@ typedef enum {
     X(EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop") \
     X(EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set") \
     X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return") \
+    X(EVENT_FS_WRITE_FILE, EVENT_FAMILY_FS, "fs_write_file") \
+    X(EVENT_FS_APPEND_FILE, EVENT_FAMILY_FS, "fs_append_file") \
+    X(EVENT_FS_READ_FILE, EVENT_FAMILY_FS, "fs_read_file") \
+    X(EVENT_FS_GLOB, EVENT_FAMILY_FS, "fs_glob") \
+    X(EVENT_FS_MKDIR, EVENT_FAMILY_FS, "fs_mkdir") \
+    X(EVENT_FS_REMOVE, EVENT_FAMILY_FS, "fs_remove") \
+    X(EVENT_FS_COPY, EVENT_FAMILY_FS, "fs_copy") \
+    X(EVENT_FS_RENAME, EVENT_FAMILY_FS, "fs_rename") \
+    X(EVENT_FS_CREATE_LINK, EVENT_FAMILY_FS, "fs_create_link") \
+    X(EVENT_FS_CHMOD, EVENT_FAMILY_FS, "fs_chmod") \
+    X(EVENT_FS_ARCHIVE_CREATE, EVENT_FAMILY_FS, "fs_archive_create") \
+    X(EVENT_FS_ARCHIVE_EXTRACT, EVENT_FAMILY_FS, "fs_archive_extract") \
+    X(EVENT_FS_TRANSFER_DOWNLOAD, EVENT_FAMILY_FS, "fs_transfer_download") \
+    X(EVENT_FS_TRANSFER_UPLOAD, EVENT_FAMILY_FS, "fs_transfer_upload") \
+    X(EVENT_PROC_EXEC_REQUEST, EVENT_FAMILY_PROC, "proc_exec_request") \
+    X(EVENT_PROC_EXEC_RESULT, EVENT_FAMILY_PROC, "proc_exec_result") \
     X(EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable") \
     X(EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add") \
     X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add") \
@@ -221,6 +237,87 @@ typedef struct {
     String_View *propagate_vars;
     size_t propagate_count;
 } Event_Flow_Return;
+
+typedef struct {
+    String_View path;
+} Event_Fs_Write_File;
+
+typedef struct {
+    String_View path;
+} Event_Fs_Append_File;
+
+typedef struct {
+    String_View path;
+    String_View out_var;
+} Event_Fs_Read_File;
+
+typedef struct {
+    String_View out_var;
+    String_View base_dir;
+    bool recursive;
+} Event_Fs_Glob;
+
+typedef struct {
+    String_View path;
+} Event_Fs_Mkdir;
+
+typedef struct {
+    String_View path;
+    bool recursive;
+} Event_Fs_Remove;
+
+typedef struct {
+    String_View source;
+    String_View destination;
+} Event_Fs_Copy;
+
+typedef struct {
+    String_View source;
+    String_View destination;
+} Event_Fs_Rename;
+
+typedef struct {
+    String_View source;
+    String_View destination;
+    bool symbolic;
+} Event_Fs_Create_Link;
+
+typedef struct {
+    String_View path;
+    bool recursive;
+} Event_Fs_Chmod;
+
+typedef struct {
+    String_View path;
+} Event_Fs_Archive_Create;
+
+typedef struct {
+    String_View path;
+    String_View destination;
+} Event_Fs_Archive_Extract;
+
+typedef struct {
+    String_View source;
+    String_View destination;
+} Event_Fs_Transfer_Download;
+
+typedef struct {
+    String_View source;
+    String_View destination;
+} Event_Fs_Transfer_Upload;
+
+typedef struct {
+    String_View command;
+    String_View working_directory;
+} Event_Proc_Exec_Request;
+
+typedef struct {
+    String_View command;
+    String_View result_code;
+    String_View stdout_text;
+    String_View stderr_text;
+    bool had_error;
+} Event_Proc_Exec_Result;
 
 typedef struct {
     bool enabled;
@@ -426,6 +523,22 @@ typedef struct {
         Event_Policy_Pop policy_pop;
         Event_Policy_Set policy_set;
         Event_Flow_Return flow_return;
+        Event_Fs_Write_File fs_write_file;
+        Event_Fs_Append_File fs_append_file;
+        Event_Fs_Read_File fs_read_file;
+        Event_Fs_Glob fs_glob;
+        Event_Fs_Mkdir fs_mkdir;
+        Event_Fs_Remove fs_remove;
+        Event_Fs_Copy fs_copy;
+        Event_Fs_Rename fs_rename;
+        Event_Fs_Create_Link fs_create_link;
+        Event_Fs_Chmod fs_chmod;
+        Event_Fs_Archive_Create fs_archive_create;
+        Event_Fs_Archive_Extract fs_archive_extract;
+        Event_Fs_Transfer_Download fs_transfer_download;
+        Event_Fs_Transfer_Upload fs_transfer_upload;
+        Event_Proc_Exec_Request proc_exec_request;
+        Event_Proc_Exec_Result proc_exec_result;
         Event_Test_Enable test_enable;
         Event_Test_Add test_add;
         Event_Install_Rule_Add install_rule_add;

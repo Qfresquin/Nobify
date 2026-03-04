@@ -87,6 +87,67 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
                                              ev->as.flow_return.propagate_count)) return false;
             break;
 
+        case EVENT_FS_WRITE_FILE:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_write_file.path)) return false;
+            break;
+        case EVENT_FS_APPEND_FILE:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_append_file.path)) return false;
+            break;
+        case EVENT_FS_READ_FILE:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_read_file.path)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_read_file.out_var)) return false;
+            break;
+        case EVENT_FS_GLOB:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_glob.out_var)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_glob.base_dir)) return false;
+            break;
+        case EVENT_FS_MKDIR:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_mkdir.path)) return false;
+            break;
+        case EVENT_FS_REMOVE:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_remove.path)) return false;
+            break;
+        case EVENT_FS_COPY:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_copy.source)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_copy.destination)) return false;
+            break;
+        case EVENT_FS_RENAME:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_rename.source)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_rename.destination)) return false;
+            break;
+        case EVENT_FS_CREATE_LINK:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_create_link.source)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_create_link.destination)) return false;
+            break;
+        case EVENT_FS_CHMOD:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_chmod.path)) return false;
+            break;
+        case EVENT_FS_ARCHIVE_CREATE:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_archive_create.path)) return false;
+            break;
+        case EVENT_FS_ARCHIVE_EXTRACT:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_archive_extract.path)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_archive_extract.destination)) return false;
+            break;
+        case EVENT_FS_TRANSFER_DOWNLOAD:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_transfer_download.source)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_transfer_download.destination)) return false;
+            break;
+        case EVENT_FS_TRANSFER_UPLOAD:
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_transfer_upload.source)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.fs_transfer_upload.destination)) return false;
+            break;
+        case EVENT_PROC_EXEC_REQUEST:
+            if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_request.command)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_request.working_directory)) return false;
+            break;
+        case EVENT_PROC_EXEC_RESULT:
+            if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.command)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.result_code)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.stdout_text)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.stderr_text)) return false;
+            break;
+
         case EVENT_TEST_ENABLE:
             break;
 
@@ -361,6 +422,88 @@ static void event_dump_one(const Event *ev) {
 
         case EVENT_FLOW_RETURN:
             printf(" propagate=%zu", ev->as.flow_return.propagate_count);
+            break;
+
+        case EVENT_FS_WRITE_FILE:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_write_file.path.count,
+                   ev->as.fs_write_file.path.data ? ev->as.fs_write_file.path.data : "");
+            break;
+        case EVENT_FS_APPEND_FILE:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_append_file.path.count,
+                   ev->as.fs_append_file.path.data ? ev->as.fs_append_file.path.data : "");
+            break;
+        case EVENT_FS_READ_FILE:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_read_file.path.count,
+                   ev->as.fs_read_file.path.data ? ev->as.fs_read_file.path.data : "");
+            break;
+        case EVENT_FS_GLOB:
+            printf(" base=%.*s",
+                   (int) ev->as.fs_glob.base_dir.count,
+                   ev->as.fs_glob.base_dir.data ? ev->as.fs_glob.base_dir.data : "");
+            break;
+        case EVENT_FS_MKDIR:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_mkdir.path.count,
+                   ev->as.fs_mkdir.path.data ? ev->as.fs_mkdir.path.data : "");
+            break;
+        case EVENT_FS_REMOVE:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_remove.path.count,
+                   ev->as.fs_remove.path.data ? ev->as.fs_remove.path.data : "");
+            break;
+        case EVENT_FS_COPY:
+            printf(" src=%.*s",
+                   (int) ev->as.fs_copy.source.count,
+                   ev->as.fs_copy.source.data ? ev->as.fs_copy.source.data : "");
+            break;
+        case EVENT_FS_RENAME:
+            printf(" src=%.*s",
+                   (int) ev->as.fs_rename.source.count,
+                   ev->as.fs_rename.source.data ? ev->as.fs_rename.source.data : "");
+            break;
+        case EVENT_FS_CREATE_LINK:
+            printf(" src=%.*s",
+                   (int) ev->as.fs_create_link.source.count,
+                   ev->as.fs_create_link.source.data ? ev->as.fs_create_link.source.data : "");
+            break;
+        case EVENT_FS_CHMOD:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_chmod.path.count,
+                   ev->as.fs_chmod.path.data ? ev->as.fs_chmod.path.data : "");
+            break;
+        case EVENT_FS_ARCHIVE_CREATE:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_archive_create.path.count,
+                   ev->as.fs_archive_create.path.data ? ev->as.fs_archive_create.path.data : "");
+            break;
+        case EVENT_FS_ARCHIVE_EXTRACT:
+            printf(" path=%.*s",
+                   (int) ev->as.fs_archive_extract.path.count,
+                   ev->as.fs_archive_extract.path.data ? ev->as.fs_archive_extract.path.data : "");
+            break;
+        case EVENT_FS_TRANSFER_DOWNLOAD:
+            printf(" src=%.*s",
+                   (int) ev->as.fs_transfer_download.source.count,
+                   ev->as.fs_transfer_download.source.data ? ev->as.fs_transfer_download.source.data : "");
+            break;
+        case EVENT_FS_TRANSFER_UPLOAD:
+            printf(" src=%.*s",
+                   (int) ev->as.fs_transfer_upload.source.count,
+                   ev->as.fs_transfer_upload.source.data ? ev->as.fs_transfer_upload.source.data : "");
+            break;
+        case EVENT_PROC_EXEC_REQUEST:
+            printf(" cmd=%.*s",
+                   (int) ev->as.proc_exec_request.command.count,
+                   ev->as.proc_exec_request.command.data ? ev->as.proc_exec_request.command.data : "");
+            break;
+        case EVENT_PROC_EXEC_RESULT:
+            printf(" cmd=%.*s error=%s",
+                   (int) ev->as.proc_exec_result.command.count,
+                   ev->as.proc_exec_result.command.data ? ev->as.proc_exec_result.command.data : "",
+                   ev->as.proc_exec_result.had_error ? "true" : "false");
             break;
 
         case EVENT_TEST_ENABLE:

@@ -880,6 +880,184 @@ static inline bool eval_emit_cmake_language_defer_queue(Evaluator_Context *ctx,
     ev.as.cmake_language_defer_queue.command_name = sv_copy_to_event_arena(ctx, command_name);
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_fs_write_file(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_WRITE_FILE;
+    ev.h.origin = origin;
+    ev.as.fs_write_file.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_append_file(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_APPEND_FILE;
+    ev.h.origin = origin;
+    ev.as.fs_append_file.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_read_file(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          String_View path,
+                                          String_View out_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_READ_FILE;
+    ev.h.origin = origin;
+    ev.as.fs_read_file.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.fs_read_file.out_var = sv_copy_to_event_arena(ctx, out_var);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_glob(Evaluator_Context *ctx,
+                                     Event_Origin origin,
+                                     String_View out_var,
+                                     String_View base_dir,
+                                     bool recursive) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_GLOB;
+    ev.h.origin = origin;
+    ev.as.fs_glob.out_var = sv_copy_to_event_arena(ctx, out_var);
+    ev.as.fs_glob.base_dir = sv_copy_to_event_arena(ctx, base_dir);
+    ev.as.fs_glob.recursive = recursive;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_mkdir(Evaluator_Context *ctx,
+                                      Event_Origin origin,
+                                      String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_MKDIR;
+    ev.h.origin = origin;
+    ev.as.fs_mkdir.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_remove(Evaluator_Context *ctx,
+                                       Event_Origin origin,
+                                       String_View path,
+                                       bool recursive) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_REMOVE;
+    ev.h.origin = origin;
+    ev.as.fs_remove.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.fs_remove.recursive = recursive;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_copy(Evaluator_Context *ctx,
+                                     Event_Origin origin,
+                                     String_View source,
+                                     String_View destination) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_COPY;
+    ev.h.origin = origin;
+    ev.as.fs_copy.source = sv_copy_to_event_arena(ctx, source);
+    ev.as.fs_copy.destination = sv_copy_to_event_arena(ctx, destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_rename(Evaluator_Context *ctx,
+                                       Event_Origin origin,
+                                       String_View source,
+                                       String_View destination) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_RENAME;
+    ev.h.origin = origin;
+    ev.as.fs_rename.source = sv_copy_to_event_arena(ctx, source);
+    ev.as.fs_rename.destination = sv_copy_to_event_arena(ctx, destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_create_link(Evaluator_Context *ctx,
+                                            Event_Origin origin,
+                                            String_View source,
+                                            String_View destination,
+                                            bool symbolic) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_CREATE_LINK;
+    ev.h.origin = origin;
+    ev.as.fs_create_link.source = sv_copy_to_event_arena(ctx, source);
+    ev.as.fs_create_link.destination = sv_copy_to_event_arena(ctx, destination);
+    ev.as.fs_create_link.symbolic = symbolic;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_chmod(Evaluator_Context *ctx,
+                                      Event_Origin origin,
+                                      String_View path,
+                                      bool recursive) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_CHMOD;
+    ev.h.origin = origin;
+    ev.as.fs_chmod.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.fs_chmod.recursive = recursive;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_archive_create(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_ARCHIVE_CREATE;
+    ev.h.origin = origin;
+    ev.as.fs_archive_create.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_archive_extract(Evaluator_Context *ctx,
+                                                Event_Origin origin,
+                                                String_View path,
+                                                String_View destination) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_ARCHIVE_EXTRACT;
+    ev.h.origin = origin;
+    ev.as.fs_archive_extract.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.fs_archive_extract.destination = sv_copy_to_event_arena(ctx, destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_transfer_download(Evaluator_Context *ctx,
+                                                  Event_Origin origin,
+                                                  String_View source,
+                                                  String_View destination) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_TRANSFER_DOWNLOAD;
+    ev.h.origin = origin;
+    ev.as.fs_transfer_download.source = sv_copy_to_event_arena(ctx, source);
+    ev.as.fs_transfer_download.destination = sv_copy_to_event_arena(ctx, destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_fs_transfer_upload(Evaluator_Context *ctx,
+                                                Event_Origin origin,
+                                                String_View source,
+                                                String_View destination) {
+    Event ev = {0};
+    ev.h.kind = EVENT_FS_TRANSFER_UPLOAD;
+    ev.h.origin = origin;
+    ev.as.fs_transfer_upload.source = sv_copy_to_event_arena(ctx, source);
+    ev.as.fs_transfer_upload.destination = sv_copy_to_event_arena(ctx, destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_proc_exec_request(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View command,
+                                               String_View working_directory) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PROC_EXEC_REQUEST;
+    ev.h.origin = origin;
+    ev.as.proc_exec_request.command = sv_copy_to_event_arena(ctx, command);
+    ev.as.proc_exec_request.working_directory = sv_copy_to_event_arena(ctx, working_directory);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_proc_exec_result(Evaluator_Context *ctx,
+                                              Event_Origin origin,
+                                              String_View command,
+                                              String_View result_code,
+                                              String_View stdout_text,
+                                              String_View stderr_text,
+                                              bool had_error) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PROC_EXEC_RESULT;
+    ev.h.origin = origin;
+    ev.as.proc_exec_result.command = sv_copy_to_event_arena(ctx, command);
+    ev.as.proc_exec_result.result_code = sv_copy_to_event_arena(ctx, result_code);
+    ev.as.proc_exec_result.stdout_text = sv_copy_to_event_arena(ctx, stdout_text);
+    ev.as.proc_exec_result.stderr_text = sv_copy_to_event_arena(ctx, stderr_text);
+    ev.as.proc_exec_result.had_error = had_error;
+    return emit_event(ctx, ev);
+}
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Event_Diag_Severity sev,
                     String_View component,
