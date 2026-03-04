@@ -751,6 +751,135 @@ static inline bool eval_emit_package_find_result(Evaluator_Context *ctx,
     ev.as.package_find_result.quiet = quiet;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_project_declare(Evaluator_Context *ctx,
+                                             Event_Origin origin,
+                                             String_View name,
+                                             String_View version,
+                                             String_View description,
+                                             String_View homepage_url,
+                                             String_View languages) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PROJECT_DECLARE;
+    ev.h.origin = origin;
+    ev.as.project_declare.name = sv_copy_to_event_arena(ctx, name);
+    ev.as.project_declare.version = sv_copy_to_event_arena(ctx, version);
+    ev.as.project_declare.description = sv_copy_to_event_arena(ctx, description);
+    ev.as.project_declare.homepage_url = sv_copy_to_event_arena(ctx, homepage_url);
+    ev.as.project_declare.languages = sv_copy_to_event_arena(ctx, languages);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_project_minimum_required(Evaluator_Context *ctx,
+                                                      Event_Origin origin,
+                                                      String_View version,
+                                                      bool fatal_if_too_old) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PROJECT_MINIMUM_REQUIRED;
+    ev.h.origin = origin;
+    ev.as.project_minimum_required.version = sv_copy_to_event_arena(ctx, version);
+    ev.as.project_minimum_required.fatal_if_too_old = fatal_if_too_old;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_include_begin(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           String_View path,
+                                           bool no_policy_scope) {
+    Event ev = {0};
+    ev.h.kind = EVENT_INCLUDE_BEGIN;
+    ev.h.origin = origin;
+    ev.as.include_begin.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.include_begin.no_policy_scope = no_policy_scope;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_include_end(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View path,
+                                         bool success) {
+    Event ev = {0};
+    ev.h.kind = EVENT_INCLUDE_END;
+    ev.h.origin = origin;
+    ev.as.include_end.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.include_end.success = success;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_add_subdirectory_begin(Evaluator_Context *ctx,
+                                                    Event_Origin origin,
+                                                    String_View source_dir,
+                                                    String_View binary_dir,
+                                                    bool exclude_from_all,
+                                                    bool system) {
+    Event ev = {0};
+    ev.h.kind = EVENT_ADD_SUBDIRECTORY_BEGIN;
+    ev.h.origin = origin;
+    ev.as.add_subdirectory_begin.source_dir = sv_copy_to_event_arena(ctx, source_dir);
+    ev.as.add_subdirectory_begin.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
+    ev.as.add_subdirectory_begin.exclude_from_all = exclude_from_all;
+    ev.as.add_subdirectory_begin.system = system;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_add_subdirectory_end(Evaluator_Context *ctx,
+                                                  Event_Origin origin,
+                                                  String_View source_dir,
+                                                  String_View binary_dir,
+                                                  bool success) {
+    Event ev = {0};
+    ev.h.kind = EVENT_ADD_SUBDIRECTORY_END;
+    ev.h.origin = origin;
+    ev.as.add_subdirectory_end.source_dir = sv_copy_to_event_arena(ctx, source_dir);
+    ev.as.add_subdirectory_end.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
+    ev.as.add_subdirectory_end.success = success;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_dir_push(Evaluator_Context *ctx,
+                                      Event_Origin origin,
+                                      String_View source_dir,
+                                      String_View binary_dir) {
+    Event ev = {0};
+    ev.h.kind = EVENT_DIR_PUSH;
+    ev.h.origin = origin;
+    ev.as.dir_push.source_dir = sv_copy_to_event_arena(ctx, source_dir);
+    ev.as.dir_push.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_dir_pop(Evaluator_Context *ctx,
+                                     Event_Origin origin,
+                                     String_View source_dir,
+                                     String_View binary_dir) {
+    Event ev = {0};
+    ev.h.kind = EVENT_DIR_POP;
+    ev.h.origin = origin;
+    ev.as.dir_pop.source_dir = sv_copy_to_event_arena(ctx, source_dir);
+    ev.as.dir_pop.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cmake_language_call(Evaluator_Context *ctx,
+                                                 Event_Origin origin,
+                                                 String_View command_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CMAKE_LANGUAGE_CALL;
+    ev.h.origin = origin;
+    ev.as.cmake_language_call.command_name = sv_copy_to_event_arena(ctx, command_name);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cmake_language_eval(Evaluator_Context *ctx,
+                                                 Event_Origin origin,
+                                                 String_View code) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CMAKE_LANGUAGE_EVAL;
+    ev.h.origin = origin;
+    ev.as.cmake_language_eval.code = sv_copy_to_event_arena(ctx, code);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cmake_language_defer_queue(Evaluator_Context *ctx,
+                                                        Event_Origin origin,
+                                                        String_View defer_id,
+                                                        String_View command_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CMAKE_LANGUAGE_DEFER_QUEUE;
+    ev.h.origin = origin;
+    ev.as.cmake_language_defer_queue.defer_id = sv_copy_to_event_arena(ctx, defer_id);
+    ev.as.cmake_language_defer_queue.command_name = sv_copy_to_event_arena(ctx, command_name);
+    return emit_event(ctx, ev);
+}
 bool eval_emit_diag(Evaluator_Context *ctx,
                     Event_Diag_Severity sev,
                     String_View component,

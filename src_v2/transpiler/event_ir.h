@@ -55,6 +55,8 @@ typedef enum {
     X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group") \
     X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component") \
     X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result") \
+    X(EVENT_PROJECT_DECLARE, EVENT_FAMILY_PROJECT, "project_declare") \
+    X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required") \
     X(EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare") \
     X(EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source") \
     X(EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency") \
@@ -64,7 +66,16 @@ typedef enum {
     X(EVENT_TARGET_LINK_DIRECTORIES, EVENT_FAMILY_TARGET, "target_link_directories") \
     X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories") \
     X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions") \
-    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options")
+    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options") \
+    X(EVENT_INCLUDE_BEGIN, EVENT_FAMILY_META, "include_begin") \
+    X(EVENT_INCLUDE_END, EVENT_FAMILY_META, "include_end") \
+    X(EVENT_ADD_SUBDIRECTORY_BEGIN, EVENT_FAMILY_META, "add_subdirectory_begin") \
+    X(EVENT_ADD_SUBDIRECTORY_END, EVENT_FAMILY_META, "add_subdirectory_end") \
+    X(EVENT_DIR_PUSH, EVENT_FAMILY_META, "dir_push") \
+    X(EVENT_DIR_POP, EVENT_FAMILY_META, "dir_pop") \
+    X(EVENT_CMAKE_LANGUAGE_CALL, EVENT_FAMILY_META, "cmake_language_call") \
+    X(EVENT_CMAKE_LANGUAGE_EVAL, EVENT_FAMILY_META, "cmake_language_eval") \
+    X(EVENT_CMAKE_LANGUAGE_DEFER_QUEUE, EVENT_FAMILY_META, "cmake_language_defer_queue")
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label) kind,
@@ -268,6 +279,19 @@ typedef struct {
 
 typedef struct {
     String_View name;
+    String_View version;
+    String_View description;
+    String_View homepage_url;
+    String_View languages;
+} Event_Project_Declare;
+
+typedef struct {
+    String_View version;
+    bool fatal_if_too_old;
+} Event_Project_Minimum_Required;
+
+typedef struct {
+    String_View name;
     Cmake_Target_Type target_type;
     bool imported;
     bool alias;
@@ -332,6 +356,52 @@ typedef struct {
 } Event_Target_Compile_Options;
 
 typedef struct {
+    String_View path;
+    bool no_policy_scope;
+} Event_Include_Begin;
+
+typedef struct {
+    String_View path;
+    bool success;
+} Event_Include_End;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+    bool exclude_from_all;
+    bool system;
+} Event_Add_Subdirectory_Begin;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+    bool success;
+} Event_Add_Subdirectory_End;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+} Event_Dir_Push;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+} Event_Dir_Pop;
+
+typedef struct {
+    String_View command_name;
+} Event_Cmake_Language_Call;
+
+typedef struct {
+    String_View code;
+} Event_Cmake_Language_Eval;
+
+typedef struct {
+    String_View defer_id;
+    String_View command_name;
+} Event_Cmake_Language_Defer_Queue;
+
+typedef struct {
     Event_Family family;
     uint16_t kind;
     uint16_t version;
@@ -363,6 +433,8 @@ typedef struct {
         Event_Cpack_Add_Component_Group cpack_add_component_group;
         Event_Cpack_Add_Component cpack_add_component;
         Event_Package_Find_Result package_find_result;
+        Event_Project_Declare project_declare;
+        Event_Project_Minimum_Required project_minimum_required;
         Event_Target_Declare target_declare;
         Event_Target_Add_Source target_add_source;
         Event_Target_Add_Dependency target_add_dependency;
@@ -373,6 +445,15 @@ typedef struct {
         Event_Target_Include_Directories target_include_directories;
         Event_Target_Compile_Definitions target_compile_definitions;
         Event_Target_Compile_Options target_compile_options;
+        Event_Include_Begin include_begin;
+        Event_Include_End include_end;
+        Event_Add_Subdirectory_Begin add_subdirectory_begin;
+        Event_Add_Subdirectory_End add_subdirectory_end;
+        Event_Dir_Push dir_push;
+        Event_Dir_Pop dir_pop;
+        Event_Cmake_Language_Call cmake_language_call;
+        Event_Cmake_Language_Eval cmake_language_eval;
+        Event_Cmake_Language_Defer_Queue cmake_language_defer_queue;
     } as;
 } Event;
 

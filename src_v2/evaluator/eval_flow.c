@@ -1630,6 +1630,7 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(CALL <command> [<arg>...])"));
             return !eval_should_stop(ctx);
         }
+        if (!eval_emit_cmake_language_call(ctx, o, args[1])) return false;
         return flow_run_call(ctx, node, &args);
     }
 
@@ -1639,6 +1640,11 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(EVAL CODE <code>...)"));
             return !eval_should_stop(ctx);
         }
+        String_View code = arena_arr_len(args) > 2
+            ? eval_sv_join_semi_temp(ctx, args + 2, arena_arr_len(args) - 2)
+            : nob_sv_from_cstr("");
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_emit_cmake_language_eval(ctx, o, code)) return false;
         return flow_run_eval_code(ctx, node, &args);
     }
 
@@ -1654,7 +1660,18 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (eval_sv_eq_ci_lit(args[0], "DEFER")) {
-        return flow_handle_defer(ctx, node);
+        bool ok = flow_handle_defer(ctx, node);
+        if (ok && !eval_should_stop(ctx)) {
+            String_View command_name = nob_sv_from_cstr("");
+            for (size_t i = 1; i + 1 < arena_arr_len(args); ++i) {
+                if (eval_sv_eq_ci_lit(args[i], "CALL")) {
+                    command_name = args[i + 1];
+                    break;
+                }
+            }
+            if (!eval_emit_cmake_language_defer_queue(ctx, o, nob_sv_from_cstr(""), command_name)) return false;
+        }
+        return ok;
     }
 
     if (eval_sv_eq_ci_lit(args[0], "SET_DEPENDENCY_PROVIDER")) {

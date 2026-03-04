@@ -130,6 +130,18 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.found_path)) return false;
             break;
 
+        case EVENT_PROJECT_DECLARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.project_declare.name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.project_declare.version)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.project_declare.description)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.project_declare.homepage_url)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.project_declare.languages)) return false;
+            break;
+
+        case EVENT_PROJECT_MINIMUM_REQUIRED:
+            if (!event_copy_sv_inplace(arena, &ev->as.project_minimum_required.version)) return false;
+            break;
+
         case EVENT_TARGET_DECLARE:
             if (!event_copy_sv_inplace(arena, &ev->as.target_declare.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_declare.alias_of)) return false;
@@ -179,6 +191,47 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_TARGET_COMPILE_OPTIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.item)) return false;
+            break;
+
+        case EVENT_INCLUDE_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.include_begin.path)) return false;
+            break;
+
+        case EVENT_INCLUDE_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.include_end.path)) return false;
+            break;
+
+        case EVENT_ADD_SUBDIRECTORY_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_begin.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_begin.binary_dir)) return false;
+            break;
+
+        case EVENT_ADD_SUBDIRECTORY_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_end.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_end.binary_dir)) return false;
+            break;
+
+        case EVENT_DIR_PUSH:
+            if (!event_copy_sv_inplace(arena, &ev->as.dir_push.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.dir_push.binary_dir)) return false;
+            break;
+
+        case EVENT_DIR_POP:
+            if (!event_copy_sv_inplace(arena, &ev->as.dir_pop.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.dir_pop.binary_dir)) return false;
+            break;
+
+        case EVENT_CMAKE_LANGUAGE_CALL:
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_call.command_name)) return false;
+            break;
+
+        case EVENT_CMAKE_LANGUAGE_EVAL:
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_eval.code)) return false;
+            break;
+
+        case EVENT_CMAKE_LANGUAGE_DEFER_QUEUE:
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_defer_queue.defer_id)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_defer_queue.command_name)) return false;
             break;
     }
 
@@ -349,6 +402,18 @@ static void event_dump_one(const Event *ev) {
                    ev->as.package_find_result.found ? "true" : "false");
             break;
 
+        case EVENT_PROJECT_DECLARE:
+            printf(" name=%.*s",
+                   (int) ev->as.project_declare.name.count,
+                   ev->as.project_declare.name.data ? ev->as.project_declare.name.data : "");
+            break;
+
+        case EVENT_PROJECT_MINIMUM_REQUIRED:
+            printf(" version=%.*s",
+                   (int) ev->as.project_minimum_required.version.count,
+                   ev->as.project_minimum_required.version.data ? ev->as.project_minimum_required.version.data : "");
+            break;
+
         case EVENT_TARGET_DECLARE:
             printf(" name=%.*s",
                    (int) ev->as.target_declare.name.count,
@@ -407,6 +472,60 @@ static void event_dump_one(const Event *ev) {
             printf(" target=%.*s",
                    (int) ev->as.target_compile_options.target_name.count,
                    ev->as.target_compile_options.target_name.data ? ev->as.target_compile_options.target_name.data : "");
+            break;
+
+        case EVENT_INCLUDE_BEGIN:
+            printf(" path=%.*s",
+                   (int) ev->as.include_begin.path.count,
+                   ev->as.include_begin.path.data ? ev->as.include_begin.path.data : "");
+            break;
+
+        case EVENT_INCLUDE_END:
+            printf(" path=%.*s success=%s",
+                   (int) ev->as.include_end.path.count,
+                   ev->as.include_end.path.data ? ev->as.include_end.path.data : "",
+                   ev->as.include_end.success ? "true" : "false");
+            break;
+
+        case EVENT_ADD_SUBDIRECTORY_BEGIN:
+            printf(" src=%.*s",
+                   (int) ev->as.add_subdirectory_begin.source_dir.count,
+                   ev->as.add_subdirectory_begin.source_dir.data ? ev->as.add_subdirectory_begin.source_dir.data : "");
+            break;
+
+        case EVENT_ADD_SUBDIRECTORY_END:
+            printf(" src=%.*s success=%s",
+                   (int) ev->as.add_subdirectory_end.source_dir.count,
+                   ev->as.add_subdirectory_end.source_dir.data ? ev->as.add_subdirectory_end.source_dir.data : "",
+                   ev->as.add_subdirectory_end.success ? "true" : "false");
+            break;
+
+        case EVENT_DIR_PUSH:
+            printf(" src=%.*s",
+                   (int) ev->as.dir_push.source_dir.count,
+                   ev->as.dir_push.source_dir.data ? ev->as.dir_push.source_dir.data : "");
+            break;
+
+        case EVENT_DIR_POP:
+            printf(" src=%.*s",
+                   (int) ev->as.dir_pop.source_dir.count,
+                   ev->as.dir_pop.source_dir.data ? ev->as.dir_pop.source_dir.data : "");
+            break;
+
+        case EVENT_CMAKE_LANGUAGE_CALL:
+            printf(" command=%.*s",
+                   (int) ev->as.cmake_language_call.command_name.count,
+                   ev->as.cmake_language_call.command_name.data ? ev->as.cmake_language_call.command_name.data : "");
+            break;
+
+        case EVENT_CMAKE_LANGUAGE_EVAL:
+            printf(" code_len=%zu", ev->as.cmake_language_eval.code.count);
+            break;
+
+        case EVENT_CMAKE_LANGUAGE_DEFER_QUEUE:
+            printf(" command=%.*s",
+                   (int) ev->as.cmake_language_defer_queue.command_name.count,
+                   ev->as.cmake_language_defer_queue.command_name.data ? ev->as.cmake_language_defer_queue.command_name.data : "");
             break;
     }
 

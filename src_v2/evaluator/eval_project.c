@@ -235,6 +235,7 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
         return !eval_should_stop(ctx);
     }
     if (!policy_apply_version_defaults(ctx, policy_version)) return !eval_should_stop(ctx);
+    if (!eval_emit_project_minimum_required(ctx, o, min_token, arena_arr_len(a) == 3)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -732,7 +733,7 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     (void)version;
     (void)desc;
     (void)langs;
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
+    if (!eval_emit_project_declare(ctx, o, name, version, desc, homepage_url, langs)) return false;
     return !eval_should_stop(ctx);
 }
 

@@ -10,13 +10,14 @@ static bool emit_dir_push_event(Evaluator_Context *ctx,
                                 Cmake_Event_Origin origin,
                                 String_View source_dir,
                                 String_View binary_dir) {
-    (void)source_dir;
-    (void)binary_dir;
-    return eval_emit_trace_begin(ctx, origin, nob_sv_from_cstr("dir_push"), NULL);
+    return eval_emit_dir_push(ctx, origin, source_dir, binary_dir);
 }
 
-static bool emit_dir_pop_event(Evaluator_Context *ctx, Cmake_Event_Origin origin) {
-    return eval_emit_trace_end(ctx, origin, nob_sv_from_cstr("dir_pop"), true, false);
+static bool emit_dir_pop_event(Evaluator_Context *ctx,
+                               Cmake_Event_Origin origin,
+                               String_View source_dir,
+                               String_View binary_dir) {
+    return eval_emit_dir_pop(ctx, origin, source_dir, binary_dir);
 }
 
 static bool include_enables_cpack_component_commands(String_View arg) {
@@ -405,6 +406,8 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         (void)eval_var_set(ctx, result_variable, file_path);
     }
 
+    if (!eval_emit_include_begin(ctx, o, file_path, no_policy_scope)) return !eval_should_stop(ctx);
+
     String_View scope_source = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (scope_source.count == 0) scope_source = ctx->source_dir;
     String_View scope_binary = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
@@ -414,7 +417,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     bool pushed_policy = false;
     if (!no_policy_scope) {
         if (!eval_policy_push(ctx)) {
-            (void)emit_dir_pop_event(ctx, o);
+            (void)emit_dir_pop_event(ctx, o, scope_source, scope_binary);
             return !eval_should_stop(ctx);
         }
         pushed_policy = true;
@@ -424,7 +427,8 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("include() failed to restore policy stack"),
                        nob_sv_from_cstr("cmake_policy(POP) underflow while leaving include()"));
     }
-    if (!emit_dir_pop_event(ctx, o)) return !eval_should_stop(ctx);
+    if (!emit_dir_pop_event(ctx, o, scope_source, scope_binary)) return !eval_should_stop(ctx);
+    if (!eval_emit_include_end(ctx, o, file_path, success)) return !eval_should_stop(ctx);
     if (!success && !optional && !eval_should_stop(ctx)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() failed to read or evaluate file"),
                        file_path);
@@ -445,10 +449,14 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
 
     String_View source_dir = a[0];
     String_View binary_dir = nob_sv_from_cstr("");
+    bool exclude_from_all = false;
     bool system = false;
 
     for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "EXCLUDE_FROM_ALL")) continue;
+        if (eval_sv_eq_ci_lit(a[i], "EXCLUDE_FROM_ALL")) {
+            exclude_from_all = true;
+            continue;
+        }
         if (eval_sv_eq_ci_lit(a[i], "SYSTEM")) {
             system = true;
             continue;
@@ -476,6 +484,9 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     String_View full_path = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr("CMakeLists.txt"));
 
     String_View scope_binary = binary_dir.count > 0 ? binary_dir : source_dir;
+    if (!eval_emit_add_subdirectory_begin(ctx, o, source_dir, scope_binary, exclude_from_all, system)) {
+        return !eval_should_stop(ctx);
+    }
     if (!emit_dir_push_event(ctx, o, source_dir, scope_binary)) return !eval_should_stop(ctx);
 
     bool had_system_default = eval_var_defined(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
@@ -484,7 +495,7 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
         : nob_sv_from_cstr("");
     if (system) {
         if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"), nob_sv_from_cstr("1"))) {
-            (void)emit_dir_pop_event(ctx, o);
+            (void)emit_dir_pop_event(ctx, o, source_dir, scope_binary);
             return !eval_should_stop(ctx);
         }
     }
@@ -499,7 +510,8 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    if (!emit_dir_pop_event(ctx, o)) return !eval_should_stop(ctx);
+    if (!emit_dir_pop_event(ctx, o, source_dir, scope_binary)) return !eval_should_stop(ctx);
+    if (!eval_emit_add_subdirectory_end(ctx, o, source_dir, scope_binary, success)) return !eval_should_stop(ctx);
     if (!success && !eval_should_stop(ctx)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_subdirectory() failed to read or evaluate CMakeLists.txt"),
                        full_path);
