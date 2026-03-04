@@ -59,7 +59,7 @@ static bool ctest_set_field(Evaluator_Context *ctx,
                      command_name.data ? command_name.data : "",
                      field_name);
     if (n < 0) return ctx_oom(ctx);
-    return eval_var_set(ctx, nob_sv_from_cstr(buf), value);
+    return eval_var_set_current(ctx, nob_sv_from_cstr(buf), value);
 }
 
 static bool ctest_keyword_in_list(String_View tok, const char *const *items, size_t count) {
@@ -82,7 +82,7 @@ static bool ctest_publish_var_keyword(Evaluator_Context *ctx, String_View key, S
         eval_sv_eq_ci_lit(key, "NUMBER_ERRORS") ||
         eval_sv_eq_ci_lit(key, "NUMBER_WARNINGS") ||
         eval_sv_eq_ci_lit(key, "DEFECT_COUNT")) {
-        return eval_var_set(ctx, value, nob_sv_from_cstr("0"));
+        return eval_var_set_current(ctx, value, nob_sv_from_cstr("0"));
     }
     return true;
 }
@@ -167,7 +167,7 @@ static String_View ctest_current_binary_dir(Evaluator_Context *ctx) {
 }
 
 static String_View ctest_binary_root(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
     return v.count > 0 ? v : ctx->binary_dir;
 }
 
@@ -438,7 +438,7 @@ bool eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    if (return_var.count > 0 && !eval_var_set(ctx, return_var, nob_sv_from_cstr(rv_text))) return false;
+    if (return_var.count > 0 && !eval_var_set_current(ctx, return_var, nob_sv_from_cstr(rv_text))) return false;
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_run_script"),
                          "SCRIPTS",

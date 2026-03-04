@@ -327,7 +327,7 @@ static bool cmk_path_set_result(Evaluator_Context *ctx,
                                 String_View out_var,
                                 String_View value) {
     String_View dst = out_var.count > 0 ? out_var : path_var;
-    return eval_var_set(ctx, dst, value);
+    return eval_var_set_current(ctx, dst, value);
 }
 
 static bool cmk_path_is_component_supports_last_only(String_View component) {
@@ -390,7 +390,7 @@ static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
     }
 
     String_View out = normalize ? cmk_path_normalize_temp(ctx, input) : input;
-    (void)eval_var_set(ctx, path_var, out);
+    (void)eval_var_set_current(ctx, path_var, out);
     return true;
 }
 
@@ -431,7 +431,7 @@ static bool handle_get(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
         out_var = a[3];
     }
 
-    String_View input = eval_var_get(ctx, path_var);
+    String_View input = eval_var_get_visible(ctx, path_var);
     bool ok = false;
     String_View result = cmk_path_component_get_temp(ctx, input, component, last_only, &ok);
     if (!ok) {
@@ -441,7 +441,7 @@ static bool handle_get(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
         return true;
     }
 
-    (void)eval_var_set(ctx, out_var, result);
+    (void)eval_var_set_current(ctx, out_var, result);
     return true;
 }
 
@@ -463,7 +463,7 @@ static bool handle_append_like(Evaluator_Context *ctx,
 
     String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
-    String_View current = eval_var_get(ctx, path_var);
+    String_View current = eval_var_get_visible(ctx, path_var);
 
     for (size_t i = 2; i < arena_arr_len(a); i++) {
         if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
@@ -511,7 +511,7 @@ static bool handle_remove_filename(Evaluator_Context *ctx, const Node *node, Cma
         }
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     size_t sep = path_last_separator_index(value);
     String_View out = nob_sv_from_cstr("");
     if (sep != SIZE_MAX) {
@@ -562,7 +562,7 @@ static bool handle_replace_filename(Evaluator_Context *ctx, const Node *node, Cm
         return true;
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     size_t sep = path_last_separator_index(value);
     String_View out = input;
     if (sep != SIZE_MAX) {
@@ -635,7 +635,7 @@ static bool handle_extension_common(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     size_t sep = path_last_separator_index(value);
     String_View head = (sep == SIZE_MAX) ? nob_sv_from_cstr("") : nob_sv_from_parts(value.data, sep + 1);
     String_View name = (sep == SIZE_MAX) ? value : nob_sv_from_parts(value.data + sep + 1, value.count - sep - 1);
@@ -689,7 +689,7 @@ static bool handle_normal_path(Evaluator_Context *ctx, const Node *node, Cmake_E
         }
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     (void)cmk_path_set_result(ctx, path_var, out_var, cmk_path_normalize_temp(ctx, value));
     return true;
 }
@@ -734,7 +734,7 @@ static bool handle_relative_path(Evaluator_Context *ctx, const Node *node, Cmake
         return true;
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     String_View abs_value = cmk_path_make_absolute_temp(ctx, value, base_dir);
     String_View abs_base = cmk_path_make_absolute_temp(ctx, base_dir, cmk_path_current_source_dir(ctx));
     String_View rel = cmk_path_relativize_temp(ctx, abs_value, abs_base);
@@ -787,7 +787,7 @@ static bool handle_absolute_path(Evaluator_Context *ctx, const Node *node, Cmake
         return true;
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     String_View abs = cmk_path_make_absolute_temp(ctx, value, base_dir);
     if (normalize) abs = cmk_path_normalize_temp(ctx, abs);
     (void)cmk_path_set_result(ctx, path_var, out_var, abs);
@@ -827,10 +827,10 @@ static bool handle_native_path(Evaluator_Context *ctx, const Node *node, Cmake_E
         return true;
     }
 
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     if (normalize) value = cmk_path_normalize_temp(ctx, value);
     value = cmk_path_to_native_seps_temp(ctx, value);
-    (void)eval_var_set(ctx, out_var, value);
+    (void)eval_var_set_current(ctx, out_var, value);
     return true;
 }
 
@@ -884,7 +884,7 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
             if (!svu_list_push_temp(ctx, &converted, p)) return !eval_should_stop(ctx);
         }
         String_View out = eval_sv_join_semi_temp(ctx, converted, arena_arr_len(converted));
-        (void)eval_var_set(ctx, out_var, out);
+        (void)eval_var_set_current(ctx, out_var, out);
         return true;
     }
 
@@ -909,7 +909,7 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
         }
 
         String_View out = cmk_path_join_char_list_temp(ctx, converted, native_list_sep);
-        (void)eval_var_set(ctx, out_var, out);
+        (void)eval_var_set_current(ctx, out_var, out);
         return true;
     }
 
@@ -943,7 +943,7 @@ static bool handle_compare(Evaluator_Context *ctx, const Node *node, Cmake_Event
         return true;
     }
 
-    (void)eval_var_set(ctx, out_var, result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+    (void)eval_var_set_current(ctx, out_var, result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
     return true;
 }
 
@@ -961,7 +961,7 @@ static bool handle_has_component(Evaluator_Context *ctx,
 
     String_View path_var = a[1];
     String_View out_var = a[2];
-    String_View value = eval_var_get(ctx, path_var);
+    String_View value = eval_var_get_visible(ctx, path_var);
     String_View component = nob_sv_from_parts(mode.data + 4, mode.count - 4);
 
     bool ok = false;
@@ -974,7 +974,7 @@ static bool handle_has_component(Evaluator_Context *ctx,
     }
 
     bool has = comp.count > 0;
-    (void)eval_var_set(ctx, out_var, has ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+    (void)eval_var_set_current(ctx, out_var, has ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
     return true;
 }
 
@@ -990,7 +990,7 @@ static bool handle_is_absolute(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View value = eval_var_get(ctx, a[1]);
+    String_View value = eval_var_get_visible(ctx, a[1]);
     bool result = false;
     if (eval_sv_eq_ci_lit(mode, "IS_ABSOLUTE")) {
         result = eval_sv_is_abs_path(value);
@@ -1001,7 +1001,7 @@ static bool handle_is_absolute(Evaluator_Context *ctx,
         return true;
     }
 
-    (void)eval_var_set(ctx, a[2], result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+    (void)eval_var_set_current(ctx, a[2], result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
     return true;
 }
 

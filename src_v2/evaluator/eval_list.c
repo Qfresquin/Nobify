@@ -98,13 +98,13 @@ static bool list_set_var_from_items(Evaluator_Context *ctx, String_View var, Str
     if (!ctx) return false;
     String_View joined = list_join_items_temp(ctx, items, count);
     if (eval_should_stop(ctx)) return false;
-    return eval_var_set(ctx, var, joined);
+    return eval_var_set_current(ctx, var, joined);
 }
 
 static bool list_load_var_items(Evaluator_Context *ctx, String_View var, SV_List *out) {
     if (!ctx || !out) return false;
     *out = (SV_List){0};
-    return list_split_semicolon_preserve_empty(ctx, eval_var_get(ctx, var), out);
+    return list_split_semicolon_preserve_empty(ctx, eval_var_get_visible(ctx, var), out);
 }
 
 static bool list_normalize_index(size_t item_count, long long raw_index, bool allow_end, size_t *out_index) {
@@ -392,12 +392,12 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         String_View var = a[1];
         if (arena_arr_len(a) == 2) return !eval_should_stop(ctx);
 
-        String_View existing = eval_var_get(ctx, var);
+        String_View existing = eval_var_get_visible(ctx, var);
         String_View incoming = eval_sv_join_semi_temp(ctx, &a[2], arena_arr_len(a) - 2);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
         if (existing.count == 0) {
-            (void)eval_var_set(ctx, var, incoming);
+            (void)eval_var_set_current(ctx, var, incoming);
             if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return false;
             return !eval_should_stop(ctx);
         }
@@ -411,7 +411,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         buf[left.count] = ';';
         memcpy(buf + left.count + 1, right.data, right.count);
         buf[total] = '\0';
-        (void)eval_var_set(ctx, var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(buf));
         if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return false;
         return !eval_should_stop(ctx);
     }
@@ -464,7 +464,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View var = a[1];
-        String_View current = eval_var_get(ctx, var);
+        String_View current = eval_var_get_visible(ctx, var);
         if (current.count == 0) return !eval_should_stop(ctx);
 
         size_t keep_count = 0;
@@ -485,7 +485,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         if (keep_count == 0) {
-            (void)eval_var_set(ctx, var, nob_sv_from_cstr(""));
+            (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
 
@@ -512,7 +512,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             p = q + 1;
         }
         buf[off] = '\0';
-        (void)eval_var_set(ctx, var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(buf));
         if (!eval_emit_list_remove(ctx, o, var)) return false;
         return !eval_should_stop(ctx);
     }
@@ -567,7 +567,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View var = a[1];
-        bool var_defined = eval_var_defined(ctx, var);
+        bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
         if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
         if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
@@ -603,12 +603,12 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         String_View list_var = a[1];
         String_View out_var = a[2];
-        String_View list_value = eval_var_get(ctx, list_var);
+        String_View list_value = eval_var_get_visible(ctx, list_var);
         size_t len = list_count_items(list_value);
 
         char num_buf[32];
         snprintf(num_buf, sizeof(num_buf), "%zu", len);
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(num_buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num_buf));
         return !eval_should_stop(ctx);
     }
 
@@ -621,7 +621,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         String_View list_var = a[1];
         String_View out_var = a[arena_arr_len(a) - 1];
-        String_View list_value = eval_var_get(ctx, list_var);
+        String_View list_value = eval_var_get_visible(ctx, list_var);
 
         SV_List list_items = NULL;
         if (!list_split_semicolon_preserve_empty(ctx, list_value, &list_items)) return !eval_should_stop(ctx);
@@ -646,7 +646,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View out = eval_sv_join_semi_temp(ctx, picked, arena_arr_len(picked));
-        (void)eval_var_set(ctx, out_var, out);
+        (void)eval_var_set_current(ctx, out_var, out);
         return !eval_should_stop(ctx);
     }
 
@@ -660,7 +660,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         String_View list_var = a[1];
         String_View needle = a[2];
         String_View out_var = a[3];
-        String_View list_value = eval_var_get(ctx, list_var);
+        String_View list_value = eval_var_get_visible(ctx, list_var);
 
         SV_List list_items = NULL;
         if (!list_split_semicolon_preserve_empty(ctx, list_value, &list_items)) return !eval_should_stop(ctx);
@@ -675,7 +675,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         char num_buf[32];
         snprintf(num_buf, sizeof(num_buf), "%lld", found);
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(num_buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num_buf));
         return !eval_should_stop(ctx);
     }
 
@@ -708,7 +708,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         out_buf[sb.count] = '\0';
         nob_sb_free(sb);
 
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(out_buf));
         return !eval_should_stop(ctx);
     }
 
@@ -746,7 +746,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         size_t start = (size_t)begin;
         if (start == arena_arr_len(list_items) || length == 0) {
-            (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(""));
+            (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
 
@@ -757,7 +757,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View out = list_join_items_temp(ctx, &list_items[start], end - start);
-        (void)eval_var_set(ctx, out_var, out);
+        (void)eval_var_set_current(ctx, out_var, out);
         return !eval_should_stop(ctx);
     }
 
@@ -785,12 +785,12 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             String_View popped = pop_front
                 ? items[oi]
                 : items[arena_arr_len(items) - 1 - oi];
-            (void)eval_var_set(ctx, out_var, popped);
+            (void)eval_var_set_current(ctx, out_var, popped);
         }
 
         size_t remain_count = arena_arr_len(items) - pop_n;
         if (remain_count == 0) {
-            (void)eval_var_set(ctx, var, nob_sv_from_cstr(""));
+            (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
 
@@ -823,7 +823,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View var = a[1];
-        bool var_defined = eval_var_defined(ctx, var);
+        bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
         if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
         if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
@@ -862,7 +862,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View var = a[1];
-        bool var_defined = eval_var_defined(ctx, var);
+        bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
         if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
         if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
@@ -949,7 +949,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View var = a[1];
-        bool var_defined = eval_var_defined(ctx, var);
+        bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
         if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
         if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
@@ -976,7 +976,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View var = a[1];
-        bool var_defined = eval_var_defined(ctx, var);
+        bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
         if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
 

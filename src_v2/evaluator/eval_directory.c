@@ -42,9 +42,9 @@ static bool semicolon_list_contains_exact(String_View list, String_View item) {
 
 static bool append_list_var_unique(Evaluator_Context *ctx, String_View var, String_View item, bool *out_added) {
     if (out_added) *out_added = false;
-    String_View current = eval_var_get(ctx, var);
+    String_View current = eval_var_get_visible(ctx, var);
     if (current.count == 0) {
-        if (!eval_var_set(ctx, var, item)) return false;
+        if (!eval_var_set_current(ctx, var, item)) return false;
         if (out_added) *out_added = true;
         return true;
     }
@@ -60,7 +60,7 @@ static bool append_list_var_unique(Evaluator_Context *ctx, String_View var, Stri
     buf[current.count] = ';';
     memcpy(buf + current.count + 1, item.data, item.count);
     buf[total] = '\0';
-    if (!eval_var_set(ctx, var, nob_sv_from_cstr(buf))) return false;
+    if (!eval_var_set_current(ctx, var, nob_sv_from_cstr(buf))) return false;
     if (out_added) *out_added = true;
     return true;
 }
@@ -69,7 +69,7 @@ static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, Strin
     if (out_removed) *out_removed = false;
     if (!ctx || item.count == 0) return false;
 
-    String_View current = eval_var_get(ctx, var);
+    String_View current = eval_var_get_visible(ctx, var);
     if (current.count == 0) return true;
 
     size_t kept_count = 0;
@@ -94,7 +94,7 @@ static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, Strin
     if (removed_count == 0) return true;
 
     if (out_removed) *out_removed = true;
-    if (kept_count == 0) return eval_var_set(ctx, var, nob_sv_from_cstr(""));
+    if (kept_count == 0) return eval_var_set_current(ctx, var, nob_sv_from_cstr(""));
 
     size_t total = kept_total + (kept_count - 1);
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
@@ -120,7 +120,7 @@ static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, Strin
     }
 
     buf[off] = '\0';
-    return eval_var_set(ctx, var, nob_sv_from_parts(buf, off));
+    return eval_var_set_current(ctx, var, nob_sv_from_parts(buf, off));
 }
 
 static bool split_definition_flag(String_View item, String_View *out_definition) {
@@ -282,7 +282,7 @@ static bool gfc_set_output_value(Evaluator_Context *ctx,
                                  String_View value,
                                  bool cache_result) {
     if (!ctx) return false;
-    if (!cache_result) return eval_var_set(ctx, out_var, value);
+    if (!cache_result) return eval_var_set_current(ctx, out_var, value);
     if (!eval_cache_set(ctx, out_var, value, nob_sv_from_cstr(""), nob_sv_from_cstr(""))) return false;
     return eval_emit_var_set_cache(ctx, origin, out_var, value);
 }
@@ -481,11 +481,11 @@ bool eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), a[0])) {
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), a[0])) {
         return !eval_should_stop(ctx);
     }
     if (arena_arr_len(a) == 2) {
-        if (!eval_var_set(ctx,
+        if (!eval_var_set_current(ctx,
                           nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN"),
                           a[1])) {
             return !eval_should_stop(ctx);
@@ -744,7 +744,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
             String_View arg_value = (arena_arr_len(tokens) > 1)
                 ? eval_sv_join_semi_temp(ctx, &tokens[1], arena_arr_len(tokens) - 1)
                 : nob_sv_from_cstr("");
-            if (!eval_var_set(ctx, args_var, arg_value)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, args_var, arg_value)) return !eval_should_stop(ctx);
         }
     } else {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() unsupported component"),

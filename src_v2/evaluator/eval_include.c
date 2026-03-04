@@ -108,12 +108,12 @@ static bool include_try_module_search(Evaluator_Context *ctx,
     if (eval_should_stop(ctx)) return false;
 
     SV_List module_dirs = NULL;
-    if (!include_split_semicolon_temp(ctx, eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH")), &module_dirs)) {
+    if (!include_split_semicolon_temp(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_MODULE_PATH")), &module_dirs)) {
         return false;
     }
 
     String_View modules_dir = nob_sv_from_cstr("");
-    String_View cmake_root = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_ROOT"));
+    String_View cmake_root = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_ROOT"));
     if (cmake_root.count > 0) {
         modules_dir = eval_sv_path_join(eval_temp_arena(ctx), cmake_root, nob_sv_from_cstr("Modules"));
         modules_dir = eval_sv_path_normalize_temp(ctx, modules_dir);
@@ -194,25 +194,25 @@ typedef enum {
 
 static bool include_guard_var_defined_global(Evaluator_Context *ctx, String_View key) {
     size_t saved_depth = 0;
-    if (!eval_scope_enter_global(ctx, &saved_depth)) return false;
-    bool defined = eval_var_defined(ctx, key);
-    eval_scope_leave(ctx, saved_depth);
+    if (!eval_scope_use_global_view(ctx, &saved_depth)) return false;
+    bool defined = eval_var_defined_visible(ctx, key);
+    eval_scope_restore_view(ctx, saved_depth);
     return defined;
 }
 
 static String_View include_guard_var_get_global(Evaluator_Context *ctx, String_View key) {
     size_t saved_depth = 0;
-    if (!eval_scope_enter_global(ctx, &saved_depth)) return nob_sv_from_cstr("");
-    String_View value = eval_var_get(ctx, key);
-    eval_scope_leave(ctx, saved_depth);
+    if (!eval_scope_use_global_view(ctx, &saved_depth)) return nob_sv_from_cstr("");
+    String_View value = eval_var_get_visible(ctx, key);
+    eval_scope_restore_view(ctx, saved_depth);
     return value;
 }
 
 static bool include_guard_var_set_global(Evaluator_Context *ctx, String_View key, String_View value) {
     size_t saved_depth = 0;
-    if (!eval_scope_enter_global(ctx, &saved_depth)) return false;
-    bool ok = eval_var_set(ctx, key, value);
-    eval_scope_leave(ctx, saved_depth);
+    if (!eval_scope_use_global_view(ctx, &saved_depth)) return false;
+    bool ok = eval_var_set_current(ctx, key, value);
+    eval_scope_restore_view(ctx, saved_depth);
     return ok;
 }
 
@@ -312,8 +312,8 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     bool already_guarded = false;
     switch (mode) {
         case INCLUDE_GUARD_VARIABLE:
-            already_guarded = eval_var_defined(ctx, key);
-            if (!already_guarded && !eval_var_set(ctx, key, nob_sv_from_cstr("1"))) {
+            already_guarded = eval_var_defined_visible(ctx, key);
+            if (!already_guarded && !eval_var_set_current(ctx, key, nob_sv_from_cstr("1"))) {
                 return !eval_should_stop(ctx);
             }
             break;
@@ -382,7 +382,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     if (include_enables_cpack_component_commands(file_or_module)) {
         ctx->cpack_component_module_loaded = true;
         if (result_variable.count > 0) {
-            (void)eval_var_set(ctx, result_variable, file_or_module);
+            (void)eval_var_set_current(ctx, result_variable, file_or_module);
         }
         return !eval_should_stop(ctx);
     }
@@ -393,7 +393,7 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
 
     if (!found) {
         if (result_variable.count > 0) {
-            (void)eval_var_set(ctx, result_variable, nob_sv_from_cstr("NOTFOUND"));
+            (void)eval_var_set_current(ctx, result_variable, nob_sv_from_cstr("NOTFOUND"));
         }
         if (!optional) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() could not find requested file or module"),
@@ -403,14 +403,14 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (result_variable.count > 0) {
-        (void)eval_var_set(ctx, result_variable, file_path);
+        (void)eval_var_set_current(ctx, result_variable, file_path);
     }
 
     if (!eval_emit_include_begin(ctx, o, file_path, no_policy_scope)) return !eval_should_stop(ctx);
 
-    String_View scope_source = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View scope_source = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (scope_source.count == 0) scope_source = ctx->source_dir;
-    String_View scope_binary = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    String_View scope_binary = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (scope_binary.count == 0) scope_binary = ctx->source_dir;
 
     if (!emit_dir_push_event(ctx, o, scope_source, scope_binary)) return !eval_should_stop(ctx);
@@ -469,9 +469,9 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
                        a[i]);
     }
 
-    String_View current_src = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View current_src = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (current_src.count == 0) current_src = ctx->source_dir;
-    String_View current_bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    String_View current_bin = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (current_bin.count == 0) current_bin = ctx->binary_dir;
 
     source_dir = eval_path_resolve_for_cmake_arg(ctx, source_dir, current_src, false);
@@ -489,12 +489,12 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     }
     if (!emit_dir_push_event(ctx, o, source_dir, scope_binary)) return !eval_should_stop(ctx);
 
-    bool had_system_default = eval_var_defined(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
+    bool had_system_default = eval_var_defined_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
     String_View system_default_prev = had_system_default
-        ? eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"))
+        ? eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"))
         : nob_sv_from_cstr("");
     if (system) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"), nob_sv_from_cstr("1"))) {
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"), nob_sv_from_cstr("1"))) {
             (void)emit_dir_pop_event(ctx, o, source_dir, scope_binary);
             return !eval_should_stop(ctx);
         }
@@ -504,9 +504,9 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
 
     if (system) {
         if (had_system_default) {
-            (void)eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"), system_default_prev);
+            (void)eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"), system_default_prev);
         } else {
-            (void)eval_var_unset(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
+            (void)eval_var_unset_current(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
         }
     }
 

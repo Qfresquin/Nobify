@@ -314,7 +314,7 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
 
     String_View result = eval_sv_join_semi_temp(ctx, values, value_count);
     if (eval_should_stop(ctx)) return false;
-    if (!eval_var_set(ctx, result_var, result)) return false;
+    if (!eval_var_set_current(ctx, result_var, result)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -332,7 +332,7 @@ bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
     }
 
     String_View value = nob_sv_from_cstr("");
-    String_View hostname_command = eval_var_get(ctx, nob_sv_from_cstr("HOSTNAME"));
+    String_View hostname_command = eval_var_get_visible(ctx, nob_sv_from_cstr("HOSTNAME"));
     if (hostname_command.count > 0) {
         if (!host_capture_command_stdout(ctx, hostname_command, &value)) return false;
         if (value.count == 0) {
@@ -347,7 +347,7 @@ bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    if (!eval_var_set(ctx, args[0], value)) return false;
+    if (!eval_var_set_current(ctx, args[0], value)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -370,9 +370,9 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View system_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
+    String_View system_name = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
     if (system_name.count == 0) system_name = eval_detect_host_system_name();
-    String_View compiler_id = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"));
+    String_View compiler_id = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"));
     if (compiler_id.count == 0) compiler_id = nob_sv_from_cstr("Unknown");
 
     size_t total = system_name.count + 1 + compiler_id.count;
@@ -383,7 +383,7 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
     memcpy(buf + system_name.count + 1, compiler_id.data, compiler_id.count);
     buf[total] = '\0';
 
-    if (!eval_var_set(ctx, args[0], nob_sv_from_parts(buf, total))) return false;
+    if (!eval_var_set_current(ctx, args[0], nob_sv_from_parts(buf, total))) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -404,13 +404,13 @@ bool eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
     }
 
     bool cmp0061_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0061);
-    String_View generator = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_GENERATOR"));
+    String_View generator = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_GENERATOR"));
     bool append_make_i = !cmp0061_new && host_is_makefile_generator(generator);
 
-    String_View cmake_command = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    String_View cmake_command = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
     String_View value = host_build_command_text_temp(ctx, cmake_command, &opt, append_make_i);
     if (eval_should_stop(ctx)) return false;
 
-    if (!eval_var_set(ctx, out_var, value)) return false;
+    if (!eval_var_set_current(ctx, out_var, value)) return false;
     return !eval_should_stop(ctx);
 }

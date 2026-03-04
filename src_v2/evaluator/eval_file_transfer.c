@@ -110,12 +110,12 @@ static String_View file_transfer_first_line_temp(Evaluator_Context *ctx, String_
 static void file_transfer_set_status_sv(Evaluator_Context *ctx, String_View status_var, int code, String_View msg) {
     if (!ctx || status_var.count == 0) return;
     const int mlen = (msg.count > (size_t)INT32_MAX) ? INT32_MAX : (int)msg.count;
-    (void)eval_var_set(ctx, status_var, nob_sv_from_cstr(nob_temp_sprintf("%d;%.*s", code, mlen, msg.data ? msg.data : "")));
+    (void)eval_var_set_current(ctx, status_var, nob_sv_from_cstr(nob_temp_sprintf("%d;%.*s", code, mlen, msg.data ? msg.data : "")));
 }
 
 static void file_transfer_set_log_sv(Evaluator_Context *ctx, String_View log_var, String_View msg) {
     if (!ctx || log_var.count == 0) return;
-    (void)eval_var_set(ctx, log_var, msg);
+    (void)eval_var_set_current(ctx, log_var, msg);
 }
 
 static void file_transfer_set_success(Evaluator_Context *ctx, const File_Transfer_Options *opt, String_View log_msg) {

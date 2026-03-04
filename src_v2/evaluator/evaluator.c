@@ -60,7 +60,7 @@ bool ctx_oom(Evaluator_Context *ctx) {
 
 bool eval_continue_on_error(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR));
     if (v.count == 0) return false;
     return eval_truthy(ctx, v);
 }
@@ -151,7 +151,7 @@ static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
     return buf;
 }
 
-String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
+String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return nob_sv_from_cstr("");
     for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
         Var_Scope *s = &ctx->scopes[d];
@@ -182,11 +182,11 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
 
     ctx->in_variable_watch_notification = true;
     bool ok = true;
-    ok = ok && eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VAR"), key);
-    ok = ok && eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_ACTION"), action);
-    ok = ok && eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VALUE"), value);
+    ok = ok && eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VAR"), key);
+    ok = ok && eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_ACTION"), action);
+    ok = ok && eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VALUE"), value);
     if (ok && command.count > 0) {
-        ok = eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_COMMAND"), command);
+        ok = eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_COMMAND"), command);
     }
     if (ok) {
         Cmake_Event_Origin origin = {0};
@@ -202,7 +202,7 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
     return ok;
 }
 
-bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
+bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View value) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
     Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
@@ -223,18 +223,17 @@ bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value) {
     return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("SET"), value);
 }
 
-bool eval_var_unset(Evaluator_Context *ctx, String_View key) {
+bool eval_var_unset_current(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
     Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
-    String_View old_value = eval_var_get(ctx, key);
+    String_View old_value = eval_var_get_visible(ctx, key);
     if (s->vars) {
         (void)stbds_shdel(s->vars, nob_temp_sv_to_cstr(key));
     }
     return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("UNSET"), old_value);
 }
 
-bool eval_var_defined(Evaluator_Context *ctx, String_View key) {
-    // True only if binding exists in any visible scope.
+bool eval_var_defined_visible(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
     for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
         Var_Scope *s = &ctx->scopes[d];
@@ -245,12 +244,27 @@ bool eval_var_defined(Evaluator_Context *ctx, String_View key) {
     return false;
 }
 
-bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key) {
-    // Used by commands that need local-scope semantics only.
+bool eval_var_defined_current(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
     Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     return b != NULL;
+}
+
+bool eval_var_collect_visible_names(Evaluator_Context *ctx, SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    for (size_t depth = 0; depth < eval_scope_visible_depth(ctx); depth++) {
+        Var_Scope *scope = &ctx->scopes[depth];
+        ptrdiff_t n = stbds_shlen(scope->vars);
+        for (ptrdiff_t i = 0; i < n; i++) {
+            if (!scope->vars[i].key) continue;
+            if (!eval_sv_arr_push_temp(ctx, out_names, nob_sv_from_cstr(scope->vars[i].key))) return false;
+        }
+    }
+
+    return true;
 }
 
 bool eval_cache_defined(Evaluator_Context *ctx, String_View key) {
@@ -412,12 +426,12 @@ bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_
         const Eval_Property_Definition *def = &ctx->property_definitions[i];
         if (!eval_sv_eq_ci_lit(def->scope_upper, "TARGET")) continue;
         if (!def->has_initialize_from_variable) continue;
-        if (!eval_var_defined(ctx, def->initialize_from_variable)) continue;
+        if (!eval_var_defined_visible(ctx, def->initialize_from_variable)) continue;
         if (!eval_emit_target_prop_set(ctx,
                                        origin,
                                        target_name,
                                        def->property_upper,
-                                       eval_var_get(ctx, def->initialize_from_variable),
+                                       eval_var_get_visible(ctx, def->initialize_from_variable),
                                        EV_PROP_SET)) {
             return false;
         }
@@ -665,7 +679,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
         } else if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "LISTS")) {
             idx++;
             for (; idx < arena_arr_len(a); idx++) {
-                String_View list_txt = eval_var_get(ctx, a[idx]);
+                String_View list_txt = eval_var_get_visible(ctx, a[idx]);
                 if (list_txt.count == 0) continue;
                 if (!eval_sv_split_semicolon_genex_aware(ctx->arena, list_txt, &items)) return ctx_oom(ctx);
             }
@@ -680,7 +694,7 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
             EVAL_OOM_RETURN_IF_NULL(ctx, zip_counts, false);
             size_t max_len = 0;
             for (size_t li = 0; li < list_count; li++, idx++) {
-                String_View list_txt = eval_var_get(ctx, a[idx]);
+                String_View list_txt = eval_var_get_visible(ctx, a[idx]);
                 SV_List one = NULL;
                 if (list_txt.count > 0 && !eval_sv_split_semicolon_genex_aware(ctx->arena, list_txt, &one)) return ctx_oom(ctx);
                 if (arena_arr_len(one) > max_len) max_len = arena_arr_len(one);
@@ -709,15 +723,15 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
         items_count = arena_arr_len(a) - idx;
     }
 
-    String_View loop_old = eval_var_get(ctx, var);
-    bool loop_old_defined = eval_var_defined(ctx, var);
+    String_View loop_old = eval_var_get_visible(ctx, var);
+    bool loop_old_defined = eval_var_defined_visible(ctx, var);
     size_t iter_count = 0;
 
     if (!eval_emit_flow_loop_begin(ctx, origin, nob_sv_from_cstr("foreach"))) return false;
     ctx->loop_depth++;
     for (size_t ii = 0; ii < items_count; ii++) {
         iter_count++;
-        if (!eval_var_set(ctx, var, items_ptr[ii])) {
+        if (!eval_var_set_current(ctx, var, items_ptr[ii])) {
             ctx->loop_depth--;
             return false;
         }
@@ -741,8 +755,8 @@ static bool eval_foreach(Evaluator_Context *ctx, const Node *node) {
     ctx->loop_depth--;
     if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("foreach"), (uint32_t)iter_count)) return false;
     if (cmp0124_new) {
-        if (loop_old_defined) (void)eval_var_set(ctx, var, loop_old);
-        else (void)eval_var_unset(ctx, var);
+        if (loop_old_defined) (void)eval_var_set_current(ctx, var, loop_old);
+        else (void)eval_var_unset_current(ctx, var);
     }
     return true;
 }
@@ -810,7 +824,7 @@ static bool eval_node(Evaluator_Context *ctx, const Node *node) {
         if (n < 0 || (size_t)n >= sizeof(line_buf)) {
             return ctx_oom(ctx);
         }
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr(line_buf))) {
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr(line_buf))) {
             return false;
         }
     }
@@ -1029,7 +1043,7 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
         String_View val = nob_sv_from_cstr("");
         if (i < arg_count) val = (*args)[i];
         if (is_function) {
-            if (!eval_var_set(ctx, cmd->params[i], val)) goto cleanup;
+            if (!eval_var_set_current(ctx, cmd->params[i], val)) goto cleanup;
         } else {
             if (!eval_macro_bind_set(ctx, cmd->params[i], val)) goto cleanup;
         }
@@ -1042,14 +1056,14 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
         return ctx_oom(ctx);
     }
     if (is_function) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("ARGC"), nob_sv_from_cstr(buf_argc))) goto cleanup;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("ARGC"), nob_sv_from_cstr(buf_argc))) goto cleanup;
     } else {
         if (!eval_macro_bind_set(ctx, nob_sv_from_cstr("ARGC"), nob_sv_from_cstr(buf_argc))) goto cleanup;
     }
 
     String_View argv_val = eval_sv_join_semi_temp(ctx, args ? *args : NULL, arg_count);
     if (is_function) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("ARGV"), argv_val)) goto cleanup;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("ARGV"), argv_val)) goto cleanup;
     } else {
         if (!eval_macro_bind_set(ctx, nob_sv_from_cstr("ARGV"), argv_val)) goto cleanup;
     }
@@ -1059,13 +1073,13 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
                                                       &(*args)[arena_arr_len(cmd->params)],
                                                       arg_count - arena_arr_len(cmd->params));
         if (is_function) {
-            if (!eval_var_set(ctx, nob_sv_from_cstr("ARGN"), argn_val)) goto cleanup;
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("ARGN"), argn_val)) goto cleanup;
         } else {
             if (!eval_macro_bind_set(ctx, nob_sv_from_cstr("ARGN"), argn_val)) goto cleanup;
         }
     } else {
         if (is_function) {
-            if (!eval_var_set(ctx, nob_sv_from_cstr("ARGN"), nob_sv_from_cstr(""))) goto cleanup;
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("ARGN"), nob_sv_from_cstr(""))) goto cleanup;
         } else {
             if (!eval_macro_bind_set(ctx, nob_sv_from_cstr("ARGN"), nob_sv_from_cstr(""))) goto cleanup;
         }
@@ -1076,7 +1090,7 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
         int key_n = snprintf(key, sizeof(key), "ARGV%zu", i);
         if (key_n < 0 || (size_t)key_n >= sizeof(key)) goto cleanup;
         if (is_function) {
-            if (!eval_var_set(ctx, nob_sv_from_cstr(key), (*args)[i])) goto cleanup;
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr(key), (*args)[i])) goto cleanup;
         } else {
             if (!eval_macro_bind_set(ctx, nob_sv_from_cstr(key), (*args)[i])) goto cleanup;
         }
@@ -1088,15 +1102,15 @@ cleanup:
     if (ctx->return_requested && arena_arr_len(ctx->return_propagate_vars) > 0 && is_function && eval_scope_visible_depth(ctx) > 1) {
         for (size_t i = 0; i < arena_arr_len(ctx->return_propagate_vars); i++) {
             String_View key = ctx->return_propagate_vars[i];
-            if (!eval_var_defined_in_current_scope(ctx, key)) continue;
-            String_View value = eval_var_get(ctx, key);
+            if (!eval_var_defined_current(ctx, key)) continue;
+            String_View value = eval_var_get_visible(ctx, key);
             size_t saved_depth = 0;
-            if (!eval_scope_enter_parent(ctx, &saved_depth)) {
+            if (!eval_scope_use_parent_view(ctx, &saved_depth)) {
                 ok = false;
                 continue;
             }
-            bool ok_set = eval_var_set(ctx, key, value);
-            eval_scope_leave(ctx, saved_depth);
+            bool ok_set = eval_var_set_current(ctx, key, value);
+            eval_scope_restore_view(ctx, saved_depth);
             if (!ok_set) ok = false;
         }
     }
@@ -1261,10 +1275,10 @@ static bool eval_push_external_context(Evaluator_Context *ctx,
     memset(state, 0, sizeof(*state));
 
     state->old_file = ctx->current_file;
-    state->old_list_file = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
-    state->old_list_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
-    state->old_src_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    state->old_bin_dir = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
+    state->old_list_file = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
+    state->old_list_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
+    state->old_src_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+    state->old_bin_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
     state->is_add_subdirectory = is_add_subdirectory;
     state->restore_needed = true;
 
@@ -1273,20 +1287,20 @@ static bool eval_push_external_context(Evaluator_Context *ctx,
     EVAL_OOM_RETURN_IF_NULL(ctx, new_current_file, false);
     ctx->current_file = new_current_file;
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), file_path)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), new_list_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), file_path)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), new_list_dir)) return false;
 
     if (!is_add_subdirectory) return true;
 
     if (!eval_scope_push(ctx)) return false;
     state->scope_pushed = true;
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), new_list_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), new_list_dir)) return false;
     if (explicit_bin_dir.count > 0) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), explicit_bin_dir)) return false;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), explicit_bin_dir)) return false;
     } else {
         String_View bin_path = sv_copy_to_event_arena(ctx, new_list_dir);
-        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), bin_path)) return false;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), bin_path)) return false;
     }
     return true;
 }
@@ -1299,11 +1313,11 @@ static void eval_pop_external_context(Evaluator_Context *ctx, const External_Eva
     }
 
     ctx->current_file = state->old_file;
-    (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), state->old_list_file);
-    (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), state->old_list_dir);
+    (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), state->old_list_file);
+    (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), state->old_list_dir);
     if (state->is_add_subdirectory) {
-        (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), state->old_src_dir);
-        (void)eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), state->old_bin_dir);
+        (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), state->old_src_dir);
+        (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), state->old_bin_dir);
     }
 }
 
@@ -1422,91 +1436,91 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->visible_scope_depth = 1;
 
     // Bootstrap canonical CMAKE_* variables.
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return NULL;
     if (ctx->current_file) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(ctx->current_file))) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(ctx->current_file))) return NULL;
     } else {
-        if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(""))) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(""))) return NULL;
     }
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr("1"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_defer_push_directory(ctx, ctx->source_dir, ctx->binary_dir)) return NULL;
 
     // Inject host/platform built-ins commonly used by scripts in if() conditions.
 #if defined(_WIN32)
-    if (!eval_var_set(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("1"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("0"))) return NULL;
 #else
-    if (!eval_var_set(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("1"))) return NULL;
 #endif
 
 #if defined(__APPLE__)
-    if (!eval_var_set(ctx, nob_sv_from_cstr("APPLE"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("APPLE"), nob_sv_from_cstr("1"))) return NULL;
 #else
-    if (!eval_var_set(ctx, nob_sv_from_cstr("APPLE"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("APPLE"), nob_sv_from_cstr("0"))) return NULL;
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
-    if (!eval_var_set(ctx, nob_sv_from_cstr("MSVC"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MSVC"), nob_sv_from_cstr("1"))) return NULL;
 #else
-    if (!eval_var_set(ctx, nob_sv_from_cstr("MSVC"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MSVC"), nob_sv_from_cstr("0"))) return NULL;
 #endif
 
 #if defined(__MINGW32__) || defined(__MINGW64__)
-    if (!eval_var_set(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("1"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("1"))) return NULL;
 #else
-    if (!eval_var_set(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("0"))) return NULL;
 #endif
 
     // Project and toolchain built-ins.
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_VERSION"), nob_sv_from_cstr("3.28.0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MAJOR_VERSION"), nob_sv_from_cstr("3"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINOR_VERSION"), nob_sv_from_cstr("28"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PATCH_VERSION"), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_VERSION"), nob_sv_from_cstr("3.28.0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MAJOR_VERSION"), nob_sv_from_cstr("3"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MINOR_VERSION"), nob_sv_from_cstr("28"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PATCH_VERSION"), nob_sv_from_cstr("0"))) return NULL;
     String_View host_system_name = eval_detect_host_system_name();
     String_View host_processor = eval_detect_host_processor();
     String_View host_system_version = eval_host_os_version_temp(ctx);
     if (eval_should_stop(ctx)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), host_system_name)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), host_processor)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), host_system_name)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), host_system_name)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), host_processor)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), host_system_name)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake"))) return NULL;
 
     // Project built-ins default to empty and are updated by project().
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
                       ctx->compat_profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(ctx->compat_profile))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY), nob_sv_from_cstr("WARN"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(ctx->compat_profile))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY), nob_sv_from_cstr("WARN"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
 
     {
         const char *cc = getenv("CC");
         if (!cc || cc[0] == '\0') cc = "cc";
         const char *cxx = getenv("CXX");
         if (!cxx || cxx[0] == '\0') cxx = "c++";
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), nob_sv_from_cstr(cc))) return NULL;
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), nob_sv_from_cstr(cxx))) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), nob_sv_from_cstr(cc))) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), nob_sv_from_cstr(cxx))) return NULL;
     }
 
     // Compiler ID can be fixed for compatibility scripts.
     String_View compiler_id = detect_compiler_id();
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
 
     return ctx;
 }

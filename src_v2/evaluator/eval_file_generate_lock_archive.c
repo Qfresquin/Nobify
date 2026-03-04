@@ -537,7 +537,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_bin_dir(ctx), &lock_path)) return true;
     if (directory_lock) {
         if (!eval_file_mkdir_p(ctx, lock_path)) {
-            if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to create lock directory"));
+            if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to create lock directory"));
             else {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(LOCK) failed to create directory for DIRECTORY lock"), lock_path);
             }
@@ -552,13 +552,13 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
             eval_file_lock_close_entry(&ctx->file_locks[existing]);
             eval_file_lock_remove_at(ctx, (size_t)existing);
         }
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("0"));
+        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
         return true;
     }
 
     if (existing >= 0) {
         if (result_var.count > 0) {
-            (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("lock already held by current evaluator context"));
+            (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("lock already held by current evaluator context"));
         } else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(LOCK) duplicate lock acquisition without RELEASE"), lock_path);
         }
@@ -577,7 +577,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
                            FILE_ATTRIBUTE_NORMAL,
                            NULL);
     if (h == INVALID_HANDLE_VALUE) {
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
+        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
         else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
         }
@@ -602,7 +602,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     }
     if (!ok) {
         CloseHandle(h);
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
+        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
         else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
         }
@@ -615,12 +615,12 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
         CloseHandle(h);
         return true;
     }
-    if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("0"));
+    if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
     return true;
 #else
     int fd = open(path_c, O_RDWR | O_CREAT, 0666);
     if (fd < 0) {
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
+        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
         else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
         }
@@ -645,7 +645,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
 
     if (!ok) {
         close(fd);
-        if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
+        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
         else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
         }
@@ -658,7 +658,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
         return true;
     }
 
-    if (result_var.count > 0) (void)eval_var_set(ctx, result_var, nob_sv_from_cstr("0"));
+    if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
     return true;
 #endif
 }

@@ -121,7 +121,7 @@ static bool add_custom_noop_positional(Evaluator_Context *ctx,
 static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
                                                   Cmake_Event_Origin o,
                                                   String_View target_name) {
-    String_View raw = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
+    String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
     if (raw.count == 0) return true;
     if (eval_sv_eq_ci_lit(raw, "0") || eval_sv_eq_ci_lit(raw, "FALSE") || eval_sv_eq_ci_lit(raw, "OFF")) {
         return true;

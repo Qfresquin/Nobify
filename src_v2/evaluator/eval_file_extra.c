@@ -104,7 +104,7 @@ static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List a
         return true;
     }
 
-    (void)eval_var_set(ctx, args[2], digest);
+    (void)eval_var_set_current(ctx, args[2], digest);
     return true;
 }
 
@@ -122,7 +122,7 @@ static String_View file_expand_configure_once(Evaluator_Context *ctx,
                 while (j < input.count && input.data[j] != '}') j++;
                 if (j < input.count && input.data[j] == '}') {
                     String_View key = nob_sv_from_parts(input.data + i + 2, j - (i + 2));
-                    file_append_configure_value(&out, eval_var_get(ctx, key), escape_quotes);
+                    file_append_configure_value(&out, eval_var_get_visible(ctx, key), escape_quotes);
                     i = j + 1;
                     continue;
                 }
@@ -165,7 +165,7 @@ static String_View file_expand_configure_once(Evaluator_Context *ctx,
             while (j < input.count && input.data[j] != '@') j++;
             if (j < input.count && input.data[j] == '@' && j > i + 1) {
                 String_View key = nob_sv_from_parts(input.data + i + 1, j - (i + 1));
-                file_append_configure_value(&out, eval_var_get(ctx, key), escape_quotes);
+                file_append_configure_value(&out, eval_var_get_visible(ctx, key), escape_quotes);
                 i = j + 1;
                 continue;
             }
@@ -294,7 +294,7 @@ static String_View configure_file_process_line(Evaluator_Context *ctx,
     while (i < line.count && (line.data[i] == ' ' || line.data[i] == '\t')) i++;
     String_View suffix = nob_sv_from_parts(line.data + i, line.count - i);
 
-    String_View val = eval_var_get(ctx, key);
+    String_View val = eval_var_get_visible(ctx, key);
     bool truthy = eval_truthy(ctx, val);
 
     Nob_String_Builder sb = {0};
@@ -660,7 +660,7 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
 
     bool ok = file_copy_file_do(ctx, src, dst, only_if_different);
     if (result_var.count > 0) {
-        (void)eval_var_set(ctx, result_var, ok ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"));
+        (void)eval_var_set_current(ctx, result_var, ok ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"));
         return true;
     }
 
@@ -1179,14 +1179,14 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
 
 #if defined(_WIN32)
     // Linux-first implementation: Windows remains deterministic no-op for now.
-    if (rd.resolved_var.count > 0) (void)eval_var_set(ctx, rd.resolved_var, nob_sv_from_cstr(""));
-    if (rd.unresolved_var.count > 0) (void)eval_var_set(ctx, rd.unresolved_var, nob_sv_from_cstr(""));
+    if (rd.resolved_var.count > 0) (void)eval_var_set_current(ctx, rd.resolved_var, nob_sv_from_cstr(""));
+    if (rd.unresolved_var.count > 0) (void)eval_var_set_current(ctx, rd.unresolved_var, nob_sv_from_cstr(""));
     if (rd.conflicts_prefix.count > 0) {
         Nob_String_Builder key = {0};
         nob_sb_append_buf(&key, rd.conflicts_prefix.data, rd.conflicts_prefix.count);
         nob_sb_append_cstr(&key, "_FILENAMES");
         nob_sb_append_null(&key);
-        (void)eval_var_set(ctx, nob_sv_from_cstr(key.items), nob_sv_from_cstr(""));
+        (void)eval_var_set_current(ctx, nob_sv_from_cstr(key.items), nob_sv_from_cstr(""));
         nob_sb_free(key);
     }
     return true;
@@ -1243,12 +1243,12 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
     if (rd.resolved_var.count > 0) {
         String_View joined = (arena_arr_len(resolved) > 0) ? eval_sv_join_semi_temp(ctx, resolved, arena_arr_len(resolved))
                                                   : nob_sv_from_cstr("");
-        (void)eval_var_set(ctx, rd.resolved_var, joined);
+        (void)eval_var_set_current(ctx, rd.resolved_var, joined);
     }
     if (rd.unresolved_var.count > 0) {
         String_View joined = (arena_arr_len(unresolved) > 0) ? eval_sv_join_semi_temp(ctx, unresolved, arena_arr_len(unresolved))
                                                     : nob_sv_from_cstr("");
-        (void)eval_var_set(ctx, rd.unresolved_var, joined);
+        (void)eval_var_set_current(ctx, rd.unresolved_var, joined);
     }
 
     if (rd.conflicts_prefix.count > 0) {
@@ -1272,7 +1272,7 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
                 nob_sb_append(&key, '_');
                 nob_sb_append_buf(&key, bi.data, bi.count);
                 nob_sb_append_null(&key);
-                (void)eval_var_set(ctx, nob_sv_from_cstr(key.items), val);
+                (void)eval_var_set_current(ctx, nob_sv_from_cstr(key.items), val);
                 nob_sb_free(key);
             }
         }
@@ -1285,7 +1285,7 @@ static bool handle_file_get_runtime_dependencies(Evaluator_Context *ctx, const N
         String_View joined = (arena_arr_len(conflict_names) > 0)
                                  ? eval_sv_join_semi_temp(ctx, conflict_names, arena_arr_len(conflict_names))
                                  : nob_sv_from_cstr("");
-        (void)eval_var_set(ctx, nob_sv_from_cstr(key.items), joined);
+        (void)eval_var_set_current(ctx, nob_sv_from_cstr(key.items), joined);
         nob_sb_free(key);
     }
 #endif

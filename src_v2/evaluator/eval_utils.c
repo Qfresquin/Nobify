@@ -489,9 +489,9 @@ bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_nam
                             command_name.data ? command_name.data : "");
     if (args_n < 0 || status_n < 0) return ctx_oom(ctx);
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND"), command_name)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(args_key), joined)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr(status_key), status)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND"), command_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(args_key), joined)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(status_key), status)) return false;
     return true;
 }
 
@@ -512,7 +512,7 @@ bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, 
                      command_name.data ? command_name.data : "");
     if (n < 0) return ctx_oom(ctx);
 
-    return eval_var_set(ctx, nob_sv_from_cstr(key), joined);
+    return eval_var_set_current(ctx, nob_sv_from_cstr(key), joined);
 }
 
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {

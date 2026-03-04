@@ -124,7 +124,7 @@ static bool msg_write_all(FILE *f, const char *text) {
 bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg) {
     if (!ctx) return false;
 
-    String_View bin = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
+    String_View bin = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
     if (bin.count == 0) bin = ctx->binary_dir;
 
     String_View cmakefiles_dir = eval_sv_path_join(eval_temp_arena(ctx), bin, nob_sv_from_cstr("CMakeFiles"));
@@ -207,9 +207,9 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (mode == MSG_MODE_DEPRECATION) {
-        String_View error_dep = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_ERROR_DEPRECATED"));
+        String_View error_dep = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_ERROR_DEPRECATED"));
         bool error_enabled = (error_dep.count > 0) && !msg_is_cmake_false(error_dep);
-        String_View warn_dep = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_WARN_DEPRECATED"));
+        String_View warn_dep = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_WARN_DEPRECATED"));
         bool warn_enabled = (warn_dep.count == 0) || !msg_is_cmake_false(warn_dep);
         if (error_enabled) {
             mode = MSG_MODE_SEND_ERROR;

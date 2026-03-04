@@ -13,7 +13,7 @@ static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
                                                   Cmake_Event_Origin o,
                                                   String_View target_name) {
-    String_View raw = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
+    String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
     if (raw.count == 0) return true;
     if (eval_sv_eq_ci_lit(raw, "0") || eval_sv_eq_ci_lit(raw, "FALSE") || eval_sv_eq_ci_lit(raw, "OFF")) {
         return true;
@@ -42,8 +42,8 @@ static bool emit_items_from_list(Evaluator_Context *ctx,
 static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
                                                  Cmake_Event_Origin o,
                                                  String_View target_name) {
-    String_View defs = eval_var_get(ctx, nob_sv_from_cstr(k_global_defs_var));
-    String_View opts = eval_var_get(ctx, nob_sv_from_cstr(k_global_opts_var));
+    String_View defs = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_defs_var));
+    String_View opts = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_opts_var));
     if (!emit_items_from_list(ctx, o, target_name, defs, 0)) return false;
     if (!emit_items_from_list(ctx, o, target_name, opts, 1)) return false;
     return true;
@@ -107,7 +107,7 @@ static bool add_alias_target_validate(Evaluator_Context *ctx,
 }
 
 static bool add_library_default_shared(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr("BUILD_SHARED_LIBS"));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("BUILD_SHARED_LIBS"));
     if (v.count == 0) return false;
     if (eval_sv_eq_ci_lit(v, "0") ||
         eval_sv_eq_ci_lit(v, "OFF") ||
@@ -228,10 +228,10 @@ bool eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node
         policy_version_token = nob_sv_from_cstr("2.4");
     }
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_token)) {
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MINIMUM_REQUIRED_VERSION"), min_token)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version_token)) {
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_version_token)) {
         return !eval_should_stop(ctx);
     }
     if (!policy_apply_version_defaults(ctx, policy_version)) return !eval_should_stop(ctx);
@@ -290,7 +290,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
 
         Eval_Semver policy_version = has_max ? max_version : min_version;
         String_View policy_token = has_max ? max_token : min_token;
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_token)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), policy_token)) return !eval_should_stop(ctx);
         if (!policy_apply_version_defaults(ctx, policy_version)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
@@ -327,7 +327,7 @@ bool eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         String_View val = eval_policy_get_effective(ctx, a[1]);
-        if (!eval_var_set(ctx, a[2], val)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, a[2], val)) return !eval_should_stop(ctx);
         return !eval_should_stop(ctx);
     }
 
@@ -408,7 +408,7 @@ static bool project_set_prefixed_var(Evaluator_Context *ctx,
                                      String_View value) {
     String_View key = svu_concat_suffix_temp(ctx, prefix, suffix);
     if (eval_should_stop(ctx)) return false;
-    return eval_var_set(ctx, key, value);
+    return eval_var_set_current(ctx, key, value);
 }
 
 static bool language_token_is_known(String_View lang) {
@@ -460,7 +460,7 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
                                     const SV_List *requested) {
     if (!ctx || !requested) return false;
 
-    String_View existing_text = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"));
+    String_View existing_text = eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"));
     SV_List enabled = NULL;
     if (existing_text.count > 0) {
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), existing_text, &enabled)) return false;
@@ -485,13 +485,13 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
 
         String_View loaded_var = language_compiler_loaded_var_temp(ctx, lang);
         if (eval_should_stop(ctx)) return false;
-        if (!eval_var_set(ctx, loaded_var, nob_sv_from_cstr("1"))) return false;
+        if (!eval_var_set_current(ctx, loaded_var, nob_sv_from_cstr("1"))) return false;
     }
 
     String_View merged = eval_sv_join_semi_temp(ctx, enabled, arena_arr_len(enabled));
     if (eval_should_stop(ctx)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), merged)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), merged)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), merged)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), merged)) return false;
     return true;
 }
 
@@ -679,40 +679,40 @@ bool eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     String_View version_tweak = has_version_arg ? version_info.tweak : nob_sv_from_cstr("");
     String_View langs = eval_sv_join_semi_temp(ctx, lang_items, arena_arr_len(lang_items));
 
-    String_View project_src_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View project_src_dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (project_src_dir.count == 0) project_src_dir = ctx->source_dir;
-    String_View project_bin_dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    String_View project_bin_dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (project_bin_dir.count == 0) project_bin_dir = ctx->binary_dir;
     bool is_top_level = nob_sv_eq(project_src_dir, ctx->source_dir) && nob_sv_eq(project_bin_dir, ctx->binary_dir);
     String_View is_top_level_sv = is_top_level ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
     bool cmp0048_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0048);
     bool should_apply_version_vars = has_version_arg || cmp0048_new;
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_NAME"), name)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_SOURCE_DIR"), project_src_dir)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_BINARY_DIR"), project_bin_dir)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_DESCRIPTION"), desc)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_HOMEPAGE_URL"), homepage_url)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_IS_TOP_LEVEL"), is_top_level_sv)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), name)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_SOURCE_DIR"), project_src_dir)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_BINARY_DIR"), project_bin_dir)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_DESCRIPTION"), desc)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_HOMEPAGE_URL"), homepage_url)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_IS_TOP_LEVEL"), is_top_level_sv)) return !eval_should_stop(ctx);
     if (should_apply_version_vars) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION"), version)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_MAJOR"), version_major)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_MINOR"), version_minor)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_PATCH"), version_patch)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("PROJECT_VERSION_TWEAK"), version_tweak)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION"), version)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION_MAJOR"), version_major)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION_MINOR"), version_minor)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION_PATCH"), version_patch)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION_TWEAK"), version_tweak)) return !eval_should_stop(ctx);
     }
 
-    String_View cmake_project_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"));
+    String_View cmake_project_name = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"));
     if (is_top_level || cmake_project_name.count == 0) {
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"), name)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_DESCRIPTION"), desc)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_HOMEPAGE_URL"), homepage_url)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME"), name)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_DESCRIPTION"), desc)) return !eval_should_stop(ctx);
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_HOMEPAGE_URL"), homepage_url)) return !eval_should_stop(ctx);
         if (should_apply_version_vars) {
-            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION"), version)) return !eval_should_stop(ctx);
-            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_MAJOR"), version_major)) return !eval_should_stop(ctx);
-            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_MINOR"), version_minor)) return !eval_should_stop(ctx);
-            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_PATCH"), version_patch)) return !eval_should_stop(ctx);
-            if (!eval_var_set(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_TWEAK"), version_tweak)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION"), version)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_MAJOR"), version_major)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_MINOR"), version_minor)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_PATCH"), version_patch)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PROJECT_VERSION_TWEAK"), version_tweak)) return !eval_should_stop(ctx);
         }
     }
 

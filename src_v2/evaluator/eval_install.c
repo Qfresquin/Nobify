@@ -282,7 +282,7 @@ static bool install_handle_targets_like(Evaluator_Context *ctx,
         memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::"), export_name.data, export_name.count);
         memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::") + export_name.count, "::TARGETS", strlen("::TARGETS"));
         key_buf[total] = '\0';
-        if (!eval_var_set(ctx,
+        if (!eval_var_set_current(ctx,
                           nob_sv_from_parts(key_buf, total),
                           eval_sv_join_semi_temp(ctx, targets, arena_arr_len(targets)))) {
             return false;

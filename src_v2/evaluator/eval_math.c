@@ -389,7 +389,7 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     } else {
         snprintf(out_buf, sizeof(out_buf), "%lld", value);
     }
-    (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_buf));
+    (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(out_buf));
     if (!eval_emit_math_expr(ctx,
                              o,
                              out_var,

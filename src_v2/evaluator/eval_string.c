@@ -106,7 +106,7 @@ static bool string_configure_expand_temp(Evaluator_Context *ctx,
             while (j < input.count && input.data[j] != '@') j++;
             if (j < input.count && j > i + 1) {
                 String_View key = nob_sv_from_parts(input.data + i + 1, j - (i + 1));
-                String_View val = eval_var_get(ctx, key);
+                String_View val = eval_var_get_visible(ctx, key);
                 (void)string_append_sv_escaped_quotes(&sb, val, escape_quotes);
                 i = j + 1;
                 continue;
@@ -128,7 +128,7 @@ static bool string_configure_expand_temp(Evaluator_Context *ctx,
                     const char *env_val = getenv(env_buf);
                     if (env_val) val = nob_sv_from_cstr(env_val);
                 } else {
-                    val = eval_var_get(ctx, key);
+                    val = eval_var_get_visible(ctx, key);
                 }
                 (void)string_append_sv_escaped_quotes(&sb, val, escape_quotes);
                 i = j + 1;
@@ -1124,8 +1124,8 @@ static bool string_json_emit_or_store_error(Evaluator_Context *ctx,
                                             size_t path_prefix_count) {
     if (!ctx || !node) return !eval_should_stop(ctx);
     if (has_error_var) {
-        (void)eval_var_set(ctx, out_var, string_json_notfound_temp(ctx, path, path_prefix_count));
-        (void)eval_var_set(ctx, error_var, message);
+        (void)eval_var_set_current(ctx, out_var, string_json_notfound_temp(ctx, path, path_prefix_count));
+        (void)eval_var_set_current(ctx, error_var, message);
         return !eval_should_stop(ctx);
     }
     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", message,
@@ -1571,7 +1571,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
         has_error_var = true;
         error_var = a[pos + 1];
         pos += 2;
-        (void)eval_var_set(ctx, error_var, nob_sv_from_cstr("NOTFOUND"));
+        (void)eval_var_set_current(ctx, error_var, nob_sv_from_cstr("NOTFOUND"));
     }
     if (pos >= arena_arr_len(a)) {
         return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
@@ -1607,7 +1607,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
         if (!string_jsonv_parse_root_temp(ctx, a[pos + 1], &rhs, &err)) {
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, NULL, 0);
         }
-        (void)eval_var_set(ctx, out_var, string_jsonv_equal(lhs, rhs) ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+        (void)eval_var_set_current(ctx, out_var, string_jsonv_equal(lhs, rhs) ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
         return !eval_should_stop(ctx);
     }
 
@@ -1635,18 +1635,18 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
         }
         if (eval_sv_eq_ci_lit(mode, "GET")) {
             if (target->type == STRING_JSON_STRING || target->type == STRING_JSON_NUMBER) {
-                (void)eval_var_set(ctx, out_var, target->scalar);
+                (void)eval_var_set_current(ctx, out_var, target->scalar);
             } else if (target->type == STRING_JSON_BOOL) {
-                (void)eval_var_set(ctx, out_var, target->bool_value ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+                (void)eval_var_set_current(ctx, out_var, target->bool_value ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
             } else if (target->type == STRING_JSON_NULL) {
-                (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(""));
+                (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
             } else {
-                (void)eval_var_set(ctx, out_var, string_jsonv_serialize_temp(ctx, target));
+                (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, target));
             }
             return !eval_should_stop(ctx);
         }
         if (eval_sv_eq_ci_lit(mode, "TYPE")) {
-            (void)eval_var_set(ctx, out_var, string_json_type_name(target->type));
+            (void)eval_var_set_current(ctx, out_var, string_json_type_name(target->type));
             return !eval_should_stop(ctx);
         }
         if (target->type != STRING_JSON_OBJECT && target->type != STRING_JSON_ARRAY) {
@@ -1656,7 +1656,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
         }
         char num[64];
         snprintf(num, sizeof(num), "%zu", target->type == STRING_JSON_ARRAY ? target->array_count : target->object_count);
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(num));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num));
         return !eval_should_stop(ctx);
     }
 
@@ -1684,7 +1684,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                                    string_json_message_with_token_temp(ctx, "string(JSON MEMBER) invalid index", index_sv),
                                                    path, path_count);
         }
-        (void)eval_var_set(ctx, out_var, target->object_items[idx].key);
+        (void)eval_var_set_current(ctx, out_var, target->object_items[idx].key);
         return !eval_should_stop(ctx);
     }
 
@@ -1723,7 +1723,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                                    nob_sv_from_cstr("string(JSON REMOVE) requires OBJECT or ARRAY target"),
                                                    path, path_count - 1);
         }
-        (void)eval_var_set(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
+        (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
         return !eval_should_stop(ctx);
     }
 
@@ -1769,7 +1769,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                                    nob_sv_from_cstr("string(JSON SET) requires OBJECT or ARRAY target"),
                                                    path, path_count - 2);
         }
-        (void)eval_var_set(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
+        (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
         return !eval_should_stop(ctx);
     }
 
@@ -1797,7 +1797,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         String_View extra = string_join_no_sep_temp(ctx, &a[2], arena_arr_len(a) - 2);
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
-        String_View curr = eval_var_get(ctx, var);
+        String_View curr = eval_var_get_visible(ctx, var);
         String_View lhs = is_append ? curr : extra;
         String_View rhs = is_append ? extra : curr;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), lhs.count + rhs.count + 1);
@@ -1805,7 +1805,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (lhs.count > 0) memcpy(buf, lhs.data, lhs.count);
         if (rhs.count > 0) memcpy(buf + lhs.count, rhs.data, rhs.count);
         buf[lhs.count + rhs.count] = '\0';
-        (void)eval_var_set(ctx, var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(buf));
         return !eval_should_stop(ctx);
     }
 
@@ -1817,7 +1817,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         String_View out_var = a[1];
         String_View out = (arena_arr_len(a) > 2) ? string_join_no_sep_temp(ctx, &a[2], arena_arr_len(a) - 2) : nob_sv_from_cstr("");
-        (void)eval_var_set(ctx, out_var, out);
+        (void)eval_var_set_current(ctx, out_var, out);
         return !eval_should_stop(ctx);
     }
 
@@ -1850,7 +1850,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
         }
         buf[off] = '\0';
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
         return !eval_should_stop(ctx);
     }
 
@@ -1862,7 +1862,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         char num_buf[64];
         snprintf(num_buf, sizeof(num_buf), "%zu", a[1].count);
-        (void)eval_var_set(ctx, a[2], nob_sv_from_cstr(num_buf));
+        (void)eval_var_set_current(ctx, a[2], nob_sv_from_cstr(num_buf));
         return !eval_should_stop(ctx);
     }
 
@@ -1872,7 +1872,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: string(STRIP <string> <out-var>)"));
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, a[2], list_strip_ws_view(a[1]));
+        (void)eval_var_set_current(ctx, a[2], list_strip_ws_view(a[1]));
         return !eval_should_stop(ctx);
     }
 
@@ -1894,7 +1894,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         long long idx = string_find_substr(a[1], a[2], reverse);
         char num_buf[64];
         snprintf(num_buf, sizeof(num_buf), "%lld", idx);
-        (void)eval_var_set(ctx, a[3], nob_sv_from_cstr(num_buf));
+        (void)eval_var_set_current(ctx, a[3], nob_sv_from_cstr(num_buf));
         return !eval_should_stop(ctx);
     }
 
@@ -1917,7 +1917,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                            a[1]);
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, a[4], ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+        (void)eval_var_set_current(ctx, a[4], ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
         return !eval_should_stop(ctx);
     }
 
@@ -1941,7 +1941,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             buf[i] = (char)((unsigned char)code);
         }
         buf[n] = '\0';
-        (void)eval_var_set(ctx, out_var, nob_sv_from_parts(buf, n));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_parts(buf, n));
         return !eval_should_stop(ctx);
     }
 
@@ -1952,7 +1952,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
         String_View out = string_bytes_hex_temp(ctx, (const unsigned char*)a[1].data, a[1].count, false);
-        (void)eval_var_set(ctx, a[2], out);
+        (void)eval_var_set_current(ctx, a[2], out);
         return !eval_should_stop(ctx);
     }
 
@@ -1979,7 +1979,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (!string_configure_expand_temp(ctx, a[1], at_only, escape_quotes, &out)) {
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, a[2], out);
+        (void)eval_var_set_current(ctx, a[2], out);
         if (!eval_emit_string_configure(ctx, o, a[2])) return false;
         return !eval_should_stop(ctx);
     }
@@ -2000,7 +2000,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             buf[off++] = (isalnum(c) || c == '_') ? (char)c : '_';
         }
         buf[off] = '\0';
-        (void)eval_var_set(ctx, a[2], nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, a[2], nob_sv_from_cstr(buf));
         return !eval_should_stop(ctx);
     }
 
@@ -2010,7 +2010,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                            nob_sv_from_cstr("Usage: string(GENEX_STRIP <string> <out-var>)"));
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, a[2], string_genex_strip_temp(ctx, a[1]));
+        (void)eval_var_set_current(ctx, a[2], string_genex_strip_temp(ctx, a[1]));
         return !eval_should_stop(ctx);
     }
 
@@ -2046,7 +2046,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
         }
         buf[off] = '\0';
-        (void)eval_var_set(ctx, a[3], nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, a[3], nob_sv_from_cstr(buf));
         return !eval_should_stop(ctx);
     }
 
@@ -2105,7 +2105,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
 
         String_View rnd = nob_sv_from_cstr("");
         if (!string_random_generate_temp(ctx, &opt, &rnd)) return !eval_should_stop(ctx);
-        (void)eval_var_set(ctx, out_var, rnd);
+        (void)eval_var_set_current(ctx, out_var, rnd);
         return !eval_should_stop(ctx);
     }
 
@@ -2133,7 +2133,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                            a[i]);
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, out_var, string_timestamp_format_temp(ctx, fmt, utc));
+        (void)eval_var_set_current(ctx, out_var, string_timestamp_format_temp(ctx, fmt, utc));
         if (!eval_emit_string_timestamp(ctx, o, out_var)) return false;
         return !eval_should_stop(ctx);
     }
@@ -2194,7 +2194,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, out_var, uuid_sv);
+        (void)eval_var_set_current(ctx, out_var, uuid_sv);
         return !eval_should_stop(ctx);
     }
 
@@ -2219,7 +2219,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                            a[0]);
             return !eval_should_stop(ctx);
         }
-        (void)eval_var_set(ctx, a[1], hash);
+        (void)eval_var_set_current(ctx, a[1], hash);
         if (!eval_emit_string_hash(ctx, o, a[0], a[1])) return false;
         return !eval_should_stop(ctx);
     }
@@ -2242,7 +2242,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
         if (match.count == 0) {
-            (void)eval_var_set(ctx, out_var, input);
+            (void)eval_var_set_current(ctx, out_var, input);
             return !eval_should_stop(ctx);
         }
 
@@ -2280,7 +2280,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
         }
         buf[off] = '\0';
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
         if (!eval_emit_string_replace(ctx, o, out_var)) return false;
         return !eval_should_stop(ctx);
     }
@@ -2302,7 +2302,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             buf[i] = (char)toupper((unsigned char)input.data[i]);
         }
         buf[input.count] = '\0';
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
         return !eval_should_stop(ctx);
     }
 
@@ -2323,7 +2323,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             buf[i] = (char)tolower((unsigned char)input.data[i]);
         }
         buf[input.count] = '\0';
-        (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+        (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
         return !eval_should_stop(ctx);
     }
 
@@ -2351,7 +2351,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         String_View out_var = a[4];
         size_t b = (size_t)begin;
         if (b >= input.count) {
-            (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(""));
+            (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
 
@@ -2361,7 +2361,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             if (b + l < end) end = b + l;
         }
         String_View out = nob_sv_from_parts(input.data + b, end - b);
-        (void)eval_var_set(ctx, out_var, out);
+        (void)eval_var_set_current(ctx, out_var, out);
         return !eval_should_stop(ctx);
     }
 
@@ -2400,9 +2400,9 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             if (rc == 0 && m[0].rm_so >= 0 && m[0].rm_eo >= m[0].rm_so) {
                 size_t mlen = (size_t)(m[0].rm_eo - m[0].rm_so);
                 String_View match_sv = nob_sv_from_parts(in_buf + m[0].rm_so, mlen);
-                (void)eval_var_set(ctx, out_var, match_sv);
+                (void)eval_var_set_current(ctx, out_var, match_sv);
             } else {
-                (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(""));
+                (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
             }
             if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("MATCH"), out_var)) return false;
             return !eval_should_stop(ctx);
@@ -2489,7 +2489,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             if (sb.count) memcpy(out_buf, sb.items, sb.count);
             out_buf[sb.count] = '\0';
             nob_sb_free(sb);
-            (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(out_buf));
+            (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(out_buf));
             if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("REPLACE"), out_var)) return false;
             return !eval_should_stop(ctx);
         }
@@ -2545,7 +2545,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             regfree(&re);
 
             String_View out = (arena_arr_len(matches) > 0) ? eval_sv_join_semi_temp(ctx, matches, arena_arr_len(matches)) : nob_sv_from_cstr("");
-            (void)eval_var_set(ctx, out_var, out);
+            (void)eval_var_set_current(ctx, out_var, out);
             return !eval_should_stop(ctx);
         }
 

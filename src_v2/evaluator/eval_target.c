@@ -95,7 +95,7 @@ static bool source_group_emit_assignment(Evaluator_Context *ctx,
     };
     String_View key = svu_join_no_sep_temp(ctx, key_parts, 3);
     if (eval_should_stop(ctx)) return false;
-    if (!eval_var_set(ctx, key, group_name)) return false;
+    if (!eval_var_set_current(ctx, key, group_name)) return false;
     return eval_emit_var_set(ctx, o, key, group_name);
 }
 
@@ -187,7 +187,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     };
     String_View key = svu_join_no_sep_temp(ctx, key_parts, 5);
     if (eval_should_stop(ctx)) return false;
-    if (!eval_var_set(ctx, key, regex_value)) return false;
+    if (!eval_var_set_current(ctx, key, regex_value)) return false;
     if (!eval_emit_var_set(ctx, o, key, regex_value)) return false;
 
     String_View name_key_parts[3] = {
@@ -197,7 +197,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     };
     String_View name_key = svu_join_no_sep_temp(ctx, name_key_parts, 3);
     if (eval_should_stop(ctx)) return false;
-    if (!eval_var_set(ctx, name_key, group_name)) return false;
+    if (!eval_var_set_current(ctx, name_key, group_name)) return false;
     return eval_emit_var_set(ctx, o, name_key, group_name);
 }
 
@@ -269,31 +269,31 @@ static bool set_non_target_property(Evaluator_Context *ctx,
     String_View store_key = eval_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
     if (eval_should_stop(ctx)) return false;
 
-    String_View current = eval_var_get(ctx, store_key);
+    String_View current = eval_var_get_visible(ctx, store_key);
     String_View merged = merge_property_value_temp(ctx, current, value, op);
     if (eval_should_stop(ctx)) return false;
 
-    if (!eval_var_set(ctx, store_key, merged)) return false;
+    if (!eval_var_set_current(ctx, store_key, merged)) return false;
     if (!eval_emit_var_set(ctx, o, store_key, merged)) return false;
 
     // Bridge common DIRECTORY properties to existing evaluator behavior.
     if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY") && is_current_directory_object(ctx, object_id)) {
         if (eval_sv_eq_ci_lit(prop_upper, "COMPILE_OPTIONS")) {
-            String_View cur = eval_var_get(ctx, nob_sv_from_cstr(k_global_opts_var));
+            String_View cur = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_opts_var));
             String_View next = merge_property_value_temp(ctx, cur, value, op);
             if (eval_should_stop(ctx)) return false;
-            if (!eval_var_set(ctx, nob_sv_from_cstr(k_global_opts_var), next)) return false;
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr(k_global_opts_var), next)) return false;
         } else if (eval_sv_eq_ci_lit(prop_upper, "COMPILE_DEFINITIONS")) {
-            String_View cur = eval_var_get(ctx, nob_sv_from_cstr(k_global_defs_var));
+            String_View cur = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_defs_var));
             String_View next = merge_property_value_temp(ctx, cur, value, op);
             if (eval_should_stop(ctx)) return false;
-            if (!eval_var_set(ctx, nob_sv_from_cstr(k_global_defs_var), next)) return false;
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr(k_global_defs_var), next)) return false;
         }
     }
 
     // Pragmatic CACHE behavior: PROPERTY VALUE mutates cache entry variable.
     if (eval_sv_eq_ci_lit(scope_upper, "CACHE") && eval_sv_eq_ci_lit(prop_upper, "VALUE")) {
-        if (!eval_var_set(ctx, object_id, merged)) return false;
+        if (!eval_var_set_current(ctx, object_id, merged)) return false;
 
         if (!eval_emit_var_set_cache(ctx, o, object_id, merged)) return false;
     }
@@ -310,7 +310,7 @@ typedef enum {
 } Eval_Property_Query_Mode;
 
 static bool set_output_var_value(Evaluator_Context *ctx, String_View out_var, String_View value) {
-    return eval_var_set(ctx, out_var, value);
+    return eval_var_set_current(ctx, out_var, value);
 }
 
 static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var) {
@@ -320,7 +320,7 @@ static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var)
     memcpy(buf, out_var.data, out_var.count);
     memcpy(buf + out_var.count, suffix.data, suffix.count);
     buf[out_var.count + suffix.count] = '\0';
-    return eval_var_set(ctx, out_var, nob_sv_from_cstr(buf));
+    return eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
 }
 
 static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View target_name, String_View *out_dir) {
@@ -347,9 +347,9 @@ static String_View target_property_from_events_temp(Evaluator_Context *ctx,
     if (!ctx) return nob_sv_from_cstr("");
     String_View store_key = eval_property_store_key_temp(ctx, nob_sv_from_cstr("TARGET"), target_name, prop_upper);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    if (!eval_var_defined(ctx, store_key)) return nob_sv_from_cstr("");
+    if (!eval_var_defined_visible(ctx, store_key)) return nob_sv_from_cstr("");
     if (out_set) *out_set = true;
-    return eval_var_get(ctx, store_key);
+    return eval_var_get_visible(ctx, store_key);
 }
 
 static bool property_parent_directory_temp(Evaluator_Context *ctx, String_View dir, String_View *out_parent) {
@@ -405,14 +405,14 @@ static String_View property_value_from_store_temp(Evaluator_Context *ctx,
         eval_sv_eq_ci_lit(prop_upper, "VALUE") &&
         eval_cache_defined(ctx, object_id)) {
         if (out_set) *out_set = true;
-        return eval_var_get(ctx, object_id);
+        return eval_var_get_visible(ctx, object_id);
     }
 
     String_View store_key = eval_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    if (!eval_var_defined(ctx, store_key)) return nob_sv_from_cstr("");
+    if (!eval_var_defined_visible(ctx, store_key)) return nob_sv_from_cstr("");
     if (out_set) *out_set = true;
-    return eval_var_get(ctx, store_key);
+    return eval_var_get_visible(ctx, store_key);
 }
 
 static String_View property_value_from_directory_chain_temp(Evaluator_Context *ctx,
@@ -624,7 +624,7 @@ static bool get_property_impl(Evaluator_Context *ctx,
         return set_output_var_value(ctx, out_var, have ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
     }
 
-    if (!have) return eval_var_unset(ctx, out_var);
+    if (!have) return eval_var_unset_current(ctx, out_var);
     return set_output_var_value(ctx, out_var, value);
 }
 
@@ -851,14 +851,13 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
     SV_List values = NULL;
 
     if (eval_sv_eq_ci_lit(prop, "VARIABLES")) {
-        for (size_t depth = 0; depth < eval_scope_visible_depth(ctx); depth++) {
-            Var_Scope *scope = &ctx->scopes[depth];
-            ptrdiff_t n = stbds_shlen(scope->vars);
-            for (ptrdiff_t i = 0; i < n; i++) {
-                if (!scope->vars[i].key) continue;
-                if (!property_append_unique_temp(ctx, &values, nob_sv_from_cstr(scope->vars[i].key))) {
-                    return !eval_should_stop(ctx);
-                }
+        SV_List visible_names = NULL;
+        if (!eval_var_collect_visible_names(ctx, &visible_names)) {
+            return !eval_should_stop(ctx);
+        }
+        for (size_t i = 0; i < arena_arr_len(visible_names); i++) {
+            if (!property_append_unique_temp(ctx, &values, visible_names[i])) {
+                return !eval_should_stop(ctx);
             }
         }
         return set_output_var_value(ctx, out_var, eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
@@ -901,7 +900,7 @@ bool eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, out_var)) return set_output_var_notfound(ctx, out_var);
+    if (!eval_var_defined_visible(ctx, out_var)) return set_output_var_notfound(ctx, out_var);
     return !eval_should_stop(ctx);
 }
 
@@ -946,7 +945,7 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
                            nob_sv_from_cstr(""));
             return !eval_should_stop(ctx);
         }
-        String_View value = eval_var_get(ctx, a[i + 1]);
+        String_View value = eval_var_get_visible(ctx, a[i + 1]);
         return set_output_var_value(ctx, out_var, value);
     }
 
@@ -968,7 +967,7 @@ bool eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, out_var)) return set_output_var_value(ctx, out_var, nob_sv_from_cstr(""));
+    if (!eval_var_defined_visible(ctx, out_var)) return set_output_var_value(ctx, out_var, nob_sv_from_cstr(""));
     return !eval_should_stop(ctx);
 }
 
@@ -996,7 +995,7 @@ bool eval_handle_get_source_file_property(Evaluator_Context *ctx, const Node *no
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
+    if (!eval_var_defined_visible(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
     return !eval_should_stop(ctx);
 }
 
@@ -1028,7 +1027,7 @@ bool eval_handle_get_target_property(Evaluator_Context *ctx, const Node *node) {
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
+    if (!eval_var_defined_visible(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
     return !eval_should_stop(ctx);
 }
 
@@ -1062,7 +1061,7 @@ bool eval_handle_get_test_property(Evaluator_Context *ctx, const Node *node) {
                            false)) {
         return !eval_should_stop(ctx);
     }
-    if (!eval_var_defined(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
+    if (!eval_var_defined_visible(ctx, a[0])) return set_output_var_notfound(ctx, a[0]);
     return !eval_should_stop(ctx);
 }
 

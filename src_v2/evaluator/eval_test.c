@@ -189,7 +189,7 @@ bool eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         memcpy(buf, "NOBIFY_TEST::", strlen("NOBIFY_TEST::"));
         memcpy(buf + strlen("NOBIFY_TEST::"), name.data, name.count);
         buf[total] = '\0';
-        (void)eval_var_set(ctx, nob_sv_from_cstr(buf), nob_sv_from_cstr("1"));
+        (void)eval_var_set_current(ctx, nob_sv_from_cstr(buf), nob_sv_from_cstr("1"));
     }
     if (!eval_emit_test_add(ctx, o, name, command, working_dir, command_expand_lists)) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
@@ -255,8 +255,8 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
     }
 
-    String_View before = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TESTDRIVER_BEFORE_TESTMAIN"));
-    String_View after = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TESTDRIVER_AFTER_TESTMAIN"));
+    String_View before = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TESTDRIVER_BEFORE_TESTMAIN"));
+    String_View after = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TESTDRIVER_AFTER_TESTMAIN"));
 
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "/* evaluator-generated create_test_sourcelist driver */\n");
@@ -313,7 +313,7 @@ bool eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node
         if (!svu_list_push_temp(ctx, &out_items, tests[ti])) return !eval_should_stop(ctx);
     }
     if (!svu_list_push_temp(ctx, &out_items, driver)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, out_items, arena_arr_len(out_items)))) {
+    if (!eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, out_items, arena_arr_len(out_items)))) {
         return !eval_should_stop(ctx);
     }
 

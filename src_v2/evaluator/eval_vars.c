@@ -36,7 +36,7 @@ static bool load_cache_resolve_path(Evaluator_Context *ctx, String_View raw_path
     if (!ctx || !out_path) return false;
     String_View path = raw_path;
     if (!eval_sv_is_abs_path(path)) {
-        String_View base = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+        String_View base = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
         if (base.count == 0) base = ctx->binary_dir;
         path = eval_sv_path_join(eval_temp_arena(ctx), base, path);
         if (eval_should_stop(ctx)) return false;
@@ -307,7 +307,7 @@ static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start
     if (!ctx || !out) return false;
     *out = NULL;
 
-    String_View argc_sv = eval_var_get(ctx, nob_sv_from_cstr("ARGC"));
+    String_View argc_sv = eval_var_get_visible(ctx, nob_sv_from_cstr("ARGC"));
     size_t argc = 0;
     if (!parse_nonnegative_index(ctx, argc_sv, &argc)) return false;
 
@@ -315,7 +315,7 @@ static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start
         char key_buf[64];
         int n = snprintf(key_buf, sizeof(key_buf), "ARGV%zu", i);
         if (n <= 0 || (size_t)n >= sizeof(key_buf)) return ctx_oom(ctx);
-        if (!eval_sv_arr_push_temp(ctx, out, eval_var_get(ctx, nob_sv_from_cstr(key_buf)))) return false;
+        if (!eval_sv_arr_push_temp(ctx, out, eval_var_get_visible(ctx, nob_sv_from_cstr(key_buf)))) return false;
     }
 
     return true;
@@ -335,27 +335,27 @@ static bool parse_assign_results(Evaluator_Context *ctx,
 
         switch (specs[i].kind) {
             case PARSE_KEYWORD_OPTION:
-                if (!eval_var_set(ctx, var, specs[i].option_present ? nob_sv_from_cstr("TRUE")
+                if (!eval_var_set_current(ctx, var, specs[i].option_present ? nob_sv_from_cstr("TRUE")
                                                                     : nob_sv_from_cstr("FALSE"))) {
                     return false;
                 }
                 break;
             case PARSE_KEYWORD_ONE:
                 if (specs[i].one_defined) {
-                    if (!eval_var_set(ctx, var, specs[i].one_value)) return false;
+                    if (!eval_var_set_current(ctx, var, specs[i].one_value)) return false;
                 } else {
-                    if (!eval_var_unset(ctx, var)) return false;
+                    if (!eval_var_unset_current(ctx, var)) return false;
                 }
                 break;
             case PARSE_KEYWORD_MULTI:
                 if (specs[i].multi_defined) {
-                    if (!eval_var_set(ctx,
+                    if (!eval_var_set_current(ctx,
                                       var,
                                       eval_sv_join_semi_temp(ctx, specs[i].multi_values, arena_arr_len(specs[i].multi_values)))) {
                         return false;
                     }
                 } else {
-                    if (!eval_var_unset(ctx, var)) return false;
+                    if (!eval_var_unset_current(ctx, var)) return false;
                 }
                 break;
         }
@@ -364,17 +364,17 @@ static bool parse_assign_results(Evaluator_Context *ctx,
     String_View unparsed_var = {0};
     if (!parse_build_prefix_var_name(ctx, prefix, "_UNPARSED_ARGUMENTS", &unparsed_var)) return false;
     if (unparsed && arena_arr_len(*unparsed) > 0) {
-        if (!eval_var_set(ctx, unparsed_var, eval_sv_join_semi_temp(ctx, *unparsed, arena_arr_len(*unparsed)))) return false;
+        if (!eval_var_set_current(ctx, unparsed_var, eval_sv_join_semi_temp(ctx, *unparsed, arena_arr_len(*unparsed)))) return false;
     } else {
-        if (!eval_var_unset(ctx, unparsed_var)) return false;
+        if (!eval_var_unset_current(ctx, unparsed_var)) return false;
     }
 
     String_View missing_var = {0};
     if (!parse_build_prefix_var_name(ctx, prefix, "_KEYWORDS_MISSING_VALUES", &missing_var)) return false;
     if (missing && arena_arr_len(*missing) > 0) {
-        if (!eval_var_set(ctx, missing_var, eval_sv_join_semi_temp(ctx, *missing, arena_arr_len(*missing)))) return false;
+        if (!eval_var_set_current(ctx, missing_var, eval_sv_join_semi_temp(ctx, *missing, arena_arr_len(*missing)))) return false;
     } else {
-        if (!eval_var_unset(ctx, missing_var)) return false;
+        if (!eval_var_unset_current(ctx, missing_var)) return false;
     }
 
     return true;
@@ -637,7 +637,7 @@ static bool cache_upsert(Evaluator_Context *ctx,
     return true;
 }
 
-static bool scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
+static bool visible_scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
     if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
     for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
         Var_Scope *scope = &ctx->scopes[depth];
@@ -684,7 +684,7 @@ static bool mark_as_advanced_apply(Evaluator_Context *ctx,
                                                         var_name,
                                                         nob_sv_from_cstr("ADVANCED"));
     if (eval_should_stop(ctx)) return false;
-    return eval_var_set(ctx, prop_key, clear_mode ? nob_sv_from_cstr("0")
+    return eval_var_set_current(ctx, prop_key, clear_mode ? nob_sv_from_cstr("0")
                                                   : nob_sv_from_cstr("1"));
 }
 
@@ -823,7 +823,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
         bool cmp0126_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0126);
         bool remove_local_binding_old = (existing == NULL) || (existing && existing->value.type.count == 0) || force || is_internal;
 
-        if (!cmp0126_new && remove_local_binding_old) (void)eval_var_unset(ctx, var);
+        if (!cmp0126_new && remove_local_binding_old) (void)eval_var_unset_current(ctx, var);
 
         if (should_write_cache) {
             if (!cache_upsert(ctx, var, value, cache_type, cache_doc)) return false;
@@ -838,7 +838,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (arena_arr_len(a) == 1) {
-        (void)eval_var_unset(ctx, var);
+        (void)eval_var_unset_current(ctx, var);
         return !eval_should_stop(ctx);
     }
 
@@ -860,9 +860,9 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (parent_scope) {
         if (eval_scope_visible_depth(ctx) > 1) {
             size_t saved_depth = 0;
-            if (!eval_scope_enter_parent(ctx, &saved_depth)) return false;
-            bool ok = eval_var_set(ctx, var, value);
-            eval_scope_leave(ctx, saved_depth);
+            if (!eval_scope_use_parent_view(ctx, &saved_depth)) return false;
+            bool ok = eval_var_set_current(ctx, var, value);
+            eval_scope_restore_view(ctx, saved_depth);
             if (!ok) return false;
         }
         else {
@@ -873,7 +873,7 @@ bool eval_handle_set(Evaluator_Context *ctx, const Node *node) {
             }
         }
     } else {
-        (void)eval_var_set(ctx, var, value);
+        (void)eval_var_set_current(ctx, var, value);
     }
 
     return !eval_should_stop(ctx);
@@ -943,14 +943,14 @@ bool eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
         }
 
         size_t saved_depth = 0;
-        if (!eval_scope_enter_parent(ctx, &saved_depth)) return false;
-        bool ok = eval_var_unset(ctx, var);
-        eval_scope_leave(ctx, saved_depth);
+        if (!eval_scope_use_parent_view(ctx, &saved_depth)) return false;
+        bool ok = eval_var_unset_current(ctx, var);
+        eval_scope_restore_view(ctx, saved_depth);
         if (!ok) return false;
         return !eval_should_stop(ctx);
     }
 
-    (void)eval_var_unset(ctx, var);
+    (void)eval_var_unset_current(ctx, var);
     return !eval_should_stop(ctx);
 }
 
@@ -978,7 +978,7 @@ bool eval_handle_option(Evaluator_Context *ctx, const Node *node) {
     String_View value = (arena_arr_len(a) >= 3) ? a[2] : nob_sv_from_cstr("OFF");
 
     bool cmp0077_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0077);
-    bool has_normal_binding = scope_has_normal_binding(ctx, var);
+    bool has_normal_binding = visible_scope_has_normal_binding(ctx, var);
     Eval_Cache_Entry *existing = cache_find(ctx, var);
     bool has_typed_cache = existing && existing->value.type.count > 0;
 
@@ -1096,7 +1096,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
 
     String_View input = nob_sv_from_cstr("");
     if (arena_arr_len(a) == 1) {
-        input = eval_var_get(ctx, out_var);
+        input = eval_var_get_visible(ctx, out_var);
     } else {
         if (!join_sv_with_spaces_temp(ctx, &a[input_index], arena_arr_len(a) - input_index, &input)) {
             return !eval_should_stop(ctx);
@@ -1105,7 +1105,7 @@ bool eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
 
     SV_List tokens = NULL;
     if (!separate_arguments_parse_tokens(ctx, windows_mode, input, &tokens)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)))) {
+    if (!eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)))) {
         return !eval_should_stop(ctx);
     }
 
@@ -1230,7 +1230,7 @@ bool eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
                         if (prefix.count > 0) memcpy(buf, prefix.data, prefix.count);
                         memcpy(buf + prefix.count, key.data, key.count);
                         buf[total] = '\0';
-                        if (!eval_var_set(ctx, nob_sv_from_parts(buf, total), value)) {
+                        if (!eval_var_set_current(ctx, nob_sv_from_parts(buf, total), value)) {
                             nob_sb_free(sb);
                             return !eval_should_stop(ctx);
                         }

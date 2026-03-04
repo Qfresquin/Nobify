@@ -139,7 +139,7 @@ static bool policy_set_depth_var(Evaluator_Context *ctx) {
     char depth_buf[32];
     int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", eval_policy_visible_depth(ctx));
     if (n < 0 || (size_t)n >= sizeof(depth_buf)) return ctx_oom(ctx);
-    return eval_var_set(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr(depth_buf));
+    return eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr(depth_buf));
 }
 
 static bool policy_ensure_capacity(Evaluator_Context *ctx, size_t min_capacity) {
@@ -208,7 +208,7 @@ bool eval_policy_set_status(Evaluator_Context *ctx, String_View policy_id, Eval_
     if (snprintf(id_buf, sizeof(id_buf), "CMP%04d", policy_number) != 7) return ctx_oom(ctx);
     char legacy_key[32];
     if (snprintf(legacy_key, sizeof(legacy_key), "CMAKE_POLICY_%s", id_buf) < 0) return ctx_oom(ctx);
-    return eval_var_set(ctx, nob_sv_from_cstr(legacy_key), eval_policy_status_to_sv(status));
+    return eval_var_set_current(ctx, nob_sv_from_cstr(legacy_key), eval_policy_status_to_sv(status));
 }
 
 bool eval_policy_set(Evaluator_Context *ctx, String_View policy_id, String_View value) {
@@ -240,14 +240,14 @@ String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy
         (void)ctx_oom(ctx);
         return nob_sv_from_cstr("");
     }
-    if (eval_var_defined(ctx, nob_sv_from_cstr(default_key))) {
-        Eval_Policy_Status s = policy_status_from_sv(eval_var_get(ctx, nob_sv_from_cstr(default_key)));
+    if (eval_var_defined_visible(ctx, nob_sv_from_cstr(default_key))) {
+        Eval_Policy_Status s = policy_status_from_sv(eval_var_get_visible(ctx, nob_sv_from_cstr(default_key)));
         if (s == POLICY_STATUS_OLD) return nob_sv_from_cstr("OLD");
         if (s == POLICY_STATUS_NEW) return nob_sv_from_cstr("NEW");
         return nob_sv_from_cstr("");
     }
 
-    String_View policy_version = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"));
+    String_View policy_version = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"));
     Eval_Semver current = {0};
     if (!eval_semver_parse_strict(policy_version, &current)) return nob_sv_from_cstr("");
 

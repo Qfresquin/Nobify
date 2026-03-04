@@ -87,7 +87,7 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, a[1], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) {
+    if (!eval_var_set_current(ctx, a[1], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -95,7 +95,7 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
 
 static bool eval_var_truthy_or_default(Evaluator_Context *ctx, const char *key, bool default_value) {
     if (!ctx || !key) return default_value;
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(key));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(key));
     if (v.count == 0) return default_value;
     return eval_truthy(ctx, v);
 }
@@ -1065,7 +1065,7 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
         joined = nob_sv_from_cstr(buf);
     }
 
-    (void)eval_var_set(ctx, out_var, joined);
+    (void)eval_var_set_current(ctx, out_var, joined);
     String_View base_dir = pat_idx < arena_arr_len(args) ? glob_base_dir(args[pat_idx]) : eval_current_source_dir(ctx);
     (void)eval_emit_fs_glob(ctx, o, out_var, base_dir, recurse);
 }
@@ -1205,7 +1205,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
 
     if (!hex) {
         String_View content = nob_sv_from_parts(sb.items + begin, n);
-        (void)eval_var_set(ctx, out_var, content);
+        (void)eval_var_set_current(ctx, out_var, content);
         nob_sb_free(sb);
         (void)eval_emit_fs_read_file(ctx, o, path, out_var);
         return;
@@ -1223,7 +1223,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
         hex_buf[(i * 2) + 1] = lut[b & 0xF];
     }
     hex_buf[n * 2] = '\0';
-    (void)eval_var_set(ctx, out_var, nob_sv_from_cstr(hex_buf));
+    (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(hex_buf));
     nob_sb_free(sb);
     (void)eval_emit_fs_read_file(ctx, o, path, out_var);
 }
@@ -1483,7 +1483,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     String_View out_sv = out.items ? nob_sv_from_parts(out.items, out.count - 1) : nob_sv_from_cstr("");
     if (re_compiled) regfree(&re);
     nob_sb_free(out);
-    (void)eval_var_set(ctx, out_var, out_sv);
+    (void)eval_var_set_current(ctx, out_var, out_sv);
     nob_sb_free(sb);
 }
 

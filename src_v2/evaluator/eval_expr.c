@@ -211,7 +211,7 @@ static String_View sv_lookup_if_var(struct Evaluator_Context *ctx, String_View t
     if (!ctx || tok.count == 0) return tok;
     String_View macro_val = {0};
     if (eval_macro_bind_get(ctx, tok, &macro_val)) return macro_val;
-    if (eval_var_defined(ctx, tok)) return eval_var_get(ctx, tok);
+    if (eval_var_defined_visible(ctx, tok)) return eval_var_get_visible(ctx, tok);
     return tok;
 }
 
@@ -305,7 +305,7 @@ static int eval_expand_limit(struct Evaluator_Context *ctx) {
 
     // Priority 1: context variable (script/runtime configurable).
     if (ctx) {
-        String_View cfg = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_EXPAND_MAX_RECURSION));
+        String_View cfg = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_EXPAND_MAX_RECURSION));
         int parsed = 0;
         if (sv_parse_positive_int(cfg, &parsed)) {
             limit = parsed;
@@ -358,8 +358,8 @@ bool eval_truthy(struct Evaluator_Context *ctx, String_View v) {
             return eval_truthy_constant_only(macro_val, NULL);
         }
 
-        if (eval_var_defined(ctx, v)) {
-            String_View var_val = eval_var_get(ctx, v);
+        if (eval_var_defined_visible(ctx, v)) {
+            String_View var_val = eval_var_get_visible(ctx, v);
             return eval_truthy_constant_only(var_val, NULL);
         }
     }
@@ -439,7 +439,7 @@ static String_View expand_once(struct Evaluator_Context *ctx, String_View in) {
                 inner = eval_expand_vars(ctx, inner);
                 String_View val = nob_sv_from_cstr("");
                 if (!eval_macro_bind_get(ctx, inner, &val)) {
-                    val = eval_var_get(ctx, inner);
+                    val = eval_var_get_visible(ctx, inner);
                 }
                 sb_append_sv(&sb, val);
                 i = j - 1;
@@ -558,7 +558,7 @@ static bool parse_unary(Expr *e) {
             return eval_has_env(e->ctx, env_name);
         }
 
-        return eval_var_defined(e->ctx, var_name);
+        return eval_var_defined_visible(e->ctx, var_name);
     }
 
     if (eval_sv_eq_ci_lit(tok, "TARGET")) {
@@ -645,7 +645,7 @@ static bool parse_unary(Expr *e) {
         memcpy(buf, "NOBIFY_TEST::", strlen("NOBIFY_TEST::"));
         memcpy(buf + strlen("NOBIFY_TEST::"), name.data, name.count);
         buf[total] = '\0';
-        return eval_var_defined(e->ctx, nob_sv_from_cstr(buf));
+        return eval_var_defined_visible(e->ctx, nob_sv_from_cstr(buf));
     }
 
     return parse_primary(e);

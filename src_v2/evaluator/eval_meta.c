@@ -71,10 +71,10 @@ static bool meta_export_assign_last(Evaluator_Context *ctx,
                                     String_View file_path,
                                     String_View targets,
                                     String_View ns) {
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE"), mode)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_FILE"), file_path)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_TARGETS"), targets)) return false;
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_NAMESPACE"), ns)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE"), mode)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_FILE"), file_path)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_TARGETS"), targets)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_NAMESPACE"), ns)) return false;
     return true;
 }
 
@@ -241,7 +241,7 @@ bool eval_handle_export(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View map_key = meta_concat3_temp(ctx, "NOBIFY_INSTALL_EXPORT::", export_name, "::TARGETS");
-        String_View targets_sv = eval_var_get(ctx, map_key);
+        String_View targets_sv = eval_var_get_visible(ctx, map_key);
         if (targets_sv.count == 0) {
             (void)meta_emit_diag(ctx,
                                  node,
@@ -362,11 +362,11 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
 
     String_View deps_joined = eval_sv_join_semi_temp(ctx, deps, arena_arr_len(deps));
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::LOCATION"), location)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::TYPE"), type_guid)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::GUID"), project_guid)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::PLATFORM"), platform)) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::DEPENDENCIES"), deps_joined)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::LOCATION"), location)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::TYPE"), type_guid)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::GUID"), project_guid)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::PLATFORM"), platform)) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::DEPENDENCIES"), deps_joined)) return !eval_should_stop(ctx);
     if (!eval_emit_target_declare(ctx,
                                   eval_origin_from_node(ctx, node),
                                   name,
@@ -435,7 +435,7 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::API_VERSION"), nob_sv_from_cstr("1"))) {
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::API_VERSION"), nob_sv_from_cstr("1"))) {
         return !eval_should_stop(ctx);
     }
 
@@ -476,7 +476,7 @@ bool eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
 
         String_View joined = eval_sv_join_semi_temp(ctx, versions, arena_arr_len(versions));
         if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
-        if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_QUERY::", kind, ""), joined)) {
+        if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_QUERY::", kind, ""), joined)) {
             return !eval_should_stop(ctx);
         }
     }

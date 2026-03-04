@@ -305,7 +305,7 @@ static inline bool eval_policy_is_old(Evaluator_Context *ctx, const char *policy
     return eval_sv_eq_ci_lit(eval_policy_effective_id(ctx, policy_id), "OLD");
 }
 
-static inline bool eval_scope_enter_parent(Evaluator_Context *ctx, size_t *saved_depth) {
+static inline bool eval_scope_use_parent_view(Evaluator_Context *ctx, size_t *saved_depth) {
     if (!ctx || !saved_depth) return false;
     size_t depth = eval_scope_visible_depth(ctx);
     if (depth <= 1) return false;
@@ -314,7 +314,7 @@ static inline bool eval_scope_enter_parent(Evaluator_Context *ctx, size_t *saved
     return true;
 }
 
-static inline bool eval_scope_enter_global(Evaluator_Context *ctx, size_t *saved_depth) {
+static inline bool eval_scope_use_global_view(Evaluator_Context *ctx, size_t *saved_depth) {
     if (!ctx || !saved_depth) return false;
     size_t depth = eval_scope_visible_depth(ctx);
     if (depth == 0) return false;
@@ -323,7 +323,7 @@ static inline bool eval_scope_enter_global(Evaluator_Context *ctx, size_t *saved
     return true;
 }
 
-static inline void eval_scope_leave(Evaluator_Context *ctx, size_t saved_depth) {
+static inline void eval_scope_restore_view(Evaluator_Context *ctx, size_t saved_depth) {
     if (ctx) ctx->visible_scope_depth = saved_depth;
 }
 
@@ -1326,11 +1326,12 @@ bool eval_command_caps_lookup(String_View name, Command_Capability *out_capabili
 bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg);
 
 // ---- vars ----
-String_View eval_var_get(Evaluator_Context *ctx, String_View key);
-bool eval_var_defined(Evaluator_Context *ctx, String_View key);
-bool eval_var_set(Evaluator_Context *ctx, String_View key, String_View value);
-bool eval_var_unset(Evaluator_Context *ctx, String_View key);
-bool eval_var_defined_in_current_scope(Evaluator_Context *ctx, String_View key);
+String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key);
+bool eval_var_defined_visible(Evaluator_Context *ctx, String_View key);
+bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View value);
+bool eval_var_unset_current(Evaluator_Context *ctx, String_View key);
+bool eval_var_defined_current(Evaluator_Context *ctx, String_View key);
+bool eval_var_collect_visible_names(Evaluator_Context *ctx, SV_List *out_names);
 bool eval_cache_defined(Evaluator_Context *ctx, String_View key);
 bool eval_cache_set(Evaluator_Context *ctx,
                     String_View key,
@@ -1339,25 +1340,25 @@ bool eval_cache_set(Evaluator_Context *ctx,
                     String_View doc);
 
 static inline String_View eval_current_source_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
     if (v.count == 0 && ctx) v = ctx->source_dir;
     return v;
 }
 
 static inline String_View eval_current_binary_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
     if (v.count == 0 && ctx) v = ctx->binary_dir;
     return v;
 }
 
 static inline String_View eval_current_list_dir(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
     if (v.count == 0 && ctx) v = ctx->source_dir;
     return v;
 }
 
 static inline String_View eval_current_list_file(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
     if (v.count == 0 && ctx && ctx->current_file) v = nob_sv_from_cstr(ctx->current_file);
     return v;
 }

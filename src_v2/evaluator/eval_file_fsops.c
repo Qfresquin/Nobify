@@ -354,7 +354,7 @@ static bool file_prepare_parent_dir(Evaluator_Context *ctx, String_View path) {
 static bool file_emit_result_code(Evaluator_Context *ctx, String_View out_var, int code, const char *message) {
     if (!ctx || out_var.count == 0) return false;
     String_View v = nob_sv_from_cstr(nob_temp_sprintf("%d;%s", code, message ? message : ""));
-    return eval_var_set(ctx, out_var, v);
+    return eval_var_set_current(ctx, out_var, v);
 }
 
 static String_View file_relativize_temp(Evaluator_Context *ctx, String_View full, String_View base) {
@@ -491,7 +491,7 @@ static bool handle_file_size(Evaluator_Context *ctx, const Node *node, SV_List a
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(SIZE) failed to stat file"), path);
         return true;
     }
-    (void)eval_var_set(ctx, args[2], nob_sv_from_cstr(nob_temp_sprintf("%lld", (long long)st.st_size)));
+    (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(nob_temp_sprintf("%lld", (long long)st.st_size)));
     return true;
 }
 
@@ -599,7 +599,7 @@ static bool handle_file_read_symlink(Evaluator_Context *ctx, const Node *node, S
         return true;
     }
     tmp[n] = '\0';
-    (void)eval_var_set(ctx, args[2], nob_sv_from_cstr(tmp));
+    (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(tmp));
     return true;
 #endif
 }
@@ -760,7 +760,7 @@ static bool handle_file_real_path(Evaluator_Context *ctx, const Node *node, SV_L
     bool cmp0152_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0152);
     String_View resolved = nob_sv_from_cstr("");
     if (!file_real_path_resolve_temp(ctx, path, cmp0152_new, &resolved)) return true;
-    (void)eval_var_set(ctx, args[2], resolved);
+    (void)eval_var_set_current(ctx, args[2], resolved);
     return true;
 }
 
@@ -776,7 +776,7 @@ static bool handle_file_relative_path(Evaluator_Context *ctx, const Node *node, 
     String_View file = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[2], eval_file_current_src_dir(ctx), &dir)) return true;
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[3], eval_file_current_src_dir(ctx), &file)) return true;
-    (void)eval_var_set(ctx, args[1], file_relativize_temp(ctx, file, dir));
+    (void)eval_var_set_current(ctx, args[1], file_relativize_temp(ctx, file, dir));
     return true;
 }
 
@@ -789,7 +789,7 @@ static bool handle_file_to_path(Evaluator_Context *ctx, const Node *node, SV_Lis
                                 : nob_sv_from_cstr("Usage: file(TO_NATIVE_PATH <path> <out-var>)"));
         return true;
     }
-    (void)eval_var_set(ctx, args[2], file_convert_path_list_temp(ctx, args[1], to_cmake));
+    (void)eval_var_set_current(ctx, args[2], file_convert_path_list_temp(ctx, args[1], to_cmake));
     return true;
 }
 
@@ -832,7 +832,7 @@ static bool handle_file_timestamp(Evaluator_Context *ctx, const Node *node, SV_L
     EVAL_OOM_RETURN_IF_NULL(ctx, out, true);
     size_t n = strftime(out, 256, fmt_c, &tmv);
     out[n] = '\0';
-    (void)eval_var_set(ctx, args[2], nob_sv_from_cstr(out));
+    (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(out));
     return true;
 }
 

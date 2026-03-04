@@ -205,7 +205,7 @@ bool eval_handle_remove(Evaluator_Context *ctx, const Node *node) {
         return !eval_should_stop(ctx);
     }
 
-    String_View current = eval_var_get(ctx, a[0]);
+    String_View current = eval_var_get_visible(ctx, a[0]);
     SV_List items = NULL;
     if (current.count > 0 && !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current, &items)) {
         return !eval_should_stop(ctx);
@@ -223,7 +223,7 @@ bool eval_handle_remove(Evaluator_Context *ctx, const Node *node) {
         if (!drop && !svu_list_push_temp(ctx, &kept, items[i])) return !eval_should_stop(ctx);
     }
 
-    if (!eval_var_set(ctx, a[0], eval_sv_join_semi_temp(ctx, kept, arena_arr_len(kept)))) {
+    if (!eval_var_set_current(ctx, a[0], eval_sv_join_semi_temp(ctx, kept, arena_arr_len(kept)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -322,7 +322,7 @@ bool eval_handle_qt_wrap_cpp(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
     }
-    if (!eval_var_set(ctx, a[1], eval_sv_join_semi_temp(ctx, generated, arena_arr_len(generated)))) {
+    if (!eval_var_set_current(ctx, a[1], eval_sv_join_semi_temp(ctx, generated, arena_arr_len(generated)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);
@@ -351,8 +351,8 @@ bool eval_handle_qt_wrap_ui(Evaluator_Context *ctx, const Node *node) {
             return !eval_should_stop(ctx);
         }
     }
-    if (!eval_var_set(ctx, a[1], eval_sv_join_semi_temp(ctx, headers, arena_arr_len(headers)))) return !eval_should_stop(ctx);
-    if (!eval_var_set(ctx, a[2], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, a[1], eval_sv_join_semi_temp(ctx, headers, arena_arr_len(headers)))) return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, a[2], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) return !eval_should_stop(ctx);
     return !eval_should_stop(ctx);
 }
 
@@ -385,7 +385,7 @@ bool eval_handle_fltk_wrap_ui(Evaluator_Context *ctx, const Node *node) {
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
     memcpy(buf, a[0].data, a[0].count);
     memcpy(buf + a[0].count, "_FLTK_UI_SRCS", sizeof("_FLTK_UI_SRCS"));
-    if (!eval_var_set(ctx, nob_sv_from_parts(buf, total), eval_sv_join_semi_temp(ctx, outputs, arena_arr_len(outputs)))) {
+    if (!eval_var_set_current(ctx, nob_sv_from_parts(buf, total), eval_sv_join_semi_temp(ctx, outputs, arena_arr_len(outputs)))) {
         return !eval_should_stop(ctx);
     }
     return !eval_should_stop(ctx);

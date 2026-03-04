@@ -143,13 +143,13 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
 
     for (size_t i = 0; i < arena_arr_len(frame->propagate_vars); i++) {
         String_View key = frame->propagate_vars[i];
-        if (!eval_var_defined_in_current_scope(ctx, key)) continue;
+        if (!eval_var_defined_current(ctx, key)) continue;
 
-        String_View value = eval_var_get(ctx, key);
+        String_View value = eval_var_get_visible(ctx, key);
         size_t saved_depth = 0;
-        if (!eval_scope_enter_parent(ctx, &saved_depth)) return false;
-        bool ok = eval_var_set(ctx, key, value);
-        eval_scope_leave(ctx, saved_depth);
+        if (!eval_scope_use_parent_view(ctx, &saved_depth)) return false;
+        bool ok = eval_var_set_current(ctx, key, value);
+        eval_scope_restore_view(ctx, saved_depth);
         if (!ok) return false;
     }
 
@@ -390,7 +390,7 @@ static bool flow_arg_exact_ci(String_View value, const char *lit) {
 
 static String_View flow_current_binary_dir(Evaluator_Context *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
-    String_View dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    String_View dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (dir.count == 0) dir = ctx->binary_dir;
     return dir;
 }
@@ -449,7 +449,7 @@ static bool flow_exec_emit_command_echo(const Flow_Exec_Command *cmd, Flow_Exec_
 }
 
 static Flow_Exec_Command_Echo flow_exec_default_command_echo(Evaluator_Context *ctx) {
-    String_View v = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_EXECUTE_PROCESS_COMMAND_ECHO"));
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_EXECUTE_PROCESS_COMMAND_ECHO"));
     if (eval_sv_eq_ci_lit(v, "STDOUT")) return FLOW_EXEC_ECHO_STDOUT;
     if (eval_sv_eq_ci_lit(v, "STDERR")) return FLOW_EXEC_ECHO_STDERR;
     return FLOW_EXEC_ECHO_NONE;
@@ -968,18 +968,18 @@ static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
         if (eval_should_stop(ctx)) return false;
     }
 
-    if (opt->has_result_variable && !eval_var_set(ctx, opt->result_variable, last_result)) return false;
-    if (opt->has_results_variable && !eval_var_set(ctx, opt->results_variable, results_joined)) return false;
+    if (opt->has_result_variable && !eval_var_set_current(ctx, opt->result_variable, last_result)) return false;
+    if (opt->has_results_variable && !eval_var_set_current(ctx, opt->results_variable, results_joined)) return false;
 
     if (opt->has_output_variable) {
         String_View to_set = opt->output_quiet ? nob_sv_from_cstr("")
                                                : (share_var ? merged_value : output_value);
-        if (!eval_var_set(ctx, opt->output_variable, to_set)) return false;
+        if (!eval_var_set_current(ctx, opt->output_variable, to_set)) return false;
     }
     if (opt->has_error_variable) {
         String_View to_set = opt->error_quiet ? nob_sv_from_cstr("")
                                               : (share_var ? merged_value : error_value);
-        if (!eval_var_set(ctx, opt->error_variable, to_set)) return false;
+        if (!eval_var_set_current(ctx, opt->error_variable, to_set)) return false;
     }
 
     if (opt->has_output_file && !opt->output_quiet) {
@@ -1179,7 +1179,7 @@ static String_View flow_make_deferred_id(Evaluator_Context *ctx) {
 
 static String_View flow_current_source_dir(Evaluator_Context *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
-    String_View dir = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    String_View dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (dir.count == 0) dir = ctx->source_dir;
     return dir;
 }
@@ -1356,7 +1356,7 @@ static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
         EVAL_OOM_RETURN_IF_NULL(ctx, ids, false);
         for (size_t i = 0; i < arena_arr_len(frame->calls); i++) ids[i] = frame->calls[i].id;
     }
-    return eval_var_set(ctx, out_var, eval_sv_join_semi_temp(ctx, ids, arena_arr_len(frame->calls)));
+    return eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, ids, arena_arr_len(frame->calls)));
 }
 
 static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
@@ -1381,7 +1381,7 @@ static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
     char *copy = arena_strndup(ctx->arena, sb.items, sb.count);
     nob_sb_free(sb);
     EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
-    return eval_var_set(ctx, out_var, nob_sv_from_parts(copy, strlen(copy)));
+    return eval_var_set_current(ctx, out_var, nob_sv_from_parts(copy, strlen(copy)));
 }
 
 static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
@@ -1614,7 +1614,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     if (!flow_clone_args_to_event_range(ctx, raw, i + 2, &call.args)) return false;
     if (!flow_append_defer_queue(ctx, frame, call)) return false;
     if (!eval_emit_flow_defer_queue(ctx, origin, call.id, call.command_name)) return false;
-    if (id_var.count > 0 && !eval_var_set(ctx, id_var, call.id)) return false;
+    if (id_var.count > 0 && !eval_var_set_current(ctx, id_var, call.id)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -1661,8 +1661,8 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
                                  nob_sv_from_cstr("Usage: cmake_language(GET_MESSAGE_LOG_LEVEL <out-var>)"));
             return !eval_should_stop(ctx);
         }
-        String_View value = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_MESSAGE_LOG_LEVEL"));
-        (void)eval_var_set(ctx, args[1], value);
+        String_View value = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_MESSAGE_LOG_LEVEL"));
+        (void)eval_var_set_current(ctx, args[1], value);
         return !eval_should_stop(ctx);
     }
 

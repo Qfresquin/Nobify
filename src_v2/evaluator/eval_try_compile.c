@@ -457,13 +457,13 @@ static bool try_compile_publish_result(Evaluator_Context *ctx,
                                        String_View output_text) {
     if (!ctx || !req) return false;
     if (req->no_cache) {
-        if (!eval_var_set(ctx, req->result_var, result)) return false;
+        if (!eval_var_set_current(ctx, req->result_var, result)) return false;
     } else {
         if (!try_compile_cache_upsert(ctx, req->result_var, result)) return false;
         if (!eval_emit_var_set_cache(ctx, origin, req->result_var, result)) return false;
     }
     if (req->output_var.count > 0) {
-        if (!eval_var_set(ctx, req->output_var, output_text)) return false;
+        if (!eval_var_set_current(ctx, req->output_var, output_text)) return false;
     }
     return true;
 }
@@ -533,7 +533,7 @@ static bool try_compile_append_required_compile_settings(Evaluator_Context *ctx,
         if (!try_compile_append_define_arg(ctx, cmd, req->compile_definitions[i], msvc)) return false;
     }
 
-    String_View required_defs = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS"));
+    String_View required_defs = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_DEFINITIONS"));
     if (required_defs.count > 0) {
         SV_List parts = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_defs, &parts)) return false;
@@ -542,7 +542,7 @@ static bool try_compile_append_required_compile_settings(Evaluator_Context *ctx,
         }
     }
 
-    String_View required_includes = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_INCLUDES"));
+    String_View required_includes = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_INCLUDES"));
     if (required_includes.count > 0) {
         SV_List incs = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_includes, &incs)) return false;
@@ -551,7 +551,7 @@ static bool try_compile_append_required_compile_settings(Evaluator_Context *ctx,
         }
     }
 
-    if (!try_compile_append_tokenized_flags(ctx, cmd, eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_FLAGS")))) {
+    if (!try_compile_append_tokenized_flags(ctx, cmd, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_FLAGS")))) {
         return false;
     }
 
@@ -636,7 +636,7 @@ static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
         nob_cmd_append(cmd, arg);
     }
 
-    String_View required_link_options = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LINK_OPTIONS"));
+    String_View required_link_options = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LINK_OPTIONS"));
     if (required_link_options.count > 0) {
         SV_List opts = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_link_options, &opts)) return false;
@@ -647,7 +647,7 @@ static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
         }
     }
 
-    String_View required_link_dirs = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LINK_DIRECTORIES"));
+    String_View required_link_dirs = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LINK_DIRECTORIES"));
     if (required_link_dirs.count > 0) {
         SV_List dirs = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_link_dirs, &dirs)) return false;
@@ -662,7 +662,7 @@ static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
         }
     }
 
-    String_View required_libs = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LIBRARIES"));
+    String_View required_libs = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_REQUIRED_LIBRARIES"));
     if (required_libs.count > 0) {
         SV_List libs = NULL;
         if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), required_libs, &libs)) return false;
@@ -737,8 +737,8 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
         char *compiler_c = eval_sv_to_cstr_temp(
             ctx,
             lang == TRY_COMPILE_LANG_CXX
-                ? eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"))
-                : eval_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")));
+                ? eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"))
+                : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")));
         char *src_c = eval_sv_to_cstr_temp(ctx, src);
         char *obj_c = eval_sv_to_cstr_temp(ctx, obj_path);
         EVAL_OOM_RETURN_IF_NULL(ctx, compiler_c, false);
@@ -748,7 +748,7 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
         Nob_Cmd cmd = {0};
         nob_cmd_append(&cmd, compiler_c);
 #if defined(_WIN32)
-        msvc = eval_sv_eq_ci_lit(eval_var_get(ctx, nob_sv_from_cstr("MSVC")), "1");
+        msvc = eval_sv_eq_ci_lit(eval_var_get_visible(ctx, nob_sv_from_cstr("MSVC")), "1");
         if (msvc) {
             String_View fo_arg = sv_copy_to_arena(eval_temp_arena(ctx),
                                                   nob_sv_from_cstr(nob_temp_sprintf("/Fo:%s", obj_c)));
@@ -789,7 +789,7 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
         return true;
     }
 
-    String_View target_type = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_TARGET_TYPE"));
+    String_View target_type = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_TARGET_TYPE"));
     Try_Compile_Build_Kind build_kind = req->signature == TRY_COMPILE_SIGNATURE_SOURCE
         ? (eval_sv_eq_ci_lit(target_type, "STATIC_LIBRARY")
             ? TRY_COMPILE_BUILD_STATIC_LIBRARY
@@ -841,7 +841,7 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
     }
 
 #if defined(_WIN32)
-    msvc = eval_sv_eq_ci_lit(eval_var_get(ctx, nob_sv_from_cstr("MSVC")), "1");
+    msvc = eval_sv_eq_ci_lit(eval_var_get_visible(ctx, nob_sv_from_cstr("MSVC")), "1");
 #endif
     Try_Compile_Language link_lang = TRY_COMPILE_LANG_C;
     if (req->linker_language.count > 0) {
@@ -869,8 +869,8 @@ static bool try_compile_execute_source_request(Evaluator_Context *ctx,
     char *linker_c = eval_sv_to_cstr_temp(
         ctx,
         link_lang == TRY_COMPILE_LANG_CXX
-            ? eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"))
-            : eval_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")));
+            ? eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"))
+            : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")));
     char *out_c = eval_sv_to_cstr_temp(ctx, output_path);
     EVAL_OOM_RETURN_IF_NULL(ctx, linker_c, false);
     EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
@@ -1082,7 +1082,7 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
             if (!try_compile_write_generated_source(ctx,
                                                     req,
                                                     values[0],
-                                                    eval_var_get(ctx, values[1]),
+                                                    eval_var_get_visible(ctx, values[1]),
                                                     current_type)) {
                 return false;
             }
@@ -1393,9 +1393,9 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
 
 static bool try_run_clear_run_outputs(Evaluator_Context *ctx, const Try_Run_Request *req) {
     if (!ctx || !req) return false;
-    if (req->run_output_var.count > 0 && !eval_var_set(ctx, req->run_output_var, nob_sv_from_cstr(""))) return false;
-    if (req->run_stdout_var.count > 0 && !eval_var_set(ctx, req->run_stdout_var, nob_sv_from_cstr(""))) return false;
-    if (req->run_stderr_var.count > 0 && !eval_var_set(ctx, req->run_stderr_var, nob_sv_from_cstr(""))) return false;
+    if (req->run_output_var.count > 0 && !eval_var_set_current(ctx, req->run_output_var, nob_sv_from_cstr(""))) return false;
+    if (req->run_stdout_var.count > 0 && !eval_var_set_current(ctx, req->run_stdout_var, nob_sv_from_cstr(""))) return false;
+    if (req->run_stderr_var.count > 0 && !eval_var_set_current(ctx, req->run_stderr_var, nob_sv_from_cstr(""))) return false;
     return true;
 }
 
@@ -1417,14 +1417,14 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
     if (!ok) return !eval_should_stop(ctx);
 
     if (req.signature == TRY_COMPILE_SIGNATURE_SOURCE && req.copy_file_path.count > 0) {
-        String_View target_type = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_TARGET_TYPE"));
+        String_View target_type = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_TARGET_TYPE"));
         if (eval_sv_eq_ci_lit(target_type, "STATIC_LIBRARY")) {
             exec_res.ok = false;
             if (exec_res.output.count == 0) {
                 exec_res.output = nob_sv_from_cstr("try_compile COPY_FILE is invalid when CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY");
             }
             if (req.copy_file_error_var.count > 0) {
-                (void)eval_var_set(ctx, req.copy_file_error_var, nob_sv_from_cstr("COPY_FILE requires an executable artifact"));
+                (void)eval_var_set_current(ctx, req.copy_file_error_var, nob_sv_from_cstr("COPY_FILE requires an executable artifact"));
             }
         } else if (exec_res.ok && exec_res.artifact_path.count > 0) {
             String_View dst = try_compile_resolve_in_dir(ctx, req.copy_file_path, req.current_bin_dir);
@@ -1438,13 +1438,13 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
             (void)mkdir_p_local(ctx, parent_c);
             bool copied = nob_copy_file(src_c, dst_c);
             if (req.copy_file_error_var.count > 0) {
-                (void)eval_var_set(ctx,
+                (void)eval_var_set_current(ctx,
                                    req.copy_file_error_var,
                                    copied ? nob_sv_from_cstr("") : nob_sv_from_cstr("try_compile COPY_FILE failed"));
             }
             if (!copied) exec_res.ok = false;
         } else if (req.copy_file_error_var.count > 0) {
-            (void)eval_var_set(ctx, req.copy_file_error_var, nob_sv_from_cstr("try_compile COPY_FILE failed"));
+            (void)eval_var_set_current(ctx, req.copy_file_error_var, nob_sv_from_cstr("try_compile COPY_FILE failed"));
         }
     }
 
@@ -1491,20 +1491,20 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
         .compile_ok = exec_res.ok,
         .compile_output = exec_res.output.count > 0 ? exec_res.output : nob_sv_from_cstr(""),
     };
-    if (!eval_var_set(ctx,
+    if (!eval_var_set_current(ctx,
                       req.compile_req.result_var,
                       run_res.compile_ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) {
         return false;
     }
-    if (req.compile_output_var.count > 0 && !eval_var_set(ctx, req.compile_output_var, run_res.compile_output)) return false;
+    if (req.compile_output_var.count > 0 && !eval_var_set_current(ctx, req.compile_output_var, run_res.compile_output)) return false;
 
     if (!run_res.compile_ok) {
         if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
         return !eval_should_stop(ctx);
     }
 
-    String_View cross_compiling = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
+    String_View cross_compiling = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
     if (cross_compiling.count > 0 && !try_compile_is_false(cross_compiling)) {
         (void)EVAL_DIAG(ctx,
                              EV_DIAG_ERROR,
@@ -1514,7 +1514,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
                              nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"),
                              nob_sv_from_cstr("This batch only supports native execution"));
         if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -1527,7 +1527,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
                              nob_sv_from_cstr("try_run() failed to start compiled executable"),
                              nob_sv_from_cstr("compiled artifact path is empty"));
         if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -1572,7 +1572,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
                              nob_sv_from_cstr("try_run() failed to start compiled executable"),
                              exec_res.artifact_path);
         if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
         return !eval_should_stop(ctx);
     }
 
@@ -1581,9 +1581,9 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     run_res.run_stdout = proc_res.stdout_text;
     run_res.run_stderr = proc_res.stderr_text;
 
-    if (req.run_result_var.count > 0 && !eval_var_set(ctx, req.run_result_var, proc_res.result_text)) return false;
-    if (req.run_stdout_var.count > 0 && !eval_var_set(ctx, req.run_stdout_var, run_res.run_stdout)) return false;
-    if (req.run_stderr_var.count > 0 && !eval_var_set(ctx, req.run_stderr_var, run_res.run_stderr)) return false;
+    if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, proc_res.result_text)) return false;
+    if (req.run_stdout_var.count > 0 && !eval_var_set_current(ctx, req.run_stdout_var, run_res.run_stdout)) return false;
+    if (req.run_stderr_var.count > 0 && !eval_var_set_current(ctx, req.run_stderr_var, run_res.run_stderr)) return false;
     if (req.run_output_var.count > 0) {
         Nob_String_Builder merged = {0};
         if (run_res.run_stdout.count > 0) nob_sb_append_buf(&merged, run_res.run_stdout.data, run_res.run_stdout.count);
@@ -1595,7 +1595,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
             combined = nob_sv_from_parts(copy, merged.count);
         }
         nob_sb_free(merged);
-        if (!eval_var_set(ctx, req.run_output_var, combined)) return false;
+        if (!eval_var_set_current(ctx, req.run_output_var, combined)) return false;
     }
 
     return !eval_should_stop(ctx);
