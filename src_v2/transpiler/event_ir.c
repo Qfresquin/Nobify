@@ -123,6 +123,12 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.archive_file)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.plist)) return false;
             break;
+
+        case EVENT_PACKAGE_FIND_RESULT:
+            if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.package_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.mode)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.found_path)) return false;
+            break;
     }
 
     return true;
@@ -283,6 +289,13 @@ static void event_dump_one(const Event *ev) {
             printf(" name=%.*s",
                    (int) ev->as.cpack_add_component.name.count,
                    ev->as.cpack_add_component.name.data ? ev->as.cpack_add_component.name.data : "");
+            break;
+
+        case EVENT_PACKAGE_FIND_RESULT:
+            printf(" pkg=%.*s found=%s",
+                   (int) ev->as.package_find_result.package_name.count,
+                   ev->as.package_find_result.package_name.data ? ev->as.package_find_result.package_name.data : "",
+                   ev->as.package_find_result.found ? "true" : "false");
             break;
     }
 

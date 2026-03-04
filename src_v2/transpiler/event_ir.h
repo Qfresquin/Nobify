@@ -53,7 +53,8 @@ typedef enum {
     X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add") \
     X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type") \
     X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group") \
-    X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component")
+    X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component") \
+    X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result")
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label) kind,
@@ -247,6 +248,15 @@ typedef struct {
 } Event_Cpack_Add_Component;
 
 typedef struct {
+    String_View package_name;
+    String_View mode;
+    String_View found_path;
+    bool found;
+    bool required;
+    bool quiet;
+} Event_Package_Find_Result;
+
+typedef struct {
     Event_Family family;
     uint16_t kind;
     uint16_t version;
@@ -277,6 +287,7 @@ typedef struct {
         Event_Cpack_Add_Install_Type cpack_add_install_type;
         Event_Cpack_Add_Component_Group cpack_add_component_group;
         Event_Cpack_Add_Component cpack_add_component;
+        Event_Package_Find_Result package_find_result;
     } as;
 } Event;
 

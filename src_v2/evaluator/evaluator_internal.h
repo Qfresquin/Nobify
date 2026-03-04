@@ -606,6 +606,25 @@ static inline bool eval_emit_cpack_add_component(Evaluator_Context *ctx,
     ev.as.cpack_add_component.downloaded = downloaded;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_package_find_result(Evaluator_Context *ctx,
+                                                 Event_Origin origin,
+                                                 String_View package_name,
+                                                 String_View mode,
+                                                 String_View found_path,
+                                                 bool found,
+                                                 bool required,
+                                                 bool quiet) {
+    Event ev = {0};
+    ev.h.kind = EVENT_PACKAGE_FIND_RESULT;
+    ev.h.origin = origin;
+    ev.as.package_find_result.package_name = sv_copy_to_event_arena(ctx, package_name);
+    ev.as.package_find_result.mode = sv_copy_to_event_arena(ctx, mode);
+    ev.as.package_find_result.found_path = sv_copy_to_event_arena(ctx, found_path);
+    ev.as.package_find_result.found = found;
+    ev.as.package_find_result.required = required;
+    ev.as.package_find_result.quiet = quiet;
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_target_dependency(Evaluator_Context *ctx,
                                                Event_Origin origin,
                                                String_View target_name,

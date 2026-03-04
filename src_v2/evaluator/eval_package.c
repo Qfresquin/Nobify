@@ -1782,7 +1782,16 @@ static void find_package_emit_result(Evaluator_Context *ctx,
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("Package not found"),
                        opt->pkg);
     }
-    (void)found_path;
+    if (!eval_should_stop(ctx)) {
+        (void)eval_emit_package_find_result(ctx,
+                                            o,
+                                            opt->pkg,
+                                            opt->mode,
+                                            found_path,
+                                            found,
+                                            opt->required,
+                                            opt->quiet);
+    }
 }
 
 bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
@@ -1805,7 +1814,6 @@ bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     bool found = find_package_resolve(ctx, &opt, &found_path);
     find_package_publish_vars(ctx, &opt, &found, found_path);
     find_package_emit_result(ctx, node, o, &opt, found, found_path);
-    if (!eval_should_stop(ctx) && !eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
