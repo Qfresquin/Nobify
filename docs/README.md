@@ -53,6 +53,18 @@ Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 
 ---
 
+## Reference Specs
+
+The implementation-level contracts for v2 live in focused docs under `docs/`.
+
+- `docs/evaluator/`: evaluator runtime, command routing, and event IR contracts.
+- `docs/build_model/`: build model ingestion, validation, freeze, and query contracts.
+- `docs/lexer/`: lexer tokenization and source-position contract.
+- `docs/parser/`: parser AST, grammar, and recovery contract.
+- `docs/arena/`: arena allocator and `arena_dyn.h` memory helper contract.
+
+---
+
 ## Disclaimer
 
 Nobify is not a 1:1 clone of CMake. It does not promise to support every legacy policy or historical quirk of the last 20 years.
