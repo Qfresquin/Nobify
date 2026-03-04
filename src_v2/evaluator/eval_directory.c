@@ -380,7 +380,7 @@ static bool expand_link_option_token(Evaluator_Context *ctx, String_View tok, SV
 }
 
 bool eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    (void)node;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
@@ -400,9 +400,7 @@ bool eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return false;
         if (!added) continue;
-        (void)o;
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -423,16 +421,12 @@ bool eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *nod
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique[i], &added)) return false;
         if (!added) continue;
-
-        (void)o;
         if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return false;
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
 bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
@@ -453,7 +447,6 @@ bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return false;
         if (!added) continue;
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -525,7 +518,6 @@ bool eval_handle_add_link_options(Evaluator_Context *ctx, const Node *node) {
         if (!added) continue;
         (void)o;
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
@@ -566,12 +558,10 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"),
                        qualifier);
     }
-    if (!eval_should_stop(ctx) && !eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
 bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
@@ -599,12 +589,10 @@ bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
         (void)is_system;
         (void)is_before;
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 
 bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
 
@@ -626,7 +614,6 @@ bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
         (void)resolved;
         (void)is_before;
     }
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
     return !eval_should_stop(ctx);
 }
 

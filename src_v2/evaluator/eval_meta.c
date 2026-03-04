@@ -367,7 +367,15 @@ bool eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::GUID"), project_guid)) return !eval_should_stop(ctx);
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::PLATFORM"), platform)) return !eval_should_stop(ctx);
     if (!eval_var_set(ctx, meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", name, "::DEPENDENCIES"), deps_joined)) return !eval_should_stop(ctx);
-    if (!eval_emit_trace_command(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name, &a, true, false)) return false;
+    if (!eval_emit_target_declare(ctx,
+                                  eval_origin_from_node(ctx, node),
+                                  name,
+                                  EV_TARGET_LIBRARY_UNKNOWN,
+                                  true,
+                                  false,
+                                  nob_sv_from_cstr(""))) {
+        return false;
+    }
     return !eval_should_stop(ctx);
 }
 

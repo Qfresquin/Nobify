@@ -598,10 +598,24 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         opt.main_dependency = nob_sv_from_cstr("");
     }
 
-    (void)mode_target;
-    (void)target_name;
-    (void)opt;
-    if (!eval_emit_trace_command(ctx, o, node->as.cmd.name, &a, true, false)) return false;
+    if (mode_target) {
+        if (!eval_emit_target_prop_set(ctx,
+                                       o,
+                                       target_name,
+                                       nob_sv_from_cstr("NOBIFY_CUSTOM_COMMAND_STAGE"),
+                                       opt.pre_build ? nob_sv_from_cstr("PRE_BUILD") : nob_sv_from_cstr("POST_BUILD"),
+                                       EV_PROP_SET)) {
+            return false;
+        }
+    } else {
+        for (size_t i = 0; i < arena_arr_len(opt.outputs); i++) {
+            if (opt.append) {
+                if (!eval_emit_fs_append_file(ctx, o, opt.outputs[i])) return false;
+            } else {
+                if (!eval_emit_fs_write_file(ctx, o, opt.outputs[i])) return false;
+            }
+        }
+    }
     return !eval_should_stop(ctx);
 }
 
