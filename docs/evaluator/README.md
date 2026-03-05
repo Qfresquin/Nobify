@@ -30,14 +30,15 @@ Substantive drafts already written:
 - `evaluator_variables_and_scope.md`
 - `evaluator_dispatch.md`
 - `evaluator_diagnostics.md`
-
-Placeholder drafts still pending detailed content:
+- `evaluator_compatibility_model.md`
 - `evaluator_expressions.md`
 - `evaluator_event_ir_contract.md`
-- `evaluator_compatibility_model.md`
 - `evaluator_command_capabilities.md`
 - `evaluator_coverage_matrix.md`
 - `evaluator_audit_notes.md`
+
+Placeholder drafts still pending detailed content:
+- none
 
 ## Planned Draft Set
 

@@ -1,21 +1,199 @@
 # Evaluator Audit Notes (Rewrite Draft)
 
-Status: Draft rewrite. This document is intended to capture analytical findings, risks, and review notes for the new evaluator documentation set.
+Status: Analytical draft. This document captures implementation-audit findings, risk prioritization, and remediation backlog for the evaluator rewrite set in `docs/evaluator/`.
 
-## Rewrite Boundary
+## 1. Scope
 
-This file is a placeholder for the analytical audit-notes slice of the evaluator rewrite.
+This document records:
+- cross-cutting implementation findings that do not fit a single semantic slice,
+- behavior divergences and operational risks,
+- maintainability/performance hotspots,
+- prioritized follow-up actions.
 
-Current rule:
-- use `docs/Evaluator/` as historical reference,
-- keep this file focused on findings and open questions,
-- do not let this file redefine canonical evaluator guarantees,
-- keep this file subordinate to `evaluator_v2_spec.md`.
+It does not redefine evaluator contracts. Canonical behavior remains in `evaluator_v2_spec.md`.
 
-## Planned Sections
+## 2. Source of Truth
 
-- Current findings
-- Behavioral risks
-- Documentation gaps
-- Code-health notes
-- Open follow-up questions
+Primary implementation sources:
+- `src_v2/evaluator/evaluator.c`
+- `src_v2/evaluator/eval_dispatcher.c`
+- `src_v2/evaluator/eval_command_caps.c`
+- `src_v2/evaluator/eval_command_registry.h`
+- `src_v2/evaluator/eval_compat.c`
+- `src_v2/evaluator/eval_report.c`
+
+Companion docs used for audit context:
+- `docs/evaluator/evaluator_v2_spec.md`
+- `docs/evaluator/evaluator_compatibility_model.md`
+- `docs/evaluator/evaluator_command_capabilities.md`
+- `docs/evaluator/evaluator_coverage_matrix.md`
+- `docs/Evaluatorr/evaluator_v2_full_audit.md` (legacy archive reference)
+
+## 3. Snapshot Baseline
+
+Snapshot date (workspace): March 5, 2026.
+
+Current quantitative baseline:
+- Built-in registry commands: `119`
+- Capability labels: `67 FULL` / `52 PARTIAL` / `0 MISSING`
+- Fallback labels: `116 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
+- Largest implementation files by size:
+  - `eval_string.c` (`2561` lines)
+  - `eval_target.c` (`2320` lines)
+  - `eval_file.c` (`2181` lines)
+  - `eval_flow.c` (`2068` lines)
+  - `eval_package.c` (`1834` lines)
+
+## 4. Positive Findings
+
+Current strengths worth preserving:
+- Dispatcher and capability metadata are generated from one registry macro (`EVAL_COMMAND_REGISTRY`), reducing drift risk.
+- Stop-state handling is coherent: OOM transitions to `stop_requested` and short-circuits most execution paths.
+- Diagnostic emission is consistent and dual-sink: one external log line plus one `EVENT_DIAG` with run-report updates.
+- Unknown-command behavior is explicit and policy-driven instead of silently ignored.
+
+## 5. Prioritized Findings
+
+| ID | Severity | Category | Finding (short) |
+|---|---|---|---|
+| F-01 | Medium | Behavioral divergence | `while()` has hard iteration cap (`10000`) that can change valid script outcomes. |
+| F-02 | Medium | Contract coherence | Capability metadata (`implemented_level`/`fallback`) is not enforced by dispatch runtime. |
+| F-03 | Medium | Observability | Evaluator severity and process-global diagnostics severity can diverge under strict modes. |
+| F-04 | Medium | Runtime controls | Compatibility variable refresh is call-site based (not universal), creating timing sensitivity. |
+| F-05 | Low | Performance scalability | Known-command and capability lookup are linear scans over registry size. |
+| F-06 | Low | Maintainability | Large evaluator translation units concentrate many concerns and raise refactor risk. |
+| F-07 | Low | Coverage debt | `PARTIAL` footprint remains high (`43.7%`), concentrated in `ctest_*` and legacy wrappers. |
+
+## 6. Detailed Findings
+
+### F-01: `while()` hard cap
+
+Evidence:
+- `src_v2/evaluator/evaluator.c` (`eval_while`) sets `const size_t kMaxIter = 10000` and emits `"Iteration limit exceeded"` when exhausted.
+
+Risk:
+- Long but valid loops can terminate with evaluator error even when original CMake flow would continue.
+
+Recommendation:
+- Keep guard, but make it configurable (`env` or evaluator variable) and document default explicitly in canonical spec.
+
+### F-02: Capability metadata is informational only
+
+Evidence:
+- Capability lookup returns static metadata from `eval_command_caps.c`.
+- Dispatch path in `eval_dispatcher.c` routes directly to handler by name and does not branch on capability/fallback metadata.
+
+Risk:
+- Tooling can over-interpret capability fields as runtime policy.
+- Metadata/runtime drift can persist unnoticed.
+
+Recommendation:
+- Choose one explicit contract:
+  - keep metadata informational-only and state this in all related docs/tests, or
+  - add runtime checks/hook points that consume fallback metadata for known commands.
+
+### F-03: Severity split between evaluator and global diagnostics
+
+Evidence:
+- `eval_emit_diag(...)` computes evaluator-effective severity and emits both `EVENT_DIAG` and `diag_log(...)`.
+- Shared diagnostics strict mode can escalate warnings independently from evaluator report/event severity.
+
+Risk:
+- CI gates based on global diagnostics counters can disagree with evaluator run report.
+
+Recommendation:
+- Define one authority for severity escalation (evaluator vs global diagnostics) and codify a single gating recommendation.
+
+### F-04: Compatibility refresh timing
+
+Evidence:
+- `eval_refresh_runtime_compat(...)` is currently called in `eval_emit_diag(...)` and unknown-command dispatch path.
+- It is not globally invoked at every command entry.
+
+Risk:
+- Runtime variable changes (`CMAKE_NOBIFY_*`) can become effective only when a refresh point is hit.
+
+Recommendation:
+- Either:
+  - refresh once per command dispatch entry, or
+  - explicitly document delayed-application semantics as intentional.
+
+### F-05: Linear lookup paths
+
+Evidence:
+- `eval_dispatcher_is_known_command(...)` scans `DISPATCH` linearly.
+- `eval_command_caps_lookup(...)` scans `COMMAND_CAPS` linearly.
+
+Risk:
+- Current cost is acceptable at `119` commands, but headroom drops as registry grows and introspection frequency increases.
+
+Recommendation:
+- Keep as-is for now; plan optional hash/index table if command surface expands materially.
+
+### F-06: File-size concentration
+
+Evidence:
+- Multiple core `.c` files exceed ~1800 lines (`eval_string.c`, `eval_target.c`, `eval_file.c`, `eval_flow.c`, `eval_package.c`).
+
+Risk:
+- Review complexity and regression probability increase, especially for cross-cutting edits.
+
+Recommendation:
+- Refactor by domain boundaries (for example: split `eval_file` by subcommand families and `eval_string` by mode families).
+
+### F-07: Coverage debt concentration
+
+Evidence:
+- Coverage matrix snapshot: `52` of `119` built-ins remain `PARTIAL` (`43.7%`).
+- Concentration is mostly `ctest_*`, legacy compatibility commands, and query/introspection surfaces.
+
+Risk:
+- Behavioral confidence remains uneven despite broad command-name availability.
+
+Recommendation:
+- Keep promotion backlog focused on clusters (not one-off commands), starting with `ctest_*` + `target_* advanced` + `try_run`.
+
+## 7. Remediation Backlog
+
+Priority tiers for next engineering/doc pass:
+
+1. P0
+- Clarify severity authority and CI gating rule (F-03).
+- Decide and document capability-metadata contract (F-02).
+
+2. P1
+- Add configurable `while()` guard limit and document default semantics (F-01).
+- Define deterministic compatibility-refresh timing contract (F-04).
+
+3. P2
+- Start decomposition of largest evaluator files with stable internal interfaces (F-06).
+- Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
+- Revisit lookup indexing only if profiling justifies it (F-05).
+
+## 8. Verification Checklist for Next Audit Pass
+
+- Re-run registry stats and fallback distribution from `eval_command_registry.h`.
+- Confirm any new `PARTIAL -> FULL` promotions are reflected in both coverage matrix and capability docs.
+- Re-check strict-mode severity behavior with one controlled warning scenario.
+- Re-check `while()` behavior and guard configurability if implemented.
+- Recompute top evaluator file-size hotspots after any refactor wave.
+
+## 9. Open Questions
+
+- Should `CI_STRICT` remain behaviorally equivalent to `STRICT`, or gain CI-specific stop/report semantics?
+- Should unknown-command and known-command fallback policy converge to one unified policy mechanism?
+- Which metric is canonical for build gating: evaluator run report, global diagnostics counters, or both?
+
+## 10. Relationship to Other Docs
+
+- `evaluator_v2_spec.md`
+Canonical contract; this file is analytical only.
+
+- `evaluator_coverage_matrix.md`
+Quantitative command-coverage snapshot used by this audit.
+
+- `evaluator_command_capabilities.md`
+Capability API/data contract referenced by finding F-02.
+
+- `evaluator_compatibility_model.md`
+Profile/policy behavior referenced by findings F-03 and F-04.
