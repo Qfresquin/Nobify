@@ -4,7 +4,6 @@
 
 #include "arena.h"
 #include "arena_dyn.h"
-#include "build_model_builder.h"
 #include "diagnostics.h"
 #include "evaluator.h"
 #include "evaluator_internal.h"
@@ -168,9 +167,7 @@ static bool evaluator_prepare_site_name_command(char *out_path, size_t out_path_
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 static Ast_Root parse_cmake(Arena *arena, const char *script) {
@@ -2223,70 +2220,6 @@ TEST(evaluator_add_compile_definitions_updates_existing_and_future_targets) {
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
-    TEST_PASS();
-}
-
-TEST(evaluator_add_dependencies_emits_events_and_updates_build_model) {
-    Arena *temp_arena = arena_create(2 * 1024 * 1024);
-    Arena *event_arena = arena_create(2 * 1024 * 1024);
-    Arena *model_arena = arena_create(2 * 1024 * 1024);
-    ASSERT(temp_arena && event_arena && model_arena);
-
-    Cmake_Event_Stream *stream = event_stream_create(event_arena);
-    ASSERT(stream != NULL);
-
-    Evaluator_Init init = {0};
-    init.arena = temp_arena;
-    init.event_arena = event_arena;
-    init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
-    init.current_file = "CMakeLists.txt";
-
-    Evaluator_Context *ctx = evaluator_create(&init);
-    ASSERT(ctx != NULL);
-
-    Ast_Root root = parse_cmake(
-        temp_arena,
-        "add_custom_target(dep_a)\n"
-        "add_custom_target(dep_b)\n"
-        "add_custom_target(root_t)\n"
-        "add_dependencies(root_t dep_a dep_b)\n");
-    ASSERT(evaluator_run(ctx, root));
-
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
-    ASSERT(report != NULL);
-    ASSERT(report->error_count == 0);
-
-    bool saw_dep_a_event = false;
-    bool saw_dep_b_event = false;
-    for (size_t i = 0; i < stream->count; i++) {
-        const Cmake_Event *ev = &stream->items[i];
-        if (ev->kind != EV_TARGET_ADD_DEPENDENCY) continue;
-        if (!nob_sv_eq(ev->as.target_add_dependency.target_name, nob_sv_from_cstr("root_t"))) continue;
-        if (nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("dep_a"))) saw_dep_a_event = true;
-        if (nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("dep_b"))) saw_dep_b_event = true;
-    }
-
-    ASSERT(saw_dep_a_event);
-    ASSERT(saw_dep_b_event);
-
-    Build_Model_Builder *builder = builder_create(model_arena, NULL);
-    ASSERT(builder != NULL);
-    ASSERT(builder_apply_stream(builder, stream));
-    Build_Model *model = builder_finish(builder);
-    ASSERT(model != NULL);
-
-    Build_Target *root_target = build_model_find_target(model, nob_sv_from_cstr("root_t"));
-    ASSERT(root_target != NULL);
-    ASSERT(root_target->dependencies.count == 2);
-    ASSERT(nob_sv_eq(root_target->dependencies.items[0], nob_sv_from_cstr("dep_a")));
-    ASSERT(nob_sv_eq(root_target->dependencies.items[1], nob_sv_from_cstr("dep_b")));
-
-    evaluator_destroy(ctx);
-    arena_destroy(temp_arena);
-    arena_destroy(event_arena);
-    arena_destroy(model_arena);
     TEST_PASS();
 }
 
@@ -7013,7 +6946,6 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
     test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed);
-    test_evaluator_add_dependencies_emits_events_and_updates_build_model(passed, failed);
     test_evaluator_execute_process_captures_output_and_models_3_28_fatal_mode(passed, failed);
     test_evaluator_cmake_language_core_subcommands_work(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);

@@ -52,7 +52,6 @@ static Test_Module TEST_MODULES[] = {
     {"lexer", test_lexer},
     {"parser", test_parser},
     {"evaluator", test_evaluator},
-    {"pipeline", test_pipeline},
 };
 
 static void append_v2_common_flags(Nob_Cmd *cmd) {
@@ -79,9 +78,6 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/transpiler",
         "-Isrc_v2/evaluator",
         "-Isrc_v2/genex",
-        "-Isrc_v2/build_model",
-        "-I", "src obsoleto so use de referencia/logic_model",
-        "-I", "src obsoleto so use de referencia/ds_adapter",
         "-Itest_v2");
 
     const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
@@ -141,13 +137,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_test.c",
         "src_v2/evaluator/eval_try_compile.c",
         "src_v2/evaluator/eval_utils.c",
-        "src_v2/evaluator/eval_vars.c",
-        "src_v2/build_model/build_model.c",
-        "src_v2/build_model/build_model_builder.c",
-        "src_v2/build_model/build_model_validate.c",
-        "src_v2/build_model/build_model_freeze.c",
-        "src_v2/build_model/build_model_query.c",
-        "src_v2/build_model/build_logic.c");
+        "src_v2/evaluator/eval_vars.c");
 }
 
 static void append_v2_parser_runtime_sources(Nob_Cmd *cmd) {
@@ -156,16 +146,6 @@ static void append_v2_parser_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/lexer/lexer.c",
         "src_v2/parser/parser.c",
         "src_v2/diagnostics/diagnostics.c");
-}
-
-static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "src_v2/build_model/build_model.c",
-        "src_v2/build_model/build_model_builder.c",
-        "src_v2/build_model/build_model_validate.c",
-        "src_v2/build_model/build_model_freeze.c",
-        "src_v2/build_model/build_model_query.c",
-        "src_v2/build_model/build_logic.c");
 }
 
 static void append_v2_lexer_runtime_sources(Nob_Cmd *cmd) {
@@ -205,13 +185,6 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
         "test_v2/test_workspace.c",
         "test_v2/evaluator/test_evaluator_v2_main.c",
         "test_v2/evaluator/test_evaluator_v2_suite.c");
-}
-
-static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
-    nob_cmd_append(cmd,
-        "test_v2/test_workspace.c",
-        "test_v2/pipeline/test_pipeline_v2_main.c",
-        "test_v2/pipeline/test_pipeline_v2_suite.c");
 }
 
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
@@ -548,19 +521,6 @@ static bool build_test_evaluator(void) {
     return nob_cmd_run_sync(cmd);
 }
 
-static bool build_test_pipeline(void) {
-    Nob_Cmd cmd = {0};
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_PIPELINE_OUT);
-    append_v2_pipeline_test_sources(&cmd);
-    append_v2_evaluator_runtime_sources(&cmd);
-    append_v2_build_model_runtime_sources(&cmd);
-    append_v2_pcre_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
-}
-
 static bool test_evaluator(void) {
     nob_log(NOB_INFO, "[v2] build+run evaluator");
     if (!build_test_evaluator()) return false;
@@ -568,9 +528,8 @@ static bool test_evaluator(void) {
 }
 
 static bool test_pipeline(void) {
-    nob_log(NOB_INFO, "[v2] build+run pipeline");
-    if (!build_test_pipeline()) return false;
-    return run_binary_in_workspace(TEST_PIPELINE_RUN);
+    nob_log(NOB_WARNING, "[v2] pipeline test is temporarily disabled while build_model is absent");
+    return false;
 }
 
 static bool test_arena(void) {
