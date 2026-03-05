@@ -56,7 +56,9 @@ Compatibility and metadata:
 
 ```c
 bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);
-bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability);
+bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
+bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
+bool evaluator_get_command_capability(Evaluator_Context *ctx, String_View command_name, Command_Capability *out_capability);
 ```
 
 Current top-level API behavior:
@@ -105,6 +107,7 @@ Core runtime ownership model:
 
 State includes:
 - variable scopes and policy stacks,
+- native-command registry,
 - user-command registry,
 - macro/block/deferred/file-lock stacks,
 - diagnostics/report counters,
@@ -120,7 +123,7 @@ Execution is node-driven:
 - `NODE_COMMAND` uses dispatcher routing.
 
 Dispatch routing order:
-1. built-in command table lookup,
+1. native command lookup in the context registry (built-ins are seeded at create),
 2. user command lookup/invocation,
 3. unknown-command diagnostic fallback.
 

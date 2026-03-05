@@ -9,6 +9,6 @@ typedef struct {
     Eval_Command_Fallback fallback;
 } Eval_Command_Cap_Entry;
 
-bool eval_command_caps_lookup(String_View name, Command_Capability *out_capability);
+bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
 
 #endif // EVAL_COMMAND_CAPS_H_

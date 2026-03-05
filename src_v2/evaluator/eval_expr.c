@@ -571,7 +571,7 @@ static bool parse_unary(Expr *e) {
         expr_next(e);
         if (!expr_has(e)) return false;
         String_View name = expr_next(e);
-        if (eval_dispatcher_is_known_command(name)) return true;
+        if (eval_dispatcher_is_known_command(e->ctx, name)) return true;
         return eval_user_cmd_find(e->ctx, name) != NULL;
     }
 

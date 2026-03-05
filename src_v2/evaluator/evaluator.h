@@ -20,6 +20,7 @@
 // -----------------------------------------------------------------------------
 
 typedef struct Evaluator_Context Evaluator_Context;
+typedef bool (*Eval_Native_Command_Handler)(Evaluator_Context *ctx, const Node *node);
 
 typedef enum {
     EVAL_PROFILE_PERMISSIVE = 0,
@@ -63,6 +64,13 @@ typedef struct {
     Eval_Command_Fallback fallback_behavior;
 } Command_Capability;
 
+typedef struct {
+    String_View name;
+    Eval_Native_Command_Handler handler;
+    Eval_Command_Impl_Level implemented_level;
+    Eval_Command_Fallback fallback_behavior;
+} Evaluator_Native_Command_Def;
+
 typedef enum {
     EVAL_RUN_OK = 0,
     EVAL_RUN_OK_WITH_WARNINGS,
@@ -100,6 +108,10 @@ bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
 const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx);
 const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx);
 bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);
-bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability);
+bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
+bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
+bool evaluator_get_command_capability(Evaluator_Context *ctx,
+                                      String_View command_name,
+                                      Command_Capability *out_capability);
 
 #endif // EVALUATOR_H_

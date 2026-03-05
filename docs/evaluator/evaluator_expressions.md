@@ -189,7 +189,7 @@ Supported unary predicates in `parse_unary(...)`:
 
 Current meaning notes:
 - `TARGET` checks `eval_target_known(...)`.
-- `COMMAND` checks built-in registry plus registered user commands.
+- `COMMAND` checks context-native registry plus registered user commands.
 - `POLICY` checks whether policy id is known, not whether current effective value is `NEW`/`OLD`.
 - `TEST` checks definition of `NOBIFY_TEST::<name>` variable.
 - filesystem predicates use host filesystem APIs (`stat`, `access`, etc.).

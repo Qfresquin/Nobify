@@ -184,6 +184,33 @@ static Ast_Root parse_cmake(Arena *arena, const char *script) {
     return parse_tokens(arena, toks);
 }
 
+static bool native_test_handler_set_hit(Evaluator_Context *ctx, const Node *node) {
+    (void)node;
+    return eval_var_set_current(ctx, nob_sv_from_cstr("NATIVE_HIT"), nob_sv_from_cstr("1"));
+}
+
+static bool native_test_handler_runtime_mutation(Evaluator_Context *ctx, const Node *node) {
+    (void)node;
+
+    Evaluator_Native_Command_Def during_run = {
+        .name = nob_sv_from_cstr("native_during_run_register"),
+        .handler = native_test_handler_set_hit,
+        .implemented_level = EVAL_CMD_IMPL_PARTIAL,
+        .fallback_behavior = EVAL_FALLBACK_NOOP_WARN,
+    };
+    bool register_ok = evaluator_register_native_command(ctx, &during_run);
+    bool unregister_ok = evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_runtime_probe"));
+
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("NATIVE_REG_DURING_RUN"),
+                              register_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    return eval_var_set_current(ctx,
+                                nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN"),
+                                unregister_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+}
+
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
     if (!arena || !path || !out) return false;
 
@@ -980,24 +1007,137 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     ASSERT(found_diag_error);
 
     Command_Capability cap = {0};
-    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("file"), &cap));
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("file"), &cap));
     ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
     Command_Capability cmk_path_cap = {0};
-    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("cmake_path"), &cmk_path_cap));
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("cmake_path"), &cmk_path_cap));
     ASSERT(cmk_path_cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
     Command_Capability link_libs_cap = {0};
-    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("link_libraries"), &link_libs_cap));
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("link_libraries"), &link_libs_cap));
     ASSERT(link_libs_cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
     Command_Capability try_compile_cap = {0};
-    ASSERT(evaluator_get_command_capability(nob_sv_from_cstr("try_compile"), &try_compile_cap));
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("try_compile"), &try_compile_cap));
     ASSERT(try_compile_cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
     Command_Capability missing = {0};
-    ASSERT(!evaluator_get_command_capability(nob_sv_from_cstr("unknown_public_api_command"), &missing));
+    ASSERT(!evaluator_get_command_capability(ctx, nob_sv_from_cstr("unknown_public_api_command"), &missing));
     ASSERT(missing.implemented_level == EVAL_CMD_IMPL_MISSING);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_native_command_registry_runtime_extension) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root_builtin = parse_cmake(temp_arena, "set(BUILTIN_SEEDED 1)\n");
+    ASSERT(evaluator_run(ctx, root_builtin));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BUILTIN_SEEDED")), nob_sv_from_cstr("1")));
+
+    Evaluator_Native_Command_Def native_ext = {
+        .name = nob_sv_from_cstr("native_ext_cmd"),
+        .handler = native_test_handler_set_hit,
+        .implemented_level = EVAL_CMD_IMPL_PARTIAL,
+        .fallback_behavior = EVAL_FALLBACK_ERROR_CONTINUE,
+    };
+    ASSERT(evaluator_register_native_command(ctx, &native_ext));
+
+    Command_Capability native_ext_cap = {0};
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("native_ext_cmd"), &native_ext_cap));
+    ASSERT(native_ext_cap.implemented_level == EVAL_CMD_IMPL_PARTIAL);
+    ASSERT(native_ext_cap.fallback_behavior == EVAL_FALLBACK_ERROR_CONTINUE);
+
+    ASSERT(!evaluator_register_native_command(ctx, &native_ext));
+
+    Ast_Root root_native = parse_cmake(
+        temp_arena,
+        "if(COMMAND native_ext_cmd)\n"
+        "  set(NATIVE_PREDICATE 1)\n"
+        "endif()\n"
+        "native_ext_cmd()\n");
+    ASSERT(evaluator_run(ctx, root_native));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_PREDICATE")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_HIT")), nob_sv_from_cstr("1")));
+
+    Ast_Root root_user_collision = parse_cmake(
+        temp_arena,
+        "function(native_user_collision)\n"
+        "endfunction()\n");
+    ASSERT(evaluator_run(ctx, root_user_collision));
+
+    Evaluator_Native_Command_Def user_collision = native_ext;
+    user_collision.name = nob_sv_from_cstr("native_user_collision");
+    ASSERT(!evaluator_register_native_command(ctx, &user_collision));
+
+    ASSERT(!evaluator_unregister_native_command(ctx, nob_sv_from_cstr("message")));
+
+    Evaluator_Native_Command_Def runtime_probe = {
+        .name = nob_sv_from_cstr("native_runtime_probe"),
+        .handler = native_test_handler_runtime_mutation,
+        .implemented_level = EVAL_CMD_IMPL_PARTIAL,
+        .fallback_behavior = EVAL_FALLBACK_NOOP_WARN,
+    };
+    ASSERT(evaluator_register_native_command(ctx, &runtime_probe));
+
+    Ast_Root root_runtime_probe = parse_cmake(temp_arena, "native_runtime_probe()\n");
+    ASSERT(evaluator_run(ctx, root_runtime_probe));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_REG_DURING_RUN")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN")), nob_sv_from_cstr("0")));
+
+    ASSERT(evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_runtime_probe")));
+    ASSERT(!evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_runtime_probe")));
+
+    Command_Capability removed_runtime_probe = {0};
+    ASSERT(!evaluator_get_command_capability(ctx, nob_sv_from_cstr("native_runtime_probe"), &removed_runtime_probe));
+    ASSERT(removed_runtime_probe.implemented_level == EVAL_CMD_IMPL_MISSING);
+
+    Ast_Root root_probe_missing = parse_cmake(
+        temp_arena,
+        "if(COMMAND native_runtime_probe)\n"
+        "  set(PROBE_STILL_VISIBLE 1)\n"
+        "endif()\n");
+    ASSERT(evaluator_run(ctx, root_probe_missing));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROBE_STILL_VISIBLE")).count == 0);
+
+    ASSERT(evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_ext_cmd")));
+    ASSERT(!evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_ext_cmd")));
+
+    Command_Capability removed_native_ext = {0};
+    ASSERT(!evaluator_get_command_capability(ctx, nob_sv_from_cstr("native_ext_cmd"), &removed_native_ext));
+    ASSERT(removed_native_ext.implemented_level == EVAL_CMD_IMPL_MISSING);
+
+    Ast_Root root_native_missing = parse_cmake(
+        temp_arena,
+        "if(COMMAND native_ext_cmd)\n"
+        "  set(NATIVE_AFTER_UNREGISTER 1)\n"
+        "endif()\n");
+    ASSERT(evaluator_run(ctx, root_native_missing));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_AFTER_UNREGISTER")).count == 0);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -6855,6 +6995,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
 
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+    test_evaluator_native_command_registry_runtime_extension(passed, failed);
     test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed);
     test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed);
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);

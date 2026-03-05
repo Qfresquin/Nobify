@@ -958,6 +958,65 @@ static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *sr
 }
 
 // -----------------------------------------------------------------------------
+// Native command registration/lookup
+// -----------------------------------------------------------------------------
+
+const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name) {
+    if (!ctx) return NULL;
+    for (size_t i = arena_arr_len(ctx->native_commands); i-- > 0;) {
+        if (sv_eq_ci(ctx->native_commands[i].name, name)) {
+            return &ctx->native_commands[i];
+        }
+    }
+    return NULL;
+}
+
+Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name) {
+    return (Eval_Native_Command*)eval_native_cmd_find_const(ctx, name);
+}
+
+bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
+                                       const Evaluator_Native_Command_Def *def,
+                                       bool is_builtin,
+                                       bool allow_during_run) {
+    if (!ctx || !def || !def->handler || def->name.count == 0 || !def->name.data) return false;
+    if (!allow_during_run && ctx->file_eval_depth > 0) return false;
+    if (eval_native_cmd_find(ctx, def->name)) return false;
+    if (eval_user_cmd_find(ctx, def->name)) return false;
+
+    Eval_Native_Command cmd = {0};
+    cmd.name = sv_copy_to_event_arena(ctx, def->name);
+    if (eval_should_stop(ctx)) return false;
+    cmd.handler = def->handler;
+    cmd.implemented_level = def->implemented_level;
+    cmd.fallback_behavior = def->fallback_behavior;
+    cmd.is_builtin = is_builtin;
+
+    Arena *registry_arena = ctx->native_commands_arena ? ctx->native_commands_arena : ctx->event_arena;
+    return EVAL_ARR_PUSH(ctx, registry_arena, ctx->native_commands, cmd);
+}
+
+bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
+                                         String_View name,
+                                         bool allow_builtin_remove,
+                                         bool allow_during_run) {
+    if (!ctx || name.count == 0 || !name.data) return false;
+    if (!allow_during_run && ctx->file_eval_depth > 0) return false;
+
+    size_t count = arena_arr_len(ctx->native_commands);
+    for (size_t i = 0; i < count; i++) {
+        if (!sv_eq_ci(ctx->native_commands[i].name, name)) continue;
+        if (ctx->native_commands[i].is_builtin && !allow_builtin_remove) return false;
+        for (size_t j = i + 1; j < count; j++) {
+            ctx->native_commands[j - 1] = ctx->native_commands[j];
+        }
+        arena_arr_set_len(ctx->native_commands, count - 1);
+        return true;
+    }
+    return false;
+}
+
+// -----------------------------------------------------------------------------
 // User command registration/invocation (function/macro)
 // -----------------------------------------------------------------------------
 
@@ -1408,6 +1467,14 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->error_budget = 0; // 0 == unlimited in permissive profile
     eval_report_reset(ctx);
 
+    ctx->native_commands_arena = arena_create(4096);
+    if (!ctx->native_commands_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->native_commands_arena)) {
+        arena_destroy(ctx->native_commands_arena);
+        ctx->native_commands_arena = NULL;
+        return NULL;
+    }
+
     ctx->known_targets_arena = arena_create(4096);
     if (!ctx->known_targets_arena) return NULL;
     if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->known_targets_arena)) {
@@ -1521,6 +1588,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     String_View compiler_id = detect_compiler_id();
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
+    if (!eval_dispatcher_seed_builtin_commands(ctx)) return NULL;
 
     return ctx;
 }
@@ -1576,6 +1644,16 @@ bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile pr
     return eval_compat_set_profile(ctx, profile);
 }
 
-bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability) {
-    return eval_dispatcher_get_command_capability(command_name, out_capability);
+bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def) {
+    return eval_native_cmd_register_internal(ctx, def, false, false);
+}
+
+bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name) {
+    return eval_native_cmd_unregister_internal(ctx, command_name, false, false);
+}
+
+bool evaluator_get_command_capability(Evaluator_Context *ctx,
+                                      String_View command_name,
+                                      Command_Capability *out_capability) {
+    return eval_dispatcher_get_command_capability(ctx, command_name, out_capability);
 }

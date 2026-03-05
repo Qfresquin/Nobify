@@ -24,40 +24,40 @@
 #include "eval_command_caps.h"
 #include "eval_command_registry.h"
 
-typedef bool (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node);
-
-typedef struct {
-    const char *name;
-    Cmd_Handler fn;
-} Command_Entry;
-
-static const Command_Entry DISPATCH[] = {
-#define DISPATCH_ENTRY(name, handler, level, fallback) {name, handler},
-    EVAL_COMMAND_REGISTRY(DISPATCH_ENTRY)
-#undef DISPATCH_ENTRY
-};
-static const size_t DISPATCH_COUNT = sizeof(DISPATCH) / sizeof(DISPATCH[0]);
-
-bool eval_dispatcher_get_command_capability(String_View name, Command_Capability *out_capability) {
-    return eval_command_caps_lookup(name, out_capability);
+bool eval_dispatcher_seed_builtin_commands(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+#define SEED_BUILTIN(cmd_name, cmd_handler, cmd_level, cmd_fallback)                                  \
+    do {                                                                                               \
+        Evaluator_Native_Command_Def def = {0};                                                       \
+        def.name = nob_sv_from_cstr(cmd_name);                                                         \
+        def.handler = (cmd_handler);                                                                   \
+        def.implemented_level = (cmd_level);                                                           \
+        def.fallback_behavior = (cmd_fallback);                                                        \
+        if (!eval_native_cmd_register_internal(ctx, &def, true, true)) return false;                  \
+    } while (0);
+    EVAL_COMMAND_REGISTRY(SEED_BUILTIN);
+#undef SEED_BUILTIN
+    return true;
 }
 
-bool eval_dispatcher_is_known_command(String_View name) {
-    for (size_t i = 0; i < DISPATCH_COUNT; i++) {
-        if (eval_sv_eq_ci_lit(name, DISPATCH[i].name)) return true;
-    }
-    return false;
+bool eval_dispatcher_get_command_capability(const Evaluator_Context *ctx,
+                                            String_View name,
+                                            Command_Capability *out_capability) {
+    return eval_command_caps_lookup(ctx, name, out_capability);
+}
+
+bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View name) {
+    return eval_native_cmd_find_const(ctx, name) != NULL;
 }
 
 bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node || node->kind != NODE_COMMAND) return false;
 
-    for (size_t i = 0; i < DISPATCH_COUNT; i++) {
-        if (eval_sv_eq_ci_lit(node->as.cmd.name, DISPATCH[i].name)) {
-            if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return false;
-            if (!DISPATCH[i].fn(ctx, node)) return false;
-            return !eval_should_stop(ctx);
-        }
+    const Eval_Native_Command *native = eval_native_cmd_find_const(ctx, node->as.cmd.name);
+    if (native) {
+        if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return false;
+        if (!native->handler(ctx, node)) return false;
+        return !eval_should_stop(ctx);
     }
 
     Event_Origin o = eval_origin_from_node(ctx, node);

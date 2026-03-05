@@ -84,6 +84,16 @@ typedef struct {
 
 typedef User_Command *User_Command_List;
 
+typedef struct {
+    String_View name;
+    Eval_Native_Command_Handler handler;
+    Eval_Command_Impl_Level implemented_level;
+    Eval_Command_Fallback fallback_behavior;
+    bool is_builtin;
+} Eval_Native_Command;
+
+typedef Eval_Native_Command *Eval_Native_Command_List;
+
 typedef Var_Binding *Macro_Binding_List;
 
 typedef struct {
@@ -219,6 +229,7 @@ typedef enum {
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
+    Arena *native_commands_arena;
     Arena *known_targets_arena;
     Arena *user_commands_arena;
     Cmake_Event_Stream *stream;
@@ -236,6 +247,7 @@ struct Evaluator_Context {
     SV_List known_targets; 
     SV_List alias_targets;
     SV_List message_check_stack;
+    Eval_Native_Command_List native_commands;
     User_Command_List user_commands;
     Macro_Frame_Stack macro_frames;
     Block_Frame_Stack block_frames;
@@ -1339,7 +1351,7 @@ void eval_report_record_diag(Evaluator_Context *ctx,
                              Eval_Diag_Code code,
                              Eval_Error_Class cls);
 void eval_report_finalize(Evaluator_Context *ctx);
-bool eval_command_caps_lookup(String_View name, Command_Capability *out_capability);
+bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
 bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg);
 
 // ---- vars ----
@@ -1388,6 +1400,18 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
 bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name);
 bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Event_Origin origin, String_View target_name);
+
+// ---- native commands ----
+Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name);
+const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name);
+bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
+                                       const Evaluator_Native_Command_Def *def,
+                                       bool is_builtin,
+                                       bool allow_during_run);
+bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
+                                         String_View name,
+                                         bool allow_builtin_remove,
+                                         bool allow_during_run);
 
 // ---- user commands ----
 bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node);

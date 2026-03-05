@@ -31,19 +31,22 @@ Public/internal entry points:
 
 ```c
 bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node);
-bool eval_dispatcher_is_known_command(String_View name);
-bool eval_dispatcher_get_command_capability(String_View name, Command_Capability *out_capability);
+bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View name);
+bool eval_dispatcher_get_command_capability(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
+bool eval_dispatcher_seed_builtin_commands(Evaluator_Context *ctx);
 ```
 
 Top-level API surface:
 
 ```c
-bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability);
+bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
+bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
+bool evaluator_get_command_capability(Evaluator_Context *ctx, String_View command_name, Command_Capability *out_capability);
 ```
 
 `evaluator_get_command_capability(...)` delegates directly to dispatcher capability lookup.
 
-## 4. Built-In Dispatch Table Model
+## 4. Native Registry Runtime Model
 
 ### 4.1 Registry as Single Source
 
@@ -56,20 +59,17 @@ Each entry carries:
 - implementation level metadata,
 - fallback metadata.
 
-### 4.2 Runtime Dispatch Table Construction
+### 4.2 Runtime Registry Construction
 
-`eval_dispatcher.c` expands that registry into:
-
-```c
-static const Command_Entry DISPATCH[] = { ... };
-```
+`evaluator_create(...)` calls `eval_dispatcher_seed_builtin_commands(...)`, which expands
+`EVAL_COMMAND_REGISTRY(X)` and registers each built-in into the context registry.
 
 Current routing mechanics:
-- linear scan over `DISPATCH`,
-- case-insensitive name comparison (`eval_sv_eq_ci_lit`).
+- linear scan over `ctx->native_commands`,
+- case-insensitive name comparison.
 
 Current implication:
-- dispatch cost is O(N) in registered command count.
+- dispatch and capability lookup cost are O(N) in registered command count.
 
 ## 5. Command Dispatch Pipeline
 
@@ -81,9 +81,9 @@ Current implication:
 - `node == NULL`,
 - `node->kind != NODE_COMMAND`.
 
-### 5.2 Built-In Match Path
+### 5.2 Native Match Path
 
-On first built-in name match:
+On first native registry name match:
 1. emit `EVENT_COMMAND_CALL`,
 2. invoke handler,
 3. return `!eval_should_stop(ctx)`.
@@ -93,7 +93,7 @@ Current event helper:
 
 ### 5.3 User Command Fallback Path
 
-If no built-in matches:
+If no native command matches:
 1. refresh runtime compatibility knobs (`eval_refresh_runtime_compat(...)`),
 2. lookup user command (`eval_user_cmd_find(...)`),
 3. if found, resolve args with `eval_resolve_args_literal(...)` for macros or `eval_resolve_args(...)` for functions,
@@ -109,7 +109,7 @@ Practical consequence:
 
 ### 5.4 Unknown Command Path
 
-If built-in and user lookup both miss:
+If native and user lookup both miss:
 - emit diagnostic component `dispatcher`, cause `"Unknown command"`,
 - diagnostic severity depends on `ctx->unsupported_policy`,
 - dispatcher returns `true` after diagnostic emission path.
@@ -204,7 +204,7 @@ Those fields are documentation/reporting metadata in current code paths.
 ## 10. Relationship With Expression Semantics
 
 `if(COMMAND <name>)` currently resolves command existence by:
-- built-in registry presence (`eval_dispatcher_is_known_command(...)`), or
+- native registry presence (`eval_dispatcher_is_known_command(ctx, ...)`), or
 - user command registration (`eval_user_cmd_find(...)`).
 
 This means `COMMAND` predicates observe the same command namespace model used by dispatcher routing.
@@ -212,7 +212,7 @@ This means `COMMAND` predicates observe the same command namespace model used by
 ## 11. Current Limits and Non-Goals
 
 Current limitations visible in implementation:
-- built-in lookup is linear (no hash/indexed dispatcher).
+- native lookup is linear (no hash/indexed dispatcher).
 - unknown-command handling is generic; per-command fallback metadata is not applied at runtime.
 - there is no `EVENT_COMMAND_CALL` emission for unknown-command attempts.
 - dispatcher contract is `NODE_COMMAND`-only; structural nodes (`if`, `while`, etc.) are routed elsewhere.

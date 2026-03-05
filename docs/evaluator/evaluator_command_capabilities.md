@@ -58,21 +58,23 @@ Contract intent:
 Public API:
 
 ```c
-bool evaluator_get_command_capability(String_View command_name, Command_Capability *out_capability);
+bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
+bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
+bool evaluator_get_command_capability(Evaluator_Context *ctx, String_View command_name, Command_Capability *out_capability);
 ```
 
 Internal delegated path:
 
 ```c
-bool eval_dispatcher_get_command_capability(String_View name, Command_Capability *out_capability);
-bool eval_command_caps_lookup(String_View name, Command_Capability *out_capability);
+bool eval_dispatcher_get_command_capability(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
+bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
 ```
 
 Current call chain:
 - `evaluator_get_command_capability(...)` delegates to dispatcher,
 - dispatcher delegates to `eval_command_caps_lookup(...)`.
 
-No evaluator runtime context is required for lookup.
+Lookup uses evaluator runtime context (`ctx`) and reflects native commands registered in that context.
 
 ## 5. Registry Model
 
@@ -85,32 +87,24 @@ Each registry entry currently carries:
 - implementation level,
 - fallback behavior.
 
-The capabilities table is generated from this same registry:
-
-```c
-static const Eval_Command_Cap_Entry COMMAND_CAPS[] = {
-    #define COMMAND_CAP_ENTRY(name, handler, level, fallback) {name, level, fallback},
-    EVAL_COMMAND_REGISTRY(COMMAND_CAP_ENTRY)
-    #undef COMMAND_CAP_ENTRY
-};
-```
+Built-ins are seeded into each context-native registry in `evaluator_create(...)` by expanding this same macro list.
 
 Practical consequence:
-- dispatcher command set and capability metadata stay structurally in sync at compile time.
+- dispatcher command set and capability metadata stay structurally in sync at runtime per context.
 
 ## 6. Lookup Contract
 
 ### 6.1 Matching
 
 Lookup is:
-- linear scan over generated table,
+- linear scan over the context-native registry,
 - case-insensitive by command name (`eval_sv_eq_ci_lit`).
 
 ### 6.2 Return Value Semantics
 
 `eval_command_caps_lookup(...)` returns:
-- `true` when name is found in registry table,
-- `false` when name is not found or when `out_capability == NULL`.
+- `true` when name is found in registry,
+- `false` when name is not found, context is null, or when `out_capability == NULL`.
 
 When not found and `out_capability` is valid, it still writes:
 - `implemented_level = EVAL_CMD_IMPL_MISSING`
@@ -129,7 +123,7 @@ Current implication:
 Current intended meanings:
 - `EVAL_CMD_IMPL_FULL`: command path considered substantially implemented in evaluator.
 - `EVAL_CMD_IMPL_PARTIAL`: command path exists but has known behavior gaps or reduced feature scope.
-- `EVAL_CMD_IMPL_MISSING`: command not represented in built-in registry lookup table.
+- `EVAL_CMD_IMPL_MISSING`: command not represented in the context-native registry.
 
 These are static metadata flags, not runtime proof of success for any specific invocation.
 
@@ -158,20 +152,20 @@ Examples:
 
 Capability metadata is therefore introspection/reporting data, not an execution policy engine.
 
-## 10. Built-In vs User-Defined Command Visibility
+## 10. Native vs User-Defined Command Visibility
 
-Capability lookup currently covers only built-in commands from registry.
+Capability lookup currently covers native commands from context registry (built-ins + externally registered natives).
 
 It does not reflect:
 - user-defined `function()`/`macro()` commands registered at runtime.
 
 Practical consequence:
-- `evaluator_get_command_capability("my_func")` returns missing unless `my_func` is built-in, even if runtime dispatch could call a user command with that name.
+- `evaluator_get_command_capability(ctx, "my_func")` returns missing unless `my_func` is native, even if runtime dispatch could call a user command with that name.
 
 ## 11. Known-Command Predicate Relationship
 
 `if(COMMAND <name>)` command existence uses:
-- built-in known-command check (`eval_dispatcher_is_known_command`)
+- native known-command check (`eval_dispatcher_is_known_command(ctx, ...)`)
 - or runtime user-command lookup (`eval_user_cmd_find`).
 
 This predicate model is broader than capability API coverage because it includes user commands.
@@ -186,7 +180,7 @@ There is no hash/index cache for capabilities in current implementation.
 ## 13. Current Limits and Non-Goals
 
 Current limitations:
-- capability lookup is static and context-free,
+- capability lookup does not include user-defined commands,
 - no dynamic capability downgrade/upgrade by policy/profile at runtime,
 - no machine-readable reason field for why a command is `PARTIAL`,
 - fallback metadata is not currently enforced by dispatcher as policy logic,
