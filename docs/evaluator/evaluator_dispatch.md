@@ -141,7 +141,7 @@ Dispatch is stop-aware, not exception-based.
 
 Current behavior:
 - dispatch will not start when stop is already set,
-- any path that sets stop (`oom` or explicit request) makes dispatch return `false`,
+- any path that sets stop (`oom` or explicit request) makes dispatch return `EVAL_RESULT_FATAL`,
 - diagnostic escalation policy can indirectly cause stop (through compat/report pipeline), affecting dispatch result.
 
 ## 8. Unknown-Command Policy Integration
@@ -230,3 +230,23 @@ Current limitations visible in implementation:
   - should detail the capability matrix and intended semantics of implementation/fallback metadata.
 - `evaluator_diagnostics.md`
   - diagnostic emission and stop escalation behavior used by unknown-command handling.
+
+## 13. Refactor Target: Lookup Strategy
+
+Planned dispatch lookup direction:
+- move native command lookup from linear scan to indexed/hash-backed lookup over the runtime registry,
+- preserve current command-resolution semantics (case-insensitive behavior and dispatch order) unless a dedicated RFC changes them.
+
+Target impact:
+- reduce hot-path lookup cost for command dispatch and `if(COMMAND ...)` checks,
+- keep capability lookup behavior compatible while improving runtime lookup efficiency.
+
+## 14. Refactor Target: Metadata Semantics
+
+Planned metadata semantics direction:
+- `implemented_level` and `fallback_behavior` remain descriptive first-class metadata for introspection/reporting,
+- runtime stop/continue policy remains mediated by diagnostics + compatibility policy paths.
+
+Separation rule:
+- unknown-command behavior stays explicit in dispatcher unknown-path logic,
+- capability metadata does not implicitly replace unknown-command fallback policy without a dedicated behavioral RFC.

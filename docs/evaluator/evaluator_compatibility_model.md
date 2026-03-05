@@ -107,6 +107,9 @@ Current core refresh points:
 Practical consequence:
 - compatibility variable changes are live, but only become effective after a refresh point is reached.
 
+Roadmap direction:
+- migrate to one canonical per-command-cycle refresh boundary (see section 15).
+
 ## 6. Profile Semantics
 
 ### 6.1 Severity Shaping
@@ -271,3 +274,34 @@ Diagnostic emission pipeline, severity shaping, and stop behavior.
 
 - `evaluator_execution_model.md`
 Where compatibility outcomes influence traversal and control flow.
+
+## 15. Refactor Target: Centralized Refresh Boundary
+
+Compatibility refresh will converge to one deterministic boundary per command evaluation cycle.
+
+Target contract:
+- at command-cycle entry, evaluator refreshes all `CMAKE_NOBIFY_*` compatibility knobs exactly once,
+- all compatibility decisions in that cycle (unknown-command policy, severity shaping, budget and stop checks) read that same refreshed snapshot,
+- call-site ad hoc refreshes inside dispatcher/diagnostic internals are reduced to compatibility-core infrastructure.
+
+Determinism objective:
+- equal command sequence + equal variable state at cycle boundaries yields equal compatibility decisions.
+
+## 16. Inter-Command Mutation Fallback Contract
+
+Mutation timing rule for compatibility variables:
+- writes to `CMAKE_NOBIFY_*` that happen during command N become normative for command N+1 by default.
+
+Fallback semantics:
+- if a command mutates compatibility knobs after the cycle snapshot is taken, evaluator keeps current-cycle decisions stable and applies new values at the next cycle boundary,
+- only commands that explicitly document immediate local refresh semantics may observe same-cycle effects, and that behavior must be declared in command-specific docs/tests.
+
+## 17. Strictness Escalation Ownership
+
+Ownership split is explicit:
+- evaluator compatibility layer owns evaluator-local strictness interpretation (effective severity shaping and evaluator stop/continue decisions),
+- shared diagnostics layer owns process-global logging/visibility escalation.
+
+Boundary rule:
+- shared/global logging strictness must not retroactively rewrite evaluator-local run-state outcomes,
+- evaluator run result and run report are derived from evaluator-local compatibility decisions; shared logger escalation is an external observability concern.

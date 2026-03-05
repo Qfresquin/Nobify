@@ -9,7 +9,7 @@ The evaluator consumes parser AST and emits semantic Event IR through an append-
 Primary boundary:
 - Input: `Ast_Root` from `src_v2/parser`.
 - Output: `Event_Stream` from `src_v2/transpiler/event_ir.h`.
-- Evaluator does not depend on `build_model.h` as part of its contract surface.
+- Build-IR coupling (`build_model.h`) is out of scope in this roadmap (decision #2 rejected).
 
 This document specifies:
 - public API behavior and lifecycle contracts,
@@ -147,7 +147,24 @@ Related runtime controls:
 Current behavior:
 - compatibility state can be changed both through API (`evaluator_set_compat_profile`) and by runtime variable refresh (`eval_refresh_runtime_compat`).
 
-## 8. Diagnostics and Run Report Boundary
+## 8. Refactor Direction
+
+Strategic roadmap source:
+- `docs/evaluator/Refatorção Estrutural.md`
+
+Direction constraints for refactor waves:
+- architecture remains context-centric (`Evaluator_Context` is still the integration boundary),
+- subsystem extraction is incremental and service-oriented, not a one-shot object-graph rewrite,
+- evaluator boundary remains AST -> Event IR.
+
+Declared non-goals for the current roadmap:
+- no `BuildModelBuilder`/Build IR coupling in evaluator scope,
+- no child evaluator context model for nested execution.
+
+Public API stability rule:
+- evaluator public API contracts remain unchanged during these refactor waves unless a separate RFC explicitly defines breaking API updates.
+
+## 9. Diagnostics and Run Report Boundary
 
 Evaluator diagnostics are emitted through `eval_emit_diag(...)`, which currently:
 - classifies evaluator metadata (`code`, `error_class`),
@@ -160,7 +177,7 @@ Evaluator diagnostics are emitted through `eval_emit_diag(...)`, which currently
 Important boundary:
 - evaluator report/event severity and process-global diagnostics counters can diverge when global diagnostics strict mode is enabled independently.
 
-## 9. Event IR Output Contract (Top-Level)
+## 10. Event IR Output Contract (Top-Level)
 
 The evaluator appends semantic events to the provided stream and does not rewrite prior events.
 
@@ -173,7 +190,7 @@ Current event categories produced include:
 Ownership rule:
 - event payload strings are copied into persistent evaluator-owned arena storage (`event_arena`-backed).
 
-## 10. Stop-State Contract
+## 11. Stop-State Contract
 
 Stop predicate:
 - evaluator is considered stopped when `oom` or `stop_requested` is true.
@@ -183,17 +200,18 @@ Current propagation pattern:
 - OOM (`ctx_oom`) marks both `oom` and `stop_requested`,
 - stop is cooperative across traversal, dispatch, diagnostics, and nested file execution.
 
-## 11. Current Known Divergences / Limits
+## 12. Current Known Divergences / Limits
 
 Current intentionally visible limits:
 - `while()` execution has a hard iteration guard.
 - dispatcher lookup is linear over the registry table.
 - unknown-command fallback is generic and does not dynamically apply capability metadata.
-- context is reused for nested evaluation rather than isolated child evaluators.
+- nested evaluation remains shared-context; child-context isolation is out of scope in the current roadmap.
 
-## 12. Annex Map
+## 13. Annex Map
 
 Subordinate detailed docs:
+- `Refatorção Estrutural.md`
 - `evaluator_runtime_model.md`
 - `evaluator_execution_model.md`
 - `evaluator_variables_and_scope.md`

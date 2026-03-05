@@ -34,7 +34,7 @@ typedef struct Evaluator_Context Evaluator_Context;
 High-level characteristics:
 - one context owns the live evaluator state for a run sequence,
 - the same context may execute multiple ASTs over time,
-- nested file execution re-enters the same context instead of spawning child evaluators,
+- nested file execution re-enters the same context (child-context isolation is out of scope in the current roadmap),
 - the context is stateful and not designed as a pure/stateless executor.
 
 Practical consequence:
@@ -532,7 +532,7 @@ Current runtime-model limitations visible in the implementation:
 
 - The context is stateful and not thread-safe by design.
 - A run reset clears `run_report`, not the entire evaluator environment.
-- Nested execution reuses one context instead of isolating child state into separate evaluator instances.
+- Nested execution reuses one context; child-context isolation remains an explicit out-of-scope decision in this roadmap.
 - Most persistent data is append/grow oriented; there is no general-purpose runtime snapshot/rollback API.
 - OOM is treated as a sticky fatal state for the context.
 
@@ -549,3 +549,23 @@ Should document variable lookup, scope mutation, and macro/function binding rule
 
 - `evaluator_diagnostics.md`
 Describes how runtime failures and warnings are emitted, recorded, and turned into events.
+
+## 16. Incremental Subsystemization Boundary
+
+Refactor direction for runtime architecture is incremental extraction over shared context state.
+
+Current target boundary:
+- scope, policy, flow, diagnostics, dispatcher, file execution, and deferred queues evolve as internal services,
+- those services continue to operate over the same `Evaluator_Context` integration boundary.
+
+Explicit non-target in this roadmap:
+- no child evaluator runtime context model for nested execution (`include`, subdirectory, inline/deferred execution).
+
+## 17. Compatibility Refresh Timing Contract Target
+
+Refactor target for compatibility refresh is one deterministic point per command evaluation cycle.
+
+Target behavior contract:
+- compatibility knobs are refreshed once at a canonical command-cycle boundary before policy/diagnostic decisions,
+- command-level decisions in that cycle use the same refreshed snapshot,
+- mutations of `CMAKE_NOBIFY_*` variables become effective on the next command cycle unless a command explicitly documents immediate local refresh semantics.
