@@ -89,10 +89,16 @@ typedef struct {
     Eval_Native_Command_Handler handler;
     Eval_Command_Impl_Level implemented_level;
     Eval_Command_Fallback fallback_behavior;
+    char *normalized_name;
     bool is_builtin;
 } Eval_Native_Command;
 
 typedef Eval_Native_Command *Eval_Native_Command_List;
+
+typedef struct Eval_Native_Command_Index_Entry {
+    char *key;
+    size_t value;
+} Eval_Native_Command_Index_Entry;
 
 typedef Var_Binding *Macro_Binding_List;
 
@@ -248,6 +254,8 @@ struct Evaluator_Context {
     SV_List alias_targets;
     SV_List message_check_stack;
     Eval_Native_Command_List native_commands;
+    // Case-insensitive lookup index: normalized command name -> native_commands index.
+    Eval_Native_Command_Index_Entry *native_command_index;
     User_Command_List user_commands;
     Macro_Frame_Stack macro_frames;
     Block_Frame_Stack block_frames;
@@ -275,6 +283,8 @@ struct Evaluator_Context {
     Eval_Compat_Profile compat_profile;
     Eval_Unsupported_Policy unsupported_policy;
     size_t error_budget;
+    // Snapshot refreshed at command-cycle boundary (eval_node entry).
+    bool continue_on_error_snapshot;
     Eval_Run_Report run_report;
 
     bool oom;
@@ -1394,6 +1404,9 @@ bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_
 
 // ---- vars ----
 String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key);
+static inline String_View eval_var_get(Evaluator_Context *ctx, String_View key) {
+    return eval_var_get_visible(ctx, key);
+}
 bool eval_var_defined_visible(Evaluator_Context *ctx, String_View key);
 bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View value);
 bool eval_var_unset_current(Evaluator_Context *ctx, String_View key);

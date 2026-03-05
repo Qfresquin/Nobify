@@ -165,7 +165,9 @@ void eval_file_lock_cleanup(Evaluator_Context *ctx) {
     for (size_t i = 0; i < arena_arr_len(ctx->file_locks); i++) {
         eval_file_lock_close_entry(&ctx->file_locks[i]);
     }
-    arena_arr_set_len(ctx->file_locks, 0);
+    if (ctx->file_locks) {
+        arena_arr_set_len(ctx->file_locks, 0);
+    }
 }
 
 static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_t fd_or_dummy, int guard_kind) {

@@ -16,6 +16,46 @@ static Eval_Unsupported_Policy eval_unsupported_policy_from_sv(String_View v) {
     return EVAL_UNSUPPORTED_WARN;
 }
 
+static bool eval_sv_ends_with_ci_lit(String_View v, const char *suffix) {
+    String_View s = nob_sv_from_cstr(suffix);
+    if (v.count < s.count) return false;
+    return eval_sv_eq_ci_lit(nob_sv_from_parts(v.data + (v.count - s.count), s.count), suffix);
+}
+
+static bool eval_compat_truthy_sv(String_View v) {
+    if (v.count == 0 || !v.data) return false;
+
+    if (eval_sv_eq_ci_lit(v, "1") ||
+        eval_sv_eq_ci_lit(v, "ON") ||
+        eval_sv_eq_ci_lit(v, "YES") ||
+        eval_sv_eq_ci_lit(v, "TRUE") ||
+        eval_sv_eq_ci_lit(v, "Y")) {
+        return true;
+    }
+
+    if (eval_sv_eq_ci_lit(v, "0") ||
+        eval_sv_eq_ci_lit(v, "OFF") ||
+        eval_sv_eq_ci_lit(v, "NO") ||
+        eval_sv_eq_ci_lit(v, "FALSE") ||
+        eval_sv_eq_ci_lit(v, "N") ||
+        eval_sv_eq_ci_lit(v, "IGNORE") ||
+        eval_sv_eq_ci_lit(v, "NOTFOUND") ||
+        eval_sv_ends_with_ci_lit(v, "-NOTFOUND")) {
+        return false;
+    }
+
+    char buf[64];
+    if (v.count < sizeof(buf)) {
+        memcpy(buf, v.data, v.count);
+        buf[v.count] = '\0';
+        char *end = NULL;
+        double numeric = strtod(buf, &end);
+        if (end && *end == '\0') return numeric != 0.0;
+    }
+
+    return true;
+}
+
 static bool eval_parse_size_t_sv(String_View v, size_t *out) {
     if (!out || v.count == 0) return false;
     char buf[64];
@@ -46,6 +86,7 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
         return false;
     }
     ctx->compat_profile = profile;
+    ctx->continue_on_error_snapshot = (profile == EVAL_PROFILE_PERMISSIVE);
 
     if (eval_scope_visible_depth(ctx) == 0) return true;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(profile))) {
@@ -57,6 +98,7 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
 }
 
 void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
+    if (!ctx) return;
     if (eval_scope_visible_depth(ctx) == 0) return;
     String_View profile = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE));
     if (profile.count > 0) ctx->compat_profile = eval_profile_from_sv(profile);
@@ -67,6 +109,11 @@ void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
     String_View budget_sv = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET));
     size_t parsed = 0;
     if (eval_parse_size_t_sv(budget_sv, &parsed)) ctx->error_budget = parsed;
+
+    String_View continue_on_error = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR));
+    if (continue_on_error.count > 0) {
+        ctx->continue_on_error_snapshot = eval_compat_truthy_sv(continue_on_error);
+    }
 }
 
 Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx, Cmake_Diag_Severity sev) {

@@ -61,7 +61,6 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
     }
 
     Event_Origin o = eval_origin_from_node(ctx, node);
-    eval_refresh_runtime_compat(ctx);
     User_Command *user = eval_user_cmd_find(ctx, node->as.cmd.name);
     if (user) {
         SV_List args = (user->kind == USER_CMD_MACRO)

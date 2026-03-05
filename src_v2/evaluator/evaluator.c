@@ -59,10 +59,7 @@ bool ctx_oom(Evaluator_Context *ctx) {
 }
 
 bool eval_continue_on_error(Evaluator_Context *ctx) {
-    if (!ctx) return false;
-    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR));
-    if (v.count == 0) return false;
-    return eval_truthy(ctx, v);
+    return ctx ? ctx->continue_on_error_snapshot : false;
 }
 
 void eval_request_stop(Evaluator_Context *ctx) {
@@ -92,7 +89,6 @@ Eval_Result eval_emit_diag(Evaluator_Context *ctx,
                            String_View cause,
                            String_View hint) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
-    eval_refresh_runtime_compat(ctx);
 
     Eval_Diag_Code code = EVAL_ERR_NONE;
     Eval_Error_Class cls = EVAL_ERR_CLASS_NONE;
@@ -453,6 +449,28 @@ static bool sv_eq_ci(String_View a, String_View b) {
         if (toupper((unsigned char)a.data[i]) != toupper((unsigned char)b.data[i])) return false;
     }
     return true;
+}
+
+static char *sv_ascii_upper_copy(Arena *arena, String_View sv) {
+    if (!arena || !sv.data || sv.count == 0) return NULL;
+    char *buf = (char*)arena_alloc(arena, sv.count + 1);
+    if (!buf) return NULL;
+    for (size_t i = 0; i < sv.count; i++) {
+        buf[i] = (char)toupper((unsigned char)sv.data[i]);
+    }
+    buf[sv.count] = '\0';
+    return buf;
+}
+
+static char *sv_ascii_upper_heap(String_View sv) {
+    if (!sv.data || sv.count == 0) return NULL;
+    char *buf = (char*)malloc(sv.count + 1);
+    if (!buf) return NULL;
+    for (size_t i = 0; i < sv.count; i++) {
+        buf[i] = (char)toupper((unsigned char)sv.data[i]);
+    }
+    buf[sv.count] = '\0';
+    return buf;
 }
 
 static bool sv_list_push(Arena *arena, SV_List *list, String_View sv) {
@@ -839,6 +857,8 @@ static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node) {
 
 static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
+    eval_refresh_runtime_compat(ctx);
+    if (eval_should_stop(ctx)) return eval_result_fatal();
 
     {
         char line_buf[32];
@@ -984,14 +1004,50 @@ static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *sr
 // Native command registration/lookup
 // -----------------------------------------------------------------------------
 
-const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name) {
-    if (!ctx) return NULL;
-    for (size_t i = arena_arr_len(ctx->native_commands); i-- > 0;) {
-        if (sv_eq_ci(ctx->native_commands[i].name, name)) {
-            return &ctx->native_commands[i];
-        }
+static bool eval_native_cmd_index_rebuild(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+
+    if (ctx->native_command_index) {
+        stbds_shfree(ctx->native_command_index);
+        ctx->native_command_index = NULL;
     }
-    return NULL;
+
+    size_t count = arena_arr_len(ctx->native_commands);
+    for (size_t i = 0; i < count; i++) {
+        Eval_Native_Command *cmd = &ctx->native_commands[i];
+        if (!cmd->normalized_name) {
+            Arena *registry_arena = ctx->native_commands_arena ? ctx->native_commands_arena : ctx->event_arena;
+            cmd->normalized_name = sv_ascii_upper_copy(registry_arena, cmd->name);
+            EVAL_OOM_RETURN_IF_NULL(ctx, cmd->normalized_name, false);
+        }
+        stbds_shput(ctx->native_command_index, cmd->normalized_name, i);
+    }
+
+    return true;
+}
+
+const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name) {
+    if (!ctx || !name.data || name.count == 0) return NULL;
+
+    Evaluator_Context *mutable_ctx = (Evaluator_Context*)ctx;
+    char *lookup_key = sv_ascii_upper_heap(name);
+    if (!lookup_key) {
+        (void)ctx_oom(mutable_ctx);
+        return NULL;
+    }
+
+    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(mutable_ctx->native_command_index, lookup_key);
+    if (!entry) {
+        free(lookup_key);
+        return NULL;
+    }
+    if (entry->value >= arena_arr_len(mutable_ctx->native_commands)) {
+        free(lookup_key);
+        return NULL;
+    }
+    const Eval_Native_Command *out = &mutable_ctx->native_commands[entry->value];
+    free(lookup_key);
+    return out;
 }
 
 Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name) {
@@ -1007,16 +1063,20 @@ bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
     if (eval_native_cmd_find(ctx, def->name)) return false;
     if (eval_user_cmd_find(ctx, def->name)) return false;
 
+    Arena *registry_arena = ctx->native_commands_arena ? ctx->native_commands_arena : ctx->event_arena;
+
     Eval_Native_Command cmd = {0};
     cmd.name = sv_copy_to_event_arena(ctx, def->name);
     if (eval_should_stop(ctx)) return false;
+    cmd.normalized_name = sv_ascii_upper_copy(registry_arena, def->name);
+    EVAL_OOM_RETURN_IF_NULL(ctx, cmd.normalized_name, false);
     cmd.handler = def->handler;
     cmd.implemented_level = def->implemented_level;
     cmd.fallback_behavior = def->fallback_behavior;
     cmd.is_builtin = is_builtin;
 
-    Arena *registry_arena = ctx->native_commands_arena ? ctx->native_commands_arena : ctx->event_arena;
-    return EVAL_ARR_PUSH(ctx, registry_arena, ctx->native_commands, cmd);
+    if (!EVAL_ARR_PUSH(ctx, registry_arena, ctx->native_commands, cmd)) return false;
+    return eval_native_cmd_index_rebuild(ctx);
 }
 
 bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
@@ -1026,17 +1086,32 @@ bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
     if (!ctx || name.count == 0 || !name.data) return false;
     if (!allow_during_run && ctx->file_eval_depth > 0) return false;
 
-    size_t count = arena_arr_len(ctx->native_commands);
-    for (size_t i = 0; i < count; i++) {
-        if (!sv_eq_ci(ctx->native_commands[i].name, name)) continue;
-        if (ctx->native_commands[i].is_builtin && !allow_builtin_remove) return false;
-        for (size_t j = i + 1; j < count; j++) {
-            ctx->native_commands[j - 1] = ctx->native_commands[j];
-        }
-        arena_arr_set_len(ctx->native_commands, count - 1);
-        return true;
+    char *lookup_key = sv_ascii_upper_heap(name);
+    EVAL_OOM_RETURN_IF_NULL(ctx, lookup_key, false);
+
+    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(ctx->native_command_index, lookup_key);
+    if (!entry) {
+        free(lookup_key);
+        return false;
     }
-    return false;
+
+    size_t idx = entry->value;
+    size_t count = arena_arr_len(ctx->native_commands);
+    if (idx >= count) {
+        free(lookup_key);
+        return false;
+    }
+    if (ctx->native_commands[idx].is_builtin && !allow_builtin_remove) {
+        free(lookup_key);
+        return false;
+    }
+
+    for (size_t j = idx + 1; j < count; j++) {
+        ctx->native_commands[j - 1] = ctx->native_commands[j];
+    }
+    arena_arr_set_len(ctx->native_commands, count - 1);
+    free(lookup_key);
+    return eval_native_cmd_index_rebuild(ctx);
 }
 
 // -----------------------------------------------------------------------------
@@ -1490,6 +1565,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     }
     ctx->unsupported_policy = EVAL_UNSUPPORTED_WARN;
     ctx->error_budget = 0; // 0 == unlimited in permissive profile
+    ctx->continue_on_error_snapshot = (ctx->compat_profile == EVAL_PROFILE_PERMISSIVE);
     eval_report_reset(ctx);
 
     ctx->native_commands_arena = arena_create(4096);
@@ -1621,6 +1697,10 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 void evaluator_destroy(Evaluator_Context *ctx) {
     if (!ctx) return;
     eval_file_lock_cleanup(ctx);
+    if (ctx->native_command_index) {
+        stbds_shfree(ctx->native_command_index);
+        ctx->native_command_index = NULL;
+    }
     if (ctx->cache_entries) {
         stbds_shfree(ctx->cache_entries);
         ctx->cache_entries = NULL;

@@ -513,7 +513,10 @@ typedef struct {
 typedef struct {
     String_View package_name;
     String_View mode;
-    String_View found_path;
+    union {
+        String_View found_path;
+        String_View location; // legacy alias
+    };
     bool found;
     bool required;
     bool quiet;
@@ -534,7 +537,10 @@ typedef struct {
 
 typedef struct {
     String_View name;
-    Cmake_Target_Type target_type;
+    union {
+        Cmake_Target_Type target_type;
+        Cmake_Target_Type type; // legacy alias
+    };
     bool imported;
     bool alias;
     String_View alias_of;
@@ -716,12 +722,15 @@ typedef struct {
         Event_Path_Compare path_compare;
         Event_Path_Convert path_convert;
         Event_Test_Enable test_enable;
+        Event_Test_Enable testing_enable; // legacy alias
         Event_Test_Add test_add;
         Event_Install_Rule_Add install_rule_add;
+        Event_Install_Rule_Add install_add_rule; // legacy alias
         Event_Cpack_Add_Install_Type cpack_add_install_type;
         Event_Cpack_Add_Component_Group cpack_add_component_group;
         Event_Cpack_Add_Component cpack_add_component;
         Event_Package_Find_Result package_find_result;
+        Event_Package_Find_Result find_package; // legacy alias
         Event_Project_Declare project_declare;
         Event_Project_Minimum_Required project_minimum_required;
         Event_Target_Declare target_declare;
@@ -749,6 +758,7 @@ typedef struct {
 
 typedef struct {
     Event *items;
+    size_t count; // legacy compatibility mirror (equals arena_arr_len(items))
 } Event_Stream;
 
 typedef struct {
@@ -759,6 +769,8 @@ typedef struct {
 
 // Transitional compatibility aliases while evaluator modules migrate from the
 // frozen structural IR to the semantic contract.
+typedef Event Cmake_Event;
+typedef Event_Kind Cmake_Event_Kind;
 typedef Event_Origin Cmake_Event_Origin;
 typedef Event_Stream Cmake_Event_Stream;
 typedef Event_Stream_Iterator Cmake_Event_Stream_Iterator;
@@ -767,6 +779,43 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_DIAG_NOTE EVENT_DIAG_SEVERITY_NOTE
 #define EV_DIAG_WARNING EVENT_DIAG_SEVERITY_WARNING
 #define EV_DIAG_ERROR EVENT_DIAG_SEVERITY_ERROR
+
+// Legacy event-kind aliases used by older tests/helpers.
+#define EV_DIAGNOSTIC EVENT_DIAG
+#define EV_PROJECT_DECLARE EVENT_PROJECT_DECLARE
+#define EV_VAR_SET EVENT_VAR_SET
+#define EV_SET_CACHE_ENTRY EVENT_VAR_SET
+#define EV_TARGET_DECLARE EVENT_TARGET_DECLARE
+#define EV_TARGET_ADD_SOURCE EVENT_TARGET_ADD_SOURCE
+#define EV_TARGET_ADD_DEPENDENCY EVENT_TARGET_ADD_DEPENDENCY
+#define EV_TARGET_PROP_SET EVENT_TARGET_PROP_SET
+#define EV_TARGET_INCLUDE_DIRECTORIES EVENT_TARGET_INCLUDE_DIRECTORIES
+#define EV_TARGET_COMPILE_DEFINITIONS EVENT_TARGET_COMPILE_DEFINITIONS
+#define EV_TARGET_COMPILE_OPTIONS EVENT_TARGET_COMPILE_OPTIONS
+#define EV_TARGET_LINK_LIBRARIES EVENT_TARGET_LINK_LIBRARIES
+#define EV_TARGET_LINK_OPTIONS EVENT_TARGET_LINK_OPTIONS
+#define EV_TARGET_LINK_DIRECTORIES EVENT_TARGET_LINK_DIRECTORIES
+#define EV_DIR_PUSH EVENT_DIR_PUSH
+#define EV_DIR_POP EVENT_DIR_POP
+#define EV_TESTING_ENABLE EVENT_TEST_ENABLE
+#define EV_TEST_ADD EVENT_TEST_ADD
+#define EV_INSTALL_ADD_RULE EVENT_INSTALL_RULE_ADD
+#define EV_CPACK_ADD_INSTALL_TYPE EVENT_CPACK_ADD_INSTALL_TYPE
+#define EV_CPACK_ADD_COMPONENT_GROUP EVENT_CPACK_ADD_COMPONENT_GROUP
+#define EV_CPACK_ADD_COMPONENT EVENT_CPACK_ADD_COMPONENT
+#define EV_FIND_PACKAGE EVENT_PACKAGE_FIND_RESULT
+#define EV_COMMAND_CALL EVENT_COMMAND_CALL
+
+// Removed kinds kept as non-emitted sentinels for source compatibility.
+#define EV_CUSTOM_COMMAND_TARGET ((Event_Kind)0x7FF0)
+#define EV_CUSTOM_COMMAND_OUTPUT ((Event_Kind)0x7FF1)
+#define EV_DIRECTORY_INCLUDE_DIRECTORIES ((Event_Kind)0x7FF2)
+#define EV_DIRECTORY_LINK_DIRECTORIES ((Event_Kind)0x7FF3)
+#define EV_GLOBAL_COMPILE_DEFINITIONS ((Event_Kind)0x7FF4)
+#define EV_GLOBAL_COMPILE_OPTIONS ((Event_Kind)0x7FF5)
+#define EV_GLOBAL_LINK_OPTIONS ((Event_Kind)0x7FF6)
+#define EV_GLOBAL_LINK_LIBRARIES ((Event_Kind)0x7FF7)
+#define EV_UNKNOWN ((Event_Kind)0x7FFF)
 
 Event_Stream *event_stream_create(Arena *arena);
 bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event ev);

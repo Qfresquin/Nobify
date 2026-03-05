@@ -384,7 +384,10 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
 
 Event_Stream *event_stream_create(Arena *arena) {
     if (!arena) return NULL;
-    return arena_alloc_zero(arena, sizeof(Event_Stream));
+    Event_Stream *stream = arena_alloc_zero(arena, sizeof(Event_Stream));
+    if (!stream) return NULL;
+    stream->count = 0;
+    return stream;
 }
 
 bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event ev) {
@@ -394,7 +397,9 @@ bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event ev) {
     if (ev.h.version == 0) ev.h.version = 1;
 
     if (!event_deep_copy_payload(event_arena, &ev)) return false;
-    return arena_arr_push(event_arena, stream->items, ev);
+    if (!arena_arr_push(event_arena, stream->items, ev)) return false;
+    stream->count = arena_arr_len(stream->items);
+    return true;
 }
 
 Event_Stream_Iterator event_stream_iter(const Event_Stream *stream) {
@@ -405,7 +410,7 @@ Event_Stream_Iterator event_stream_iter(const Event_Stream *stream) {
 
 bool event_stream_next(Event_Stream_Iterator *it) {
     if (!it || !it->stream) return false;
-    if (it->index >= arena_arr_len(it->stream->items)) {
+    if (it->index >= it->stream->count) {
         it->current = NULL;
         return false;
     }

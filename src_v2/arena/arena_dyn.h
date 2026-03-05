@@ -38,6 +38,42 @@ static inline const Arena_Arr_Header *arena_arr__hdr_const(const void *arr) {
 #define arena_arr_set_len(a, n) ((void)(arena_arr__hdr_mut((void*)(a))->count = (n)))
 #define arena_arr_free(a) ((void)(a))
 
+// Legacy compatibility helper used by v2 tests that still rely on the
+// pre-header dynamic array contract.
+static inline bool arena_da_reserve(
+    Arena *arena,
+    void **items,
+    size_t *capacity,
+    size_t item_size,
+    size_t min_count
+) {
+    if (!arena || !items || !capacity || item_size == 0) return false;
+    if (min_count <= *capacity) return true;
+
+    size_t new_cap = *capacity ? *capacity : ARENA_ARR_INIT_CAPACITY;
+    while (new_cap < min_count) {
+        if (new_cap > SIZE_MAX / 2) {
+            new_cap = min_count;
+            break;
+        }
+        new_cap *= 2;
+    }
+
+    if (new_cap < min_count) return false;
+    if (new_cap > (SIZE_MAX / item_size)) return false;
+
+    void *new_items = arena_alloc(arena, new_cap * item_size);
+    if (!new_items) return false;
+
+    if (*items && *capacity > 0) {
+        memcpy(new_items, *items, (*capacity) * item_size);
+    }
+
+    *items = new_items;
+    *capacity = new_cap;
+    return true;
+}
+
 static inline bool arena_arr__grow(
     Arena *arena,
     void **arr,

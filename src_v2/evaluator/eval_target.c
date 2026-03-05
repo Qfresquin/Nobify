@@ -334,7 +334,7 @@ static bool property_append_unique_temp(Evaluator_Context *ctx, SV_List *list, S
     if (!ctx || !list) return false;
     if (value.count == 0) return true;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
-        if (eval_sv_key_eq(*list[i], value)) return true;
+        if (eval_sv_key_eq((*list)[i], value)) return true;
     }
     return svu_list_push_temp(ctx, list, value);
 }
