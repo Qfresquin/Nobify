@@ -6,8 +6,8 @@
 #include "evaluator.h"
 
 // Handler principal para o comando file()
-bool eval_handle_file(struct Evaluator_Context *ctx, const Node *node);
-bool eval_handle_configure_file(struct Evaluator_Context *ctx, const Node *node);
-bool eval_handle_aux_source_directory(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_file(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_configure_file(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_aux_source_directory(struct Evaluator_Context *ctx, const Node *node);
 
 #endif // EVAL_FILE_H_

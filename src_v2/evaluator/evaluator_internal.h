@@ -296,6 +296,38 @@ bool ctx_oom(Evaluator_Context *ctx);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
 String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id);
 
+static inline Eval_Result eval_result_ok(void) {
+    Eval_Result r = { .kind = EVAL_RESULT_OK };
+    return r;
+}
+
+static inline Eval_Result eval_result_soft_error(void) {
+    Eval_Result r = { .kind = EVAL_RESULT_SOFT_ERROR };
+    return r;
+}
+
+static inline Eval_Result eval_result_fatal(void) {
+    Eval_Result r = { .kind = EVAL_RESULT_FATAL };
+    return r;
+}
+
+static inline Eval_Result eval_result_merge(Eval_Result lhs, Eval_Result rhs) {
+    return (rhs.kind > lhs.kind) ? rhs : lhs;
+}
+
+static inline Eval_Result eval_result_from_bool(bool ok) {
+    return ok ? eval_result_ok() : eval_result_fatal();
+}
+
+static inline Eval_Result eval_result_from_ctx(Evaluator_Context *ctx) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
+    return ctx->run_report.error_count > 0 ? eval_result_soft_error() : eval_result_ok();
+}
+
+static inline Eval_Result eval_result_ok_if_running(Evaluator_Context *ctx) {
+    return eval_should_stop(ctx) ? eval_result_fatal() : eval_result_ok();
+}
+
 static inline size_t eval_scope_visible_depth(const Evaluator_Context *ctx) {
     return ctx ? ctx->visible_scope_depth : 0;
 }
@@ -354,14 +386,17 @@ static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr
 #define EVAL_ARR_PUSH(ctx, arena, arr, value) \
     (arena_arr_push((arena), (arr), (value)) ? true : ctx_oom((ctx)))
 
-#define EVAL_NODE_ORIGIN_DIAG(ctx, node, origin, severity, component_lit, cause, hint) \
-    eval_emit_diag((ctx),                                                       \
-                   (severity),                                                  \
-                   nob_sv_from_cstr((component_lit)),                           \
-                   (node)->as.cmd.name,                                         \
-                   (origin),                                                    \
-                   (cause),                                                     \
+#define EVAL_NODE_ORIGIN_DIAG_RESULT(ctx, node, origin, severity, component_lit, cause, hint) \
+    eval_emit_diag((ctx),                                                                       \
+                   (severity),                                                                  \
+                   nob_sv_from_cstr((component_lit)),                                           \
+                   (node)->as.cmd.name,                                                         \
+                   (origin),                                                                    \
+                   (cause),                                                                     \
                    (hint))
+
+#define EVAL_NODE_ORIGIN_DIAG(ctx, node, origin, severity, component_lit, cause, hint) \
+    (!eval_result_is_fatal(EVAL_NODE_ORIGIN_DIAG_RESULT((ctx), (node), (origin), (severity), (component_lit), (cause), (hint))))
 
 #define EVAL_NODE_DIAG(ctx, node, severity, component_lit, cause, hint) \
     EVAL_NODE_ORIGIN_DIAG((ctx),                                         \
@@ -372,8 +407,11 @@ static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr
                           (cause),                                       \
                           (hint))
 
-#define EVAL_DIAG(ctx, severity, component, command, origin, cause, hint) \
+#define EVAL_DIAG_RESULT(ctx, severity, component, command, origin, cause, hint) \
     eval_emit_diag((ctx), (severity), (component), (command), (origin), (cause), (hint))
+
+#define EVAL_DIAG(ctx, severity, component, command, origin, cause, hint) \
+    (!eval_result_is_fatal(EVAL_DIAG_RESULT((ctx), (severity), (component), (command), (origin), (cause), (hint))))
 
 static inline void eval_clear_return_state(Evaluator_Context *ctx) {
     if (!ctx) return;
@@ -1331,13 +1369,13 @@ static inline bool eval_emit_path_convert(Evaluator_Context *ctx,
     ev.as.path_convert.out_var = sv_copy_to_event_arena(ctx, out_var);
     return emit_event(ctx, ev);
 }
-bool eval_emit_diag(Evaluator_Context *ctx,
-                    Event_Diag_Severity sev,
-                    String_View component,
-                    String_View command,
-                    Event_Origin origin,
-                    String_View cause,
-                    String_View hint);
+Eval_Result eval_emit_diag(Evaluator_Context *ctx,
+                           Event_Diag_Severity sev,
+                           String_View component,
+                           String_View command,
+                           Event_Origin origin,
+                           String_View cause,
+                           String_View hint);
 void eval_diag_classify(String_View component,
                         String_View cause,
                         Event_Diag_Severity sev,
@@ -1495,8 +1533,8 @@ String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy
 
 // ---- Execução Externa (Subdiretórios e Includes) ----
 // Retorna false em caso de OOM ou erro fatal.
-bool eval_execute_file(Evaluator_Context *ctx, String_View file_path, bool is_add_subdirectory, String_View explicit_bin_dir);
-bool eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result eval_execute_file(Evaluator_Context *ctx, String_View file_path, bool is_add_subdirectory, String_View explicit_bin_dir);
+Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
 
 #ifdef __cplusplus
 }

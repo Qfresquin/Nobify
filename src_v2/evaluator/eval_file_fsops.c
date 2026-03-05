@@ -212,7 +212,7 @@ static bool file_real_path_resolve_temp(Evaluator_Context *ctx,
             if (eval_should_stop(ctx)) return false;
         }
         *out_path = eval_file_cmk_path_normalize_temp(ctx, combined);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (probe[0] != '\0') {
@@ -224,13 +224,13 @@ static bool file_real_path_resolve_temp(Evaluator_Context *ctx,
                 if (eval_should_stop(ctx)) return false;
             }
             *out_path = eval_file_cmk_path_normalize_temp(ctx, combined);
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         if (eval_should_stop(ctx)) return false;
     }
 
     *out_path = eval_file_cmk_path_normalize_temp(ctx, seed);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 bool eval_real_path_resolve_temp(Evaluator_Context *ctx,

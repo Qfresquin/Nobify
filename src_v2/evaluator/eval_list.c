@@ -375,52 +375,52 @@ static int list_sort_item_cmp(String_View a, String_View b, const List_Sort_Opti
     return cmp;
 }
 
-bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return !eval_should_stop(ctx);
+Eval_Result eval_handle_list(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || arena_arr_len(a) < 1) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx) || arena_arr_len(a) < 1) return eval_result_from_ctx(ctx);
 
     if (eval_sv_eq_ci_lit(a[0], "APPEND") || eval_sv_eq_ci_lit(a[0], "PREPEND")) {
         if (arena_arr_len(a) < 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(APPEND/PREPEND) requires list variable name"),
                            nob_sv_from_cstr("Usage: list(APPEND|PREPEND <list> [elements...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         bool is_append = eval_sv_eq_ci_lit(a[0], "APPEND");
         String_View var = a[1];
-        if (arena_arr_len(a) == 2) return !eval_should_stop(ctx);
+        if (arena_arr_len(a) == 2) return eval_result_from_ctx(ctx);
 
         String_View existing = eval_var_get_visible(ctx, var);
         String_View incoming = eval_sv_join_semi_temp(ctx, &a[2], arena_arr_len(a) - 2);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
         if (existing.count == 0) {
             (void)eval_var_set_current(ctx, var, incoming);
-            if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return false;
-            return !eval_should_stop(ctx);
+            if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return eval_result_fatal();
+            return eval_result_from_ctx(ctx);
         }
 
         String_View left = is_append ? existing : incoming;
         String_View right = is_append ? incoming : existing;
         size_t total = left.count + 1 + right.count;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         memcpy(buf, left.data, left.count);
         buf[left.count] = ';';
         memcpy(buf + left.count + 1, right.data, right.count);
         buf[total] = '\0';
         (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(buf));
-        if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return false;
-        return !eval_should_stop(ctx);
+        if (!(is_append ? eval_emit_list_append(ctx, o, var) : eval_emit_list_prepend(ctx, o, var))) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "INSERT")) {
         if (arena_arr_len(a) < 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(INSERT) requires list variable, index and at least one element"),
                            nob_sv_from_cstr("Usage: list(INSERT <list> <index> <element> [<element> ...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
@@ -428,23 +428,23 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         if (!sv_parse_i64(a[2], &raw_index) || raw_index < 0) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(INSERT) index must be a non-negative integer"),
                            a[2]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
 
         if ((size_t)raw_index > arena_arr_len(items)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(INSERT) index out of range"),
                            a[2]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t index = (size_t)raw_index;
         size_t insert_count = arena_arr_len(a) - 3;
         size_t out_count = arena_arr_len(items) + insert_count;
         String_View *out_items = arena_alloc_array(eval_temp_arena(ctx), String_View, out_count);
-        EVAL_OOM_RETURN_IF_NULL(ctx, out_items, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, out_items, eval_result_fatal());
 
         size_t off = 0;
         for (size_t i = 0; i < index; i++) out_items[off++] = items[i];
@@ -452,20 +452,20 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         for (size_t i = index; i < arena_arr_len(items); i++) out_items[off++] = items[i];
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
-        if (!eval_emit_list_insert(ctx, o, var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_list_insert(ctx, o, var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REMOVE_ITEM")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(REMOVE_ITEM) requires list variable and at least one item"),
                            nob_sv_from_cstr("Usage: list(REMOVE_ITEM <list> <item>...)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         String_View current = eval_var_get_visible(ctx, var);
-        if (current.count == 0) return !eval_should_stop(ctx);
+        if (current.count == 0) return eval_result_from_ctx(ctx);
 
         size_t keep_count = 0;
         size_t keep_total = 0;
@@ -486,12 +486,12 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         if (keep_count == 0) {
             (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t total = keep_total + (keep_count - 1);
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
 
         size_t off = 0;
         size_t emitted = 0;
@@ -513,24 +513,24 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(buf));
-        if (!eval_emit_list_remove(ctx, o, var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_list_remove(ctx, o, var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REMOVE_AT")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(REMOVE_AT) requires list variable and at least one index"),
                            nob_sv_from_cstr("Usage: list(REMOVE_AT <list> <index> [<index> ...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
 
         bool *remove_mask = arena_alloc_array_zero(eval_temp_arena(ctx), bool, arena_arr_len(items));
         if (arena_arr_len(items) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, remove_mask, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, remove_mask, eval_result_fatal());
         }
 
         for (size_t i = 2; i < arena_arr_len(a); i++) {
@@ -539,14 +539,14 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (!sv_parse_i64(a[i], &raw_idx) || !list_normalize_index(arena_arr_len(items), raw_idx, false, &idx)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(REMOVE_AT) index out of range"),
                                a[i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             remove_mask[idx] = true;
         }
 
         String_View *out_items = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(items));
         if (arena_arr_len(items) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, out_items, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, out_items, eval_result_fatal());
         }
 
         size_t out_count = 0;
@@ -555,26 +555,26 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
-        if (!eval_emit_list_remove(ctx, o, var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_list_remove(ctx, o, var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REMOVE_DUPLICATES")) {
         if (arena_arr_len(a) != 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(REMOVE_DUPLICATES) requires only the list variable"),
                            nob_sv_from_cstr("Usage: list(REMOVE_DUPLICATES <list>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
-        if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
+        if (arena_arr_len(items) == 0 && !var_defined) return eval_result_from_ctx(ctx);
 
         String_View *out_items = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(items));
         if (arena_arr_len(items) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, out_items, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, out_items, eval_result_fatal());
         }
 
         size_t out_count = 0;
@@ -590,15 +590,15 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
-        if (!eval_emit_list_remove(ctx, o, var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_list_remove(ctx, o, var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "LENGTH")) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(LENGTH) requires list variable and output variable"),
                            nob_sv_from_cstr("Usage: list(LENGTH <list> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View list_var = a[1];
@@ -609,14 +609,14 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         char num_buf[32];
         snprintf(num_buf, sizeof(num_buf), "%zu", len);
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num_buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "GET")) {
         if (arena_arr_len(a) < 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(GET) requires list variable, index(es) and output variable"),
                            nob_sv_from_cstr("Usage: list(GET <list> <index> [<index> ...] <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View list_var = a[1];
@@ -624,7 +624,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         String_View list_value = eval_var_get_visible(ctx, list_var);
 
         SV_List list_items = NULL;
-        if (!list_split_semicolon_preserve_empty(ctx, list_value, &list_items)) return !eval_should_stop(ctx);
+        if (!list_split_semicolon_preserve_empty(ctx, list_value, &list_items)) return eval_result_from_ctx(ctx);
 
         SV_List picked = NULL;
         for (size_t i = 2; i + 1 < arena_arr_len(a); i++) {
@@ -632,29 +632,29 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (!sv_parse_i64(a[i], &raw_idx)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(GET) index is not a valid integer"),
                                a[i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
             size_t idx = 0;
             if (!list_normalize_index(arena_arr_len(list_items), raw_idx, false, &idx)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(GET) index out of range"),
                                a[i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
-            if (!svu_list_push_temp(ctx, &picked, list_items[idx])) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &picked, list_items[idx])) return eval_result_from_ctx(ctx);
         }
 
         String_View out = eval_sv_join_semi_temp(ctx, picked, arena_arr_len(picked));
         (void)eval_var_set_current(ctx, out_var, out);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "FIND")) {
         if (arena_arr_len(a) != 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(FIND) requires list variable, value and output variable"),
                            nob_sv_from_cstr("Usage: list(FIND <list> <value> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View list_var = a[1];
@@ -663,7 +663,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         String_View list_value = eval_var_get_visible(ctx, list_var);
 
         SV_List list_items = NULL;
-        if (!list_split_semicolon_preserve_empty(ctx, list_value, &list_items)) return !eval_should_stop(ctx);
+        if (!list_split_semicolon_preserve_empty(ctx, list_value, &list_items)) return eval_result_from_ctx(ctx);
 
         long long found = -1;
         for (size_t i = 0; i < arena_arr_len(list_items); i++) {
@@ -676,14 +676,14 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         char num_buf[32];
         snprintf(num_buf, sizeof(num_buf), "%lld", found);
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num_buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "JOIN")) {
         if (arena_arr_len(a) != 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(JOIN) requires list variable, glue and output variable"),
                            nob_sv_from_cstr("Usage: list(JOIN <list> <glue> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View list_var = a[1];
@@ -691,7 +691,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         String_View out_var = a[3];
 
         SV_List list_items = NULL;
-        if (!list_load_var_items(ctx, list_var, &list_items)) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, list_var, &list_items)) return eval_result_from_ctx(ctx);
 
         Nob_String_Builder sb = {0};
         for (size_t i = 0; i < arena_arr_len(list_items); i++) {
@@ -702,21 +702,21 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         char *out_buf = (char*)arena_alloc(eval_temp_arena(ctx), sb.count + 1);
         if (!out_buf) {
             nob_sb_free(sb);
-            EVAL_OOM_RETURN_IF_NULL(ctx, out_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, out_buf, eval_result_fatal());
         }
         if (sb.count) memcpy(out_buf, sb.items, sb.count);
         out_buf[sb.count] = '\0';
         nob_sb_free(sb);
 
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(out_buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "SUBLIST")) {
         if (arena_arr_len(a) != 5) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SUBLIST) requires list variable, begin, length and output variable"),
                            nob_sv_from_cstr("Usage: list(SUBLIST <list> <begin> <length> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View list_var = a[1];
@@ -727,27 +727,27 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         if (!sv_parse_i64(a[2], &begin) || !sv_parse_i64(a[3], &length)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SUBLIST) begin/length must be integers"),
                            nob_sv_from_cstr("Use numeric begin and length (length can be -1 for until end)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (begin < 0 || length < -1) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SUBLIST) begin must be >= 0 and length >= -1"),
                            nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         SV_List list_items = NULL;
-        if (!list_load_var_items(ctx, list_var, &list_items)) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, list_var, &list_items)) return eval_result_from_ctx(ctx);
 
         if ((size_t)begin > arena_arr_len(list_items)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SUBLIST) begin index out of range"),
                            a[2]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t start = (size_t)begin;
         if (start == arena_arr_len(list_items) || length == 0) {
             (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t end = arena_arr_len(list_items);
@@ -758,14 +758,14 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
 
         String_View out = list_join_items_temp(ctx, &list_items[start], end - start);
         (void)eval_var_set_current(ctx, out_var, out);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "POP_BACK") || eval_sv_eq_ci_lit(a[0], "POP_FRONT")) {
         if (arena_arr_len(a) < 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(POP_BACK/POP_FRONT) requires list variable"),
                            nob_sv_from_cstr("Usage: list(POP_BACK|POP_FRONT <list> [out-var ...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         bool pop_front = eval_sv_eq_ci_lit(a[0], "POP_FRONT");
@@ -773,11 +773,11 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         size_t pop_n = (arena_arr_len(a) == 2) ? 1 : (arena_arr_len(a) - 2);
 
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
         if (arena_arr_len(items) < pop_n) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(POP_BACK/POP_FRONT) cannot pop more items than list size"),
                            nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         for (size_t oi = 0; oi + 2 < arena_arr_len(a); oi++) {
@@ -791,24 +791,24 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         size_t remain_count = arena_arr_len(items) - pop_n;
         if (remain_count == 0) {
             (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View *remain_items = pop_front ? &items[pop_n] : items;
         (void)list_set_var_from_items(ctx, var, remain_items, remain_count);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "FILTER")) {
         if (arena_arr_len(a) != 5) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(FILTER) requires list variable, mode and regex"),
                            nob_sv_from_cstr("Usage: list(FILTER <list> INCLUDE|EXCLUDE REGEX <regex>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (!eval_sv_eq_ci_lit(a[3], "REGEX")) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(FILTER) currently supports only REGEX mode"),
                            nob_sv_from_cstr("Usage: list(FILTER <list> INCLUDE|EXCLUDE REGEX <regex>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         bool include_mode = false;
@@ -819,21 +819,21 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         } else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(FILTER) mode must be INCLUDE or EXCLUDE"),
                            a[2]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
-        if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
+        if (arena_arr_len(items) == 0 && !var_defined) return eval_result_from_ctx(ctx);
 
         regex_t re;
-        if (!list_compile_regex(ctx, node, o, a[4], &re)) return !eval_should_stop(ctx);
+        if (!list_compile_regex(ctx, node, o, a[4], &re)) return eval_result_from_ctx(ctx);
 
         String_View *out_items = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(items));
         if (arena_arr_len(items) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, out_items, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, out_items, eval_result_fatal());
         }
         size_t out_count = 0;
 
@@ -841,7 +841,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             char *item_c = eval_sv_to_cstr_temp(ctx, items[i]);
             if (!item_c) {
                 regfree(&re);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             bool match = regexec(&re, item_c, 0, NULL, 0) == 0;
             if ((include_mode && match) || (!include_mode && !match)) {
@@ -851,21 +851,21 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         regfree(&re);
 
         (void)list_set_var_from_items(ctx, var, out_items, out_count);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REVERSE")) {
         if (arena_arr_len(a) != 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(REVERSE) requires only the list variable"),
                            nob_sv_from_cstr("Usage: list(REVERSE <list>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
-        if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
+        if (arena_arr_len(items) == 0 && !var_defined) return eval_result_from_ctx(ctx);
 
         for (size_t i = 0; i < arena_arr_len(items) / 2; i++) {
             String_View tmp = items[i];
@@ -873,15 +873,15 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             items[arena_arr_len(items) - 1 - i] = tmp;
         }
         (void)list_set_var_from_items(ctx, var, items, arena_arr_len(items));
-        if (!eval_emit_list_sort(ctx, o, var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_list_sort(ctx, o, var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "SORT")) {
         if (arena_arr_len(a) < 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT) requires list variable"),
                            nob_sv_from_cstr("Usage: list(SORT <list> [COMPARE <mode>] [CASE <mode>] [ORDER <mode>])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         List_Sort_Options opt = {
@@ -895,7 +895,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (i + 1 >= arena_arr_len(a)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT COMPARE) missing value"),
                                    nob_sv_from_cstr("Expected STRING, FILE_BASENAME or NATURAL"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 i++;
                 if (eval_sv_eq_ci_lit(a[i], "STRING")) opt.compare = LIST_SORT_COMPARE_STRING;
@@ -904,7 +904,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 else {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT COMPARE) received unsupported value"),
                                    a[i]);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 continue;
             }
@@ -913,7 +913,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (i + 1 >= arena_arr_len(a)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT CASE) missing value"),
                                    nob_sv_from_cstr("Expected SENSITIVE or INSENSITIVE"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 i++;
                 if (eval_sv_eq_ci_lit(a[i], "SENSITIVE")) opt.case_mode = LIST_SORT_CASE_SENSITIVE;
@@ -921,7 +921,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 else {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT CASE) received unsupported value"),
                                    a[i]);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 continue;
             }
@@ -930,7 +930,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (i + 1 >= arena_arr_len(a)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT ORDER) missing value"),
                                    nob_sv_from_cstr("Expected ASCENDING or DESCENDING"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 i++;
                 if (eval_sv_eq_ci_lit(a[i], "ASCENDING")) opt.order = LIST_SORT_ORDER_ASCENDING;
@@ -938,21 +938,21 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 else {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT ORDER) received unsupported value"),
                                    a[i]);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 continue;
             }
 
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(SORT) received unsupported option token"),
                            a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
-        if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
+        if (arena_arr_len(items) == 0 && !var_defined) return eval_result_from_ctx(ctx);
 
         for (size_t i = 1; i < arena_arr_len(items); i++) {
             String_View key = items[i];
@@ -965,20 +965,20 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         }
 
         (void)list_set_var_from_items(ctx, var, items, arena_arr_len(items));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "TRANSFORM")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM) requires list variable and action"),
                            nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View var = a[1];
         bool var_defined = eval_var_defined_visible(ctx, var);
         SV_List items = NULL;
-        if (!list_load_var_items(ctx, var, &items)) return !eval_should_stop(ctx);
+        if (!list_load_var_items(ctx, var, &items)) return eval_result_from_ctx(ctx);
 
         List_Transform_Action action = LIST_TRANSFORM_TOLOWER;
         size_t next = 3;
@@ -990,7 +990,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (next >= arena_arr_len(a)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM APPEND) missing suffix"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             action_arg1 = a[next++];
         } else if (eval_sv_eq_ci_lit(a[2], "PREPEND")) {
@@ -998,7 +998,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (next >= arena_arr_len(a)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM PREPEND) missing prefix"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             action_arg1 = a[next++];
         } else if (eval_sv_eq_ci_lit(a[2], "TOLOWER")) {
@@ -1014,19 +1014,19 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (next + 1 >= arena_arr_len(a)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM REPLACE) requires regex and replacement"),
                                nob_sv_from_cstr("Usage: list(TRANSFORM <list> REPLACE <regex> <replace> [selector] [OUTPUT_VARIABLE <out-var>])"));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             action_arg1 = a[next++];
             action_arg2 = a[next++];
         } else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("Unsupported list(TRANSFORM) action"),
                            a[2]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         bool *selected = arena_alloc_array_zero(eval_temp_arena(ctx), bool, arena_arr_len(items));
         if (arena_arr_len(items) > 0) {
-            EVAL_OOM_RETURN_IF_NULL(ctx, selected, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, selected, eval_result_fatal());
         }
 
         String_View out_var = nob_sv_from_cstr("");
@@ -1038,7 +1038,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (next + 2 != arena_arr_len(a)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
                                nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             has_output_var = true;
             out_var = a[next + 1];
@@ -1051,7 +1051,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (i + 2 != arena_arr_len(a)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
                                    nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 has_output_var = true;
                 out_var = a[i + 1];
@@ -1061,7 +1061,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (next + 1 >= end) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM AT) requires at least one index"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             for (size_t i = next + 1; i < end; i++) {
                 long long raw_idx = 0;
@@ -1069,7 +1069,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (!sv_parse_i64(a[i], &raw_idx) || !list_normalize_index(arena_arr_len(items), raw_idx, false, &idx)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM AT) index out of range"),
                                    a[i]);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 selected[idx] = true;
             }
@@ -1081,7 +1081,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (i + 2 != arena_arr_len(a)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
                                    nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 has_output_var = true;
                 out_var = a[i + 1];
@@ -1091,7 +1091,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (end < next + 3 || end > next + 4) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM FOR) expects start stop [step]"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             long long start = 0;
             long long stop = 0;
@@ -1099,17 +1099,17 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (!sv_parse_i64(a[next + 1], &start) || !sv_parse_i64(a[next + 2], &stop)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM FOR) start/stop must be integers"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             if (end == next + 4 && !sv_parse_i64(a[next + 3], &step)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM FOR) step must be an integer"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             if (step <= 0) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM FOR) step must be greater than zero"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             size_t start_idx = 0;
             size_t stop_idx = 0;
@@ -1117,7 +1117,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 !list_normalize_index(arena_arr_len(items), stop, false, &stop_idx)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM FOR) range out of bounds"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             if (start_idx <= stop_idx) {
                 for (size_t i = start_idx; i <= stop_idx; i += (size_t)step) {
@@ -1138,7 +1138,7 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
                 if (i + 2 != arena_arr_len(a)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM OUTPUT_VARIABLE) expects exactly one output variable"),
                                    nob_sv_from_cstr("Usage: list(TRANSFORM <list> <ACTION> [selector] [OUTPUT_VARIABLE <out-var>])"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 has_output_var = true;
                 out_var = a[i + 1];
@@ -1148,15 +1148,15 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             if (end != next + 2) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM REGEX) expects exactly one regex argument"),
                                nob_sv_from_cstr(""));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             regex_t sel_re;
-            if (!list_compile_regex(ctx, node, o, a[next + 1], &sel_re)) return !eval_should_stop(ctx);
+            if (!list_compile_regex(ctx, node, o, a[next + 1], &sel_re)) return eval_result_from_ctx(ctx);
             for (size_t i = 0; i < arena_arr_len(items); i++) {
                 char *item_c = eval_sv_to_cstr_temp(ctx, items[i]);
                 if (!item_c) {
                     regfree(&sel_re);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 if (regexec(&sel_re, item_c, 0, NULL, 0) == 0) selected[i] = true;
             }
@@ -1164,13 +1164,13 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         } else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("list(TRANSFORM) received unsupported selector"),
                            a[next]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         regex_t replace_re;
         bool replace_ready = false;
         if (action == LIST_TRANSFORM_REPLACE) {
-            if (!list_compile_regex(ctx, node, o, action_arg1, &replace_re)) return !eval_should_stop(ctx);
+            if (!list_compile_regex(ctx, node, o, action_arg1, &replace_re)) return eval_result_from_ctx(ctx);
             replace_ready = true;
         }
 
@@ -1192,12 +1192,12 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
             } else if (action == LIST_TRANSFORM_REPLACE) {
                 if (!list_regex_replace_one_temp(ctx, &replace_re, action_arg2, curr, &curr)) {
                     if (replace_ready) regfree(&replace_re);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
             }
             if (eval_should_stop(ctx)) {
                 if (replace_ready) regfree(&replace_re);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             items[i] = curr;
         }
@@ -1205,17 +1205,17 @@ bool eval_handle_list(Evaluator_Context *ctx, const Node *node) {
         if (replace_ready) regfree(&replace_re);
         if (has_output_var) {
             (void)list_set_var_from_items(ctx, out_var, items, arena_arr_len(items));
-            if (!eval_emit_list_transform(ctx, o, var)) return false;
-            return !eval_should_stop(ctx);
+            if (!eval_emit_list_transform(ctx, o, var)) return eval_result_fatal();
+            return eval_result_from_ctx(ctx);
         }
-        if (arena_arr_len(items) == 0 && !var_defined) return !eval_should_stop(ctx);
+        if (arena_arr_len(items) == 0 && !var_defined) return eval_result_from_ctx(ctx);
         (void)list_set_var_from_items(ctx, var, items, arena_arr_len(items));
-        if (!eval_emit_list_transform(ctx, o, var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_list_transform(ctx, o, var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "list", nob_sv_from_cstr("Unsupported list() subcommand"),
                    nob_sv_from_cstr("Implemented: APPEND, PREPEND, INSERT, REMOVE_ITEM, REMOVE_AT, REMOVE_DUPLICATES, LENGTH, GET, FIND, JOIN, SUBLIST, POP_BACK, POP_FRONT, FILTER, TRANSFORM, REVERSE, SORT"));
     eval_request_stop_on_error(ctx);
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

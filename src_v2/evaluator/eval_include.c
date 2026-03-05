@@ -275,15 +275,15 @@ static bool include_guard_directory_add(Evaluator_Context *ctx, String_View key,
     return include_guard_var_set_global(ctx, key, updated);
 }
 
-bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) > 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include_guard() accepts at most one scope argument"),
                        nob_sv_from_cstr("Usage: include_guard([DIRECTORY|GLOBAL])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Include_Guard_Mode mode = INCLUDE_GUARD_VARIABLE;
@@ -295,7 +295,7 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
         } else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include_guard() received invalid scope"),
                            nob_sv_from_cstr("Expected one of: DIRECTORY, GLOBAL"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
 
@@ -307,47 +307,47 @@ bool eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
     if (current_source_dir.count == 0) current_source_dir = ctx->source_dir;
 
     String_View key = include_guard_key_for_mode(ctx, mode, current_file);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     bool already_guarded = false;
     switch (mode) {
         case INCLUDE_GUARD_VARIABLE:
             already_guarded = eval_var_defined_visible(ctx, key);
             if (!already_guarded && !eval_var_set_current(ctx, key, nob_sv_from_cstr("1"))) {
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             break;
         case INCLUDE_GUARD_GLOBAL:
             already_guarded = include_guard_var_defined_global(ctx, key);
             if (!already_guarded && !include_guard_var_set_global(ctx, key, nob_sv_from_cstr("1"))) {
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             break;
         case INCLUDE_GUARD_DIRECTORY:
             already_guarded = include_guard_directory_hit(ctx, key, current_source_dir);
-            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
             if (!already_guarded && !include_guard_directory_add(ctx, key, current_source_dir)) {
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             break;
         default:
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
     }
 
     if (already_guarded) {
         ctx->return_requested = true;
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() missing file or module argument"),
                        nob_sv_from_cstr("Usage: include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View file_or_module = a[0];
@@ -368,14 +368,14 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
             if (i + 1 >= arena_arr_len(a)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include(RESULT_VARIABLE) requires an output variable name"),
                                nob_sv_from_cstr("Usage: include(<file|module> ... RESULT_VARIABLE <var>)"));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             result_variable = a[++i];
             continue;
         }
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() received unexpected argument"),
                        a[i]);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     // CPack component commands are provided by CPackComponent (and by CPack, which includes it).
@@ -384,12 +384,12 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         if (result_variable.count > 0) {
             (void)eval_var_set_current(ctx, result_variable, file_or_module);
         }
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View file_path = nob_sv_from_cstr("");
     bool found = include_resolve_target(ctx, file_or_module, &file_path);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (!found) {
         if (result_variable.count > 0) {
@@ -399,52 +399,53 @@ bool eval_handle_include(Evaluator_Context *ctx, const Node *node) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() could not find requested file or module"),
                            file_or_module);
         }
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (result_variable.count > 0) {
         (void)eval_var_set_current(ctx, result_variable, file_path);
     }
 
-    if (!eval_emit_include_begin(ctx, o, file_path, no_policy_scope)) return !eval_should_stop(ctx);
+    if (!eval_emit_include_begin(ctx, o, file_path, no_policy_scope)) return eval_result_from_ctx(ctx);
 
     String_View scope_source = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (scope_source.count == 0) scope_source = ctx->source_dir;
     String_View scope_binary = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (scope_binary.count == 0) scope_binary = ctx->source_dir;
 
-    if (!emit_dir_push_event(ctx, o, scope_source, scope_binary)) return !eval_should_stop(ctx);
+    if (!emit_dir_push_event(ctx, o, scope_source, scope_binary)) return eval_result_from_ctx(ctx);
     bool pushed_policy = false;
     if (!no_policy_scope) {
         if (!eval_policy_push(ctx)) {
             (void)emit_dir_pop_event(ctx, o, scope_source, scope_binary);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         pushed_policy = true;
     }
-    bool success = eval_execute_file(ctx, file_path, false, nob_sv_from_cstr(""));
+    Eval_Result exec_res = eval_execute_file(ctx, file_path, false, nob_sv_from_cstr(""));
+    bool success = !eval_result_is_fatal(exec_res);
     if (pushed_policy && !eval_policy_pop(ctx) && !eval_should_stop(ctx)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("include() failed to restore policy stack"),
                        nob_sv_from_cstr("cmake_policy(POP) underflow while leaving include()"));
     }
-    if (!emit_dir_pop_event(ctx, o, scope_source, scope_binary)) return !eval_should_stop(ctx);
-    if (!eval_emit_include_end(ctx, o, file_path, success)) return !eval_should_stop(ctx);
+    if (!emit_dir_pop_event(ctx, o, scope_source, scope_binary)) return eval_result_from_ctx(ctx);
+    if (!eval_emit_include_end(ctx, o, file_path, success)) return eval_result_from_ctx(ctx);
     if (!success && !optional && !eval_should_stop(ctx)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() failed to read or evaluate file"),
                        file_path);
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_subdirectory() missing source_dir"),
                        nob_sv_from_cstr(""));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View source_dir = a[0];
@@ -475,19 +476,19 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     if (current_bin.count == 0) current_bin = ctx->binary_dir;
 
     source_dir = eval_path_resolve_for_cmake_arg(ctx, source_dir, current_src, false);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (binary_dir.count > 0) {
         binary_dir = eval_path_resolve_for_cmake_arg(ctx, binary_dir, current_bin, false);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     }
 
     String_View full_path = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr("CMakeLists.txt"));
 
     String_View scope_binary = binary_dir.count > 0 ? binary_dir : source_dir;
     if (!eval_emit_add_subdirectory_begin(ctx, o, source_dir, scope_binary, exclude_from_all, system)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
-    if (!emit_dir_push_event(ctx, o, source_dir, scope_binary)) return !eval_should_stop(ctx);
+    if (!emit_dir_push_event(ctx, o, source_dir, scope_binary)) return eval_result_from_ctx(ctx);
 
     bool had_system_default = eval_var_defined_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
     String_View system_default_prev = had_system_default
@@ -496,11 +497,12 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
     if (system) {
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"), nob_sv_from_cstr("1"))) {
             (void)emit_dir_pop_event(ctx, o, source_dir, scope_binary);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
 
-    bool success = eval_execute_file(ctx, full_path, true, binary_dir);
+    Eval_Result exec_res = eval_execute_file(ctx, full_path, true, binary_dir);
+    bool success = !eval_result_is_fatal(exec_res);
 
     if (system) {
         if (had_system_default) {
@@ -510,12 +512,12 @@ bool eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
         }
     }
 
-    if (!emit_dir_pop_event(ctx, o, source_dir, scope_binary)) return !eval_should_stop(ctx);
-    if (!eval_emit_add_subdirectory_end(ctx, o, source_dir, scope_binary, success)) return !eval_should_stop(ctx);
+    if (!emit_dir_pop_event(ctx, o, source_dir, scope_binary)) return eval_result_from_ctx(ctx);
+    if (!eval_emit_add_subdirectory_end(ctx, o, source_dir, scope_binary, success)) return eval_result_from_ctx(ctx);
     if (!success && !eval_should_stop(ctx)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_subdirectory() failed to read or evaluate CMakeLists.txt"),
                        full_path);
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 

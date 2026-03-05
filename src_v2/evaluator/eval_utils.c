@@ -137,13 +137,13 @@ bool eval_host_hostname_temp(Evaluator_Context *ctx, String_View *out_hostname) 
     DWORD size = (DWORD)(sizeof(buf) - 1);
     if (!GetComputerNameA(buf, &size)) return true;
     *out_hostname = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)size));
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 #else
     char buf[256] = {0};
     if (gethostname(buf, sizeof(buf) - 1) != 0) return true;
     buf[sizeof(buf) - 1] = '\0';
     *out_hostname = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(buf));
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 #endif
 }
 

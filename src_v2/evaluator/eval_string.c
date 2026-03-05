@@ -903,7 +903,7 @@ static bool string_uuid_name_based_temp(Evaluator_Context *ctx,
 
     uuid[8] = (unsigned char)((uuid[8] & 0x3F) | 0x80); // RFC 4122 variant
     *out_uuid = string_format_uuid_temp(ctx, uuid, upper);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 typedef enum {
@@ -1122,15 +1122,15 @@ static bool string_json_emit_or_store_error(Evaluator_Context *ctx,
                                             String_View message,
                                             String_View *path,
                                             size_t path_prefix_count) {
-    if (!ctx || !node) return !eval_should_stop(ctx);
+    if (!ctx || !node) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     if (has_error_var) {
         (void)eval_var_set_current(ctx, out_var, string_json_notfound_temp(ctx, path, path_prefix_count));
         (void)eval_var_set_current(ctx, error_var, message);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", message,
                    nob_sv_from_cstr(""));
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static String_Json_Value *string_jsonv_new(Evaluator_Context *ctx, String_Json_Type type) {
@@ -1551,11 +1551,11 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                        const Node *node,
                                        Cmake_Event_Origin o,
                                        SV_List a) {
-    if (!ctx || !node) return !eval_should_stop(ctx);
+    if (!ctx || !node) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     if (arena_arr_len(a) < 4) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(JSON) requires out-var, mode and JSON string"),
                        nob_sv_from_cstr("Usage: string(JSON <out-var> [ERROR_VARIABLE <err-var>] <mode> <json> ...)"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     size_t pos = 1;
@@ -1566,7 +1566,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
         if (pos + 1 >= arena_arr_len(a)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(JSON ERROR_VARIABLE) requires output variable"),
                            nob_sv_from_cstr("Usage: string(JSON <out-var> ERROR_VARIABLE <err-var> <mode> <json> ...)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         has_error_var = true;
         error_var = a[pos + 1];
@@ -1608,7 +1608,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, NULL, 0);
         }
         (void)eval_var_set_current(ctx, out_var, string_jsonv_equal(lhs, rhs) ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (pos >= arena_arr_len(a)) {
@@ -1643,11 +1643,11 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
             } else {
                 (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, target));
             }
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         if (eval_sv_eq_ci_lit(mode, "TYPE")) {
             (void)eval_var_set_current(ctx, out_var, string_json_type_name(target->type));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         if (target->type != STRING_JSON_OBJECT && target->type != STRING_JSON_ARRAY) {
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
@@ -1657,7 +1657,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
         char num[64];
         snprintf(num, sizeof(num), "%zu", target->type == STRING_JSON_ARRAY ? target->array_count : target->object_count);
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (eval_sv_eq_ci_lit(mode, "MEMBER")) {
@@ -1685,7 +1685,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                                    path, path_count);
         }
         (void)eval_var_set_current(ctx, out_var, target->object_items[idx].key);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (eval_sv_eq_ci_lit(mode, "REMOVE")) {
@@ -1724,7 +1724,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                                    path, path_count - 1);
         }
         (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (eval_sv_eq_ci_lit(mode, "SET")) {
@@ -1750,7 +1750,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
             if (string_jsonv_object_find(parent, key_or_index, &idx)) {
                 parent->object_items[idx].value = new_value;
             } else {
-                if (!string_jsonv_object_push(ctx, parent, key_or_index, new_value)) return !eval_should_stop(ctx);
+                if (!string_jsonv_object_push(ctx, parent, key_or_index, new_value)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
         } else if (parent->type == STRING_JSON_ARRAY) {
             size_t idx = 0;
@@ -1762,7 +1762,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
             if (idx < parent->array_count) {
                 parent->array_items[idx] = new_value;
             } else {
-                if (!string_jsonv_array_push(ctx, parent, new_value)) return !eval_should_stop(ctx);
+                if (!string_jsonv_array_push(ctx, parent, new_value)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
         } else {
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
@@ -1770,7 +1770,7 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                                    path, path_count - 2);
         }
         (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
@@ -1778,54 +1778,54 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                            path, 0);
 }
 
-bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return !eval_should_stop(ctx);
+Eval_Result eval_handle_string(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || arena_arr_len(a) < 1) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx) || arena_arr_len(a) < 1) return eval_result_from_ctx(ctx);
 
     if (eval_sv_eq_ci_lit(a[0], "APPEND") || eval_sv_eq_ci_lit(a[0], "PREPEND")) {
         if (arena_arr_len(a) < 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(APPEND/PREPEND) requires variable name"),
                            nob_sv_from_cstr("Usage: string(APPEND|PREPEND <var> [input...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
-        if (arena_arr_len(a) == 2) return !eval_should_stop(ctx);
+        if (arena_arr_len(a) == 2) return eval_result_from_ctx(ctx);
 
         bool is_append = eval_sv_eq_ci_lit(a[0], "APPEND");
         String_View var = a[1];
         String_View extra = string_join_no_sep_temp(ctx, &a[2], arena_arr_len(a) - 2);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
         String_View curr = eval_var_get_visible(ctx, var);
         String_View lhs = is_append ? curr : extra;
         String_View rhs = is_append ? extra : curr;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), lhs.count + rhs.count + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         if (lhs.count > 0) memcpy(buf, lhs.data, lhs.count);
         if (rhs.count > 0) memcpy(buf + lhs.count, rhs.data, rhs.count);
         buf[lhs.count + rhs.count] = '\0';
         (void)eval_var_set_current(ctx, var, nob_sv_from_cstr(buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "CONCAT")) {
         if (arena_arr_len(a) < 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(CONCAT) requires output variable"),
                            nob_sv_from_cstr("Usage: string(CONCAT <out-var> [input...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View out_var = a[1];
         String_View out = (arena_arr_len(a) > 2) ? string_join_no_sep_temp(ctx, &a[2], arena_arr_len(a) - 2) : nob_sv_from_cstr("");
         (void)eval_var_set_current(ctx, out_var, out);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "JOIN")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(JOIN) requires glue and output variable"),
                            nob_sv_from_cstr("Usage: string(JOIN <glue> <out-var> [input...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View glue = a[1];
@@ -1836,7 +1836,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (n > 1) total += glue.count * (n - 1);
 
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
 
         size_t off = 0;
         for (size_t i = 0; i < n; i++) {
@@ -1851,43 +1851,43 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "LENGTH")) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(LENGTH) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(LENGTH <string> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         char num_buf[64];
         snprintf(num_buf, sizeof(num_buf), "%zu", a[1].count);
         (void)eval_var_set_current(ctx, a[2], nob_sv_from_cstr(num_buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "STRIP")) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(STRIP) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(STRIP <string> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, a[2], list_strip_ws_view(a[1]));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "FIND")) {
         if (!(arena_arr_len(a) == 4 || arena_arr_len(a) == 5)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(FIND) requires input, substring and output variable"),
                            nob_sv_from_cstr("Usage: string(FIND <string> <substring> <out-var> [REVERSE])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         bool reverse = false;
         if (arena_arr_len(a) == 5) {
             if (!eval_sv_eq_ci_lit(a[4], "REVERSE")) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(FIND) received unsupported option"),
                                a[4]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             reverse = true;
         }
@@ -1895,14 +1895,14 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         char num_buf[64];
         snprintf(num_buf, sizeof(num_buf), "%lld", idx);
         (void)eval_var_set_current(ctx, a[3], nob_sv_from_cstr(num_buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "COMPARE")) {
         if (arena_arr_len(a) != 5) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(COMPARE) requires op, lhs, rhs and output variable"),
                            nob_sv_from_cstr("Usage: string(COMPARE <LESS|GREATER|EQUAL|NOTEQUAL|LESS_EQUAL|GREATER_EQUAL> <s1> <s2> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         int cmp = string_sv_cmp(a[2], a[3]);
         bool ok = false;
@@ -1915,52 +1915,52 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         else {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(COMPARE) received unsupported operation"),
                            a[1]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, a[4], ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "ASCII")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(ASCII) requires at least one code and output variable"),
                            nob_sv_from_cstr("Usage: string(ASCII <code>... <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View out_var = a[arena_arr_len(a) - 1];
         size_t n = arena_arr_len(a) - 2;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), n + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         for (size_t i = 0; i < n; i++) {
             long long code = 0;
             if (!sv_parse_i64(a[1 + i], &code) || code < 0 || code > 255) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(ASCII) code must be an integer in range [0,255]"),
                                a[1 + i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             buf[i] = (char)((unsigned char)code);
         }
         buf[n] = '\0';
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_parts(buf, n));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "HEX")) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(HEX) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(HEX <string> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View out = string_bytes_hex_temp(ctx, (const unsigned char*)a[1].data, a[1].count, false);
         (void)eval_var_set_current(ctx, a[2], out);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "CONFIGURE")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(CONFIGURE) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(CONFIGURE <string> <out-var> [@ONLY] [ESCAPE_QUOTES])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         bool at_only = false;
         bool escape_quotes = false;
@@ -1972,27 +1972,27 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             } else {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(CONFIGURE) received unsupported option"),
                                a[i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
         }
         String_View out = nob_sv_from_cstr("");
         if (!string_configure_expand_temp(ctx, a[1], at_only, escape_quotes, &out)) {
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, a[2], out);
-        if (!eval_emit_string_configure(ctx, o, a[2])) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_string_configure(ctx, o, a[2])) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "MAKE_C_IDENTIFIER")) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(MAKE_C_IDENTIFIER) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(MAKE_C_IDENTIFIER <string> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View in = a[1];
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 2);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         size_t off = 0;
         if (in.count > 0 && isdigit((unsigned char)in.data[0])) buf[off++] = '_';
         for (size_t i = 0; i < in.count; i++) {
@@ -2001,43 +2001,43 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set_current(ctx, a[2], nob_sv_from_cstr(buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "GENEX_STRIP")) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(GENEX_STRIP) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(GENEX_STRIP <string> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, a[2], string_genex_strip_temp(ctx, a[1]));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REPEAT")) {
         if (arena_arr_len(a) != 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REPEAT) requires input, count and output variable"),
                            nob_sv_from_cstr("Usage: string(REPEAT <string> <count> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         unsigned long long count = 0;
         if (!string_parse_u64_sv(a[2], &count)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REPEAT) repeat count is not a non-negative integer"),
                            a[2]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View in = a[1];
         if (in.count > 0 && count > (SIZE_MAX / in.count)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REPEAT) result is too large"),
                            nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t total = (size_t)count * in.count;
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         size_t off = 0;
         for (size_t i = 0; i < (size_t)count; i++) {
             if (in.count > 0) {
@@ -2047,14 +2047,14 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set_current(ctx, a[3], nob_sv_from_cstr(buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "RANDOM")) {
         if (arena_arr_len(a) < 2) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(RANDOM) requires output variable"),
                            nob_sv_from_cstr("Usage: string(RANDOM [LENGTH <n>] [ALPHABET <chars>] [RANDOM_SEED <seed>] <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_Random_Options opt = {
@@ -2070,7 +2070,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                 if (i + 1 >= arena_arr_len(a) - 1 || !string_parse_u64_sv(a[i + 1], &v) || v == 0) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(RANDOM LENGTH) expects integer > 0"),
                                    i + 1 < arena_arr_len(a) ? a[i + 1] : nob_sv_from_cstr(""));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 opt.length = (size_t)v;
                 i++;
@@ -2080,7 +2080,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                 if (i + 1 >= arena_arr_len(a) - 1 || a[i + 1].count == 0) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(RANDOM ALPHABET) expects non-empty alphabet"),
                                    nob_sv_from_cstr(""));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 opt.alphabet = a[i + 1];
                 i++;
@@ -2091,7 +2091,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                 if (i + 1 >= arena_arr_len(a) - 1 || !string_parse_u64_sv(a[i + 1], &seed)) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(RANDOM RANDOM_SEED) expects unsigned integer"),
                                    i + 1 < arena_arr_len(a) ? a[i + 1] : nob_sv_from_cstr(""));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 opt.has_seed = true;
                 opt.seed = seed;
@@ -2100,20 +2100,20 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(RANDOM) received unsupported option"),
                            a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View rnd = nob_sv_from_cstr("");
-        if (!string_random_generate_temp(ctx, &opt, &rnd)) return !eval_should_stop(ctx);
+        if (!string_random_generate_temp(ctx, &opt, &rnd)) return eval_result_from_ctx(ctx);
         (void)eval_var_set_current(ctx, out_var, rnd);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "TIMESTAMP")) {
         if (arena_arr_len(a) < 2 || arena_arr_len(a) > 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(TIMESTAMP) expects output variable with optional format and UTC"),
                            nob_sv_from_cstr("Usage: string(TIMESTAMP <out-var> [format] [UTC])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View out_var = a[1];
         String_View fmt = nob_sv_from_cstr("%Y-%m-%dT%H:%M:%S");
@@ -2131,18 +2131,18 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(TIMESTAMP) received unsupported option"),
                            a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, out_var, string_timestamp_format_temp(ctx, fmt, utc));
-        if (!eval_emit_string_timestamp(ctx, o, out_var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_string_timestamp(ctx, o, out_var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "UUID")) {
         if (arena_arr_len(a) < 8) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(UUID) requires NAMESPACE, NAME and TYPE"),
                            nob_sv_from_cstr("Usage: string(UUID <out-var> NAMESPACE <uuid> NAME <name> TYPE <MD5|SHA1> [UPPER])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View out_var = a[1];
         String_View ns = nob_sv_from_cstr("");
@@ -2157,7 +2157,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             if (i + 1 >= arena_arr_len(a)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(UUID) option is missing value"),
                                a[i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             if (eval_sv_eq_ci_lit(a[i], "NAMESPACE")) {
                 ns = a[++i];
@@ -2176,12 +2176,12 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             }
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(UUID) received unsupported option"),
                            a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (!has_ns || !has_name || !has_type) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(UUID) requires NAMESPACE, NAME and TYPE"),
                            nob_sv_from_cstr("Usage: string(UUID <out-var> NAMESPACE <uuid> NAME <name> TYPE <MD5|SHA1> [UPPER])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View uuid_sv = nob_sv_from_cstr("");
         if (!string_uuid_name_based_temp(ctx, ns, name, type, upper, &uuid_sv)) {
@@ -2192,10 +2192,10 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(UUID) unsupported TYPE"),
                                type);
             }
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, out_var, uuid_sv);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "MD5") ||
@@ -2211,39 +2211,39 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(<HASH>) requires output variable and input"),
                            nob_sv_from_cstr("Usage: string(<HASH> <out-var> <input>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View hash = nob_sv_from_cstr("");
         if (!eval_hash_compute_hex_temp(ctx, a[0], a[2], &hash)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("Unsupported hash algorithm"),
                            a[0]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         (void)eval_var_set_current(ctx, a[1], hash);
-        if (!eval_emit_string_hash(ctx, o, a[0], a[1])) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_string_hash(ctx, o, a[0], a[1])) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "JSON")) {
-        return string_handle_json_command(ctx, node, o, a);
+        return eval_result_from_bool(string_handle_json_command(ctx, node, o, a));
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REPLACE")) {
         if (arena_arr_len(a) < 4) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REPLACE) requires match, replace, out-var and input"),
                            nob_sv_from_cstr("Usage: string(REPLACE <match> <replace> <out-var> <input>...)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View match = a[1];
         String_View repl = a[2];
         String_View out_var = a[3];
         String_View input = (arena_arr_len(a) > 4) ? eval_sv_join_semi_temp(ctx, &a[4], arena_arr_len(a) - 4) : nob_sv_from_cstr("");
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
         if (match.count == 0) {
             (void)eval_var_set_current(ctx, out_var, input);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t hits = 0;
@@ -2264,7 +2264,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             total -= hits * (match.count - repl.count);
         }
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
 
         size_t off = 0;
         i = 0;
@@ -2281,57 +2281,57 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         buf[off] = '\0';
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
-        if (!eval_emit_string_replace(ctx, o, out_var)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_string_replace(ctx, o, out_var)) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "TOUPPER")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(TOUPPER) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(TOUPPER <input> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View out_var = a[arena_arr_len(a) - 1];
         String_View input = (arena_arr_len(a) == 3) ? a[1] : eval_sv_join_semi_temp(ctx, &a[1], arena_arr_len(a) - 2);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         for (size_t i = 0; i < input.count; i++) {
             buf[i] = (char)toupper((unsigned char)input.data[i]);
         }
         buf[input.count] = '\0';
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "TOLOWER")) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(TOLOWER) requires input and output variable"),
                            nob_sv_from_cstr("Usage: string(TOLOWER <input> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View out_var = a[arena_arr_len(a) - 1];
         String_View input = (arena_arr_len(a) == 3) ? a[1] : eval_sv_join_semi_temp(ctx, &a[1], arena_arr_len(a) - 2);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
         char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, !eval_should_stop(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
         for (size_t i = 0; i < input.count; i++) {
             buf[i] = (char)tolower((unsigned char)input.data[i]);
         }
         buf[input.count] = '\0';
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "SUBSTRING")) {
         if (arena_arr_len(a) != 5) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(SUBSTRING) requires input, begin, length and output variable"),
                            nob_sv_from_cstr("Usage: string(SUBSTRING <input> <begin> <length> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View input = a[1];
@@ -2340,19 +2340,19 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         if (!sv_parse_i64(a[2], &begin) || !sv_parse_i64(a[3], &length)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(SUBSTRING) begin/length must be integers"),
                            nob_sv_from_cstr("Use numeric begin and length (length can be -1 for until end)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (begin < 0 || length < -1) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(SUBSTRING) begin must be >= 0 and length >= -1"),
                            nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         String_View out_var = a[4];
         size_t b = (size_t)begin;
         if (b >= input.count) {
             (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         size_t end = input.count;
@@ -2362,35 +2362,35 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
         }
         String_View out = nob_sv_from_parts(input.data + b, end - b);
         (void)eval_var_set_current(ctx, out_var, out);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "REGEX")) {
         if (arena_arr_len(a) < 5) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REGEX) requires mode and arguments"),
                            nob_sv_from_cstr("Usage: string(REGEX MATCH|REPLACE|MATCHALL ...)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (eval_sv_eq_ci_lit(a[1], "MATCH")) {
             String_View pattern = a[2];
             String_View out_var = a[3];
             String_View input = (arena_arr_len(a) > 4) ? eval_sv_join_semi_temp(ctx, &a[4], arena_arr_len(a) - 4) : nob_sv_from_cstr("");
-            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
             char *pat_buf = (char*)arena_alloc(eval_temp_arena(ctx), pattern.count + 1);
-            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, eval_result_fatal());
             memcpy(pat_buf, pattern.data, pattern.count);
             pat_buf[pattern.count] = '\0';
 
             char *in_buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, eval_result_fatal());
             memcpy(in_buf, input.data, input.count);
             in_buf[input.count] = '\0';
 
             regex_t re;
             if (regcomp(&re, pat_buf, REG_EXTENDED) != 0) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("Invalid regex pattern"), pattern);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
             regmatch_t m[1];
@@ -2404,37 +2404,37 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             } else {
                 (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
             }
-            if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("MATCH"), out_var)) return false;
-            return !eval_should_stop(ctx);
+            if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("MATCH"), out_var)) return eval_result_fatal();
+            return eval_result_from_ctx(ctx);
         }
 
         if (eval_sv_eq_ci_lit(a[1], "REPLACE")) {
             if (arena_arr_len(a) < 6) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REGEX REPLACE) requires regex, replace, out-var and input"),
                                nob_sv_from_cstr("Usage: string(REGEX REPLACE <regex> <replace> <out-var> <input>...)"));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
             String_View pattern = a[2];
             String_View replacement = a[3];
             String_View out_var = a[4];
             String_View input = (arena_arr_len(a) > 5) ? eval_sv_join_semi_temp(ctx, &a[5], arena_arr_len(a) - 5) : nob_sv_from_cstr("");
-            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
             char *pat_buf = (char*)arena_alloc(eval_temp_arena(ctx), pattern.count + 1);
-            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, eval_result_fatal());
             memcpy(pat_buf, pattern.data, pattern.count);
             pat_buf[pattern.count] = '\0';
 
             char *in_buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, eval_result_fatal());
             memcpy(in_buf, input.data, input.count);
             in_buf[input.count] = '\0';
 
             regex_t re;
             if (regcomp(&re, pat_buf, REG_EXTENDED) != 0) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("Invalid regex pattern"), pattern);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
             enum { MAX_GROUPS = 10 };
@@ -2484,42 +2484,42 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
             char *out_buf = (char*)arena_alloc(eval_temp_arena(ctx), sb.count + 1);
             if (!out_buf) {
                 nob_sb_free(sb);
-                EVAL_OOM_RETURN_IF_NULL(ctx, out_buf, !eval_should_stop(ctx));
+                EVAL_OOM_RETURN_IF_NULL(ctx, out_buf, eval_result_fatal());
             }
             if (sb.count) memcpy(out_buf, sb.items, sb.count);
             out_buf[sb.count] = '\0';
             nob_sb_free(sb);
             (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(out_buf));
-            if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("REPLACE"), out_var)) return false;
-            return !eval_should_stop(ctx);
+            if (!eval_emit_string_regex(ctx, o, nob_sv_from_cstr("REPLACE"), out_var)) return eval_result_fatal();
+            return eval_result_from_ctx(ctx);
         }
 
         if (eval_sv_eq_ci_lit(a[1], "MATCHALL")) {
             if (arena_arr_len(a) < 5) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("string(REGEX MATCHALL) requires regex, out-var and input"),
                                nob_sv_from_cstr("Usage: string(REGEX MATCHALL <regex> <out-var> <input>...)"));
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
             String_View pattern = a[2];
             String_View out_var = a[3];
             String_View input = (arena_arr_len(a) > 4) ? string_join_no_sep_temp(ctx, &a[4], arena_arr_len(a) - 4) : nob_sv_from_cstr("");
-            if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
             char *pat_buf = (char*)arena_alloc(eval_temp_arena(ctx), pattern.count + 1);
-            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, pat_buf, eval_result_fatal());
             memcpy(pat_buf, pattern.data, pattern.count);
             pat_buf[pattern.count] = '\0';
 
             char *in_buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
-            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, in_buf, eval_result_fatal());
             memcpy(in_buf, input.data, input.count);
             in_buf[input.count] = '\0';
 
             regex_t re;
             if (regcomp(&re, pat_buf, REG_EXTENDED) != 0) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("Invalid regex pattern"), pattern);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
 
             SV_List matches = {0};
@@ -2532,7 +2532,7 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
                 String_View hit = nob_sv_from_parts(cursor + m[0].rm_so, (size_t)(m[0].rm_eo - m[0].rm_so));
                 if (!svu_list_push_temp(ctx, &matches, hit)) {
                     regfree(&re);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
 
                 if (m[0].rm_eo == 0) {
@@ -2546,16 +2546,16 @@ bool eval_handle_string(Evaluator_Context *ctx, const Node *node) {
 
             String_View out = (arena_arr_len(matches) > 0) ? eval_sv_join_semi_temp(ctx, matches, arena_arr_len(matches)) : nob_sv_from_cstr("");
             (void)eval_var_set_current(ctx, out_var, out);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("Unsupported string(REGEX) mode"),
                        nob_sv_from_cstr("Implemented: MATCH, REPLACE, MATCHALL"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "string", nob_sv_from_cstr("Unsupported string() subcommand"),
                    nob_sv_from_cstr("Implemented: APPEND, PREPEND, CONCAT, JOIN, LENGTH, STRIP, FIND, COMPARE, ASCII, HEX, CONFIGURE, MAKE_C_IDENTIFIER, GENEX_STRIP, REPEAT, RANDOM, TIMESTAMP, UUID, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA3_224, SHA3_256, SHA3_384, SHA3_512, REPLACE, TOUPPER, TOLOWER, SUBSTRING, REGEX MATCH, REGEX REPLACE, REGEX MATCHALL, JSON(GET|TYPE|MEMBER|LENGTH|REMOVE|SET|EQUAL)"));
     eval_request_stop_on_error(ctx);
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

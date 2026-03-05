@@ -181,12 +181,12 @@ static Ast_Root parse_cmake(Arena *arena, const char *script) {
     return parse_tokens(arena, toks);
 }
 
-static bool native_test_handler_set_hit(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result native_test_handler_set_hit(Evaluator_Context *ctx, const Node *node) {
     (void)node;
-    return eval_var_set_current(ctx, nob_sv_from_cstr("NATIVE_HIT"), nob_sv_from_cstr("1"));
+    return eval_result_from_bool(eval_var_set_current(ctx, nob_sv_from_cstr("NATIVE_HIT"), nob_sv_from_cstr("1")));
 }
 
-static bool native_test_handler_runtime_mutation(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result native_test_handler_runtime_mutation(Evaluator_Context *ctx, const Node *node) {
     (void)node;
 
     Evaluator_Native_Command_Def during_run = {
@@ -201,11 +201,11 @@ static bool native_test_handler_runtime_mutation(Evaluator_Context *ctx, const N
     if (!eval_var_set_current(ctx,
                               nob_sv_from_cstr("NATIVE_REG_DURING_RUN"),
                               register_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
-        return false;
+        return eval_result_fatal();
     }
-    return eval_var_set_current(ctx,
-                                nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN"),
-                                unregister_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+    return eval_result_from_bool(eval_var_set_current(ctx,
+                                                      nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN"),
+                                                      unregister_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0")));
 }
 
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
@@ -1049,7 +1049,7 @@ TEST(evaluator_native_command_registry_runtime_extension) {
     ASSERT(ctx != NULL);
 
     Ast_Root root_builtin = parse_cmake(temp_arena, "set(BUILTIN_SEEDED 1)\n");
-    ASSERT(evaluator_run(ctx, root_builtin));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root_builtin)));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BUILTIN_SEEDED")), nob_sv_from_cstr("1")));
 
     Evaluator_Native_Command_Def native_ext = {
@@ -1073,7 +1073,7 @@ TEST(evaluator_native_command_registry_runtime_extension) {
         "  set(NATIVE_PREDICATE 1)\n"
         "endif()\n"
         "native_ext_cmd()\n");
-    ASSERT(evaluator_run(ctx, root_native));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root_native)));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_PREDICATE")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_HIT")), nob_sv_from_cstr("1")));
 
@@ -1081,7 +1081,7 @@ TEST(evaluator_native_command_registry_runtime_extension) {
         temp_arena,
         "function(native_user_collision)\n"
         "endfunction()\n");
-    ASSERT(evaluator_run(ctx, root_user_collision));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root_user_collision)));
 
     Evaluator_Native_Command_Def user_collision = native_ext;
     user_collision.name = nob_sv_from_cstr("native_user_collision");
@@ -1098,7 +1098,7 @@ TEST(evaluator_native_command_registry_runtime_extension) {
     ASSERT(evaluator_register_native_command(ctx, &runtime_probe));
 
     Ast_Root root_runtime_probe = parse_cmake(temp_arena, "native_runtime_probe()\n");
-    ASSERT(evaluator_run(ctx, root_runtime_probe));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root_runtime_probe)));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_REG_DURING_RUN")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN")), nob_sv_from_cstr("0")));
 
@@ -1114,7 +1114,7 @@ TEST(evaluator_native_command_registry_runtime_extension) {
         "if(COMMAND native_runtime_probe)\n"
         "  set(PROBE_STILL_VISIBLE 1)\n"
         "endif()\n");
-    ASSERT(evaluator_run(ctx, root_probe_missing));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root_probe_missing)));
     ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROBE_STILL_VISIBLE")).count == 0);
 
     ASSERT(evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_ext_cmd")));
@@ -1129,12 +1129,54 @@ TEST(evaluator_native_command_registry_runtime_extension) {
         "if(COMMAND native_ext_cmd)\n"
         "  set(NATIVE_AFTER_UNREGISTER 1)\n"
         "endif()\n");
-    ASSERT(evaluator_run(ctx, root_native_missing));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root_native_missing)));
     ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NATIVE_AFTER_UNREGISTER")).count == 0);
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_run_result_kind_tri_state_contract) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root_ok = parse_cmake(temp_arena, "set(RESULT_KIND_OK 1)\n");
+    Eval_Result ok_res = evaluator_run(ctx, root_ok);
+    ASSERT(eval_result_is_ok(ok_res));
+
+    Ast_Root root_soft = parse_cmake(
+        temp_arena,
+        "set(CMAKE_NOBIFY_UNSUPPORTED_POLICY ERROR)\n"
+        "unknown_soft_result_command()\n");
+    Eval_Result soft_res = evaluator_run(ctx, root_soft);
+    ASSERT(eval_result_is_soft_error(soft_res));
+    ASSERT(!eval_result_is_fatal(soft_res));
+
+    ASSERT(evaluator_set_compat_profile(ctx, EVAL_PROFILE_STRICT));
+    Ast_Root root_fatal = parse_cmake(temp_arena, "unknown_fatal_result_command()\n");
+    Eval_Result fatal_res = evaluator_run(ctx, root_fatal);
+    ASSERT(eval_result_is_fatal(fatal_res));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1165,7 +1207,7 @@ TEST(evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier
         temp_arena,
         "link_libraries(debug dbg optimized opt general gen plain)\n"
         "link_libraries(debug)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1279,7 +1321,7 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
         "P_IS_ABSOLUTE=${P_IS_ABSOLUTE})\n",
         convert_to_cmake_input);
     Ast_Root root = parse_cmake(temp_arena, script);
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1395,7 +1437,7 @@ TEST(evaluator_flow_commands_reject_extra_arguments) {
         "continue(oops)\n"
         "block()\n"
         "endblock(oops)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1441,7 +1483,7 @@ TEST(evaluator_enable_testing_does_not_set_build_testing_variable) {
         "enable_testing()\n"
         "add_executable(enable_testing_probe main.c)\n"
         "target_compile_definitions(enable_testing_probe PRIVATE BUILD_TESTING=${BUILD_TESTING})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1490,7 +1532,7 @@ TEST(evaluator_enable_testing_rejects_extra_arguments) {
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(temp_arena, "enable_testing(extra)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1542,7 +1584,7 @@ TEST(evaluator_include_supports_result_variable_optional_and_module_search) {
         "include(missing_optional OPTIONAL RESULT_VARIABLE INC_MISS_RES)\n"
         "add_executable(include_probe main.c)\n"
         "target_compile_definitions(include_probe PRIVATE MYINC_FLAG=${MYINC_FLAG} INC_MOD_RES=${INC_MOD_RES} INC_MISS_RES=${INC_MISS_RES})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1598,7 +1640,7 @@ TEST(evaluator_include_validates_options_strictly) {
         "file(WRITE inc_ok.cmake [=[set(X 1)\n]=])\n"
         "include(inc_ok.cmake BAD_OPT)\n"
         "include(inc_ok.cmake RESULT_VARIABLE)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1663,7 +1705,7 @@ TEST(evaluator_include_cmp0017_search_order_from_builtin_modules) {
         "set(PICK_NEW ${PICK})\n"
         "add_executable(include_cmp0017_probe main.c)\n"
         "target_compile_definitions(include_cmp0017_probe PRIVATE PICK_OLD=${PICK_OLD} PICK_NEW=${PICK_NEW})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1714,7 +1756,7 @@ TEST(evaluator_include_guard_default_scope_is_strict_and_warning_free) {
         "include(guard_var.cmake)\n"
         "add_executable(guard_var_probe main.c)\n"
         "target_compile_definitions(guard_var_probe PRIVATE VAR_HIT=${VAR_HIT})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1765,7 +1807,7 @@ TEST(evaluator_include_guard_directory_scope_applies_only_to_directory_and_child
         "include(guard_dir.cmake)\n"
         "add_executable(guard_dir_probe main.c)\n"
         "target_compile_definitions(guard_dir_probe PRIVATE DIR_HIT=${DIR_HIT})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1817,7 +1859,7 @@ TEST(evaluator_include_guard_global_scope_persists_across_function_scope) {
         "run_guard_once()\n"
         "add_executable(guard_global_probe main.c)\n"
         "target_compile_definitions(guard_global_probe PRIVATE GLOBAL_GUARD_HITS=${GLOBAL_GUARD_HITS})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1866,7 +1908,7 @@ TEST(evaluator_include_guard_rejects_invalid_arguments) {
         "include_guard(BAD)\n"
         "include_guard(VARIABLE)\n"
         "include_guard(GLOBAL EXTRA)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1922,7 +1964,7 @@ TEST(evaluator_enable_language_updates_enabled_language_state_and_validates_scop
         "endfunction()\n"
         "bad_scope()\n"
         "enable_language(HIP OPTIONAL)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -1984,7 +2026,7 @@ TEST(evaluator_add_test_name_signature_parses_supported_options) {
         "enable_testing()\n"
         "add_test(NAME smoke COMMAND app --flag value CONFIGURATIONS Debug RelWithDebInfo WORKING_DIRECTORY tests COMMAND_EXPAND_LISTS)\n"
         "add_test(legacy app WORKING_DIRECTORY tools)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2042,7 +2084,7 @@ TEST(evaluator_add_test_name_signature_rejects_unexpected_arguments) {
         "enable_testing()\n"
         "add_test(NAME bad COMMAND app WORKING_DIRECTORY bad_dir EXTRA_TOKEN value)\n"
         "add_test(legacy_ok app ok)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2097,7 +2139,7 @@ TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
         temp_arena,
         "add_definitions(-DLEGACY=1 /DWIN_DEF -fPIC /EHsc -D)\n"
         "add_executable(defs_probe main.c)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2173,7 +2215,7 @@ TEST(evaluator_add_compile_definitions_updates_existing_and_future_targets) {
         "add_executable(defs_before main_before.c)\n"
         "add_compile_definitions(-DFOO BAR=1 -D)\n"
         "add_executable(defs_after main_after.c)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2263,7 +2305,7 @@ TEST(evaluator_execute_process_captures_output_and_models_3_28_fatal_mode) {
 #endif
 
     Ast_Root root = parse_cmake(temp_arena, script);
-    ASSERT(!evaluator_run(ctx, root));
+    ASSERT(eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2337,7 +2379,7 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
         "cmake_language(DEFER GET_CALL later CALL_INFO)\n"
         "set(DEFER_VALUE after)\n"
         "return()\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2399,7 +2441,7 @@ TEST(evaluator_target_compile_definitions_normalizes_dash_d_items) {
         temp_arena,
         "add_executable(norm_defs main.c)\n"
         "target_compile_definitions(norm_defs PRIVATE -DFOO -D BAR -DBAZ=1 QUX=2)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2461,7 +2503,7 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
         "add_custom_command(TARGET gen COMMAND echo bad_no_stage)\n"
         "add_custom_command(TARGET gen PRE_BUILD PRE_LINK COMMAND echo bad_multi_stage)\n"
         "add_custom_command(TARGET gen POST_BUILD DEPENDS dep1 COMMAND echo bad_depends)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2526,7 +2568,7 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
         "add_custom_command(OUTPUT bad_conflict.c IMPLICIT_DEPENDS C in.c DEPFILE in.d COMMAND gen)\n"
         "add_custom_command(OUTPUT bad_pool.c JOB_POOL pool USES_TERMINAL COMMAND gen)\n"
         "add_custom_command(OUTPUT good.c COMMAND python gen.py DEPENDS schema.idl BYPRODUCTS gen.log MAIN_DEPENDENCY schema.idl)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2595,7 +2637,7 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
         "mc_ret()\n"
         "add_executable(ret_macro main.c)\n"
         "target_compile_definitions(ret_macro PRIVATE MAC_RET=${MAC_RET})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2663,7 +2705,7 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
         "ret_new()\n"
         "add_executable(ret_cmp0140 main.c)\n"
         "target_compile_definitions(ret_cmp0140 PRIVATE RET_OLD=${RET_OLD} RET_NEW=${RET_NEW})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2719,7 +2761,7 @@ TEST(evaluator_list_transform_genex_strip_and_output_variable) {
         "list(TRANSFORM L APPEND \"_S\" AT 0 OUTPUT_VARIABLE L_APPENDED)\n"
         "add_executable(list_transform_ov main.c)\n"
         "target_compile_definitions(list_transform_ov PRIVATE \"L=${L}\" \"L_STRIPPED=${L_STRIPPED}\" \"L_APPENDED=${L_APPENDED}\")\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2776,7 +2818,7 @@ TEST(evaluator_list_transform_output_variable_requires_single_output_var) {
         "set(L \"a;b\")\n"
         "list(TRANSFORM L TOUPPER OUTPUT_VARIABLE)\n"
         "list(TRANSFORM L TOUPPER AT 0 OUTPUT_VARIABLE OUT EXTRA)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2823,7 +2865,7 @@ TEST(evaluator_math_rejects_empty_and_incomplete_invocations) {
         temp_arena,
         "math()\n"
         "math(EXPR)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2875,7 +2917,7 @@ TEST(evaluator_set_target_properties_rejects_alias_target) {
         "add_library(real STATIC real.c)\n"
         "add_library(alias_real ALIAS real)\n"
         "set_target_properties(alias_real PROPERTIES OUTPUT_NAME x)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -2935,7 +2977,7 @@ TEST(evaluator_add_executable_imported_and_alias_signatures) {
         "add_executable(tool_alias_bad ALIAS missing_tool)\n"
         "add_executable(tool_alias2 ALIAS tool_alias)\n"
         "add_executable(tool_bad IMPORTED source.c)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3020,7 +3062,7 @@ TEST(evaluator_add_library_imported_alias_and_default_type) {
         "add_library(bad_alias ALIAS base_alias)\n"
         "add_library(bad_import IMPORTED)\n"
         "add_library(iface INTERFACE EXCLUDE_FROM_ALL)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3112,7 +3154,7 @@ TEST(evaluator_set_property_target_rejects_alias_and_unknown_target) {
         "add_library(alias_real ALIAS real)\n"
         "set_property(TARGET alias_real PROPERTY OUTPUT_NAME bad_alias)\n"
         "set_property(TARGET missing_t PROPERTY OUTPUT_NAME bad_missing)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3181,7 +3223,7 @@ TEST(evaluator_define_property_initializes_target_properties_from_variable) {
         "add_library(real STATIC real.c)\n"
         "set(MY_INIT second)\n"
         "add_executable(app main.c)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3241,7 +3283,7 @@ TEST(evaluator_set_property_source_test_directory_clauses_parse_and_apply) {
         "set_property(SOURCE foo.c DIRECTORY src PROPERTY LANGUAGE C)\n"
         "set_property(SOURCE bar.c TARGET_DIRECTORY src_t PROPERTY LANGUAGE CXX)\n"
         "set_property(TEST smoke DIRECTORY . PROPERTY LABELS fast)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3309,7 +3351,7 @@ TEST(evaluator_set_property_allows_zero_objects_and_validates_test_lookup) {
         "set_property(CACHE PROPERTY VALUE cache_ignore)\n"
         "set_property(TEST smoke PROPERTY LABELS ok)\n"
         "set_property(TEST missing PROPERTY LABELS bad)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3366,7 +3408,7 @@ TEST(evaluator_set_property_cache_requires_existing_entry) {
         "set(CACHED_X old CACHE STRING \"doc\")\n"
         "set_property(CACHE CACHED_X PROPERTY VALUE new_ok)\n"
         "set_property(CACHE MISSING_X PROPERTY VALUE bad)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3429,7 +3471,7 @@ TEST(evaluator_get_property_core_queries_and_directory_wrappers) {
         "get_property(GP_INH DIRECTORY PROPERTY INHERITED_DIR)\n"
         "get_directory_property(GP_DIR BATCH_DIR_PROP)\n"
         "get_directory_property(GP_DEFVAR DEFINITION SCOPE_VAR)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3481,7 +3523,7 @@ TEST(evaluator_get_property_target_source_and_test_wrappers) {
         "get_source_file_property(SRC_MISS main.c UNKNOWN_SRC)\n"
         "get_property(TEST_OK TEST batch_test DIRECTORY . PROPERTY LABELS)\n"
         "get_test_property(TEST_MISS batch_test UNKNOWN_TEST)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3533,7 +3575,7 @@ TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists
         "list(FIND ALL_VARS NORMAL_A IDX_VAR)\n"
         "list(FIND CACHE_VARS CACHED_A IDX_CACHE)\n"
         "list(FIND ALL_MACROS batch_macro IDX_MACRO)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3587,7 +3629,7 @@ TEST(evaluator_option_mark_as_advanced_and_include_regular_expression_follow_pol
         "get_property(OPT_ADV CACHE OPT_OLD PROPERTY ADVANCED)\n"
         "add_executable(option_probe main.c)\n"
         "target_compile_definitions(option_probe PRIVATE OPT_OLD=${OPT_OLD} OPT_NEW=${OPT_NEW} OPT_ADV=${OPT_ADV} RX=${CMAKE_INCLUDE_REGULAR_EXPRESSION} RC=${CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3657,7 +3699,7 @@ TEST(evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode) {
         "set(OUT_NATIVE [=[alpha \"two words\"]=])\n"
         "separate_arguments(OUT_NATIVE)\n"
         "separate_arguments(BAD_PROGRAM UNIX_COMMAND PROGRAM alpha)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3710,7 +3752,7 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
         temp_arena,
         "add_definitions(-DKEEP=1 -DREMOVE_ME=1 -Wall)\n"
         "remove_definitions(-DREMOVE_ME=1 -Wall /DUNKNOWN=1)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3758,7 +3800,7 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
             "set(HOSTNAME \"%s\")\n"
             "site_name(SITE_CMD)\n",
             site_cmd));
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3836,7 +3878,7 @@ TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
         "build_command(BC_OLD CONFIGURATION Debug TARGET demo PARALLEL_LEVEL 3)\n"
         "cmake_policy(SET CMP0061 NEW)\n"
         "build_command(BC_NEW legacy_make legacy_file legacy_target)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -3919,7 +3961,7 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
         "  NO_CACHE\n"
         "  RUN_OUTPUT_VARIABLE RUN_XC_ALL)\n"
         "try_run(RUN_PROJECT COMPILE_PROJECT PROJECT Demo SOURCE_DIR missing_dir)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4011,7 +4053,7 @@ TEST(evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface) {
 #endif
 
     Ast_Root root = parse_cmake(temp_arena, script);
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4104,7 +4146,7 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
         "create_test_sourcelist(TEST_SRCS generated_driver.c alpha_test.c beta_test.c EXTRA_INCLUDE extra.h FUNCTION setup_hook)\n"
         "include_external_msproject(ext_proj external.vcxproj TYPE type-guid GUID proj-guid PLATFORM Win32 meta_lib)\n"
         "cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 CACHE 2.0)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4197,7 +4239,7 @@ TEST(evaluator_batch6_metadata_commands_reject_unsupported_forms) {
         "cmake_file_api(REPLY)\n"
         "cmake_file_api(QUERY API_VERSION 2 CODEMODEL 2)\n"
         "cmake_file_api(QUERY API_VERSION 1 UNKNOWN_KIND 1)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4257,7 +4299,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         "ctest_read_custom_files(ctest_custom)\n"
         "ctest_run_script(ctest_script.cmake RETURN_VALUE SCRIPT_RV)\n"
         "ctest_sleep(0.25)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4320,7 +4362,7 @@ TEST(evaluator_ctest_family_rejects_invalid_and_unsupported_forms) {
         "ctest_run_script(NEW_PROCESS ctest_script_bad.cmake)\n"
         "ctest_sleep(1 2)\n"
         "ctest_build(BUILD)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4377,7 +4419,7 @@ TEST(evaluator_batch8_legacy_commands_register_and_model_compat_paths) {
         "fltk_wrap_ui(FltkLib main.fl)\n"
         "write_file(legacy_dir/sub/appended.txt one)\n"
         "write_file(legacy_dir/sub/appended.txt two APPEND)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4458,7 +4500,7 @@ TEST(evaluator_batch8_legacy_commands_reject_invalid_forms) {
         "remove(ONLY_VAR)\n"
         "variable_watch(A B C)\n"
         "qt_wrap_cpp(LegacyLib ONLY_OUT)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4503,7 +4545,7 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
         "target_compile_features(alias_real PRIVATE bad_feature)\n"
         "target_precompile_headers(missing_pch PRIVATE missing.h)\n"
         "target_sources(missing_src PRIVATE bad.c)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4629,7 +4671,7 @@ TEST(evaluator_source_group_supports_files_tree_and_regex_forms) {
         "source_group(TREE src PREFIX Generated FILES src/a.c src/sub/b.c)\n"
         "source_group(Texts [=[.*\\.txt$]=])\n"
         "source_group(TREE src FILES ../outside.c)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4739,7 +4781,7 @@ TEST(evaluator_message_mode_severity_mapping) {
         "message(CHECK_PASS ok)\n"
         "message(CHECK_START probe2)\n"
         "message(CHECK_FAIL fail)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4790,7 +4832,7 @@ TEST(evaluator_message_check_pass_without_start_is_error) {
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(temp_arena, "message(CHECK_PASS done)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4842,7 +4884,7 @@ TEST(evaluator_message_deprecation_respects_control_variables) {
         "message(DEPRECATION shown)\n"
         "set(CMAKE_ERROR_DEPRECATED TRUE)\n"
         "message(DEPRECATION err)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -4900,7 +4942,7 @@ TEST(evaluator_message_configure_log_persists_yaml_file) {
         "message(CONFIGURE_LOG probe-start)\n"
         "message(CHECK_PASS yes)\n"
         "message(CONFIGURE_LOG probe-end)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     String_View log_text = {0};
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, "./CMakeFiles/CMakeConfigureLog.yaml", &log_text));
@@ -4943,7 +4985,7 @@ TEST(evaluator_set_and_unset_env_forms) {
         "target_compile_definitions(env_forms PRIVATE A=$ENV{NOBIFY_ENV_A} B=$ENV{NOBIFY_ENV_B})\n"
         "unset(ENV{NOBIFY_ENV_B})\n"
         "target_compile_definitions(env_forms PRIVATE B2=$ENV{NOBIFY_ENV_B})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5020,7 +5062,7 @@ TEST(evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms) {
         "endfunction()\n"
         "parse_direct(OPT EXTRA DEST bin TARGETS a b CONFIGS)\n"
         "parse_argv(skip FLAG TAIL ONE \"\" MULTI alpha beta)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5093,7 +5135,7 @@ TEST(evaluator_unset_env_rejects_options) {
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(temp_arena, "unset(ENV{NOBIFY_ENV_OPT} CACHE)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5147,7 +5189,7 @@ TEST(evaluator_set_cache_cmp0126_old_and_new_semantics) {
         "set(CACHE_NEW cache_new CACHE STRING \"doc\" FORCE)\n"
         "add_executable(cache_new_t main.c)\n"
         "target_compile_definitions(cache_new_t PRIVATE NEW_CB=${CACHE_NEW})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5215,7 +5257,7 @@ TEST(evaluator_set_cache_policy_version_defaults_cmp0126_to_new) {
         "set(CACHE_VER cache_ver CACHE STRING \"doc\")\n"
         "add_executable(cache_ver_t main.c)\n"
         "target_compile_definitions(cache_ver_t PRIVATE VER=${CACHE_VER})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5312,7 +5354,7 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(temp_arena, script);
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5382,7 +5424,7 @@ TEST(evaluator_get_filename_component_covers_documented_modes) {
         "get_filename_component(GFC_PROG \"sh -c echo\" PROGRAM PROGRAM_ARGS GFC_PROG_ARGS)\n"
 #endif
     );
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5441,7 +5483,7 @@ TEST(evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_v
         "find_package(DemoFP NO_MODULE NAMES AltName CONFIGS AltCfg.cmake PATH_SUFFIXES sfx PATHS fp_cfg_root REGISTRY_VIEW HOST QUIET)\n"
         "add_executable(fp_cfg_probe main.c)\n"
         "target_compile_definitions(fp_cfg_probe PRIVATE FOUND=${DemoFP_FOUND} SRC=${DemoFP_SOURCE} RV=${DemoFP_FIND_REGISTRY_VIEW})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5514,7 +5556,7 @@ TEST(evaluator_find_package_auto_prefers_config_when_requested) {
         "find_package(PrefPkg QUIET)\n"
         "add_executable(fp_pref_probe main.c)\n"
         "target_compile_definitions(fp_pref_probe PRIVATE FROM=${PrefPkg_FROM})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5593,7 +5635,7 @@ TEST(evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root) {
         "find_package(Cmp0074New CONFIG QUIET)\n"
         "add_executable(fp_cmp0074_probe main.c)\n"
         "target_compile_definitions(fp_cmp0074_probe PRIVATE OLD_FROM=${Cmp0074Old_FROM} NEW_FROM=${Cmp0074New_FROM})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5671,7 +5713,7 @@ TEST(evaluator_project_full_signature_and_variable_surface) {
         "target_compile_definitions(root_probe PRIVATE ROOT_TOP=${PROJECT_IS_TOP_LEVEL} ROOT_NAMED_TOP=${MainProj_IS_TOP_LEVEL} ROOT_MAJOR=${PROJECT_VERSION_MAJOR} ROOT_MINOR=${PROJECT_VERSION_MINOR} ROOT_PATCH=${PROJECT_VERSION_PATCH} ROOT_TWEAK=${PROJECT_VERSION_TWEAK} ROOT_CMAKE_VER=${CMAKE_PROJECT_VERSION} ROOT_HOME=${PROJECT_HOMEPAGE_URL})\n"
         "add_subdirectory(subproj)\n"
         "target_compile_definitions(root_probe PRIVATE ROOT_NAME_AFTER=${CMAKE_PROJECT_NAME} ROOT_HOME_AFTER=${CMAKE_PROJECT_HOMEPAGE_URL})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5796,7 +5838,7 @@ TEST(evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without
         "project(OldNoVer LANGUAGES NONE)\n"
         "add_executable(project_old_nover main.c)\n"
         "target_compile_definitions(project_old_nover PRIVATE OLD_VER=${PROJECT_VERSION} OLD_MAJ=${PROJECT_VERSION_MAJOR})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5857,7 +5899,7 @@ TEST(evaluator_project_rejects_invalid_signature_forms) {
         "project(BadDesc DESCRIPTION)\n"
         "project(BadHome HOMEPAGE_URL)\n"
         "project(BadUnexpected VERSION 1.0 C)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -5934,7 +5976,7 @@ TEST(evaluator_policy_known_unknown_and_if_predicate) {
         "cmake_policy(GET CMP9999 BAD_OUT)\n"
         "add_executable(policy_pred main.c)\n"
         "target_compile_definitions(policy_pred PRIVATE POL_OUT=${POL_OUT} IF_KNOWN=${IF_KNOWN} IF_UNKNOWN=${IF_UNKNOWN})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6003,7 +6045,7 @@ TEST(evaluator_policy_strict_arity_and_version_validation) {
         "cmake_policy(VERSION 2.3)\n"
         "cmake_policy(VERSION 3.29)\n"
         "cmake_policy(VERSION 3.20...3.10)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6085,7 +6127,7 @@ TEST(evaluator_cmake_minimum_required_inside_function_applies_policy_not_variabl
         "cmake_policy(GET CMP0124 OUT_POL)\n"
         "add_executable(minreq_func main.c)\n"
         "target_compile_definitions(minreq_func PRIVATE OUT_POL=${OUT_POL} MIN_VER=${CMAKE_MINIMUM_REQUIRED_VERSION})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6138,7 +6180,7 @@ TEST(evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_
         "cpack_add_component(core)\n"
         "include(CPackComponent)\n"
         "cpack_add_component(core DISPLAY_NAME Core ARCHIVE_FILE core.txz PLIST core.plist)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6223,7 +6265,7 @@ TEST(evaluator_string_hash_repeat_and_json_full_surface) {
         "\"SREP=${SREP}\" \"SREP0=${SREP0}\" \"SJ_MEMBER=${SJ_MEMBER}\" \"SJ_RM_LEN=${SJ_RM_LEN}\" "
         "\"SJ_SET_GET=${SJ_SET_GET}\" \"SJ_EQ=${SJ_EQ}\" \"SJ_NEQ=${SJ_NEQ}\" "
         "\"SJ_ERR_OK=${SJ_ERR_OK}\" \"SJ_E1=${SJ_E1}\" \"SJ_ERR1=${SJ_ERR1}\" \"SJ_E2=${SJ_E2}\" \"SJ_ERR2=${SJ_ERR2}\")\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6370,7 +6412,7 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         "\"TOUCH_CREATED=${TOUCH_CREATED}\" \"TOUCH_NOCREATE_CREATED=${TOUCH_NOCREATE_CREATED}\" "
         "\"RD_RES_LEN=${RD_RES_LEN}\" "
         "\"DL_OK_TXT=${DL_OK_TXT}\" \"DL_BAD_LEN=${DL_BAD_LEN}\" \"DL_BAD_CODE=${DL_BAD_CODE}\")\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6474,7 +6516,7 @@ TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
         "set(DISABLE_FEATURE 0)\n"
         "configure_file(cfg_template.in cfg_configured.txt @ONLY ESCAPE_QUOTES NEWLINE_STYLE DOS)\n"
         "configure_file(cfg_copy.in cfg_out_dir COPYONLY)\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6534,7 +6576,7 @@ TEST(evaluator_file_real_path_cmp0152_old_and_new) {
         "file(REAL_PATH cmp0152_real_link/../cmp0152_result.txt OUT_NEW)\n"
         "add_executable(real_path_policy_probe main.c)\n"
         "target_compile_definitions(real_path_policy_probe PRIVATE OLD=${OUT_OLD} NEW=${OUT_NEW})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6611,7 +6653,7 @@ TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
         "endif()\n"
         "add_executable(gen_deferred_probe main.c)\n"
         "target_compile_definitions(gen_deferred_probe PRIVATE GEN_BEFORE=${GEN_BEFORE})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6639,7 +6681,7 @@ TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
         "endif()\n"
         "add_executable(gen_deferred_verify main.c)\n"
         "target_compile_definitions(gen_deferred_verify PRIVATE GEN_OUT=${GEN_OUT} GEN_IN=${GEN_IN} GEN_SKIP=${GEN_SKIP})\n");
-    ASSERT(evaluator_run(ctx, verify));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, verify)));
 
     bool saw_out = false;
     bool saw_in = false;
@@ -6689,7 +6731,7 @@ TEST(evaluator_file_lock_directory_and_duplicate_lock_result) {
         "file(LOCK lock_dir DIRECTORY RELEASE RESULT_VARIABLE L3)\n"
         "add_executable(lock_probe main.c)\n"
         "target_compile_definitions(lock_probe PRIVATE L1=${L1} L2=${L2} L3=${L3})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6747,7 +6789,7 @@ TEST(evaluator_file_download_probe_mode_without_destination) {
         "list(GET DL_STATUS 0 DL_CODE)\n"
         "add_executable(dl_probe main.c)\n"
         "target_compile_definitions(dl_probe PRIVATE DL_LEN=${DL_LEN} DL_CODE=${DL_CODE})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6798,7 +6840,7 @@ TEST(evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak) {
         "  NO_CACHE)\n"
         "add_executable(tc_try_local_probe main.c)\n"
         "target_compile_definitions(tc_try_local_probe PRIVATE TC_LOCAL_ONLY=${TC_LOCAL_ONLY} \"INNER_ONLY_PARENT=${INNER_ONLY}\")\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
@@ -6867,7 +6909,7 @@ TEST(evaluator_try_compile_failure_populates_output_variable) {
         "string(LENGTH \"${TC_FAIL_LOG}\" TC_FAIL_LOG_LEN)\n"
         "add_executable(tc_try_fail_probe main.c)\n"
         "target_compile_definitions(tc_try_fail_probe PRIVATE TC_FAIL=${TC_FAIL} TC_FAIL_LOG_LEN=${TC_FAIL_LOG_LEN})\n");
-    ASSERT(evaluator_run(ctx, root));
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);

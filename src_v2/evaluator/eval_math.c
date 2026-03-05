@@ -289,28 +289,28 @@ static bool math_parse_bitor(Math_Parser *p, long long *out) {
     return true;
 }
 
-bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return !eval_should_stop(ctx);
+Eval_Result eval_handle_math(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math() requires a subcommand"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (!eval_sv_eq_ci_lit(a[0], "EXPR")) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("Unsupported math() subcommand"),
                        nob_sv_from_cstr("Implemented: EXPR"));
         eval_request_stop_on_error(ctx);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (arena_arr_len(a) < 3) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View out_var = a[1];
@@ -329,17 +329,17 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
         if (output_format_idx + 1 >= arena_arr_len(a)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"),
                            nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (!math_parse_output_format_sv(a[output_format_idx + 1], &out_fmt)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"),
                            a[output_format_idx + 1]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (output_format_idx + 2 != arena_arr_len(a)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"),
                            nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         expr_end = output_format_idx;
     } else if (arena_arr_len(a) >= 4) {
@@ -353,15 +353,15 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     if (expr_end <= expr_begin) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
                        nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     size_t expr_count = expr_end - expr_begin;
     String_View expr_sv = (expr_count == 1) ? a[expr_begin] : svu_join_no_sep_temp(ctx, &a[expr_begin], expr_count);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     char *expr_buf = (char*)arena_alloc(eval_temp_arena(ctx), expr_sv.count + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, expr_buf, !eval_should_stop(ctx));
+    EVAL_OOM_RETURN_IF_NULL(ctx, expr_buf, eval_result_fatal());
     memcpy(expr_buf, expr_sv.data, expr_sv.count);
     expr_buf[expr_sv.count] = '\0';
 
@@ -375,11 +375,11 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     };
 
     long long value = 0;
-    if (!math_parse_expr(&p, &value)) return !eval_should_stop(ctx);
+    if (!math_parse_expr(&p, &value)) return eval_result_from_ctx(ctx);
     math_skip_ws(&p);
     if (p.s[p.pos] != '\0') {
         (void)math_emit_error(&p, "Unexpected trailing tokens in expression");
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     char out_buf[64];
@@ -396,7 +396,7 @@ bool eval_handle_math(Evaluator_Context *ctx, const Node *node) {
                              out_fmt == MATH_OUTPUT_HEXADECIMAL
                                  ? nob_sv_from_cstr("HEXADECIMAL")
                                  : nob_sv_from_cstr("DECIMAL"))) {
-        return false;
+        return eval_result_fatal();
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

@@ -875,13 +875,13 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
         const char native_list_sep = ':';
 #endif
         SV_List parts = NULL;
-        if (!cmk_path_split_char_list_temp(ctx, input, native_list_sep, &parts)) return !eval_should_stop(ctx);
+        if (!cmk_path_split_char_list_temp(ctx, input, native_list_sep, &parts)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 
         SV_List converted = NULL;
         for (size_t i = 0; i < arena_arr_len(parts); i++) {
             String_View p = cmk_path_to_cmake_seps_temp(ctx, parts[i]);
             if (normalize) p = cmk_path_normalize_temp(ctx, p);
-            if (!svu_list_push_temp(ctx, &converted, p)) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &converted, p)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         String_View out = eval_sv_join_semi_temp(ctx, converted, arena_arr_len(converted));
         (void)eval_var_set_current(ctx, out_var, out);
@@ -905,7 +905,7 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
             String_View p = parts[i];
             if (normalize) p = cmk_path_normalize_temp(ctx, p);
             p = cmk_path_to_native_seps_temp(ctx, p);
-            if (!svu_list_push_temp(ctx, &converted, p)) return !eval_should_stop(ctx);
+            if (!svu_list_push_temp(ctx, &converted, p)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
 
         String_View out = cmk_path_join_char_list_temp(ctx, converted, native_list_sep);
@@ -1005,36 +1005,36 @@ static bool handle_is_absolute(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         cmk_path_error(ctx, node, o,
                        "cmake_path() requires a subcommand",
                        nob_sv_from_cstr("Usage: cmake_path(<mode> ...)"));
-        return true;
+        return eval_result_ok();
     }
 
     String_View mode = a[0];
 
-    if (eval_sv_eq_ci_lit(mode, "SET")) return handle_set(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "GET")) return handle_get(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "APPEND")) return handle_append_like(ctx, node, o, a, false);
-    if (eval_sv_eq_ci_lit(mode, "APPEND_STRING")) return handle_append_like(ctx, node, o, a, true);
-    if (eval_sv_eq_ci_lit(mode, "REMOVE_FILENAME")) return handle_remove_filename(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "REPLACE_FILENAME")) return handle_replace_filename(ctx, node, o, a);
-    if (eval_sv_eq_ci_lit(mode, "REMOVE_EXTENSION")) return handle_extension_common(ctx, node, o, a, false);
-    if (eval_sv_eq_ci_lit(mode, "REPLACE_EXTENSION")) return handle_extension_common(ctx, node, o, a, true);
+    if (eval_sv_eq_ci_lit(mode, "SET")) return eval_result_from_bool(handle_set(ctx, node, o, a));
+    if (eval_sv_eq_ci_lit(mode, "GET")) return eval_result_from_bool(handle_get(ctx, node, o, a));
+    if (eval_sv_eq_ci_lit(mode, "APPEND")) return eval_result_from_bool(handle_append_like(ctx, node, o, a, false));
+    if (eval_sv_eq_ci_lit(mode, "APPEND_STRING")) return eval_result_from_bool(handle_append_like(ctx, node, o, a, true));
+    if (eval_sv_eq_ci_lit(mode, "REMOVE_FILENAME")) return eval_result_from_bool(handle_remove_filename(ctx, node, o, a));
+    if (eval_sv_eq_ci_lit(mode, "REPLACE_FILENAME")) return eval_result_from_bool(handle_replace_filename(ctx, node, o, a));
+    if (eval_sv_eq_ci_lit(mode, "REMOVE_EXTENSION")) return eval_result_from_bool(handle_extension_common(ctx, node, o, a, false));
+    if (eval_sv_eq_ci_lit(mode, "REPLACE_EXTENSION")) return eval_result_from_bool(handle_extension_common(ctx, node, o, a, true));
     if (eval_sv_eq_ci_lit(mode, "NORMAL_PATH")) {
         bool ok = handle_normal_path(ctx, node, o, a);
         if (ok && !eval_should_stop(ctx)) {
             String_View out_var = (arena_arr_len(a) == 4 && eval_sv_eq_ci_lit(a[2], "OUTPUT_VARIABLE")) ? a[3] : nob_sv_from_cstr("");
-            if (!eval_emit_path_normalize(ctx, o, out_var)) return false;
+            if (!eval_emit_path_normalize(ctx, o, out_var)) return eval_result_fatal();
         }
-        return ok;
+        return eval_result_from_bool(ok);
     }
-    if (eval_sv_eq_ci_lit(mode, "RELATIVE_PATH")) return handle_relative_path(ctx, node, o, a);
+    if (eval_sv_eq_ci_lit(mode, "RELATIVE_PATH")) return eval_result_from_bool(handle_relative_path(ctx, node, o, a));
     if (eval_sv_eq_ci_lit(mode, "ABSOLUTE_PATH")) {
         bool ok = handle_absolute_path(ctx, node, o, a);
         if (ok && !eval_should_stop(ctx)) {
@@ -1045,17 +1045,17 @@ bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
                     break;
                 }
             }
-            if (!eval_emit_path_normalize(ctx, o, out_var)) return false;
+            if (!eval_emit_path_normalize(ctx, o, out_var)) return eval_result_fatal();
         }
-        return ok;
+        return eval_result_from_bool(ok);
     }
     if (eval_sv_eq_ci_lit(mode, "NATIVE_PATH")) {
         bool ok = handle_native_path(ctx, node, o, a);
         if (ok && !eval_should_stop(ctx)) {
             String_View out_var = arena_arr_len(a) >= 3 ? a[arena_arr_len(a) - 1] : nob_sv_from_cstr("");
-            if (!eval_emit_path_normalize(ctx, o, out_var)) return false;
+            if (!eval_emit_path_normalize(ctx, o, out_var)) return eval_result_fatal();
         }
-        return ok;
+        return eval_result_from_bool(ok);
     }
     if (eval_sv_eq_ci_lit(mode, "CONVERT")) {
         bool ok = handle_convert(ctx, node, o, a);
@@ -1066,24 +1066,24 @@ bool eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
                 out_var = a[i];
                 break;
             }
-            if (!eval_emit_path_convert(ctx, o, out_var)) return false;
+            if (!eval_emit_path_convert(ctx, o, out_var)) return eval_result_fatal();
         }
-        return ok;
+        return eval_result_from_bool(ok);
     }
     if (eval_sv_eq_ci_lit(mode, "COMPARE")) {
         bool ok = handle_compare(ctx, node, o, a);
         if (ok && !eval_should_stop(ctx)) {
             String_View out_var = arena_arr_len(a) == 5 ? a[4] : nob_sv_from_cstr("");
-            if (!eval_emit_path_compare(ctx, o, out_var)) return false;
+            if (!eval_emit_path_compare(ctx, o, out_var)) return eval_result_fatal();
         }
-        return ok;
+        return eval_result_from_bool(ok);
     }
 
-    if (svu_has_prefix_ci_lit(mode, "HAS_")) return handle_has_component(ctx, node, o, a, mode);
-    if (svu_has_prefix_ci_lit(mode, "IS_")) return handle_is_absolute(ctx, node, o, a, mode);
+    if (svu_has_prefix_ci_lit(mode, "HAS_")) return eval_result_from_bool(handle_has_component(ctx, node, o, a, mode));
+    if (svu_has_prefix_ci_lit(mode, "IS_")) return eval_result_from_bool(handle_is_absolute(ctx, node, o, a, mode));
 
     cmk_path_error(ctx, node, o,
                    "cmake_path() subcommand is not implemented",
                    mode);
-    return true;
+    return eval_result_ok();
 }

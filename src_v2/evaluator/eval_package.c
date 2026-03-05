@@ -395,7 +395,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
                                       node,
                                       nob_sv_from_cstr("find_*() requires an output variable and at least one name"),
                                       nob_sv_from_cstr("Usage: find_*(<VAR> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     out_opt->out_var = args[0];
@@ -483,7 +483,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
             if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
                 (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"),
                                      nob_sv_from_cstr("Usage: find_*(... REGISTRY_VIEW <view>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_registry_view = true;
             out_opt->registry_view = args[i++];
@@ -493,7 +493,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
             if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
                 (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"),
                                      nob_sv_from_cstr("Usage: find_*(... VALIDATOR <function>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_validator = true;
             out_opt->validator = args[i++];
@@ -504,7 +504,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
     if (arena_arr_len(out_opt->names) == 0) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_*() requires at least one search name"),
                              nob_sv_from_cstr("Provide a legacy name after <VAR> or use NAMES <name>..."));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     return true;
 }
@@ -778,7 +778,7 @@ static bool find_item_invoke_validator(Evaluator_Context *ctx,
     SV_List call_args = call_args_storage;
     Cmake_Event_Origin o = {0};
     o.file_path = ctx->current_file ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr("<input>");
-    if (!eval_user_cmd_invoke(ctx, opt->validator, &call_args, o)) return !eval_should_stop(ctx);
+    if (!eval_user_cmd_invoke(ctx, opt->validator, &call_args, o)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     if (eval_should_stop(ctx)) return false;
 
     String_View final = eval_var_get_visible(ctx, result_var);
@@ -960,7 +960,7 @@ static bool find_item_set_result(Evaluator_Context *ctx,
                                       opt->out_var);
         eval_request_stop_on_error(ctx);
     }
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static bool find_item_handle(Evaluator_Context *ctx,
@@ -968,13 +968,13 @@ static bool find_item_handle(Evaluator_Context *ctx,
                              Find_Item_Kind kind) {
     if (!ctx || !node || eval_should_stop(ctx)) return false;
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 
     Find_Item_Options opt = {0};
-    if (!find_item_parse_options(ctx, node, args, &opt)) return !eval_should_stop(ctx);
+    if (!find_item_parse_options(ctx, node, args, &opt)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 
     String_View found = nob_sv_from_cstr("");
-    if (!find_item_search(ctx, &opt, kind, &found)) return !eval_should_stop(ctx);
+    if (!find_item_search(ctx, &opt, kind, &found)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     return find_item_set_result(ctx, node, &opt, found);
 }
 
@@ -1722,7 +1722,8 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
                 (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION"), nob_sv_from_cstr(""));
                 (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"), nob_sv_from_cstr(""));
                 (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"), nob_sv_from_cstr(""));
-                if (!eval_execute_file(ctx, version_path, false, nob_sv_from_cstr(""))) {
+                Eval_Result version_exec_res = eval_execute_file(ctx, version_path, false, nob_sv_from_cstr(""));
+                if (eval_result_is_fatal(version_exec_res)) {
                     version_ok = false;
                 } else {
                     String_View exact = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"));
@@ -1739,7 +1740,8 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
         }
 
         if (version_ok) {
-            if (!eval_execute_file(ctx, found_path, false, nob_sv_from_cstr(""))) {
+            Eval_Result package_exec_res = eval_execute_file(ctx, found_path, false, nob_sv_from_cstr(""));
+            if (eval_result_is_fatal(package_exec_res)) {
                 *io_found = false;
             }
         } else {
@@ -1794,15 +1796,15 @@ static void find_package_emit_result(Evaluator_Context *ctx,
     }
 }
 
-bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("find_package() missing package name"),
                        nob_sv_from_cstr("Usage: find_package(<Pkg> [REQUIRED] [MODULE|CONFIG])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Find_Package_Options opt = find_package_parse_options(ctx, a);
@@ -1814,21 +1816,21 @@ bool eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     bool found = find_package_resolve(ctx, &opt, &found_path);
     find_package_publish_vars(ctx, &opt, &found, found_path);
     find_package_emit_result(ctx, node, o, &opt, found, found_path);
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_find_program(Evaluator_Context *ctx, const Node *node) {
-    return find_item_handle(ctx, node, FIND_ITEM_PROGRAM);
+Eval_Result eval_handle_find_program(Evaluator_Context *ctx, const Node *node) {
+    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_PROGRAM));
 }
 
-bool eval_handle_find_file(Evaluator_Context *ctx, const Node *node) {
-    return find_item_handle(ctx, node, FIND_ITEM_FILE);
+Eval_Result eval_handle_find_file(Evaluator_Context *ctx, const Node *node) {
+    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_FILE));
 }
 
-bool eval_handle_find_path(Evaluator_Context *ctx, const Node *node) {
-    return find_item_handle(ctx, node, FIND_ITEM_PATH);
+Eval_Result eval_handle_find_path(Evaluator_Context *ctx, const Node *node) {
+    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_PATH));
 }
 
-bool eval_handle_find_library(Evaluator_Context *ctx, const Node *node) {
-    return find_item_handle(ctx, node, FIND_ITEM_LIBRARY);
+Eval_Result eval_handle_find_library(Evaluator_Context *ctx, const Node *node) {
+    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_LIBRARY));
 }

@@ -30,7 +30,7 @@ Primary implementation files for this slice:
 Public/internal entry points:
 
 ```c
-bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node);
 bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View name);
 bool eval_dispatcher_get_command_capability(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
 bool eval_dispatcher_seed_builtin_commands(Evaluator_Context *ctx);
@@ -75,7 +75,7 @@ Current implication:
 
 ### 5.1 Guard Conditions
 
-`eval_dispatch_command(...)` returns `false` immediately when:
+`eval_dispatch_command(...)` returns `EVAL_RESULT_FATAL` immediately when:
 - `ctx == NULL`,
 - evaluator is in stop state,
 - `node == NULL`,
@@ -86,7 +86,7 @@ Current implication:
 On first native registry name match:
 1. emit `EVENT_COMMAND_CALL`,
 2. invoke handler,
-3. return `!eval_should_stop(ctx)`.
+3. return handler `Eval_Result` merged with runtime stop state.
 
 Current event helper:
 - `eval_emit_command_call(...)` copies command name to `event_arena`.
@@ -101,8 +101,8 @@ If no native command matches:
 5. invoke via `eval_user_cmd_invoke(...)`.
 
 Return behavior on user command invoke:
-- if invoke returns `true`, dispatcher returns `true`,
-- otherwise dispatcher returns `!eval_should_stop(ctx)`.
+- if invoke finishes without stop-state, dispatcher keeps execution in non-fatal state,
+- if invoke enters stop-state, dispatcher returns `EVAL_RESULT_FATAL`.
 
 Practical consequence:
 - non-stop execution failures in user invocation are treated as recoverable at dispatcher return boundary.
@@ -112,7 +112,7 @@ Practical consequence:
 If native and user lookup both miss:
 - emit diagnostic component `dispatcher`, cause `"Unknown command"`,
 - diagnostic severity depends on `ctx->unsupported_policy`,
-- dispatcher returns `true` after diagnostic emission path.
+- dispatcher returns `EVAL_RESULT_SOFT_ERROR` for non-fatal unknown-command diagnostics, or `EVAL_RESULT_FATAL` if policy/stop state escalates.
 
 Current hint text:
 - `EVAL_UNSUPPORTED_NOOP_WARN`: `"No-op with warning by policy"`,
@@ -126,13 +126,14 @@ Important event detail:
 Handler type:
 
 ```c
-typedef bool (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node);
+typedef Eval_Result (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node);
 ```
 
 Current contract shape:
-- `false` indicates hard failure path (commonly OOM/stop),
-- semantic problems are generally reported as diagnostics inside handler and may still return success-like continuation (`!eval_should_stop(ctx)`),
-- dispatcher does not normalize or wrap handler results beyond stop-state checks.
+- `EVAL_RESULT_OK` means clean execution,
+- `EVAL_RESULT_SOFT_ERROR` means non-fatal diagnostics happened,
+- `EVAL_RESULT_FATAL` means hard stop path (commonly OOM/stop),
+- dispatcher merges handler result with runtime stop-state.
 
 ## 7. Stop and Error Propagation
 

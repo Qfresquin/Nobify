@@ -52,7 +52,7 @@ static bool host_capture_command_stdout(Evaluator_Context *ctx, String_View comm
     while (len > 0 && (sb.items[len - 1] == '\n' || sb.items[len - 1] == '\r')) len--;
     *out_text = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, len));
     nob_sb_free(sb);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static String_View host_format_size_t_temp(Evaluator_Context *ctx, size_t value) {
@@ -217,13 +217,13 @@ static bool host_info_query_value(Evaluator_Context *ctx,
             return true;
         }
         *out_value = host_format_size_t_temp(ctx, count);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(key, "HOSTNAME")) {
         String_View hostname = nob_sv_from_cstr("");
         if (!eval_host_hostname_temp(ctx, &hostname)) return false;
         *out_value = hostname;
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(key, "TOTAL_VIRTUAL_MEMORY") ||
         eval_sv_eq_ci_lit(key, "AVAILABLE_VIRTUAL_MEMORY") ||
@@ -242,7 +242,7 @@ static bool host_info_query_value(Evaluator_Context *ctx,
         else value = info.available_physical_mib;
 
         *out_value = host_format_ull_temp(ctx, value);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(key, "IS_64BIT")) {
         *out_value = sizeof(void*) >= 8 ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
@@ -254,11 +254,11 @@ static bool host_info_query_value(Evaluator_Context *ctx,
     }
     if (eval_sv_eq_ci_lit(key, "OS_RELEASE")) {
         *out_value = eval_host_os_release_temp(ctx);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(key, "OS_VERSION")) {
         *out_value = eval_host_os_version_temp(ctx);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(key, "OS_PLATFORM")) {
         *out_value = eval_detect_host_processor();
@@ -269,7 +269,7 @@ static bool host_info_query_value(Evaluator_Context *ctx,
         const char *value = eval_getenv_temp(ctx, "MSYSTEM_PREFIX");
         if (!value) value = "";
         *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(value));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 #else
         *out_supported = false;
         return true;
@@ -280,30 +280,30 @@ static bool host_info_query_value(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(args) < 4 ||
         !eval_sv_eq_ci_lit(args[0], "RESULT") ||
         !eval_sv_eq_ci_lit(args[2], "QUERY")) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("cmake_host_system_information() requires RESULT and QUERY clauses"),
                              nob_sv_from_cstr("Usage: cmake_host_system_information(RESULT <var> QUERY <key>...)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View result_var = args[1];
     String_View *values = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(args) - 3);
-    EVAL_OOM_RETURN_IF_NULL(ctx, values, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, values, eval_result_fatal());
 
     size_t value_count = 0;
     for (size_t i = 3; i < arena_arr_len(args); i++) {
         String_View value = nob_sv_from_cstr("");
         bool supported = false;
-        if (!host_info_query_value(ctx, args[i], &value, &supported)) return false;
+        if (!host_info_query_value(ctx, args[i], &value, &supported)) return eval_result_fatal();
         if (!supported) {
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"),
                                  args[i]);
@@ -313,61 +313,61 @@ bool eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Nod
     }
 
     String_View result = eval_sv_join_semi_temp(ctx, values, value_count);
-    if (eval_should_stop(ctx)) return false;
-    if (!eval_var_set_current(ctx, result_var, result)) return false;
-    return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_fatal();
+    if (!eval_var_set_current(ctx, result_var, result)) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(args) != 1) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("site_name() requires exactly one output variable"),
                              nob_sv_from_cstr("Usage: site_name(<out-var>)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View value = nob_sv_from_cstr("");
     String_View hostname_command = eval_var_get_visible(ctx, nob_sv_from_cstr("HOSTNAME"));
     if (hostname_command.count > 0) {
-        if (!host_capture_command_stdout(ctx, hostname_command, &value)) return false;
+        if (!host_capture_command_stdout(ctx, hostname_command, &value)) return eval_result_fatal();
         if (value.count == 0) {
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "host", nob_sv_from_cstr("site_name() HOSTNAME helper command produced no output"),
                                  hostname_command);
         }
     } else {
-        if (!eval_host_hostname_temp(ctx, &value)) return false;
+        if (!eval_host_hostname_temp(ctx, &value)) return eval_result_fatal();
         if (value.count == 0) {
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "host", nob_sv_from_cstr("site_name() could not determine host name"),
                                  nob_sv_from_cstr("Result variable set to empty string"));
         }
     }
 
-    if (!eval_var_set_current(ctx, args[0], value)) return false;
-    return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, args[0], value)) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(args) != 1) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_name() requires exactly one output variable"),
                              nob_sv_from_cstr("Usage: build_name(<out-var>)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_policy_is_new(ctx, EVAL_POLICY_CMP0036)) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "host", nob_sv_from_cstr("build_name() is disallowed by CMP0036"),
                              nob_sv_from_cstr("Set CMP0036 to OLD only for legacy compatibility"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View system_name = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
@@ -377,26 +377,26 @@ bool eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
 
     size_t total = system_name.count + 1 + compiler_id.count;
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
     memcpy(buf, system_name.data, system_name.count);
     buf[system_name.count] = '-';
     memcpy(buf + system_name.count + 1, compiler_id.data, compiler_id.count);
     buf[total] = '\0';
 
-    if (!eval_var_set_current(ctx, args[0], nob_sv_from_parts(buf, total))) return false;
-    return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, args[0], nob_sv_from_parts(buf, total))) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     String_View out_var = nob_sv_from_cstr("");
     Build_Command_Options opt = {0};
-    if (!host_build_command_parse(ctx, node, &args, &out_var, &opt)) return !eval_should_stop(ctx);
+    if (!host_build_command_parse(ctx, node, &args, &out_var, &opt)) return eval_result_from_ctx(ctx);
 
     if (opt.saw_project_name) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "host", nob_sv_from_cstr("build_command(PROJECT_NAME ...) is parsed but ignored by evaluator v2"),
@@ -409,8 +409,8 @@ bool eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
 
     String_View cmake_command = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
     String_View value = host_build_command_text_temp(ctx, cmake_command, &opt, append_make_i);
-    if (eval_should_stop(ctx)) return false;
+    if (eval_should_stop(ctx)) return eval_result_fatal();
 
-    if (!eval_var_set_current(ctx, out_var, value)) return false;
-    return !eval_should_stop(ctx);
+    if (!eval_var_set_current(ctx, out_var, value)) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
 }

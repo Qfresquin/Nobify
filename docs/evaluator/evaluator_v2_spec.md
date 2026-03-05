@@ -47,7 +47,7 @@ void evaluator_destroy(Evaluator_Context *ctx);
 Execution and reporting:
 
 ```c
-bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
 const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx);
 const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx);
 ```
@@ -63,7 +63,10 @@ bool evaluator_get_command_capability(Evaluator_Context *ctx, String_View comman
 
 Current top-level API behavior:
 - `evaluator_create(...)` returns `NULL` if required init pointers are missing or setup fails.
-- `evaluator_run(...)` returns `false` for null/stopped contexts or when stop-state is reached during run.
+- `evaluator_run(...)` returns:
+  - `EVAL_RESULT_OK` for clean execution,
+  - `EVAL_RESULT_SOFT_ERROR` when non-fatal errors were emitted,
+  - `EVAL_RESULT_FATAL` for stop-state paths (OOM / explicit stop / null or already-stopped context).
 - run report is reset/finalized per top-level run.
 - capability lookup is introspection metadata, not a direct execution call.
 
@@ -176,7 +179,7 @@ Stop predicate:
 - evaluator is considered stopped when `oom` or `stop_requested` is true.
 
 Current propagation pattern:
-- most evaluator entry points early-return when stop is active,
+- execution entry points return `EVAL_RESULT_FATAL` when stop is active,
 - OOM (`ctx_oom`) marks both `oom` and `stop_requested`,
 - stop is cooperative across traversal, dispatch, diagnostics, and nested file execution.
 
@@ -200,6 +203,7 @@ Subordinate detailed docs:
 - `evaluator_expressions.md`
 - `evaluator_event_ir_contract.md`
 - `evaluator_command_capabilities.md`
+- `evaluator_src_v2_code_standardization.md`
 - `evaluator_coverage_matrix.md`
 - `evaluator_audit_notes.md`
 

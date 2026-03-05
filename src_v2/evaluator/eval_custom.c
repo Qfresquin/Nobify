@@ -348,14 +348,14 @@ static bool add_custom_error_positional_parse_ctx(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_target() missing target name"),
                        nob_sv_from_cstr("Usage: add_custom_target(<name> [ALL] [COMMAND ...])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View name = a[0];
@@ -396,13 +396,13 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
                              add_custom_target_on_option,
                              add_custom_noop_positional,
                              &opt)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     (void)eval_target_register(ctx, name);
 
-    if (!eval_target_apply_defined_initializers(ctx, o, name)) return !eval_should_stop(ctx);
-    if (!apply_subdir_system_default_to_target(ctx, o, name)) return !eval_should_stop(ctx);
+    if (!eval_target_apply_defined_initializers(ctx, o, name)) return eval_result_from_ctx(ctx);
+    if (!apply_subdir_system_default_to_target(ctx, o, name)) return eval_result_from_ctx(ctx);
 
     if (!emit_target_prop_set(ctx,
                               o,
@@ -410,7 +410,7 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
                               nob_sv_from_cstr("EXCLUDE_FROM_ALL"),
                               all ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"),
                               EV_PROP_SET)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (opt.has_job_pool && opt.job_pool.count > 0) {
         if (!emit_target_prop_set(ctx,
@@ -419,7 +419,7 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
                                   nob_sv_from_cstr("JOB_POOL"),
                                   opt.job_pool,
                                   EV_PROP_SET)) {
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
     if (opt.has_job_server_aware) {
@@ -430,7 +430,7 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
                                   nob_sv_from_cstr("JOB_SERVER_AWARE"),
                                   aware,
                                   EV_PROP_SET)) {
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
 
@@ -442,19 +442,19 @@ bool eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
                                   false,
                                   false,
                                   nob_sv_from_cstr(""))) {
-        return false;
+        return eval_result_fatal();
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 2) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command() requires TARGET or OUTPUT signature"),
                        nob_sv_from_cstr("Usage: add_custom_command(TARGET <tgt> ... ) or add_custom_command(OUTPUT <files...> ...)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     bool mode_target = eval_sv_eq_ci_lit(a[0], "TARGET");
@@ -462,7 +462,7 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
     if (!mode_target && !mode_output) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("Unsupported add_custom_command() signature"),
                        nob_sv_from_cstr("Use TARGET or OUTPUT signatures"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View target_name = nob_sv_from_cstr("");
@@ -471,18 +471,18 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
         if (arena_arr_len(a) < 3) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(TARGET ...) requires target name and stage"),
                            nob_sv_from_cstr("Usage: add_custom_command(TARGET <target> PRE_BUILD|PRE_LINK|POST_BUILD COMMAND <cmd> ...)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         target_name = a[1];
         if (!eval_target_known(ctx, target_name)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(TARGET ...) target was not declared"),
                            target_name);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (eval_target_alias_known(ctx, target_name)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(TARGET ...) cannot be used on ALIAS targets"),
                            target_name);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         parse_start = 2;
     }
@@ -546,47 +546,47 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
                              add_custom_command_on_option_parse_ctx,
                              add_custom_error_positional_parse_ctx,
                              &parse_ctx)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
-    if (parse_ctx.had_positional_error) return !eval_should_stop(ctx);
+    if (parse_ctx.had_positional_error) return eval_result_from_ctx(ctx);
 
     if (mode_target) {
         if (!opt.got_stage) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(TARGET ...) requires PRE_BUILD, PRE_LINK or POST_BUILD"),
                            nob_sv_from_cstr("Specify one build stage keyword"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (opt.stage_count > 1) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(TARGET ...) accepts exactly one build stage"),
                            nob_sv_from_cstr("Use one of PRE_BUILD, PRE_LINK, POST_BUILD"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     } else if (opt.got_stage) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(OUTPUT ...) does not accept build stage keywords"),
                        nob_sv_from_cstr("PRE_BUILD/PRE_LINK/POST_BUILD are valid only for TARGET signature"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (opt.has_implicit_depends && opt.has_depfile) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(OUTPUT ...) cannot combine DEPFILE with IMPLICIT_DEPENDS"),
                        nob_sv_from_cstr("Use either DEPFILE or IMPLICIT_DEPENDS"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (opt.has_job_pool && opt.uses_terminal) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(OUTPUT ...) JOB_POOL is incompatible with USES_TERMINAL"),
                        nob_sv_from_cstr("Remove one of JOB_POOL or USES_TERMINAL"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (arena_arr_len(opt.commands) == 0) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command() has no COMMAND entries"),
                        nob_sv_from_cstr("Provide at least one COMMAND"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (mode_output && arena_arr_len(opt.outputs) == 0) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_custom_command(OUTPUT ...) requires at least one output"),
                        nob_sv_from_cstr(""));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (opt.main_dependency.count > 0) (void)svu_list_push_temp(ctx, &opt.depends, opt.main_dependency);
     if (opt.depfile.count > 0) (void)svu_list_push_temp(ctx, &opt.byproducts, opt.depfile);
@@ -605,17 +605,17 @@ bool eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
                                        nob_sv_from_cstr("NOBIFY_CUSTOM_COMMAND_STAGE"),
                                        opt.pre_build ? nob_sv_from_cstr("PRE_BUILD") : nob_sv_from_cstr("POST_BUILD"),
                                        EV_PROP_SET)) {
-            return false;
+            return eval_result_fatal();
         }
     } else {
         for (size_t i = 0; i < arena_arr_len(opt.outputs); i++) {
             if (opt.append) {
-                if (!eval_emit_fs_append_file(ctx, o, opt.outputs[i])) return false;
+                if (!eval_emit_fs_append_file(ctx, o, opt.outputs[i])) return eval_result_fatal();
             } else {
-                if (!eval_emit_fs_write_file(ctx, o, opt.outputs[i])) return false;
+                if (!eval_emit_fs_write_file(ctx, o, opt.outputs[i])) return eval_result_fatal();
             }
         }
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 

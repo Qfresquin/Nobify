@@ -170,11 +170,11 @@ bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_
     return ok;
 }
 
-bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_message(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return false;
+    if (eval_should_stop(ctx)) return eval_result_fatal();
 
     Eval_Message_Mode mode = MSG_MODE_PLAIN;
     size_t msg_begin = 0;
@@ -186,24 +186,24 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
 
     String_View msg = {0};
     if (!msg_join_no_sep_temp(ctx, a ? &a[msg_begin] : NULL, arena_arr_len(a) > msg_begin ? (arena_arr_len(a) - msg_begin) : 0, &msg)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (mode == MSG_MODE_CHECK_START) {
-        if (!msg_check_stack_push(ctx, msg)) return !eval_should_stop(ctx);
+        if (!msg_check_stack_push(ctx, msg)) return eval_result_from_ctx(ctx);
     } else if (mode == MSG_MODE_CHECK_PASS || mode == MSG_MODE_CHECK_FAIL) {
         String_View start_msg = {0};
         if (!msg_check_stack_pop(ctx, &start_msg)) {
             if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "message", nob_sv_from_cstr("message(CHECK_PASS/CHECK_FAIL) requires a preceding CHECK_START"),
                                 nob_sv_from_cstr("Use message(CHECK_START ...) before CHECK_PASS/CHECK_FAIL"))) {
-                return false;
+                return eval_result_fatal();
             }
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         // CMake check reporting uses the latest CHECK_START text as a prefix.
         String_View parts[3] = {start_msg, nob_sv_from_cstr(" - "), msg};
-        if (!msg_join_no_sep_temp(ctx, parts, 3, &msg)) return !eval_should_stop(ctx);
+        if (!msg_join_no_sep_temp(ctx, parts, 3, &msg)) return eval_result_from_ctx(ctx);
     }
 
     if (mode == MSG_MODE_DEPRECATION) {
@@ -214,7 +214,7 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
         if (error_enabled) {
             mode = MSG_MODE_SEND_ERROR;
         } else if (!warn_enabled) {
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         } else {
             mode = MSG_MODE_WARNING;
         }
@@ -222,9 +222,10 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
 
     if (mode == MSG_MODE_CONFIGURE_LOG) {
         if (!eval_append_configure_log(ctx, node, msg)) {
-            return ctx_oom(ctx) ? false : !eval_should_stop(ctx);
+            if (ctx_oom(ctx)) return eval_result_fatal();
+            return eval_result_from_ctx(ctx);
         }
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (mode == MSG_MODE_FATAL_ERROR || mode == MSG_MODE_SEND_ERROR) {
@@ -235,15 +236,15 @@ bool eval_handle_message(Evaluator_Context *ctx, const Node *node) {
 
     if (mode == MSG_MODE_FATAL_ERROR || mode == MSG_MODE_SEND_ERROR) {
         if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "message", msg, nob_sv_from_cstr(""))) {
-            return false;
+            return eval_result_fatal();
         }
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (mode == MSG_MODE_WARNING || mode == MSG_MODE_AUTHOR_WARNING || mode == MSG_MODE_DEPRECATION) {
         if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "message", msg, nob_sv_from_cstr(""))) {
-            return false;
+            return eval_result_fatal();
         }
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

@@ -20,7 +20,30 @@
 // -----------------------------------------------------------------------------
 
 typedef struct Evaluator_Context Evaluator_Context;
-typedef bool (*Eval_Native_Command_Handler)(Evaluator_Context *ctx, const Node *node);
+
+typedef enum {
+    EVAL_RESULT_OK = 0,
+    EVAL_RESULT_SOFT_ERROR,
+    EVAL_RESULT_FATAL,
+} Eval_Result_Kind;
+
+typedef struct {
+    Eval_Result_Kind kind;
+} Eval_Result;
+
+static inline bool eval_result_is_ok(Eval_Result r) {
+    return r.kind == EVAL_RESULT_OK;
+}
+
+static inline bool eval_result_is_soft_error(Eval_Result r) {
+    return r.kind == EVAL_RESULT_SOFT_ERROR;
+}
+
+static inline bool eval_result_is_fatal(Eval_Result r) {
+    return r.kind == EVAL_RESULT_FATAL;
+}
+
+typedef Eval_Result (*Eval_Native_Command_Handler)(Evaluator_Context *ctx, const Node *node);
 
 typedef enum {
     EVAL_PROFILE_PERMISSIVE = 0,
@@ -104,7 +127,7 @@ typedef struct {
 Evaluator_Context *evaluator_create(const Evaluator_Init *init);
 void evaluator_destroy(Evaluator_Context *ctx);
 
-bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
 const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx);
 const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx);
 bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);

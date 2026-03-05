@@ -44,6 +44,10 @@ jobs:
           mkdir -p build
           cc -std=c11 -Wall -Wextra -pedantic src_v2/build/nob_test.c -o build/nob_v2_test
 
+      - name: Check result type conventions
+        run: |
+          bash test_v2/evaluator/check_result_type_conventions.sh
+
       - name: Run evaluator suite
         run: |
           ./build/nob_v2_test test-evaluator
@@ -93,6 +97,10 @@ jobs:
         run: |
           mkdir -p build
           cc -std=c11 -Wall -Wextra -pedantic src_v2/build/nob_test.c -o build/nob_v2_test.exe
+
+      - name: Check result type conventions
+        run: |
+          bash test_v2/evaluator/check_result_type_conventions.sh
 
       - name: Run evaluator suite
         run: |

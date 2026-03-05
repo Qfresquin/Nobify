@@ -430,7 +430,7 @@ static bool try_compile_cache_upsert(Evaluator_Context *ctx, String_View key, St
         entry->value.data = sv_copy_to_event_arena(ctx, value);
         entry->value.type = sv_copy_to_event_arena(ctx, nob_sv_from_cstr("INTERNAL"));
         entry->value.doc = sv_copy_to_event_arena(ctx, nob_sv_from_cstr("try_compile result"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     char *stable_key = (char*)arena_alloc(eval_event_arena(ctx), key.count + 1);
@@ -1399,22 +1399,22 @@ static bool try_run_clear_run_outputs(Evaluator_Context *ctx, const Try_Run_Requ
     return true;
 }
 
-bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     Try_Compile_Request req = {0};
     if (!try_compile_parse_request(ctx, node, &args, &req)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Try_Compile_Execution_Result exec_res = {0};
     bool ok = req.signature == TRY_COMPILE_SIGNATURE_PROJECT
         ? try_compile_execute_project_request(ctx, node, &req, &exec_res)
         : try_compile_execute_source_request(ctx, &req, &exec_res);
-    if (!ok) return !eval_should_stop(ctx);
+    if (!ok) return eval_result_from_ctx(ctx);
 
     if (req.signature == TRY_COMPILE_SIGNATURE_SOURCE && req.copy_file_path.count > 0) {
         String_View target_type = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TRY_COMPILE_TARGET_TYPE"));
@@ -1432,9 +1432,9 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
             char *parent_c = eval_sv_to_cstr_temp(ctx, parent);
             char *src_c = eval_sv_to_cstr_temp(ctx, exec_res.artifact_path);
             char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
-            EVAL_OOM_RETURN_IF_NULL(ctx, parent_c, !eval_should_stop(ctx));
-            EVAL_OOM_RETURN_IF_NULL(ctx, src_c, !eval_should_stop(ctx));
-            EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, !eval_should_stop(ctx));
+            EVAL_OOM_RETURN_IF_NULL(ctx, parent_c, eval_result_fatal());
+            EVAL_OOM_RETURN_IF_NULL(ctx, src_c, eval_result_fatal());
+            EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, eval_result_fatal());
             (void)mkdir_p_local(ctx, parent_c);
             bool copied = nob_copy_file(src_c, dst_c);
             if (req.copy_file_error_var.count > 0) {
@@ -1451,7 +1451,7 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
     String_View result = exec_res.ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
     String_View output_text = exec_res.output.count > 0 ? exec_res.output : nob_sv_from_cstr("");
     if (!try_compile_publish_result(ctx, origin, &req, result, output_text)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (req.log_description.count > 0) {
@@ -1468,23 +1468,23 @@ bool eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
         nob_sb_free(log);
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     Try_Run_Request req = {0};
     if (!try_run_parse_request(ctx, node, &args, &req)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Try_Compile_Execution_Result exec_res = {0};
     if (!try_compile_execute_source_request(ctx, &req.compile_req, &exec_res)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Try_Run_Result run_res = {
@@ -1494,14 +1494,14 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     if (!eval_var_set_current(ctx,
                       req.compile_req.result_var,
                       run_res.compile_ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) {
-        return false;
+        return eval_result_fatal();
     }
-    if (req.compile_output_var.count > 0 && !eval_var_set_current(ctx, req.compile_output_var, run_res.compile_output)) return false;
+    if (req.compile_output_var.count > 0 && !eval_var_set_current(ctx, req.compile_output_var, run_res.compile_output)) return eval_result_fatal();
 
     if (!run_res.compile_ok) {
-        if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
-        return !eval_should_stop(ctx);
+        if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     String_View cross_compiling = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
@@ -1513,9 +1513,9 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"),
                              nob_sv_from_cstr("This batch only supports native execution"));
-        if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
-        return !eval_should_stop(ctx);
+        if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     if (exec_res.artifact_path.count == 0) {
@@ -1526,9 +1526,9 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("try_run() failed to start compiled executable"),
                              nob_sv_from_cstr("compiled artifact path is empty"));
-        if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
-        return !eval_should_stop(ctx);
+        if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     String_View exec_path = exec_res.artifact_path;
@@ -1540,20 +1540,20 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
         if (getcwd(cwd_buf, sizeof(cwd_buf) - 1)) {
 #endif
             exec_path = eval_sv_path_join(eval_temp_arena(ctx), nob_sv_from_cstr(cwd_buf), exec_res.artifact_path);
-            if (eval_should_stop(ctx)) return false;
+            if (eval_should_stop(ctx)) return eval_result_fatal();
         }
     }
 
     SV_List argv = NULL;
-    if (!eval_sv_arr_push_temp(ctx, &argv, exec_path)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, exec_path)) return eval_result_fatal();
     for (size_t i = 0; i < arena_arr_len(req.run_args); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &argv, req.run_args[i])) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, req.run_args[i])) return eval_result_fatal();
     }
 
     String_View working_dir = req.working_directory.count > 0
         ? eval_path_resolve_for_cmake_arg(ctx, req.working_directory, req.compile_req.current_bin_dir, false)
         : req.compile_req.binary_dir;
-    if (eval_should_stop(ctx)) return false;
+    if (eval_should_stop(ctx)) return eval_result_fatal();
 
     Eval_Process_Run_Request proc_req = {
         .argv = argv,
@@ -1561,7 +1561,7 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
         .stdin_data = nob_sv_from_cstr(""),
     };
     Eval_Process_Run_Result proc_res = {0};
-    if (!eval_process_run_capture(ctx, &proc_req, &proc_res)) return false;
+    if (!eval_process_run_capture(ctx, &proc_req, &proc_res)) return eval_result_fatal();
 
     if (!proc_res.started) {
         (void)EVAL_DIAG(ctx,
@@ -1571,9 +1571,9 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("try_run() failed to start compiled executable"),
                              exec_res.artifact_path);
-        if (!try_run_clear_run_outputs(ctx, &req)) return false;
-        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return false;
-        return !eval_should_stop(ctx);
+        if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
+        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
+        return eval_result_from_ctx(ctx);
     }
 
     run_res.run_invoked = true;
@@ -1581,9 +1581,9 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     run_res.run_stdout = proc_res.stdout_text;
     run_res.run_stderr = proc_res.stderr_text;
 
-    if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, proc_res.result_text)) return false;
-    if (req.run_stdout_var.count > 0 && !eval_var_set_current(ctx, req.run_stdout_var, run_res.run_stdout)) return false;
-    if (req.run_stderr_var.count > 0 && !eval_var_set_current(ctx, req.run_stderr_var, run_res.run_stderr)) return false;
+    if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, proc_res.result_text)) return eval_result_fatal();
+    if (req.run_stdout_var.count > 0 && !eval_var_set_current(ctx, req.run_stdout_var, run_res.run_stdout)) return eval_result_fatal();
+    if (req.run_stderr_var.count > 0 && !eval_var_set_current(ctx, req.run_stderr_var, run_res.run_stderr)) return eval_result_fatal();
     if (req.run_output_var.count > 0) {
         Nob_String_Builder merged = {0};
         if (run_res.run_stdout.count > 0) nob_sb_append_buf(&merged, run_res.run_stdout.data, run_res.run_stdout.count);
@@ -1591,12 +1591,12 @@ bool eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
         String_View combined = nob_sv_from_cstr("");
         if (merged.count > 0) {
             char *copy = arena_strndup(ctx->arena, merged.items, merged.count);
-            EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
+            EVAL_OOM_RETURN_IF_NULL(ctx, copy, eval_result_fatal());
             combined = nob_sv_from_parts(copy, merged.count);
         }
         nob_sb_free(merged);
-        if (!eval_var_set_current(ctx, req.run_output_var, combined)) return false;
+        if (!eval_var_set_current(ctx, req.run_output_var, combined)) return eval_result_fatal();
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

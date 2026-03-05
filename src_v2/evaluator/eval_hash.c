@@ -553,61 +553,61 @@ string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, String_View i
         unsigned char d[16];
         string_md5_compute(msg, input.count, d);
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA1")) {
         unsigned char d[20];
         string_sha1_compute(msg, input.count, d);
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA256")) {
         unsigned char d[32];
         string_sha256_compute(msg, input.count, d);
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA224")) {
         unsigned char d[28];
         string_sha224_compute(msg, input.count, d);
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA384")) {
         unsigned char d[48];
         string_sha384_compute(msg, input.count, d);
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA512")) {
         unsigned char d[64];
         string_sha512_compute(msg, input.count, d);
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA3_224")) {
         unsigned char d[28];
         string_sha3_compute(msg, input.count, d, sizeof(d));
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA3_256")) {
         unsigned char d[32];
         string_sha3_compute(msg, input.count, d, sizeof(d));
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA3_384")) {
         unsigned char d[48];
         string_sha3_compute(msg, input.count, d, sizeof(d));
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (eval_sv_eq_ci_lit(algo, "SHA3_512")) {
         unsigned char d[64];
         string_sha3_compute(msg, input.count, d, sizeof(d));
         *out_hash = string_bytes_hex_temp(ctx, d, sizeof(d), false);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     return false;
 }

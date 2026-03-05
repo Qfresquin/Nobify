@@ -287,7 +287,8 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
         return false;
     }
 
-    bool eval_ok = evaluator_run(ctx, root);
+    Eval_Result eval_result = evaluator_run(ctx, root);
+    bool eval_ok = !eval_result_is_fatal(eval_result);
     bool builder_ok = false;
     bool freeze_ok = false;
 

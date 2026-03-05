@@ -85,7 +85,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("block(SCOPE_FOR ...) requires VARIABLES and/or POLICIES"),
                                  nob_sv_from_cstr("Usage: block([SCOPE_FOR VARIABLES POLICIES] [PROPAGATE <vars...>])"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
     }
 
@@ -99,7 +99,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("block(PROPAGATE ...) requires at least one variable name"),
                                  nob_sv_from_cstr("Usage: block(PROPAGATE <var1> <var2> ...)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
 
         if (!arena_arr_reserve(ctx->event_arena, frame.propagate_vars, arena_arr_len(args) - i)) {
@@ -118,7 +118,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("block() received unsupported argument"),
                              args[i]);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (frame.propagate_vars && !frame.variable_scope_pushed) {
@@ -129,7 +129,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("block(PROPAGATE ...) requires variable scope"),
                              nob_sv_from_cstr("Use SCOPE_FOR VARIABLES (or omit SCOPE_FOR) when using PROPAGATE"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     *out_frame = frame;
@@ -192,7 +192,7 @@ static bool flow_require_no_args(Evaluator_Context *ctx, const Node *node, Strin
     if (!ctx || !node) return false;
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     if (arena_arr_len(args) == 0) return true;
 
     (void)EVAL_DIAG(ctx,
@@ -512,7 +512,7 @@ static bool flow_exec_parse_timeout(Evaluator_Context *ctx,
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("execute_process(TIMEOUT) requires a non-negative numeric value"),
                              value);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     *out_seconds = timeout;
@@ -540,7 +540,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                                      origin,
                                      nob_sv_from_cstr("execute_process(COMMAND) requires at least one argument"),
                                      nob_sv_from_cstr("Usage: execute_process(COMMAND <cmd> [<arg>...] ...)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
 
             Flow_Exec_Command cmd = {0};
@@ -561,7 +561,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                                      origin,
                                      nob_sv_from_cstr("execute_process(COMMAND) requires at least one argument"),
                                      nob_sv_from_cstr("Usage: execute_process(COMMAND <cmd> [<arg>...] ...)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             if (!flow_exec_append_command(ctx, &out_opt->commands, cmd)) return false;
             continue;
@@ -572,7 +572,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(WORKING_DIRECTORY) requires a path"),
                                      nob_sv_from_cstr("Usage: execute_process(... WORKING_DIRECTORY <dir>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_working_directory = true;
             out_opt->working_directory = flow_resolve_binary_relative_path(ctx, args[++i]);
@@ -585,7 +585,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(TIMEOUT) requires a value"),
                                      nob_sv_from_cstr("Usage: execute_process(... TIMEOUT <seconds>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_timeout = true;
             if (!flow_exec_parse_timeout(ctx, node, args[++i], &out_opt->timeout_seconds)) return false;
@@ -597,7 +597,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(RESULT_VARIABLE) requires an output variable"),
                                      nob_sv_from_cstr("Usage: execute_process(... RESULT_VARIABLE <var>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_result_variable = true;
             out_opt->result_variable = args[++i];
@@ -609,7 +609,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(RESULTS_VARIABLE) requires an output variable"),
                                      nob_sv_from_cstr("Usage: execute_process(... RESULTS_VARIABLE <var>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_results_variable = true;
             out_opt->results_variable = args[++i];
@@ -621,7 +621,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(OUTPUT_VARIABLE) requires an output variable"),
                                      nob_sv_from_cstr("Usage: execute_process(... OUTPUT_VARIABLE <var>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_output_variable = true;
             out_opt->output_variable = args[++i];
@@ -633,7 +633,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(ERROR_VARIABLE) requires an output variable"),
                                      nob_sv_from_cstr("Usage: execute_process(... ERROR_VARIABLE <var>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_error_variable = true;
             out_opt->error_variable = args[++i];
@@ -645,7 +645,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(INPUT_FILE) requires a path"),
                                      nob_sv_from_cstr("Usage: execute_process(... INPUT_FILE <path>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_input_file = true;
             out_opt->input_file = flow_resolve_binary_relative_path(ctx, args[++i]);
@@ -658,7 +658,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(OUTPUT_FILE) requires a path"),
                                      nob_sv_from_cstr("Usage: execute_process(... OUTPUT_FILE <path>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_output_file = true;
             out_opt->output_file = flow_resolve_binary_relative_path(ctx, args[++i]);
@@ -671,7 +671,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(ERROR_FILE) requires a path"),
                                      nob_sv_from_cstr("Usage: execute_process(... ERROR_FILE <path>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_error_file = true;
             out_opt->error_file = flow_resolve_binary_relative_path(ctx, args[++i]);
@@ -704,7 +704,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(COMMAND_ECHO) requires a value"),
                                      nob_sv_from_cstr("Usage: execute_process(... COMMAND_ECHO <STDOUT|STDERR|NONE>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             String_View value = args[++i];
             if (eval_sv_eq_ci_lit(value, "STDOUT")) {
@@ -717,7 +717,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(COMMAND_ECHO) received an invalid value"),
                                      value);
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             continue;
         }
@@ -737,7 +737,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL) requires a value"),
                                      nob_sv_from_cstr("Usage: execute_process(... COMMAND_ERROR_IS_FATAL <ANY|LAST>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             String_View value = args[++i];
             out_opt->has_command_error_is_fatal = true;
@@ -749,12 +749,12 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL NONE) is not part of the CMake 3.28 baseline"),
                                      nob_sv_from_cstr("Use ANY or LAST for the 3.28 command surface"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             } else {
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL) received an invalid value"),
                                      value);
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             continue;
         }
@@ -764,7 +764,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                 (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), node->as.cmd.name, origin,
                                      nob_sv_from_cstr("execute_process(ENCODING) requires a value"),
                                      nob_sv_from_cstr("Usage: execute_process(... ENCODING <name>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out_opt->has_encoding = true;
             out_opt->encoding = args[++i];
@@ -778,7 +778,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                              origin,
                              nob_sv_from_cstr("execute_process() received an unsupported argument"),
                              token);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (out_opt->commands.count == 0) {
@@ -789,7 +789,7 @@ static bool flow_exec_parse_options(Evaluator_Context *ctx,
                              origin,
                              nob_sv_from_cstr("execute_process() requires at least one COMMAND clause"),
                              nob_sv_from_cstr("Usage: execute_process(COMMAND <cmd> [<arg>...] ...)"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     return true;
@@ -810,7 +810,7 @@ static bool flow_exec_read_file(Evaluator_Context *ctx, String_View path, String
     }
     *out_text = flow_sb_to_temp_sv(ctx, &sb);
     nob_sb_free(sb);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static bool flow_exec_write_file(Evaluator_Context *ctx, String_View path, String_View content) {
@@ -927,7 +927,7 @@ static bool flow_exec_collect_results(Evaluator_Context *ctx,
     if (eval_should_stop(ctx)) return false;
 
     *out_results_joined = eval_sv_join_semi_temp(ctx, results, executed);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
@@ -992,7 +992,7 @@ static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("execute_process() failed to write OUTPUT_FILE"),
                                  opt->output_file);
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
     }
     if (opt->has_error_file && !opt->error_quiet && !share_file) {
@@ -1004,7 +1004,7 @@ static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("execute_process() failed to write ERROR_FILE"),
                                  opt->error_file);
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
     }
 
@@ -1037,7 +1037,7 @@ static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
         }
     }
 
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static bool flow_strip_bracket_arg(String_View in, String_View *out) {
@@ -1257,7 +1257,8 @@ bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
 
         Ast_Root ast = NULL;
         if (!EVAL_ARR_PUSH(ctx, ctx->arena, ast, deferred)) return false;
-        if (!eval_run_ast_inline(ctx, ast)) return false;
+        Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
+        if (eval_result_is_fatal(inline_result)) return false;
 
         eval_clear_return_state(ctx);
         if (eval_should_stop(ctx)) return false;
@@ -1282,7 +1283,7 @@ static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_Lis
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("cmake_language(CALL) requires a valid command name"),
                              command_name);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (flow_is_call_disallowed(command_name)) {
         (void)EVAL_DIAG(ctx,
@@ -1292,7 +1293,7 @@ static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_Lis
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("cmake_language(CALL) does not allow structural commands"),
                              command_name);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     const String_View *call_args = &(*args)[2];
@@ -1304,13 +1305,14 @@ static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_Lis
         for (size_t i = 0; i < call_arg_count; i++) {
             if (!EVAL_ARR_PUSH(ctx, ctx->arena, tmp, call_args[i])) return false;
         }
-        if (!flow_build_call_script(ctx, command_name, &tmp, &script)) return !eval_should_stop(ctx);
+        if (!flow_build_call_script(ctx, command_name, &tmp, &script)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     Ast_Root ast = NULL;
-    if (!flow_parse_inline_script(ctx, script, &ast)) return !eval_should_stop(ctx);
-    if (!eval_run_ast_inline(ctx, ast)) return !eval_should_stop(ctx);
-    return !eval_should_stop(ctx);
+    if (!flow_parse_inline_script(ctx, script, &ast)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
+    if (eval_result_is_fatal(inline_result)) return false;
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const SV_List *args) {
@@ -1322,7 +1324,7 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("cmake_language(EVAL CODE ...) requires code text"),
                              nob_sv_from_cstr("Usage: cmake_language(EVAL CODE <code>...)"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     size_t total = 0;
@@ -1340,9 +1342,10 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
     String_View code = nob_sv_from_parts(buf, off);
 
     Ast_Root ast = NULL;
-    if (!flow_parse_inline_script(ctx, code, &ast)) return !eval_should_stop(ctx);
-    if (!eval_run_ast_inline(ctx, ast)) return !eval_should_stop(ctx);
-    return !eval_should_stop(ctx);
+    if (!flow_parse_inline_script(ctx, code, &ast)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
+    if (eval_result_is_fatal(inline_result)) return false;
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
@@ -1397,7 +1400,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("cmake_language(DEFER) requires a subcommand"),
                              nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] <subcommand> ...)"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     size_t i = 1;
@@ -1414,7 +1417,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER DIRECTORY) requires a directory argument"),
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER DIRECTORY <dir> ...)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         has_directory = true;
         directory = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
@@ -1428,14 +1431,14 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER) requires a subcommand"),
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] <subcommand> ...)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
     }
 
     String_View subcmd = flow_eval_arg_single(ctx, &(*raw)[i], true);
     if (eval_should_stop(ctx)) return false;
     Eval_Deferred_Dir_Frame *frame = flow_resolve_defer_directory(ctx, node, has_directory, directory);
-    if (!frame) return !eval_should_stop(ctx);
+    if (!frame) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 
     if (eval_sv_eq_ci_lit(subcmd, "GET_CALL_IDS")) {
         if (i + 2 != arena_arr_len(*raw)) {
@@ -1446,12 +1449,12 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER GET_CALL_IDS) expects one output variable"),
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL_IDS <out-var>)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         String_View out_var = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
         (void)flow_set_var_to_deferred_ids(ctx, frame, out_var);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (eval_sv_eq_ci_lit(subcmd, "GET_CALL")) {
@@ -1463,7 +1466,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER GET_CALL) expects an id and one output variable"),
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL <id> <out-var>)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         String_View id = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         String_View out_var = flow_eval_arg_single(ctx, &(*raw)[i + 2], true);
@@ -1477,10 +1480,10 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER GET_CALL) requires a known deferred call id"),
                                  id);
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         (void)flow_set_var_to_deferred_call(ctx, call, out_var);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (eval_sv_eq_ci_lit(subcmd, "CANCEL_CALL")) {
@@ -1492,7 +1495,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER CANCEL_CALL) requires at least one id"),
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] CANCEL_CALL <id>...)"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         for (size_t k = i + 1; k < arena_arr_len(*raw); k++) {
             String_View id = flow_eval_arg_single(ctx, &(*raw)[k], true);
@@ -1501,7 +1504,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
             if (!flow_find_deferred_call(frame, id, &idx)) continue;
             (void)flow_deferred_call_list_remove_at(&frame->calls, idx);
         }
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     String_View explicit_id = nob_sv_from_cstr("");
@@ -1515,7 +1518,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER) option requires a value"),
                                  subcmd);
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         String_View value = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
@@ -1533,7 +1536,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                                  origin,
                                  nob_sv_from_cstr("cmake_language(DEFER) missing CALL subcommand"),
                                  nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
-            return !eval_should_stop(ctx);
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         subcmd = flow_eval_arg_single(ctx, &(*raw)[i], true);
         if (eval_should_stop(ctx)) return false;
@@ -1547,7 +1550,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("Unsupported cmake_language(DEFER) subcommand"),
                              subcmd);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (i + 1 >= arena_arr_len(*raw)) {
         (void)EVAL_DIAG(ctx,
@@ -1557,7 +1560,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("cmake_language(DEFER CALL) requires a command name"),
                              nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     String_View command_name = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
@@ -1570,7 +1573,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("cmake_language(DEFER CALL) requires a valid command name"),
                              command_name);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (flow_is_call_disallowed(command_name)) {
         (void)EVAL_DIAG(ctx,
@@ -1580,7 +1583,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("cmake_language(DEFER CALL) does not allow structural commands"),
                              command_name);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     String_View id = explicit_id.count > 0 ? explicit_id : flow_make_deferred_id(ctx);
@@ -1593,7 +1596,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("cmake_language(DEFER ID) requires an id that does not start with A-Z"),
                              id);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     if (flow_find_deferred_call(frame, id, NULL)) {
         (void)EVAL_DIAG(ctx,
@@ -1603,7 +1606,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("cmake_language(DEFER ID) requires a unique id in the target directory"),
                              id);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     Eval_Deferred_Call call = {0};
@@ -1615,55 +1618,55 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     if (!flow_append_defer_queue(ctx, frame, call)) return false;
     if (!eval_emit_flow_defer_queue(ctx, origin, call.id, call.command_name)) return false;
     if (id_var.count > 0 && !eval_var_set_current(ctx, id_var, call.id)) return false;
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
 
     if (arena_arr_len(args) == 0) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language() requires a subcommand"),
                              nob_sv_from_cstr("Supported here: CALL, EVAL CODE, DEFER, GET_MESSAGE_LOG_LEVEL"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(args[0], "CALL")) {
         if (arena_arr_len(args) < 2) {
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language(CALL) requires a command name"),
                                  nob_sv_from_cstr("Usage: cmake_language(CALL <command> [<arg>...])"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
-        if (!eval_emit_cmake_language_call(ctx, o, args[1])) return false;
-        return flow_run_call(ctx, node, &args);
+        if (!eval_emit_cmake_language_call(ctx, o, args[1])) return eval_result_fatal();
+        return eval_result_from_bool(flow_run_call(ctx, node, &args));
     }
 
     if (eval_sv_eq_ci_lit(args[0], "EVAL")) {
         if (arena_arr_len(args) < 2 || !eval_sv_eq_ci_lit(args[1], "CODE")) {
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language(EVAL) requires CODE"),
                                  nob_sv_from_cstr("Usage: cmake_language(EVAL CODE <code>...)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View code = arena_arr_len(args) > 2
             ? eval_sv_join_semi_temp(ctx, args + 2, arena_arr_len(args) - 2)
             : nob_sv_from_cstr("");
-        if (eval_should_stop(ctx)) return false;
-        if (!eval_emit_cmake_language_eval(ctx, o, code)) return false;
-        return flow_run_eval_code(ctx, node, &args);
+        if (eval_should_stop(ctx)) return eval_result_fatal();
+        if (!eval_emit_cmake_language_eval(ctx, o, code)) return eval_result_fatal();
+        return eval_result_from_bool(flow_run_eval_code(ctx, node, &args));
     }
 
     if (eval_sv_eq_ci_lit(args[0], "GET_MESSAGE_LOG_LEVEL")) {
         if (arena_arr_len(args) != 2) {
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language(GET_MESSAGE_LOG_LEVEL) expects one output variable"),
                                  nob_sv_from_cstr("Usage: cmake_language(GET_MESSAGE_LOG_LEVEL <out-var>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View value = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_MESSAGE_LOG_LEVEL"));
         (void)eval_var_set_current(ctx, args[1], value);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(args[0], "DEFER")) {
@@ -1676,31 +1679,31 @@ bool eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
                     break;
                 }
             }
-            if (!eval_emit_cmake_language_defer_queue(ctx, o, nob_sv_from_cstr(""), command_name)) return false;
+            if (!eval_emit_cmake_language_defer_queue(ctx, o, nob_sv_from_cstr(""), command_name)) return eval_result_fatal();
         }
-        return ok;
+        return eval_result_from_bool(ok);
     }
 
     if (eval_sv_eq_ci_lit(args[0], "SET_DEPENDENCY_PROVIDER")) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("cmake_language() subcommand not implemented yet"),
                              args[0]);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "flow", nob_sv_from_cstr("Unsupported cmake_language() subcommand"),
                          args[0]);
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
 
     Flow_Exec_Options opt = {0};
-    if (!flow_exec_parse_options(ctx, node, args, &opt)) return !eval_should_stop(ctx);
+    if (!flow_exec_parse_options(ctx, node, args, &opt)) return eval_result_from_ctx(ctx);
     String_View request_cmd = nob_sv_from_cstr("");
     if (opt.commands.count > 0 && arena_arr_len(opt.commands.items[0].args) > 0) {
         request_cmd = opt.commands.items[0].args[0];
@@ -1709,7 +1712,7 @@ bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
                                      o,
                                      request_cmd,
                                      opt.has_working_directory ? opt.working_directory : nob_sv_from_cstr(""))) {
-        return false;
+        return eval_result_fatal();
     }
 
     String_View stdout_text = nob_sv_from_cstr("");
@@ -1724,14 +1727,14 @@ bool eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
                                    &last_result,
                                    &results_joined,
                                    &had_error)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (!eval_emit_proc_exec_result(ctx, o, request_cmd, last_result, stdout_text, stderr_text, had_error)) {
-        return false;
+        return eval_result_fatal();
     }
 
-    return flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error);
+    return eval_result_from_bool(flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error));
 }
 
 typedef struct {
@@ -1762,7 +1765,7 @@ static bool flow_exec_program_parse(Evaluator_Context *ctx,
                              origin,
                              nob_sv_from_cstr("exec_program() requires an executable"),
                              nob_sv_from_cstr("Usage: exec_program(<executable> [<working-dir>] [ARGS <arg-string>] [OUTPUT_VARIABLE <var>] [RETURN_VALUE <var>])"));
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     out->executable = (*args)[0];
@@ -1786,7 +1789,7 @@ static bool flow_exec_program_parse(Evaluator_Context *ctx,
                                      origin,
                                      nob_sv_from_cstr("exec_program(ARGS) requires exactly one argument string"),
                                      nob_sv_from_cstr("Usage: exec_program(... ARGS \"<arg-string>\")"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out->has_args = true;
             out->arg_string = (*args)[++i];
@@ -1802,7 +1805,7 @@ static bool flow_exec_program_parse(Evaluator_Context *ctx,
                                      origin,
                                      nob_sv_from_cstr("exec_program(OUTPUT_VARIABLE) requires exactly one output variable"),
                                      nob_sv_from_cstr("Usage: exec_program(... OUTPUT_VARIABLE <var>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out->has_output_variable = true;
             out->output_variable = (*args)[++i];
@@ -1818,7 +1821,7 @@ static bool flow_exec_program_parse(Evaluator_Context *ctx,
                                      origin,
                                      nob_sv_from_cstr("exec_program(RETURN_VALUE) requires exactly one output variable"),
                                      nob_sv_from_cstr("Usage: exec_program(... RETURN_VALUE <var>)"));
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
             out->has_return_value = true;
             out->return_value = (*args)[++i];
@@ -1832,14 +1835,14 @@ static bool flow_exec_program_parse(Evaluator_Context *ctx,
                              origin,
                              nob_sv_from_cstr("exec_program() received an unsupported argument"),
                              token);
-        return !eval_should_stop(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     return true;
 }
 
-bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (eval_policy_is_new(ctx, EVAL_POLICY_CMP0153)) {
@@ -1850,32 +1853,32 @@ bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
                              origin,
                              nob_sv_from_cstr("exec_program() is disallowed by CMP0153"),
                              nob_sv_from_cstr("Set CMP0153 to OLD only for legacy compatibility"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     Flow_Exec_Program_Compat compat = {0};
-    if (!flow_exec_program_parse(ctx, node, &args, &compat)) return !eval_should_stop(ctx);
+    if (!flow_exec_program_parse(ctx, node, &args, &compat)) return eval_result_from_ctx(ctx);
 
     Flow_Exec_Command cmd = {0};
-    if (!flow_exec_append_command_arg(ctx, &cmd, compat.executable)) return false;
+    if (!flow_exec_append_command_arg(ctx, &cmd, compat.executable)) return eval_result_fatal();
 
     if (compat.has_args) {
         SV_List split_args = NULL;
-        if (!eval_split_command_line_temp(ctx, EVAL_CMDLINE_NATIVE, compat.arg_string, &split_args)) return false;
+        if (!eval_split_command_line_temp(ctx, EVAL_CMDLINE_NATIVE, compat.arg_string, &split_args)) return eval_result_fatal();
         for (size_t i = 0; i < arena_arr_len(split_args); i++) {
-            if (!flow_exec_append_command_arg(ctx, &cmd, split_args[i])) return false;
+            if (!flow_exec_append_command_arg(ctx, &cmd, split_args[i])) return eval_result_fatal();
         }
     }
 
     Flow_Exec_Options opt = {0};
-    if (!flow_exec_append_command(ctx, &opt.commands, cmd)) return false;
+    if (!flow_exec_append_command(ctx, &opt.commands, cmd)) return eval_result_fatal();
     if (compat.has_working_directory) {
         opt.has_working_directory = true;
         opt.working_directory = flow_resolve_binary_relative_path(ctx, compat.working_directory);
-        if (eval_should_stop(ctx)) return false;
+        if (eval_should_stop(ctx)) return eval_result_fatal();
     }
     if (compat.has_output_variable) {
         opt.has_output_variable = true;
@@ -1898,10 +1901,10 @@ bool eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
                                    &last_result,
                                    &results_joined,
                                    &had_error)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
-    return flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error);
+    return eval_result_from_bool(flow_exec_apply_outputs(ctx, node, &opt, stdout_text, stderr_text, last_result, results_joined, had_error));
 }
 
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
@@ -1919,9 +1922,9 @@ bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     return true;
 }
 
-bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
-    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: break()"))) return !eval_should_stop(ctx);
+Eval_Result eval_handle_break(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
+    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: break()"))) return eval_result_from_ctx(ctx);
     if (ctx->loop_depth == 0) {
         (void)EVAL_DIAG(ctx,
                              EV_DIAG_ERROR,
@@ -1930,16 +1933,16 @@ bool eval_handle_break(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("break() used outside of a loop"),
                              nob_sv_from_cstr("Use break() only inside foreach()/while()"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     ctx->break_requested = true;
-    if (!eval_emit_flow_break(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return false;
-    return true;
+    if (!eval_emit_flow_break(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return eval_result_fatal();
+    return eval_result_ok();
 }
 
-bool eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
-    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: continue()"))) return !eval_should_stop(ctx);
+Eval_Result eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
+    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: continue()"))) return eval_result_from_ctx(ctx);
     if (ctx->loop_depth == 0) {
         (void)EVAL_DIAG(ctx,
                              EV_DIAG_ERROR,
@@ -1948,17 +1951,17 @@ bool eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("continue() used outside of a loop"),
                              nob_sv_from_cstr("Use continue() only inside foreach()/while()"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     ctx->continue_requested = true;
-    if (!eval_emit_flow_continue(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return false;
-    return true;
+    if (!eval_emit_flow_continue(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return eval_result_fatal();
+    return eval_result_ok();
 }
 
-bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_return(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (ctx->return_context == EVAL_RETURN_CTX_MACRO) {
         (void)EVAL_DIAG(ctx,
@@ -1968,7 +1971,7 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("return() cannot be used inside macro()"),
                              nob_sv_from_cstr("macro() is expanded in place; use function() if return() is required"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     eval_clear_return_state(ctx);
@@ -1983,7 +1986,7 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("return() received unsupported arguments"),
                                  nob_sv_from_cstr("Usage: return() or return(PROPAGATE <var...>)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (arena_arr_len(args) < 2) {
             (void)EVAL_DIAG(ctx,
@@ -1993,13 +1996,14 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
                                  eval_origin_from_node(ctx, node),
                                  nob_sv_from_cstr("return(PROPAGATE ...) requires at least one variable"),
                                  nob_sv_from_cstr("Usage: return(PROPAGATE <var1> <var2> ...)"));
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         if (!arena_arr_reserve(ctx->event_arena, ctx->return_propagate_vars, arena_arr_len(args) - 1)) {
-            return ctx_oom(ctx);
+            (void)ctx_oom(ctx);
+            return eval_result_fatal();
         }
         for (size_t i = 1; i < arena_arr_len(args); i++) {
-            if (!eval_sv_arr_push_event(ctx, &ctx->return_propagate_vars, args[i])) return false;
+            if (!eval_sv_arr_push_event(ctx, &ctx->return_propagate_vars, args[i])) return eval_result_fatal();
         }
     }
 
@@ -2007,42 +2011,42 @@ bool eval_handle_return(Evaluator_Context *ctx, const Node *node) {
         for (size_t bi = arena_arr_len(ctx->block_frames); bi-- > 0;) ctx->block_frames[bi].propagate_on_return = true;
     }
     ctx->return_requested = true;
-    return true;
+    return eval_result_ok();
 }
 
-bool eval_handle_block(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_block(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     Block_Frame frame = {0};
-    if (!block_parse_options(ctx, node, args, &frame)) return !eval_should_stop(ctx);
+    if (!block_parse_options(ctx, node, args, &frame)) return eval_result_from_ctx(ctx);
 
-    if (frame.variable_scope_pushed && !eval_scope_push(ctx)) return !eval_should_stop(ctx);
+    if (frame.variable_scope_pushed && !eval_scope_push(ctx)) return eval_result_from_ctx(ctx);
     if (frame.policy_scope_pushed && !eval_policy_push(ctx)) {
         if (frame.variable_scope_pushed) eval_scope_pop(ctx);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (!block_frame_push(ctx, frame)) {
         if (frame.policy_scope_pushed) (void)eval_policy_pop(ctx);
         if (frame.variable_scope_pushed) eval_scope_pop(ctx);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (!eval_emit_flow_block_begin(ctx,
                                     eval_origin_from_node(ctx, node),
                                     frame.variable_scope_pushed,
                                     frame.policy_scope_pushed,
                                     arena_arr_len(frame.propagate_vars) > 0)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
-    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: endblock()"))) return !eval_should_stop(ctx);
+Eval_Result eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
+    if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: endblock()"))) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(ctx->block_frames) == 0) {
         (void)EVAL_DIAG(ctx,
@@ -2052,17 +2056,17 @@ bool eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
                              eval_origin_from_node(ctx, node),
                              nob_sv_from_cstr("endblock() called without matching block()"),
                              nob_sv_from_cstr("Add block() before endblock()"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Block_Frame ended = {0};
-    if (!block_pop_frame(ctx, node, false, &ended)) return !eval_should_stop(ctx);
+    if (!block_pop_frame(ctx, node, false, &ended)) return eval_result_from_ctx(ctx);
     if (!eval_emit_flow_block_end(ctx,
                                   eval_origin_from_node(ctx, node),
                                   ended.propagate_on_return,
                                   arena_arr_len(ended.propagate_vars) > 0)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

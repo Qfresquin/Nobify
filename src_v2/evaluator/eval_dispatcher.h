@@ -8,8 +8,8 @@
 #include "evaluator.h"
 
 // Ponto de entrada principal para roteamento de comandos CMake.
-// Falhas graves (OOM) retornam false. Erros semânticos emitem EV_DIAGNOSTIC.
-bool eval_dispatch_command(struct Evaluator_Context *ctx, const Node *node);
+// Falhas graves retornam EVAL_RESULT_FATAL. Erros semânticos não fatais retornam EVAL_RESULT_SOFT_ERROR.
+Eval_Result eval_dispatch_command(struct Evaluator_Context *ctx, const Node *node);
 
 // Usado pelo eval_expr.c para o predicado: if(COMMAND nome)
 bool eval_dispatcher_is_known_command(const struct Evaluator_Context *ctx, String_View name);

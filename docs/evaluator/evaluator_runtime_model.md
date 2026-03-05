@@ -421,7 +421,7 @@ Important consequence:
 Primary execution entry point:
 
 ```c
-bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
 ```
 
 ### 11.1 Entry Behavior
@@ -458,14 +458,16 @@ Before returning, `evaluator_run(...)` currently:
 - finalizes the run report
 
 Return condition:
-- success requires both local execution success and `!eval_should_stop(ctx)`
+- `EVAL_RESULT_OK` for clean runs,
+- `EVAL_RESULT_SOFT_ERROR` when non-fatal errors were emitted,
+- `EVAL_RESULT_FATAL` when stop-state was reached.
 
 ### 11.5 Inline Execution Path
 
 Secondary execution entry point:
 
 ```c
-bool eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
 ```
 
 This is a lighter-weight runtime path:

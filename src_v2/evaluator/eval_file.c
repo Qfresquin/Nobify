@@ -57,24 +57,24 @@ static bool file_diag_error(Evaluator_Context *ctx,
     return file_diag(ctx, node, EV_DIAG_ERROR, origin, cause, hint);
 }
 
-bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) != 2) {
         file_diag_error(ctx,
                         node,
                         o,
                         nob_sv_from_cstr("aux_source_directory() requires a directory and an output variable"),
                         nob_sv_from_cstr("Usage: aux_source_directory(<dir> <var>)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View dir = a[0];
     if (!eval_sv_is_abs_path(dir)) {
         dir = eval_sv_path_join(eval_temp_arena(ctx), eval_current_source_dir(ctx), dir);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     }
 
     SV_List sources = {0};
@@ -84,13 +84,13 @@ bool eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) 
                         o,
                         nob_sv_from_cstr("aux_source_directory() failed to enumerate the source directory"),
                         dir);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (!eval_var_set_current(ctx, a[1], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 static bool eval_var_truthy_or_default(Evaluator_Context *ctx, const char *key, bool default_value) {
@@ -1701,7 +1701,7 @@ static bool copy_read_symlink_target_temp(Evaluator_Context *ctx, const char *pa
     if (n < 0) return false;
     buf[n] = '\0';
     *out_target = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 #endif
 }
 
@@ -2126,10 +2126,10 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
     }
 }
 
-bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_file(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || arena_arr_len(args) == 0) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx) || arena_arr_len(args) == 0) return eval_result_from_ctx(ctx);
 
     String_View subcmd = args[0];
 
@@ -2177,5 +2177,5 @@ bool eval_handle_file(Evaluator_Context *ctx, const Node *node) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("Unsupported file() subcommand"),
                        subcmd);
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }

@@ -28,12 +28,12 @@ Primary implementation files for this slice:
 Primary public entry point:
 
 ```c
-bool evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
 ```
 
 Current high-level behavior:
-- Returns `false` if `ctx == NULL`.
-- Returns `false` if execution is already in a stop state.
+- Returns `EVAL_RESULT_FATAL` if `ctx == NULL`.
+- Returns `EVAL_RESULT_FATAL` if execution is already in a stop state.
 - Resets `Eval_Run_Report` at the start of the run.
 - Executes the root AST through `eval_node_list(...)`.
 - Flushes deferred directory work if execution remained healthy.
@@ -42,12 +42,14 @@ Current high-level behavior:
 - Finalizes the run report before returning.
 
 Return condition:
-- success requires both `ok == true` and `!eval_should_stop(ctx)`.
+- `EVAL_RESULT_OK` for clean runs.
+- `EVAL_RESULT_SOFT_ERROR` when non-fatal errors were emitted.
+- `EVAL_RESULT_FATAL` when stop-state was reached.
 
 Secondary internal-style entry point:
 
 ```c
-bool eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
+Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
 ```
 
 This executes a node list directly without the full top-level run-finalization path.
@@ -57,7 +59,7 @@ This executes a node list directly without the full top-level run-finalization p
 The evaluator executes AST blocks through:
 
 ```c
-static bool eval_node_list(Evaluator_Context *ctx, const Node_List *list);
+static Eval_Result eval_node_list(Evaluator_Context *ctx, const Node_List *list);
 ```
 
 Current block traversal contract:
@@ -81,7 +83,7 @@ Practical consequence:
 Each AST node is executed by:
 
 ```c
-static bool eval_node(Evaluator_Context *ctx, const Node *node);
+static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node);
 ```
 
 Current per-node sequence:
@@ -207,7 +209,7 @@ Current behavior:
 
 Hard guard:
 - iteration count is capped at `10000`
-- exceeding that limit emits an evaluator error (`Iteration limit exceeded`) and returns failure
+- exceeding that limit emits an evaluator error (`Iteration limit exceeded`) and returns at least `EVAL_RESULT_SOFT_ERROR` (or `EVAL_RESULT_FATAL` if stop-state is triggered)
 
 This is an intentional evaluator safety divergence from unconstrained host execution.
 
@@ -356,10 +358,10 @@ This argument-resolution step is a major part of the evaluator execution model b
 Nested file execution is handled by:
 
 ```c
-bool eval_execute_file(Evaluator_Context *ctx,
-                       String_View file_path,
-                       bool is_add_subdirectory,
-                       String_View explicit_bin_dir);
+Eval_Result eval_execute_file(Evaluator_Context *ctx,
+                              String_View file_path,
+                              bool is_add_subdirectory,
+                              String_View explicit_bin_dir);
 ```
 
 Current execution sequence:

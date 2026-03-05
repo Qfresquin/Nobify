@@ -167,7 +167,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!evaluator_run(eval_ctx, ast)) {
+    Eval_Result run_result = evaluator_run(eval_ctx, ast);
+    if (eval_result_is_fatal(run_result)) {
         nob_log(NOB_ERROR, "Evaluator failed while processing AST");
         evaluator_destroy(eval_ctx);
         arena_destroy(event_arena);

@@ -266,7 +266,7 @@ static bool gfc_resolve_program_full_path(Evaluator_Context *ctx,
                 }
                 if (!gfc_candidate_is_file(ctx, candidate)) continue;
                 *out_program = eval_sv_path_normalize_temp(ctx, candidate);
-                return !eval_should_stop(ctx);
+                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
         }
         if (q >= end) break;
@@ -379,56 +379,56 @@ static bool expand_link_option_token(Evaluator_Context *ctx, String_View tok, SV
     return svu_list_push_temp(ctx, out, tok);
 }
 
-bool eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
     (void)node;
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     SV_List expanded = {0};
     for (size_t i = 0; i < arena_arr_len(a); i++) {
-        if (!expand_compile_option_token(ctx, a[i], &expanded)) return !eval_should_stop(ctx);
+        if (!expand_compile_option_token(ctx, a[i], &expanded)) return eval_result_from_ctx(ctx);
     }
 
     SV_List unique = {0};
     for (size_t i = 0; i < arena_arr_len(expanded); i++) {
         if (expanded[i].count == 0) continue;
         if (sv_list_contains_exact(&unique, expanded[i])) continue;
-        if (!svu_list_push_temp(ctx, &unique, expanded[i])) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &unique, expanded[i])) return eval_result_from_ctx(ctx);
     }
 
     for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     SV_List unique = {0};
     for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View item = eval_normalize_compile_definition_item(a[i]);
         if (item.count == 0) continue;
         if (sv_list_contains_exact(&unique, item)) continue;
-        if (!svu_list_push_temp(ctx, &unique, item)) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &unique, item)) return eval_result_from_ctx(ctx);
     }
 
     for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique[i], &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
-        if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return false;
+        if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return eval_result_fatal();
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View item = a[i];
@@ -438,93 +438,93 @@ bool eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
         bool looks_like_definition = split_definition_flag(item, &definition);
         if (looks_like_definition && definition.count > 0) {
             bool added = false;
-            if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return false;
+            if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return eval_result_fatal();
             if (!added) continue;
             continue;
         }
 
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return eval_result_fatal();
         if (!added) continue;
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View definition = nob_sv_from_cstr("");
         if (!split_definition_flag(a[i], &definition)) continue;
         if (definition.count == 0) continue;
         if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, NULL)) {
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1 || arena_arr_len(a) > 2) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "include_regular_expression", nob_sv_from_cstr("include_regular_expression() requires one or two regex arguments"),
                              nob_sv_from_cstr("Usage: include_regular_expression(<regex_match> [<regex_complain>])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), a[0])) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (arena_arr_len(a) == 2) {
         if (!eval_var_set_current(ctx,
                           nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION_COMPLAIN"),
                           a[1])) {
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
 
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_add_link_options(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_link_options(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     SV_List expanded = {0};
     for (size_t i = 0; i < arena_arr_len(a); i++) {
-        if (!expand_link_option_token(ctx, a[i], &expanded)) return !eval_should_stop(ctx);
+        if (!expand_link_option_token(ctx, a[i], &expanded)) return eval_result_from_ctx(ctx);
     }
 
     SV_List unique = {0};
     for (size_t i = 0; i < arena_arr_len(expanded); i++) {
         if (expanded[i].count == 0) continue;
         if (sv_list_contains_exact(&unique, expanded[i])) continue;
-        if (!svu_list_push_temp(ctx, &unique, expanded[i])) return !eval_should_stop(ctx);
+        if (!svu_list_push_temp(ctx, &unique, expanded[i])) return eval_result_from_ctx(ctx);
     }
 
     for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
-        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_link_opts_var), unique[i], &added)) return false;
+        if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_link_opts_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
         (void)o;
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     String_View qualifier = nob_sv_from_cstr("");
     for (size_t i = 0; i < arena_arr_len(a); i++) {
@@ -558,12 +558,12 @@ bool eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"),
                        qualifier);
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     String_View cur_src = eval_current_source_dir(ctx);
 
@@ -584,17 +584,17 @@ bool eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         (void)resolved;
         (void)is_system;
         (void)is_before;
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     String_View cur_src = eval_current_source_dir(ctx);
 
@@ -610,24 +610,24 @@ bool eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
         }
 
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         (void)resolved;
         (void)is_before;
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node || eval_should_stop(ctx)) return false;
+Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3) {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() requires <var> <file> <component>"),
                              nob_sv_from_cstr("Usage: get_filename_component(<var> <file> <DIRECTORY|NAME|EXT|NAME_WE|LAST_EXT|NAME_WLE|PATH|ABSOLUTE|REALPATH|PROGRAM> ...)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View out_var = a[0];
@@ -646,10 +646,10 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
             }
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(DIRECTORY) received unexpected argument"),
                                  a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         result = gfc_directory_sv(normalized);
     } else if (eval_sv_eq_ci_lit(mode, "NAME")) {
         for (size_t i = 3; i < arena_arr_len(a); i++) {
@@ -659,10 +659,10 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
             }
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(NAME) received unexpected argument"),
                                  a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         result = gfc_filename_sv(normalized);
     } else if (eval_sv_eq_ci_lit(mode, "EXT") || eval_sv_eq_ci_lit(mode, "LAST_EXT") ||
                eval_sv_eq_ci_lit(mode, "NAME_WE") || eval_sv_eq_ci_lit(mode, "NAME_WLE")) {
@@ -673,10 +673,10 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
             }
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() received unexpected argument for name/extension mode"),
                                  a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         String_View name = gfc_filename_sv(normalized);
         bool last_only = eval_sv_eq_ci_lit(mode, "LAST_EXT") || eval_sv_eq_ci_lit(mode, "NAME_WLE");
         if (eval_sv_eq_ci_lit(mode, "EXT") || eval_sv_eq_ci_lit(mode, "LAST_EXT")) {
@@ -691,10 +691,10 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                 if (i + 1 >= arena_arr_len(a)) {
                     (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(BASE_DIR) requires a value"),
                                          nob_sv_from_cstr("Usage: get_filename_component(<var> <file> ABSOLUTE|REALPATH [BASE_DIR <dir>] [CACHE])"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 base_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], current_src, false);
-                if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+                if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
                 continue;
             }
             if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
@@ -703,14 +703,14 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
             }
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(ABSOLUTE/REALPATH) received unexpected argument"),
                                  a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         result = eval_path_resolve_for_cmake_arg(ctx, input, base_dir, false);
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         if (eval_sv_eq_ci_lit(mode, "REALPATH")) {
             String_View resolved = nob_sv_from_cstr("");
-            if (!eval_real_path_resolve_temp(ctx, result, true, &resolved)) return !eval_should_stop(ctx);
+            if (!eval_real_path_resolve_temp(ctx, result, true, &resolved)) return eval_result_from_ctx(ctx);
             result = resolved;
         }
     } else if (eval_sv_eq_ci_lit(mode, "PROGRAM")) {
@@ -720,7 +720,7 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
                 if (i + 1 >= arena_arr_len(a)) {
                     (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(PROGRAM_ARGS) requires an output variable"),
                                          nob_sv_from_cstr("Usage: get_filename_component(<var> <file> PROGRAM [PROGRAM_ARGS <arg-var>] [CACHE])"));
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
                 args_var = a[++i];
                 continue;
@@ -731,28 +731,28 @@ bool eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node
             }
             (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(PROGRAM) received unexpected argument"),
                                  a[i]);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
 
         SV_List tokens = {0};
-        if (!eval_split_shell_like_temp(ctx, input, &tokens)) return !eval_should_stop(ctx);
+        if (!eval_split_shell_like_temp(ctx, input, &tokens)) return eval_result_from_ctx(ctx);
         if (arena_arr_len(tokens) > 0) {
             result = tokens[0];
-            if (!gfc_resolve_program_full_path(ctx, result, &result)) return !eval_should_stop(ctx);
+            if (!gfc_resolve_program_full_path(ctx, result, &result)) return eval_result_from_ctx(ctx);
         }
         if (args_var.count > 0) {
             String_View arg_value = (arena_arr_len(tokens) > 1)
                 ? eval_sv_join_semi_temp(ctx, &tokens[1], arena_arr_len(tokens) - 1)
                 : nob_sv_from_cstr("");
-            if (!eval_var_set_current(ctx, args_var, arg_value)) return !eval_should_stop(ctx);
+            if (!eval_var_set_current(ctx, args_var, arg_value)) return eval_result_from_ctx(ctx);
         }
     } else {
         (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() unsupported component"),
                              mode);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
-    if (!gfc_set_output_value(ctx, o, out_var, result, cache_result)) return !eval_should_stop(ctx);
-    return !eval_should_stop(ctx);
+    if (!gfc_set_output_value(ctx, o, out_var, result, cache_result)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 

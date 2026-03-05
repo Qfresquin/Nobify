@@ -50,14 +50,14 @@ bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View 
     return eval_native_cmd_find_const(ctx, name) != NULL;
 }
 
-bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node || node->kind != NODE_COMMAND) return false;
+Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node || node->kind != NODE_COMMAND) return eval_result_fatal();
 
     const Eval_Native_Command *native = eval_native_cmd_find_const(ctx, node->as.cmd.name);
     if (native) {
-        if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return false;
-        if (!native->handler(ctx, node)) return false;
-        return !eval_should_stop(ctx);
+        if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return eval_result_fatal();
+        Eval_Result native_result = native->handler(ctx, node);
+        return eval_result_merge(native_result, eval_result_ok_if_running(ctx));
     }
 
     Event_Origin o = eval_origin_from_node(ctx, node);
@@ -67,24 +67,23 @@ bool eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
         SV_List args = (user->kind == USER_CMD_MACRO)
             ? eval_resolve_args_literal(ctx, &node->as.cmd.args)
             : eval_resolve_args(ctx, &node->as.cmd.args);
-        if (eval_should_stop(ctx)) return false;
-        if (!eval_emit_command_call(ctx, o, node->as.cmd.name)) return false;
+        if (eval_should_stop(ctx)) return eval_result_fatal();
+        if (!eval_emit_command_call(ctx, o, node->as.cmd.name)) return eval_result_fatal();
         if (eval_user_cmd_invoke(ctx, node->as.cmd.name, &args, o)) {
-            return true;
+            return eval_result_ok_if_running(ctx);
         }
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     Event_Diag_Severity sev = EV_DIAG_WARNING;
     if (ctx->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
-    EVAL_DIAG(ctx,
-                   sev,
-                   nob_sv_from_cstr("dispatcher"),
-                   node->as.cmd.name,
-                   o,
-                   nob_sv_from_cstr("Unknown command"),
-                   ctx->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
-                       ? nob_sv_from_cstr("No-op with warning by policy")
-                       : nob_sv_from_cstr("Ignored during evaluation"));
-    return true;
+    return EVAL_DIAG_RESULT(ctx,
+                            sev,
+                            nob_sv_from_cstr("dispatcher"),
+                            node->as.cmd.name,
+                            o,
+                            nob_sv_from_cstr("Unknown command"),
+                            ctx->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
+                                ? nob_sv_from_cstr("No-op with warning by policy")
+                                : nob_sv_from_cstr("Ignored during evaluation"));
 }

@@ -89,5 +89,5 @@ bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effe
     } else {
         eval_request_stop_on_error(ctx);
     }
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }

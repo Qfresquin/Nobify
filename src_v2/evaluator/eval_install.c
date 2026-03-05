@@ -430,11 +430,11 @@ static bool install_handle_runtime_dependency_set(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_handle_install(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node || eval_should_stop(ctx)) return !eval_should_stop(ctx);
+Eval_Result eval_handle_install(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) == 0) {
         install_emit_diag(ctx,
@@ -443,7 +443,7 @@ bool eval_handle_install(Evaluator_Context *ctx, const Node *node) {
                           EV_DIAG_ERROR,
                           nob_sv_from_cstr("install() requires a signature keyword"),
                           nob_sv_from_cstr("Usage: install(TARGETS|FILES|PROGRAMS|DIRECTORY|SCRIPT|CODE|EXPORT ...)"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     bool ok = true;
@@ -483,6 +483,6 @@ bool eval_handle_install(Evaluator_Context *ctx, const Node *node) {
                           nob_sv_from_cstr("install() failed due to internal evaluator error"),
                           nob_sv_from_cstr("Check previous diagnostics"));
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 

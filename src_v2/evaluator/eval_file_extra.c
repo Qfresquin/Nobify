@@ -358,17 +358,17 @@ static String_View configure_file_expand_content(Evaluator_Context *ctx,
     return out;
 }
 
-bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return false;
+Eval_Result eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(args) < 2) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() requires input and output paths"),
                        nob_sv_from_cstr("Usage: configure_file(<input> <output> [COPYONLY] [@ONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE <style>] [NO_SOURCE_PERMISSIONS|USE_SOURCE_PERMISSIONS|FILE_PERMISSIONS <perms>...])"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     bool copyonly = false;
@@ -396,7 +396,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
         if (eval_sv_eq_ci_lit(args[i], "NEWLINE_STYLE")) {
             if (i + 1 >= arena_arr_len(args)) {
                 EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(NEWLINE_STYLE) requires a value"), args[i]);
-                return !eval_should_stop(ctx);
+                return eval_result_from_ctx(ctx);
             }
             newline_style = args[++i];
             continue;
@@ -414,7 +414,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
             for (i = i + 1; i < arena_arr_len(args) && !configure_file_keyword(args[i]); i++) {
                 if (!configure_file_perm_add_token(&file_mode, args[i])) {
                     EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() unknown FILE_PERMISSIONS token"), args[i]);
-                    return !eval_should_stop(ctx);
+                    return eval_result_from_ctx(ctx);
                 }
             }
             i--;
@@ -422,77 +422,77 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
         }
 
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() received unexpected argument"), args[i]);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (newline_style.count > 0 && !configure_file_valid_newline_style(newline_style)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(NEWLINE_STYLE) received invalid value"),
                        newline_style);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (copyonly && newline_style.count > 0) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(COPYONLY) cannot be combined with NEWLINE_STYLE"),
                        nob_sv_from_cstr("COPYONLY preserves the input bytes and therefore cannot rewrite line endings"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if ((saw_use_source_permissions ? 1 : 0) + (saw_no_source_permissions ? 1 : 0) + (saw_file_permissions ? 1 : 0) > 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() received conflicting permission options"),
                        nob_sv_from_cstr("Use only one of USE_SOURCE_PERMISSIONS, NO_SOURCE_PERMISSIONS, or FILE_PERMISSIONS"));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     if (saw_file_permissions && file_mode == 0) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file(FILE_PERMISSIONS) requires at least one valid permission token"),
                        nob_sv_from_cstr(""));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View in_path = nob_sv_from_cstr("");
     if (!eval_file_resolve_path(ctx, node, o, args[0], eval_file_current_src_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &in_path)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
     String_View out_path = nob_sv_from_cstr("");
     if (!eval_file_resolve_path(ctx, node, o, args[1], eval_file_current_bin_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &out_path)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     char *in_c = eval_sv_to_cstr_temp(ctx, in_path);
     char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, in_c, !eval_should_stop(ctx));
-    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, !eval_should_stop(ctx));
+    EVAL_OOM_RETURN_IF_NULL(ctx, in_c, eval_result_fatal());
+    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, eval_result_fatal());
 
     struct stat src_st = {0};
     if (stat(in_c, &src_st) != 0 || !S_ISREG(src_st.st_mode)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() input must name an existing regular file"), in_path);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     struct stat out_st = {0};
     if (stat(out_c, &out_st) == 0 && S_ISDIR(out_st.st_mode)) {
         out_path = eval_sv_path_join(eval_temp_arena(ctx), out_path, configure_file_basename(in_path));
-        if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     }
 
     Nob_String_Builder src_buf = {0};
     if (!file_read_bytes(ctx, in_path, &src_buf)) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() failed to read input file"), in_path);
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View src_text = nob_sv_from_parts(src_buf.items, src_buf.count);
     String_View out_text = copyonly ? sv_copy_to_temp_arena(ctx, src_text)
                                     : configure_file_expand_content(ctx, src_text, at_only, escape_quotes);
     nob_sb_free(src_buf);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     out_text = file_apply_newline_style(ctx, out_text, newline_style);
 
     bool same = false;
-    if (!file_same_content(ctx, out_path, out_text, &same)) return !eval_should_stop(ctx);
+    if (!file_same_content(ctx, out_path, out_text, &same)) return eval_result_from_ctx(ctx);
     if (!same) {
         if (!file_write_bytes(ctx, out_path, out_text.data, out_text.count)) {
             EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "configure_file", nob_sv_from_cstr("configure_file() failed to write output file"), out_path);
-            return !eval_should_stop(ctx);
+            return eval_result_from_ctx(ctx);
         }
     }
 
@@ -505,7 +505,7 @@ bool eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
         mode = src_st.st_mode & 0777;
     }
     (void)configure_file_apply_permissions(out_path, mode);
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 static String_View file_apply_newline_style(Evaluator_Context *ctx, String_View in, String_View style) {

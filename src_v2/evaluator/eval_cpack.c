@@ -55,7 +55,7 @@ static bool cpack_install_type_on_positional(Evaluator_Context *ctx,
                    st->origin,
                    nob_sv_from_cstr("cpack_add_install_type() unexpected argument"),
                    value);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 enum {
@@ -120,7 +120,7 @@ static bool cpack_group_on_positional(Evaluator_Context *ctx,
                    st->origin,
                    nob_sv_from_cstr("cpack_add_component_group() unexpected argument"),
                    value);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 enum {
@@ -214,18 +214,18 @@ static bool cpack_component_on_positional(Evaluator_Context *ctx,
                    st->origin,
                    nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"),
                    value);
-    return !eval_should_stop(ctx);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return eval_result_from_ctx(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_install_type() missing name"),
                        nob_sv_from_cstr(""));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View name = a[0];
@@ -253,22 +253,22 @@ bool eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node
                              cpack_install_type_on_option,
                              cpack_install_type_on_positional,
                              &opt)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
-    if (!eval_emit_cpack_add_install_type(ctx, o, name, opt.display_name)) return false;
-    return !eval_should_stop(ctx);
+    if (!eval_emit_cpack_add_install_type(ctx, o, name, opt.display_name)) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return eval_result_from_ctx(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_component_group() missing name"),
                        nob_sv_from_cstr(""));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View name = a[0];
@@ -304,7 +304,7 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
                              cpack_group_on_option,
                              cpack_group_on_positional,
                              &opt)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (!eval_emit_cpack_add_component_group(ctx,
@@ -315,20 +315,20 @@ bool eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *n
                                              opt.parent_group,
                                              opt.expanded,
                                              opt.bold_title)) {
-        return false;
+        return eval_result_fatal();
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
-bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return !eval_should_stop(ctx);
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return eval_result_from_ctx(ctx);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
         EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_component() missing name"),
                        nob_sv_from_cstr(""));
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     String_View name = a[0];
@@ -376,7 +376,7 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
                              cpack_component_on_option,
                              cpack_component_on_positional,
                              &opt)) {
-        return !eval_should_stop(ctx);
+        return eval_result_from_ctx(ctx);
     }
 
     if (!eval_emit_cpack_add_component(ctx,
@@ -393,7 +393,7 @@ bool eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
                                        opt.hidden,
                                        opt.disabled,
                                        opt.downloaded)) {
-        return false;
+        return eval_result_fatal();
     }
-    return !eval_should_stop(ctx);
+    return eval_result_from_ctx(ctx);
 }
