@@ -4,9 +4,9 @@ This folder is the active workspace for the new evaluator documentation rewrite.
 
 ## Intent
 
-- `docs/Evaluatorr/` keeps the previous evaluator documentation set preserved as the legacy baseline.
+- `docs/Evaluator/` keeps the previous evaluator documentation set preserved as the legacy baseline.
 - `docs/evaluator/` is where the replacement documentation should be written.
-- When the rewrite is complete and validated, `docs/Evaluatorr/` can be removed.
+- When the rewrite is complete and validated, `docs/Evaluator/` can be removed.
 
 ## Current Migration Rule
 
@@ -15,10 +15,29 @@ During the rewrite:
 - treat this folder as the source for the next documentation structure,
 - do not assume file names or annex structure must match the archived version.
 
-## First Active Draft
+## Canonical Precedence
 
-- `evaluator_v2_spec.md`
-Initial placeholder for the new canonical evaluator document.
+In this folder:
+- `evaluator_v2_spec.md` is the canonical evaluator contract.
+- Slice documents are subordinate annexes.
+- If an annex conflicts with the canonical spec, `evaluator_v2_spec.md` wins.
+
+## Current Status
+
+Substantive drafts already written:
+- `evaluator_runtime_model.md`
+- `evaluator_execution_model.md`
+- `evaluator_variables_and_scope.md`
+- `evaluator_dispatch.md`
+- `evaluator_diagnostics.md`
+
+Placeholder drafts still pending detailed content:
+- `evaluator_expressions.md`
+- `evaluator_event_ir_contract.md`
+- `evaluator_compatibility_model.md`
+- `evaluator_command_capabilities.md`
+- `evaluator_coverage_matrix.md`
+- `evaluator_audit_notes.md`
 
 ## Planned Draft Set
 
