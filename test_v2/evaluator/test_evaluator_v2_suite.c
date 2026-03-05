@@ -446,6 +446,46 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
     return "EV_UNKNOWN";
 }
 
+static bool snapshot_event_is_visible(const Cmake_Event *ev) {
+    if (!ev) return false;
+    Cmake_Event_Kind kind = (Cmake_Event_Kind)ev->h.kind;
+    if (kind == EVENT_VAR_SET && ev->as.var_set.target_kind == EVENT_VAR_TARGET_CACHE) {
+        return true;
+    }
+    if (kind == EVENT_VAR_SET) {
+        String_View key = ev->as.var_set.key;
+        if (sv_starts_with_cstr(key, "NOBIFY_PROPERTY_TARGET::")) return false;
+        if (sv_starts_with_cstr(key, "NOBIFY_PROPERTY_SOURCE::")) return false;
+        if (sv_starts_with_cstr(key, "NOBIFY_PROPERTY_TEST::")) return false;
+    }
+    switch (kind) {
+        case EV_DIAGNOSTIC:
+        case EV_PROJECT_DECLARE:
+        case EV_VAR_SET:
+        case EV_TARGET_DECLARE:
+        case EV_TARGET_ADD_SOURCE:
+        case EV_TARGET_ADD_DEPENDENCY:
+        case EV_TARGET_PROP_SET:
+        case EV_TARGET_INCLUDE_DIRECTORIES:
+        case EV_TARGET_COMPILE_DEFINITIONS:
+        case EV_TARGET_COMPILE_OPTIONS:
+        case EV_TARGET_LINK_LIBRARIES:
+        case EV_TARGET_LINK_OPTIONS:
+        case EV_TARGET_LINK_DIRECTORIES:
+        case EV_DIR_PUSH:
+        case EV_DIR_POP:
+        case EV_TESTING_ENABLE:
+        case EV_TEST_ADD:
+        case EV_INSTALL_ADD_RULE:
+        case EV_CPACK_ADD_INSTALL_TYPE:
+        case EV_CPACK_ADD_COMPONENT_GROUP:
+        case EV_CPACK_ADD_COMPONENT:
+        case EV_FIND_PACKAGE:
+            return true;
+    }
+    return false;
+}
+
 static const char *target_type_name(Cmake_Target_Type type) {
     switch (type) {
         case EV_TARGET_EXECUTABLE: return "EXECUTABLE";
@@ -745,10 +785,17 @@ static bool evaluator_snapshot_from_ast(Ast_Root root, const char *current_file,
     (void)evaluator_run(ctx, root);
 
     nob_sb_append_cstr(out_sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
-    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVENTS count=%zu\n", stream->count));
-
+    size_t visible_count = 0;
     for (size_t i = 0; i < stream->count; i++) {
-        append_event_line(out_sb, i, &stream->items[i]);
+        if (snapshot_event_is_visible(&stream->items[i])) visible_count++;
+    }
+
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVENTS count=%zu\n", visible_count));
+
+    size_t visible_index = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (!snapshot_event_is_visible(&stream->items[i])) continue;
+        append_event_line(out_sb, visible_index++, &stream->items[i]);
     }
 
     evaluator_destroy(ctx);

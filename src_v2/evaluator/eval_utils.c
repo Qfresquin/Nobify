@@ -515,14 +515,58 @@ bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, 
     return eval_var_set_current(ctx, nob_sv_from_cstr(key), joined);
 }
 
+static String_View eval_test_global_marker_key_temp(Evaluator_Context *ctx, String_View test_name) {
+    if (!ctx || test_name.count == 0) return nob_sv_from_cstr("");
+    size_t prefix_len = strlen("NOBIFY_TEST::");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), prefix_len + test_name.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    memcpy(buf, "NOBIFY_TEST::", prefix_len);
+    memcpy(buf + prefix_len, test_name.data, test_name.count);
+    buf[prefix_len + test_name.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View eval_test_scoped_marker_key_temp(Evaluator_Context *ctx,
+                                                    String_View scope_dir,
+                                                    String_View test_name) {
+    if (!ctx || test_name.count == 0) return nob_sv_from_cstr("");
+    if (scope_dir.count == 0) scope_dir = eval_current_source_dir_for_paths(ctx);
+
+    size_t prefix_len = strlen("NOBIFY_TEST::DIRECTORY::");
+    size_t total = prefix_len + scope_dir.count + 2 + test_name.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, "NOBIFY_TEST::DIRECTORY::", prefix_len);
+    off += prefix_len;
+    if (scope_dir.count > 0) {
+        memcpy(buf + off, scope_dir.data, scope_dir.count);
+        off += scope_dir.count;
+    }
+    buf[off++] = ':';
+    buf[off++] = ':';
+    memcpy(buf + off, test_name.data, test_name.count);
+    off += test_name.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
 bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
-    (void) ctx;
-    (void) test_name;
-    (void) scope_dir;
-    // The semantic Event IR nucleus does not yet expose test-add events.
-    // Until the TEST family is migrated, this legacy structural query remains
-    // intentionally disabled.
-    return false;
+    if (!ctx || test_name.count == 0) return false;
+
+    if (scope_dir.count == 0) scope_dir = eval_current_source_dir_for_paths(ctx);
+
+    String_View scoped_key = eval_test_scoped_marker_key_temp(ctx, scope_dir, test_name);
+    if (eval_should_stop(ctx)) return false;
+    if (eval_var_defined_visible(ctx, scoped_key)) return true;
+
+    String_View global_key = eval_test_global_marker_key_temp(ctx, test_name);
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_var_defined_visible(ctx, global_key)) return false;
+
+    String_View current_dir = eval_current_source_dir_for_paths(ctx);
+    return svu_eq_ci_sv(scope_dir, current_dir);
 }
 
 static bool eval_semver_parse_component(String_View sv, int *out_value) {

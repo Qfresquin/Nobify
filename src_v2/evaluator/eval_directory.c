@@ -290,10 +290,39 @@ static bool gfc_set_output_value(Evaluator_Context *ctx,
 static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *ctx,
                                                             Cmake_Event_Origin origin,
                                                             String_View item) {
-    (void)ctx;
-    (void)origin;
-    (void)item;
-    // Target fanout will return when the TARGET family exists in the semantic Event IR.
+    if (!ctx || item.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(ctx->known_targets); i++) {
+        String_View target_name = ctx->known_targets[i];
+        if (target_name.count == 0) continue;
+        if (eval_target_alias_known(ctx, target_name)) continue;
+        if (!eval_emit_target_compile_definitions(ctx,
+                                                  origin,
+                                                  target_name,
+                                                  EV_VISIBILITY_PRIVATE,
+                                                  item)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool emit_compile_option_to_current_file_targets(Evaluator_Context *ctx,
+                                                        Cmake_Event_Origin origin,
+                                                        String_View item) {
+    if (!ctx || item.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(ctx->known_targets); i++) {
+        String_View target_name = ctx->known_targets[i];
+        if (target_name.count == 0) continue;
+        if (eval_target_alias_known(ctx, target_name)) continue;
+        if (!eval_emit_target_compile_options(ctx,
+                                              origin,
+                                              target_name,
+                                              EV_VISIBILITY_PRIVATE,
+                                              item,
+                                              false)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -427,6 +456,7 @@ Eval_Result eval_handle_add_compile_definitions(Evaluator_Context *ctx, const No
 }
 
 Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
@@ -440,12 +470,14 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
             bool added = false;
             if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return eval_result_fatal();
             if (!added) continue;
+            if (!emit_compile_definition_to_current_file_targets(ctx, o, definition)) return eval_result_fatal();
             continue;
         }
 
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return eval_result_fatal();
         if (!added) continue;
+        if (!emit_compile_option_to_current_file_targets(ctx, o, item)) return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
 }

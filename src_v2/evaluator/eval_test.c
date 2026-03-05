@@ -27,6 +27,41 @@ static String_View test_source_stem_temp(Evaluator_Context *ctx, String_View pat
     return nob_sv_from_parts(path.data + start, end - start);
 }
 
+static String_View test_global_marker_key_temp(Evaluator_Context *ctx, String_View name) {
+    if (!ctx || name.count == 0) return nob_sv_from_cstr("");
+    size_t prefix_len = strlen("NOBIFY_TEST::");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), prefix_len + name.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    memcpy(buf, "NOBIFY_TEST::", prefix_len);
+    memcpy(buf + prefix_len, name.data, name.count);
+    buf[prefix_len + name.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
+static String_View test_scoped_marker_key_temp(Evaluator_Context *ctx, String_View dir, String_View name) {
+    if (!ctx || name.count == 0) return nob_sv_from_cstr("");
+    if (dir.count == 0) dir = eval_current_source_dir_for_paths(ctx);
+
+    size_t prefix_len = strlen("NOBIFY_TEST::DIRECTORY::");
+    size_t total = prefix_len + dir.count + 2 + name.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, "NOBIFY_TEST::DIRECTORY::", prefix_len);
+    off += prefix_len;
+    if (dir.count > 0) {
+        memcpy(buf + off, dir.data, dir.count);
+        off += dir.count;
+    }
+    buf[off++] = ':';
+    buf[off++] = ':';
+    memcpy(buf + off, name.data, name.count);
+    off += name.count;
+    buf[off] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
 Eval_Result eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -182,15 +217,15 @@ Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         command = svu_join_space_temp(ctx, &a[1], arena_arr_len(a) - 1);
     }
 
-    {
-        size_t total = strlen("NOBIFY_TEST::") + name.count;
-        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
-        memcpy(buf, "NOBIFY_TEST::", strlen("NOBIFY_TEST::"));
-        memcpy(buf + strlen("NOBIFY_TEST::"), name.data, name.count);
-        buf[total] = '\0';
-        (void)eval_var_set_current(ctx, nob_sv_from_cstr(buf), nob_sv_from_cstr("1"));
-    }
+    String_View global_marker = test_global_marker_key_temp(ctx, name);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    if (!eval_var_set_current(ctx, global_marker, nob_sv_from_cstr("1"))) return eval_result_from_ctx(ctx);
+
+    String_View test_dir = eval_current_source_dir_for_paths(ctx);
+    String_View scoped_marker = test_scoped_marker_key_temp(ctx, test_dir, name);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    if (!eval_var_set_current(ctx, scoped_marker, nob_sv_from_cstr("1"))) return eval_result_from_ctx(ctx);
+
     if (!eval_emit_test_add(ctx, o, name, command, working_dir, command_expand_lists)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }

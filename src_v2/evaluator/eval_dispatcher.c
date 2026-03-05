@@ -55,9 +55,16 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
 
     const Eval_Native_Command *native = eval_native_cmd_find_const(ctx, node->as.cmd.name);
     if (native) {
-        if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return eval_result_fatal();
+        size_t error_count_before = ctx->run_report.error_count;
         Eval_Result native_result = native->handler(ctx, node);
-        return eval_result_merge(native_result, eval_result_ok_if_running(ctx));
+        Eval_Result running_result = eval_result_ok_if_running(ctx);
+        bool native_succeeded = !eval_result_is_fatal(native_result) &&
+                                !eval_result_is_fatal(running_result) &&
+                                ctx->run_report.error_count == error_count_before;
+        if (native_succeeded) {
+            if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return eval_result_fatal();
+        }
+        return eval_result_merge(native_result, running_result);
     }
 
     Event_Origin o = eval_origin_from_node(ctx, node);
@@ -67,8 +74,13 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
             ? eval_resolve_args_literal(ctx, &node->as.cmd.args)
             : eval_resolve_args(ctx, &node->as.cmd.args);
         if (eval_should_stop(ctx)) return eval_result_fatal();
-        if (!eval_emit_command_call(ctx, o, node->as.cmd.name)) return eval_result_fatal();
+        size_t error_count_before = ctx->run_report.error_count;
         if (eval_user_cmd_invoke(ctx, node->as.cmd.name, &args, o)) {
+            bool user_succeeded = !eval_result_is_fatal(eval_result_ok_if_running(ctx)) &&
+                                  ctx->run_report.error_count == error_count_before;
+            if (user_succeeded) {
+                if (!eval_emit_command_call(ctx, o, node->as.cmd.name)) return eval_result_fatal();
+            }
             return eval_result_ok_if_running(ctx);
         }
         return eval_result_from_ctx(ctx);

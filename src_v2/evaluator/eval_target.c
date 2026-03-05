@@ -2034,6 +2034,16 @@ Eval_Result eval_handle_set_target_properties(Evaluator_Context *ctx, const Node
             continue;
         }
         for (size_t i = kv_start; i + 1 < arena_arr_len(a); i += 2) {
+            String_View prop_upper = eval_property_upper_name_temp(ctx, a[i]);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            String_View store_key = eval_property_store_key_temp(ctx,
+                                                                 nob_sv_from_cstr("TARGET"),
+                                                                 tgt,
+                                                                 prop_upper);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            if (!eval_var_set_current(ctx, store_key, a[i + 1])) {
+                return eval_result_from_ctx(ctx);
+            }
             if (!eval_emit_target_prop_set(ctx, o, tgt, a[i], a[i + 1], EV_PROP_SET)) {
                 return eval_result_from_ctx(ctx);
             }

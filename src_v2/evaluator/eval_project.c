@@ -31,11 +31,37 @@ static bool emit_items_from_list(Evaluator_Context *ctx,
                                  String_View target_name,
                                  String_View list_text,
                                  int kind) {
-    (void)ctx;
-    (void)o;
-    (void)target_name;
-    (void)list_text;
-    (void)kind;
+    if (!ctx || target_name.count == 0 || list_text.count == 0) return true;
+
+    SV_List items = NULL;
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), list_text, &items)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        String_View item = items[i];
+        if (kind == 0) {
+            item = eval_normalize_compile_definition_item(item);
+            if (item.count == 0) continue;
+            if (!eval_emit_target_compile_definitions(ctx,
+                                                      o,
+                                                      target_name,
+                                                      EV_VISIBILITY_PRIVATE,
+                                                      item)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (item.count == 0) continue;
+        if (!eval_emit_target_compile_options(ctx,
+                                              o,
+                                              target_name,
+                                              EV_VISIBILITY_PRIVATE,
+                                              item,
+                                              false)) {
+            return false;
+        }
+    }
     return true;
 }
 
