@@ -644,6 +644,7 @@ SV_List eval_resolve_args_literal(Evaluator_Context *ctx, const Args *raw_args);
 
 // ---- diagnostics / events ----
 bool eval_emit_event(Evaluator_Context *ctx, Event ev);
+bool eval_emit_event_allow_stopped(Evaluator_Context *ctx, Event ev);
 static inline bool emit_event(Evaluator_Context *ctx, Event ev) {
     return eval_emit_event(ctx, ev);
 }
@@ -1041,6 +1042,40 @@ static inline bool eval_emit_add_subdirectory_end(Evaluator_Context *ctx,
     ev.as.add_subdirectory_end.success = success;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_directory_property_mutate(Evaluator_Context *ctx,
+                                                       Event_Origin origin,
+                                                       String_View property_name,
+                                                       Event_Property_Mutate_Op op,
+                                                       uint32_t modifier_flags,
+                                                       String_View *items,
+                                                       size_t item_count) {
+    Event ev = {0};
+    ev.h.kind = EVENT_DIRECTORY_PROPERTY_MUTATE;
+    ev.h.origin = origin;
+    ev.as.directory_property_mutate.property_name = property_name;
+    ev.as.directory_property_mutate.op = op;
+    ev.as.directory_property_mutate.modifier_flags = modifier_flags;
+    ev.as.directory_property_mutate.items = items;
+    ev.as.directory_property_mutate.item_count = item_count;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_global_property_mutate(Evaluator_Context *ctx,
+                                                    Event_Origin origin,
+                                                    String_View property_name,
+                                                    Event_Property_Mutate_Op op,
+                                                    uint32_t modifier_flags,
+                                                    String_View *items,
+                                                    size_t item_count) {
+    Event ev = {0};
+    ev.h.kind = EVENT_GLOBAL_PROPERTY_MUTATE;
+    ev.h.origin = origin;
+    ev.as.global_property_mutate.property_name = property_name;
+    ev.as.global_property_mutate.op = op;
+    ev.as.global_property_mutate.modifier_flags = modifier_flags;
+    ev.as.global_property_mutate.items = items;
+    ev.as.global_property_mutate.item_count = item_count;
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_dir_push(Evaluator_Context *ctx,
                                       Event_Origin origin,
                                       String_View source_dir,
@@ -1063,14 +1098,42 @@ static inline bool eval_emit_dir_pop(Evaluator_Context *ctx,
     ev.as.dir_pop.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_command_begin(Evaluator_Context *ctx,
+                                           Event_Origin origin,
+                                           String_View command_name,
+                                           Event_Command_Dispatch_Kind dispatch_kind,
+                                           uint32_t argc) {
+    Event ev = {0};
+    ev.h.kind = EVENT_COMMAND_BEGIN;
+    ev.h.origin = origin;
+    ev.as.command_begin.command_name = command_name;
+    ev.as.command_begin.dispatch_kind = dispatch_kind;
+    ev.as.command_begin.argc = argc;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_command_end(Evaluator_Context *ctx,
+                                         Event_Origin origin,
+                                         String_View command_name,
+                                         Event_Command_Dispatch_Kind dispatch_kind,
+                                         uint32_t argc,
+                                         Event_Command_Status status) {
+    Event ev = {0};
+    ev.h.kind = EVENT_COMMAND_END;
+    ev.h.origin = origin;
+    ev.as.command_end.command_name = command_name;
+    ev.as.command_end.dispatch_kind = dispatch_kind;
+    ev.as.command_end.argc = argc;
+    ev.as.command_end.status = status;
+    return eval_emit_event_allow_stopped(ctx, ev);
+}
 static inline bool eval_emit_command_call(Evaluator_Context *ctx,
                                           Event_Origin origin,
                                           String_View command_name) {
-    Event ev = {0};
-    ev.h.kind = EVENT_COMMAND_CALL;
-    ev.h.origin = origin;
-    ev.as.command_call.command_name = sv_copy_to_event_arena(ctx, command_name);
-    return emit_event(ctx, ev);
+    return eval_emit_command_begin(ctx,
+                                   origin,
+                                   command_name,
+                                   EVENT_COMMAND_DISPATCH_BUILTIN,
+                                   0);
 }
 static inline bool eval_emit_cmake_language_call(Evaluator_Context *ctx,
                                                  Event_Origin origin,

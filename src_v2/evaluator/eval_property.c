@@ -58,6 +58,52 @@ static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var)
     return eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
 }
 
+static Event_Property_Mutate_Op property_mutate_op_from_legacy(Cmake_Target_Property_Op op) {
+    switch (op) {
+        case EV_PROP_SET: return EVENT_PROPERTY_MUTATE_SET;
+        case EV_PROP_APPEND_LIST: return EVENT_PROPERTY_MUTATE_APPEND_LIST;
+        case EV_PROP_APPEND_STRING: return EVENT_PROPERTY_MUTATE_APPEND_STRING;
+    }
+    return EVENT_PROPERTY_MUTATE_SET;
+}
+
+static bool emit_property_write_semantic_event(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               String_View scope_upper,
+                                               String_View object_id,
+                                               String_View property_upper,
+                                               String_View value,
+                                               Cmake_Target_Property_Op op) {
+    if (!ctx) return false;
+
+    bool is_directory_scope =
+        eval_sv_eq_ci_lit(scope_upper, "DIRECTORY") && is_current_directory_object(ctx, object_id);
+    bool is_global_scope = eval_sv_eq_ci_lit(scope_upper, "GLOBAL");
+    if (!is_directory_scope && !is_global_scope) return true;
+
+    SV_List items = {0};
+    if (value.count > 0 && !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), value, &items)) return false;
+
+    Event_Property_Mutate_Op semantic_op = property_mutate_op_from_legacy(op);
+    if (is_directory_scope) {
+        return eval_emit_directory_property_mutate(ctx,
+                                                   origin,
+                                                   property_upper,
+                                                   semantic_op,
+                                                   EVENT_PROPERTY_MODIFIER_NONE,
+                                                   items,
+                                                   arena_arr_len(items));
+    }
+
+    return eval_emit_global_property_mutate(ctx,
+                                            origin,
+                                            property_upper,
+                                            semantic_op,
+                                            EVENT_PROPERTY_MODIFIER_NONE,
+                                            items,
+                                            arena_arr_len(items));
+}
+
 static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View target_name, String_View *out_dir) {
     if (!ctx || !out_dir) return false;
     (void)target_name;
@@ -205,6 +251,10 @@ bool eval_property_write(Evaluator_Context *ctx,
     String_View current = eval_var_get_visible(ctx, store_key);
     String_View merged = merge_property_value_temp(ctx, current, value, op);
     if (eval_should_stop(ctx)) return false;
+
+    if (!emit_property_write_semantic_event(ctx, origin, scope_upper, object_id, prop_upper, value, op)) {
+        return false;
+    }
 
     if (!eval_var_set_current(ctx, store_key, merged)) return false;
     if (emit_var_event && !eval_emit_var_set_current(ctx, origin, store_key, merged)) return false;

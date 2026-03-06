@@ -1,104 +1,101 @@
-# Build Model Builder v2 (Normative)
+# Build Model Builder v2 (Future Consumer Contract)
 
-## 1. Overview
+## 1. Status
 
-The `build_model_builder.c` module implements the mutable state machine that constructs the Build Model. It consumes a linear stream of atomic events (`Event`) and updates the internal structures (`Build_Model_Builder`) accordingly.
+There is no active `src_v2` implementation of the build-model builder at the moment.
 
-**Key Characteristics:**
-1.  **Mutable:** The builder state changes with every event.
-2.  **Incremental:** Events are processed one by one.
-3.  **Scope-Aware (Directory Stack):** Tracks directory-level properties (e.g., `include_directories` that affect subsequent targets).
-4.  **Transactional (Optional):** Supports rollback for failed events (e.g., if a target declaration fails validation).
+This document is a consumer contract for a future builder that will read the current `Event IR`. It is not a statement that `build_model_builder.c` already exists in the active pipeline.
 
-## 2. Data Structures
+## 2. Upstream Contract
 
-### 2.1. Builder Context (`Build_Model_Builder`)
+The future builder consumes:
+- one canonical `Event_Stream`
+- only the subset of kinds marked with `EVENT_ROLE_BUILD_SEMANTIC`
+
+The builder must not depend on:
+- evaluator-private variables such as `NOBIFY_GLOBAL_*`
+- trace-only breadcrumbs
+- diagnostic events for semantic reconstruction
+
+## 3. Required Event Subset
+
+Minimum build-semantic events the future builder is expected to consume:
+- `EVENT_PROJECT_DECLARE`
+- `EVENT_PROJECT_MINIMUM_REQUIRED`
+- `EVENT_DIRECTORY_ENTER`
+- `EVENT_DIRECTORY_LEAVE`
+- `EVENT_DIRECTORY_PROPERTY_MUTATE`
+- `EVENT_GLOBAL_PROPERTY_MUTATE`
+- `EVENT_TARGET_DECLARE`
+- `EVENT_TARGET_ADD_SOURCE`
+- `EVENT_TARGET_ADD_DEPENDENCY`
+- `EVENT_TARGET_PROP_SET`
+- `EVENT_TARGET_LINK_LIBRARIES`
+- `EVENT_TARGET_LINK_OPTIONS`
+- `EVENT_TARGET_LINK_DIRECTORIES`
+- `EVENT_TARGET_INCLUDE_DIRECTORIES`
+- `EVENT_TARGET_COMPILE_DEFINITIONS`
+- `EVENT_TARGET_COMPILE_OPTIONS`
+- `EVENT_TEST_ENABLE`
+- `EVENT_TEST_ADD`
+- `EVENT_INSTALL_RULE_ADD`
+- `EVENT_CPACK_ADD_INSTALL_TYPE`
+- `EVENT_CPACK_ADD_COMPONENT_GROUP`
+- `EVENT_CPACK_ADD_COMPONENT`
+- `EVENT_PACKAGE_FIND_RESULT`
+
+## 4. Directory Semantics
+
+The builder must model directory state from first-class directory events, not from evaluator internals.
+
+Required behavior:
+- `EVENT_DIRECTORY_ENTER` pushes directory context
+- `EVENT_DIRECTORY_LEAVE` pops directory context
+- `EVENT_DIRECTORY_PROPERTY_MUTATE` updates the active directory frame
+- targets declared after a directory mutation inherit the effective directory state according to builder policy
+
+The builder should treat these properties as canonical inputs when present:
+- `INCLUDE_DIRECTORIES`
+- `LINK_DIRECTORIES`
+- `COMPILE_DEFINITIONS`
+- `COMPILE_OPTIONS`
+- `LINK_OPTIONS`
+
+The mutation payload provides:
+- `property_name`
+- `op`
+- `modifier_flags`
+- `items[]`
+
+## 5. Trace and Diagnostics Policy
+
+The builder may ignore all non-build-semantic events by default.
+
+In particular, it should not require:
+- `EVENT_COMMAND_BEGIN`
+- `EVENT_COMMAND_END`
+- `EVENT_INCLUDE_BEGIN`
+- `EVENT_INCLUDE_END`
+- `EVENT_ADD_SUBDIRECTORY_BEGIN`
+- `EVENT_ADD_SUBDIRECTORY_END`
+- `EVENT_DIAG`
+
+Those events are useful for tooling, replay and debugging, but they are not the semantic source of truth for build reconstruction.
+
+## 6. Planned Builder Shape
+
+When implemented, the builder is expected to remain:
+- incremental
+- append-driven
+- directory-scope aware
+- the only writer of `Build_Model`
+
+Expected interface shape:
+
 ```c
-typedef struct {
-    Arena *arena;               // Memory arena for the builder lifetime
-    Build_Model *model;         // The target model being built (mutable)
-    
-    // Directory Scope Stack (for inheritance)
-    struct {
-        String_List include_dirs;
-        String_List link_dirs;
-        String_List compile_defs;
-        String_List compile_options;
-    } current_scope;
-
-    // Validation State
-    bool has_fatal_error;
-    Diag_Sink *diagnostics;
-} Build_Model_Builder;
-```
-
-### 2.2. Event Handlers Map
-The builder uses a switch/dispatch mechanism based on `Event_Kind` to route events to specific update logic.
-
-## 3. Event Handling Logic
-
-### 3.1. Project & Targets
-*   `EVENT_PROJECT_DECLARE`:
-    *   Updates `model->project_name`, `model->project_version`, etc.
-    *   Resets/Initializes global build flags if needed.
-*   `EVENT_TARGET_DECLARE`:
-    *   Creates a new `Build_Target` in `model->targets`.
-    *   Sets `target->type` (EXECUTABLE, STATIC_LIBRARY, etc.).
-    *   Initializes empty lists for sources, dependencies, etc.
-    *   **Validation:** Checks for duplicate target names (error if exists).
-
-### 3.2. Sources & Properties
-*   `EVENT_TARGET_ADD_SOURCE`:
-    *   Finds the target by name.
-    *   Appends the source path to `target->sources`.
-    *   **Deduplication:** Uses a hash set (or linear scan for small lists) to avoid duplicate sources.
-*   `EVENT_TARGET_PROP_SET`:
-    *   Finds the target.
-    *   Updates the specific property (e.g., `OUTPUT_NAME`, `CXX_STANDARD`).
-    *   Supports custom properties via a key-value map.
-
-### 3.3. Dependencies & Linking
-*   `EVENT_TARGET_LINK_LIBRARIES`:
-    *   Finds the target.
-    *   Parses the item (target name vs. file path vs. flag).
-    *   Adds to `target->link_libraries` (and potentially `target->dependencies` if it's a known target).
-    *   Handles `PUBLIC`, `PRIVATE`, `INTERFACE` visibility propagation.
-*   `EVENT_TARGET_INCLUDE_DIRECTORIES`:
-    *   Adds to `target->include_directories`.
-    *   Handles visibility.
-
-### 3.4. Directory Scope (Inheritance)
-*   `EVENT_DIR_PUSH`: Push a new scope/frame of directory context.
-*   `EVENT_DIR_POP`: Pop the top directory context frame.
-*   `EVENT_TARGET_INCLUDE_DIRECTORIES` or a future directory-scoped event: adds to the active include context.
-    *   **Effect:** Any target declared *after* this event (within the same scope) inherits these includes.
-
-## 4. Validation During Build
-
-While `build_model_validate.c` does the heavy lifting post-build, the Builder performs immediate checks:
-1.  **Existence:** References to non-existent targets in `LINK_LIBRARIES` (warn or error based on policy).
-2.  **Type Safety:** Ensuring an `INTERFACE_LIBRARY` doesn't get sources (unless allowed by CMake policy CMP0019/etc - simplified here: usually error).
-3.  **Duplicate Names:** Error on `add_executable(app)` if `app` already exists.
-
-## 5. Interface
-
-```c
-// build_model_builder.h
-
-// Creates a new builder instance
-Build_Model_Builder* builder_create(Arena *arena, Diag_Sink *diags);
-
-// Applies a single event to the builder state.
-// Returns false on fatal error (e.g., out of memory).
+Build_Model_Builder *builder_create(Arena *arena, Diag_Sink *diags);
 bool builder_apply_event(Build_Model_Builder *builder, const Event *ev);
-
-// Finalizes the build process and returns the constructed model.
-// The returned model is still mutable until frozen.
-Build_Model* builder_finish(Build_Model_Builder *builder);
+Build_Model *builder_finish(Build_Model_Builder *builder);
 ```
 
-## 6. Memory Management Strategy
-
-1.  **String Interning:** The builder ideally uses an interner or simply copies strings to its arena to avoid lifetime issues with the Event Stream.
-    *   *Refinement D:* If the Event Stream persists, we can use `String_View` references. If not, we copy. The safest default for v2 is **Copy on Write** or just **Copy**.
-2.  **Growth:** Arrays (targets, sources) grow dynamically using `arena_realloc` or linked lists (if performance dictates, though dynamic arrays are preferred for cache locality).
+The exact file layout and implementation details remain open until the builder returns to active scope.

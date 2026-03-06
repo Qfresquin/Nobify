@@ -44,7 +44,17 @@ bool eval_emit_event(Evaluator_Context *ctx, Event ev) {
     if (!ctx || eval_should_stop(ctx)) return false;
     ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
     ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
-    if (!event_stream_push(eval_event_arena(ctx), ctx->stream, ev)) {
+    if (!event_stream_push(ctx->stream, &ev)) {
+        return ctx_oom(ctx);
+    }
+    return true;
+}
+
+bool eval_emit_event_allow_stopped(Evaluator_Context *ctx, Event ev) {
+    if (!ctx || ctx->oom || !ctx->stream) return false;
+    ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
+    ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
+    if (!event_stream_push(ctx->stream, &ev)) {
         return ctx_oom(ctx);
     }
     return true;
@@ -606,4 +616,3 @@ bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_Lis
     }
     return true;
 }
-

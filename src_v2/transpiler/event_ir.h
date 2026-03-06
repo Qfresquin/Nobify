@@ -1,4 +1,4 @@
-// Canonical semantic Event IR.
+// Canonical evaluator Event IR.
 #ifndef EVENT_IR_H_
 #define EVENT_IR_H_
 
@@ -6,11 +6,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "nob.h"
 #include "arena.h"
+#include "nob.h"
+
+typedef enum {
+    EVENT_ROLE_NONE = 0,
+    EVENT_ROLE_TRACE = 1u << 0,
+    EVENT_ROLE_DIAGNOSTIC = 1u << 1,
+    EVENT_ROLE_RUNTIME_EFFECT = 1u << 2,
+    EVENT_ROLE_STATE = 1u << 3,
+    EVENT_ROLE_BUILD_SEMANTIC = 1u << 4,
+} Event_Role;
 
 #define EVENT_FAMILY_LIST(X) \
+    X(EVENT_FAMILY_TRACE, "trace") \
     X(EVENT_FAMILY_DIAG, "diag") \
+    X(EVENT_FAMILY_DIRECTORY, "directory") \
     X(EVENT_FAMILY_FLOW, "flow") \
     X(EVENT_FAMILY_SCOPE, "scope") \
     X(EVENT_FAMILY_POLICY, "policy") \
@@ -26,8 +37,7 @@
     X(EVENT_FAMILY_TEST, "test") \
     X(EVENT_FAMILY_INSTALL, "install") \
     X(EVENT_FAMILY_CPACK, "cpack") \
-    X(EVENT_FAMILY_PACKAGE, "package") \
-    X(EVENT_FAMILY_META, "meta")
+    X(EVENT_FAMILY_PACKAGE, "package")
 
 typedef enum {
 #define DECLARE_EVENT_FAMILY(kind, label) kind,
@@ -36,92 +46,95 @@ typedef enum {
 } Event_Family;
 
 #define EVENT_KIND_LIST(X) \
-    X(EVENT_DIAG, EVENT_FAMILY_DIAG, "diag") \
-    X(EVENT_VAR_SET, EVENT_FAMILY_VAR, "var_set") \
-    X(EVENT_VAR_UNSET, EVENT_FAMILY_VAR, "var_unset") \
-    X(EVENT_SCOPE_PUSH, EVENT_FAMILY_SCOPE, "scope_push") \
-    X(EVENT_SCOPE_POP, EVENT_FAMILY_SCOPE, "scope_pop") \
-    X(EVENT_POLICY_PUSH, EVENT_FAMILY_POLICY, "policy_push") \
-    X(EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop") \
-    X(EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set") \
-    X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return") \
-    X(EVENT_FLOW_IF_EVAL, EVENT_FAMILY_FLOW, "flow_if_eval") \
-    X(EVENT_FLOW_BRANCH_TAKEN, EVENT_FAMILY_FLOW, "flow_branch_taken") \
-    X(EVENT_FLOW_LOOP_BEGIN, EVENT_FAMILY_FLOW, "flow_loop_begin") \
-    X(EVENT_FLOW_LOOP_END, EVENT_FAMILY_FLOW, "flow_loop_end") \
-    X(EVENT_FLOW_BREAK, EVENT_FAMILY_FLOW, "flow_break") \
-    X(EVENT_FLOW_CONTINUE, EVENT_FAMILY_FLOW, "flow_continue") \
-    X(EVENT_FLOW_DEFER_QUEUE, EVENT_FAMILY_FLOW, "flow_defer_queue") \
-    X(EVENT_FLOW_DEFER_FLUSH, EVENT_FAMILY_FLOW, "flow_defer_flush") \
-    X(EVENT_FLOW_BLOCK_BEGIN, EVENT_FAMILY_FLOW, "flow_block_begin") \
-    X(EVENT_FLOW_BLOCK_END, EVENT_FAMILY_FLOW, "flow_block_end") \
-    X(EVENT_FLOW_FUNCTION_BEGIN, EVENT_FAMILY_FLOW, "flow_function_begin") \
-    X(EVENT_FLOW_FUNCTION_END, EVENT_FAMILY_FLOW, "flow_function_end") \
-    X(EVENT_FLOW_MACRO_BEGIN, EVENT_FAMILY_FLOW, "flow_macro_begin") \
-    X(EVENT_FLOW_MACRO_END, EVENT_FAMILY_FLOW, "flow_macro_end") \
-    X(EVENT_FS_WRITE_FILE, EVENT_FAMILY_FS, "fs_write_file") \
-    X(EVENT_FS_APPEND_FILE, EVENT_FAMILY_FS, "fs_append_file") \
-    X(EVENT_FS_READ_FILE, EVENT_FAMILY_FS, "fs_read_file") \
-    X(EVENT_FS_GLOB, EVENT_FAMILY_FS, "fs_glob") \
-    X(EVENT_FS_MKDIR, EVENT_FAMILY_FS, "fs_mkdir") \
-    X(EVENT_FS_REMOVE, EVENT_FAMILY_FS, "fs_remove") \
-    X(EVENT_FS_COPY, EVENT_FAMILY_FS, "fs_copy") \
-    X(EVENT_FS_RENAME, EVENT_FAMILY_FS, "fs_rename") \
-    X(EVENT_FS_CREATE_LINK, EVENT_FAMILY_FS, "fs_create_link") \
-    X(EVENT_FS_CHMOD, EVENT_FAMILY_FS, "fs_chmod") \
-    X(EVENT_FS_ARCHIVE_CREATE, EVENT_FAMILY_FS, "fs_archive_create") \
-    X(EVENT_FS_ARCHIVE_EXTRACT, EVENT_FAMILY_FS, "fs_archive_extract") \
-    X(EVENT_FS_TRANSFER_DOWNLOAD, EVENT_FAMILY_FS, "fs_transfer_download") \
-    X(EVENT_FS_TRANSFER_UPLOAD, EVENT_FAMILY_FS, "fs_transfer_upload") \
-    X(EVENT_PROC_EXEC_REQUEST, EVENT_FAMILY_PROC, "proc_exec_request") \
-    X(EVENT_PROC_EXEC_RESULT, EVENT_FAMILY_PROC, "proc_exec_result") \
-    X(EVENT_STRING_REPLACE, EVENT_FAMILY_STRING, "string_replace") \
-    X(EVENT_STRING_CONFIGURE, EVENT_FAMILY_STRING, "string_configure") \
-    X(EVENT_STRING_REGEX, EVENT_FAMILY_STRING, "string_regex") \
-    X(EVENT_STRING_HASH, EVENT_FAMILY_STRING, "string_hash") \
-    X(EVENT_STRING_TIMESTAMP, EVENT_FAMILY_STRING, "string_timestamp") \
-    X(EVENT_LIST_APPEND, EVENT_FAMILY_LIST, "list_append") \
-    X(EVENT_LIST_PREPEND, EVENT_FAMILY_LIST, "list_prepend") \
-    X(EVENT_LIST_INSERT, EVENT_FAMILY_LIST, "list_insert") \
-    X(EVENT_LIST_REMOVE, EVENT_FAMILY_LIST, "list_remove") \
-    X(EVENT_LIST_TRANSFORM, EVENT_FAMILY_LIST, "list_transform") \
-    X(EVENT_LIST_SORT, EVENT_FAMILY_LIST, "list_sort") \
-    X(EVENT_MATH_EXPR, EVENT_FAMILY_MATH, "math_expr") \
-    X(EVENT_PATH_NORMALIZE, EVENT_FAMILY_PATH, "path_normalize") \
-    X(EVENT_PATH_COMPARE, EVENT_FAMILY_PATH, "path_compare") \
-    X(EVENT_PATH_CONVERT, EVENT_FAMILY_PATH, "path_convert") \
-    X(EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable") \
-    X(EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add") \
-    X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add") \
-    X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type") \
-    X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group") \
-    X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component") \
-    X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result") \
-    X(EVENT_PROJECT_DECLARE, EVENT_FAMILY_PROJECT, "project_declare") \
-    X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required") \
-    X(EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare") \
-    X(EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source") \
-    X(EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency") \
-    X(EVENT_TARGET_PROP_SET, EVENT_FAMILY_TARGET, "target_prop_set") \
-    X(EVENT_TARGET_LINK_LIBRARIES, EVENT_FAMILY_TARGET, "target_link_libraries") \
-    X(EVENT_TARGET_LINK_OPTIONS, EVENT_FAMILY_TARGET, "target_link_options") \
-    X(EVENT_TARGET_LINK_DIRECTORIES, EVENT_FAMILY_TARGET, "target_link_directories") \
-    X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories") \
-    X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions") \
-    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options") \
-    X(EVENT_INCLUDE_BEGIN, EVENT_FAMILY_META, "include_begin") \
-    X(EVENT_INCLUDE_END, EVENT_FAMILY_META, "include_end") \
-    X(EVENT_ADD_SUBDIRECTORY_BEGIN, EVENT_FAMILY_META, "add_subdirectory_begin") \
-    X(EVENT_ADD_SUBDIRECTORY_END, EVENT_FAMILY_META, "add_subdirectory_end") \
-    X(EVENT_DIR_PUSH, EVENT_FAMILY_META, "dir_push") \
-    X(EVENT_DIR_POP, EVENT_FAMILY_META, "dir_pop") \
-    X(EVENT_COMMAND_CALL, EVENT_FAMILY_META, "command_call") \
-    X(EVENT_CMAKE_LANGUAGE_CALL, EVENT_FAMILY_META, "cmake_language_call") \
-    X(EVENT_CMAKE_LANGUAGE_EVAL, EVENT_FAMILY_META, "cmake_language_eval") \
-    X(EVENT_CMAKE_LANGUAGE_DEFER_QUEUE, EVENT_FAMILY_META, "cmake_language_defer_queue")
+    X(EVENT_DIAG, EVENT_FAMILY_DIAG, "diag", EVENT_ROLE_DIAGNOSTIC) \
+    X(EVENT_COMMAND_BEGIN, EVENT_FAMILY_TRACE, "command_begin", EVENT_ROLE_TRACE) \
+    X(EVENT_COMMAND_END, EVENT_FAMILY_TRACE, "command_end", EVENT_ROLE_TRACE) \
+    X(EVENT_INCLUDE_BEGIN, EVENT_FAMILY_TRACE, "include_begin", EVENT_ROLE_TRACE) \
+    X(EVENT_INCLUDE_END, EVENT_FAMILY_TRACE, "include_end", EVENT_ROLE_TRACE) \
+    X(EVENT_ADD_SUBDIRECTORY_BEGIN, EVENT_FAMILY_TRACE, "add_subdirectory_begin", EVENT_ROLE_TRACE) \
+    X(EVENT_ADD_SUBDIRECTORY_END, EVENT_FAMILY_TRACE, "add_subdirectory_end", EVENT_ROLE_TRACE) \
+    X(EVENT_CMAKE_LANGUAGE_CALL, EVENT_FAMILY_TRACE, "cmake_language_call", EVENT_ROLE_TRACE) \
+    X(EVENT_CMAKE_LANGUAGE_EVAL, EVENT_FAMILY_TRACE, "cmake_language_eval", EVENT_ROLE_TRACE) \
+    X(EVENT_CMAKE_LANGUAGE_DEFER_QUEUE, EVENT_FAMILY_TRACE, "cmake_language_defer_queue", EVENT_ROLE_TRACE) \
+    X(EVENT_DIRECTORY_ENTER, EVENT_FAMILY_DIRECTORY, "directory_enter", EVENT_ROLE_TRACE | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_DIRECTORY_LEAVE, EVENT_FAMILY_DIRECTORY, "directory_leave", EVENT_ROLE_TRACE | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_FAMILY_DIRECTORY, "directory_property_mutate", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_GLOBAL_PROPERTY_MUTATE, EVENT_FAMILY_DIRECTORY, "global_property_mutate", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_VAR_SET, EVENT_FAMILY_VAR, "var_set", EVENT_ROLE_STATE) \
+    X(EVENT_VAR_UNSET, EVENT_FAMILY_VAR, "var_unset", EVENT_ROLE_STATE) \
+    X(EVENT_SCOPE_PUSH, EVENT_FAMILY_SCOPE, "scope_push", EVENT_ROLE_STATE) \
+    X(EVENT_SCOPE_POP, EVENT_FAMILY_SCOPE, "scope_pop", EVENT_ROLE_STATE) \
+    X(EVENT_POLICY_PUSH, EVENT_FAMILY_POLICY, "policy_push", EVENT_ROLE_STATE) \
+    X(EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop", EVENT_ROLE_STATE) \
+    X(EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set", EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_IF_EVAL, EVENT_FAMILY_FLOW, "flow_if_eval", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_BRANCH_TAKEN, EVENT_FAMILY_FLOW, "flow_branch_taken", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_LOOP_BEGIN, EVENT_FAMILY_FLOW, "flow_loop_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_LOOP_END, EVENT_FAMILY_FLOW, "flow_loop_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_BREAK, EVENT_FAMILY_FLOW, "flow_break", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_CONTINUE, EVENT_FAMILY_FLOW, "flow_continue", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_DEFER_QUEUE, EVENT_FAMILY_FLOW, "flow_defer_queue", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_DEFER_FLUSH, EVENT_FAMILY_FLOW, "flow_defer_flush", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_BLOCK_BEGIN, EVENT_FAMILY_FLOW, "flow_block_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_BLOCK_END, EVENT_FAMILY_FLOW, "flow_block_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_FUNCTION_BEGIN, EVENT_FAMILY_FLOW, "flow_function_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_FUNCTION_END, EVENT_FAMILY_FLOW, "flow_function_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_MACRO_BEGIN, EVENT_FAMILY_FLOW, "flow_macro_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FLOW_MACRO_END, EVENT_FAMILY_FLOW, "flow_macro_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE) \
+    X(EVENT_FS_WRITE_FILE, EVENT_FAMILY_FS, "fs_write_file", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_APPEND_FILE, EVENT_FAMILY_FS, "fs_append_file", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_READ_FILE, EVENT_FAMILY_FS, "fs_read_file", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_GLOB, EVENT_FAMILY_FS, "fs_glob", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_MKDIR, EVENT_FAMILY_FS, "fs_mkdir", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_REMOVE, EVENT_FAMILY_FS, "fs_remove", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_COPY, EVENT_FAMILY_FS, "fs_copy", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_RENAME, EVENT_FAMILY_FS, "fs_rename", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_CREATE_LINK, EVENT_FAMILY_FS, "fs_create_link", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_CHMOD, EVENT_FAMILY_FS, "fs_chmod", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_ARCHIVE_CREATE, EVENT_FAMILY_FS, "fs_archive_create", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_ARCHIVE_EXTRACT, EVENT_FAMILY_FS, "fs_archive_extract", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_TRANSFER_DOWNLOAD, EVENT_FAMILY_FS, "fs_transfer_download", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_FS_TRANSFER_UPLOAD, EVENT_FAMILY_FS, "fs_transfer_upload", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_PROC_EXEC_REQUEST, EVENT_FAMILY_PROC, "proc_exec_request", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_PROC_EXEC_RESULT, EVENT_FAMILY_PROC, "proc_exec_result", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_STRING_REPLACE, EVENT_FAMILY_STRING, "string_replace", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_STRING_CONFIGURE, EVENT_FAMILY_STRING, "string_configure", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_STRING_REGEX, EVENT_FAMILY_STRING, "string_regex", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_STRING_HASH, EVENT_FAMILY_STRING, "string_hash", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_STRING_TIMESTAMP, EVENT_FAMILY_STRING, "string_timestamp", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_LIST_APPEND, EVENT_FAMILY_LIST, "list_append", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_LIST_PREPEND, EVENT_FAMILY_LIST, "list_prepend", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_LIST_INSERT, EVENT_FAMILY_LIST, "list_insert", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_LIST_REMOVE, EVENT_FAMILY_LIST, "list_remove", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_LIST_TRANSFORM, EVENT_FAMILY_LIST, "list_transform", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_LIST_SORT, EVENT_FAMILY_LIST, "list_sort", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_MATH_EXPR, EVENT_FAMILY_MATH, "math_expr", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_PATH_NORMALIZE, EVENT_FAMILY_PATH, "path_normalize", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_PATH_COMPARE, EVENT_FAMILY_PATH, "path_compare", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_PATH_CONVERT, EVENT_FAMILY_PATH, "path_convert", EVENT_ROLE_RUNTIME_EFFECT) \
+    X(EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_PROJECT_DECLARE, EVENT_FAMILY_PROJECT, "project_declare", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_PROP_SET, EVENT_FAMILY_TARGET, "target_prop_set", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_LINK_LIBRARIES, EVENT_FAMILY_TARGET, "target_link_libraries", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_LINK_OPTIONS, EVENT_FAMILY_TARGET, "target_link_options", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_LINK_DIRECTORIES, EVENT_FAMILY_TARGET, "target_link_directories", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC)
 
 typedef enum {
-#define DECLARE_EVENT_KIND(kind, family, label) kind,
+#define DECLARE_EVENT_KIND(kind, family, label, roles) kind,
     EVENT_KIND_LIST(DECLARE_EVENT_KIND)
 #undef DECLARE_EVENT_KIND
 } Event_Kind;
@@ -162,6 +175,32 @@ typedef enum {
     EVENT_RETURN_CONTEXT_TOP_LEVEL,
 } Event_Return_Context;
 
+typedef enum {
+    EVENT_COMMAND_DISPATCH_BUILTIN = 0,
+    EVENT_COMMAND_DISPATCH_FUNCTION,
+    EVENT_COMMAND_DISPATCH_MACRO,
+    EVENT_COMMAND_DISPATCH_UNKNOWN,
+} Event_Command_Dispatch_Kind;
+
+typedef enum {
+    EVENT_COMMAND_STATUS_SUCCESS = 0,
+    EVENT_COMMAND_STATUS_ERROR,
+    EVENT_COMMAND_STATUS_UNSUPPORTED,
+} Event_Command_Status;
+
+typedef enum {
+    EVENT_PROPERTY_MUTATE_SET = 0,
+    EVENT_PROPERTY_MUTATE_APPEND_LIST,
+    EVENT_PROPERTY_MUTATE_APPEND_STRING,
+    EVENT_PROPERTY_MUTATE_PREPEND_LIST,
+} Event_Property_Mutate_Op;
+
+typedef enum {
+    EVENT_PROPERTY_MODIFIER_NONE = 0,
+    EVENT_PROPERTY_MODIFIER_BEFORE = 1u << 0,
+    EVENT_PROPERTY_MODIFIER_SYSTEM = 1u << 1,
+} Event_Property_Modifier_Flags;
+
 // Transitional legacy enums still referenced by evaluator modules that have not
 // yet been migrated off the frozen structural contract.
 typedef enum {
@@ -201,6 +240,14 @@ typedef struct {
 } Event_Origin;
 
 typedef struct {
+    Event_Kind kind;
+    Event_Family family;
+    const char *label;
+    uint32_t role_mask;
+    uint16_t default_version;
+} Event_Kind_Meta;
+
+typedef struct {
     Event_Diag_Severity severity;
     String_View component;
     String_View command;
@@ -209,6 +256,39 @@ typedef struct {
     String_View cause;
     String_View hint;
 } Event_Diag;
+
+typedef struct {
+    String_View command_name;
+    Event_Command_Dispatch_Kind dispatch_kind;
+    uint32_t argc;
+} Event_Command_Begin;
+
+typedef struct {
+    String_View command_name;
+    Event_Command_Dispatch_Kind dispatch_kind;
+    uint32_t argc;
+    Event_Command_Status status;
+} Event_Command_End;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+} Event_Directory_Enter;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+} Event_Directory_Leave;
+
+typedef struct {
+    String_View property_name;
+    Event_Property_Mutate_Op op;
+    uint32_t modifier_flags;
+    String_View *items;
+    size_t item_count;
+} Event_Directory_Property_Mutate;
+
+typedef Event_Directory_Property_Mutate Event_Global_Property_Mutate;
 
 typedef struct {
     String_View key;
@@ -627,20 +707,6 @@ typedef struct {
 } Event_Add_Subdirectory_End;
 
 typedef struct {
-    String_View source_dir;
-    String_View binary_dir;
-} Event_Dir_Push;
-
-typedef struct {
-    String_View source_dir;
-    String_View binary_dir;
-} Event_Dir_Pop;
-
-typedef struct {
-    String_View command_name;
-} Event_Command_Call;
-
-typedef struct {
     String_View command_name;
 } Event_Cmake_Language_Call;
 
@@ -654,8 +720,7 @@ typedef struct {
 } Event_Cmake_Language_Defer_Queue;
 
 typedef struct {
-    Event_Family family;
-    uint16_t kind;
+    Event_Kind kind;
     uint16_t version;
     uint32_t flags;
     uint64_t seq;
@@ -668,6 +733,22 @@ typedef struct {
     Event_Header h;
     union {
         Event_Diag diag;
+        Event_Command_Begin command_begin;
+        Event_Command_Begin command_call; // legacy alias
+        Event_Command_End command_end;
+        Event_Include_Begin include_begin;
+        Event_Include_End include_end;
+        Event_Add_Subdirectory_Begin add_subdirectory_begin;
+        Event_Add_Subdirectory_End add_subdirectory_end;
+        Event_Cmake_Language_Call cmake_language_call;
+        Event_Cmake_Language_Eval cmake_language_eval;
+        Event_Cmake_Language_Defer_Queue cmake_language_defer_queue;
+        Event_Directory_Enter directory_enter;
+        Event_Directory_Enter dir_push; // legacy alias
+        Event_Directory_Leave directory_leave;
+        Event_Directory_Leave dir_pop; // legacy alias
+        Event_Directory_Property_Mutate directory_property_mutate;
+        Event_Global_Property_Mutate global_property_mutate;
         Event_Var_Set var_set;
         Event_Var_Unset var_unset;
         Event_Scope_Push scope_push;
@@ -743,22 +824,14 @@ typedef struct {
         Event_Target_Include_Directories target_include_directories;
         Event_Target_Compile_Definitions target_compile_definitions;
         Event_Target_Compile_Options target_compile_options;
-        Event_Include_Begin include_begin;
-        Event_Include_End include_end;
-        Event_Add_Subdirectory_Begin add_subdirectory_begin;
-        Event_Add_Subdirectory_End add_subdirectory_end;
-        Event_Dir_Push dir_push;
-        Event_Dir_Pop dir_pop;
-        Event_Command_Call command_call;
-        Event_Cmake_Language_Call cmake_language_call;
-        Event_Cmake_Language_Eval cmake_language_eval;
-        Event_Cmake_Language_Defer_Queue cmake_language_defer_queue;
     } as;
 } Event;
 
 typedef struct {
+    Arena *arena;
     Event *items;
-    size_t count; // legacy compatibility mirror (equals arena_arr_len(items))
+    size_t count; // compatibility mirror for arena_arr_len(items)
+    uint64_t next_seq;
 } Event_Stream;
 
 typedef struct {
@@ -766,6 +839,10 @@ typedef struct {
     size_t index;
     const Event *current;
 } Event_Stream_Iterator;
+
+typedef Event_Directory_Enter Event_Dir_Push;
+typedef Event_Directory_Leave Event_Dir_Pop;
+typedef Event_Command_Begin Event_Command_Call;
 
 // Transitional compatibility aliases while evaluator modules migrate from the
 // frozen structural IR to the semantic contract.
@@ -795,8 +872,8 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_TARGET_LINK_LIBRARIES EVENT_TARGET_LINK_LIBRARIES
 #define EV_TARGET_LINK_OPTIONS EVENT_TARGET_LINK_OPTIONS
 #define EV_TARGET_LINK_DIRECTORIES EVENT_TARGET_LINK_DIRECTORIES
-#define EV_DIR_PUSH EVENT_DIR_PUSH
-#define EV_DIR_POP EVENT_DIR_POP
+#define EV_DIR_PUSH EVENT_DIRECTORY_ENTER
+#define EV_DIR_POP EVENT_DIRECTORY_LEAVE
 #define EV_TESTING_ENABLE EVENT_TEST_ENABLE
 #define EV_TEST_ADD EVENT_TEST_ADD
 #define EV_INSTALL_ADD_RULE EVENT_INSTALL_RULE_ADD
@@ -804,7 +881,12 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_CPACK_ADD_COMPONENT_GROUP EVENT_CPACK_ADD_COMPONENT_GROUP
 #define EV_CPACK_ADD_COMPONENT EVENT_CPACK_ADD_COMPONENT
 #define EV_FIND_PACKAGE EVENT_PACKAGE_FIND_RESULT
-#define EV_COMMAND_CALL EVENT_COMMAND_CALL
+#define EV_COMMAND_CALL EVENT_COMMAND_BEGIN
+
+// Source compatibility aliases for renamed canonical kinds.
+#define EVENT_DIR_PUSH EVENT_DIRECTORY_ENTER
+#define EVENT_DIR_POP EVENT_DIRECTORY_LEAVE
+#define EVENT_COMMAND_CALL EVENT_COMMAND_BEGIN
 
 // Removed kinds kept as non-emitted sentinels for source compatibility.
 #define EV_CUSTOM_COMMAND_TARGET ((Event_Kind)0x7FF0)
@@ -818,10 +900,13 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_UNKNOWN ((Event_Kind)0x7FFF)
 
 Event_Stream *event_stream_create(Arena *arena);
-bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event ev);
+bool event_stream_push(Event_Stream *stream, const Event *ev);
 Event_Stream_Iterator event_stream_iter(const Event_Stream *stream);
 bool event_stream_next(Event_Stream_Iterator *it);
 
+const Event_Kind_Meta *event_kind_meta(Event_Kind kind);
+bool event_kind_has_role(Event_Kind kind, Event_Role role);
+uint32_t event_kind_role_mask(Event_Kind kind);
 Event_Family event_kind_family(Event_Kind kind);
 const char *event_family_name(Event_Family family);
 const char *event_kind_name(Event_Kind kind);

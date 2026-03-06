@@ -147,9 +147,45 @@ Bulk-first execution rules for Phase F:
 - In particular, do not reintroduce build-IR coupling or child evaluator contexts as side quests.
 - Do not spend the bulk campaign on dispatcher rewrites unless a new blocker proves the current indexed dispatcher insufficient.
 
+### Phase G0 — Event IR Stabilization Before Semantic Promotion
+
+- Before the main semantic-promotion wave starts, run one short Event-IR stabilization pass now that the evaluator has returned to a structurally acceptable baseline.
+- The objective is not to "complete Event IR" in the abstract. The objective is to stop moving the evaluator -> Event IR contract underneath the first semantic-promotion wave.
+
+Recommended stabilization scope:
+
+1. **G0.1 Freeze the base contract**
+   - Freeze `Event_Kind`, family, and role taxonomy for the currently supported evaluator surface.
+   - Freeze the append-only stream API and ownership boundary so `event_stream_push(...)` remains the one deep-copy boundary.
+
+2. **G0.2 Normalize command tracing**
+   - Ensure dispatched commands emit consistent `COMMAND_BEGIN` / `COMMAND_END` framing, including unknown-command and error paths.
+   - Keep trace/diagnostic events distinct from build-semantic events so future consumers do not need to infer intent from mixed payloads.
+
+3. **G0.3 Finish first-class directory/global semantics**
+   - Emit canonical directory/global property mutation events for build-relevant directory state.
+   - Do not rely on synthetic `NOBIFY_GLOBAL_*` variables as the only externally consumable reflection of directory/global semantics.
+
+4. **G0.4 Lock the contract with tests**
+   - Keep contract tests for metadata resolution, stream sequencing, deep-copy ownership, and the core directory/global semantic events.
+   - Add only the minimum extra coverage needed to make future semantic work safe; do not expand into a parallel semantic-promotion campaign.
+
+G0 exit criteria:
+
+- kinds, roles, families, and header/stream ownership rules are no longer changing week to week;
+- command begin/end framing is consistent for dispatched commands;
+- directory/global build semantics are exposed as first-class events instead of only through evaluator-private state;
+- contract tests for Event IR are green and treated as part of the evaluator baseline.
+
+G0 non-goals:
+
+- do not block the roadmap on a hypothetical "complete Event IR" across every family before semantic promotion resumes;
+- do not reintroduce a build model inside the evaluator;
+- do not turn G0 into a second structural-bulk campaign.
+
 ### Phase G — Semantic Promotion After Structural Bulk
 
-- Once the bulk structural campaign returns to a stable green baseline, shift the main effort from moving code to increasing semantic completeness.
+- Once G0 has frozen the evaluator -> Event IR contract enough to stop churning, shift the main effort from moving code to increasing semantic completeness.
 - Promote `PARTIAL` coverage in clusters rather than command-by-command so each wave pays one stabilization cost for one semantic family.
 
 Recommended promotion order:
@@ -179,10 +215,11 @@ Recommended promotion order:
    - Tackle only after the modern/core surfaces above have stabilized.
    - Prioritize wrappers that unblock real projects or reduce compatibility surprise; do not chase perfect historical parity by default.
 
-Phase G working rule:
+Phase G working rules:
 
 - Structural extraction should happen before large semantic-promotion pushes whenever both touch the same code path.
 - The objective is to avoid paying the same regression-fix tax twice: once during movement and again during semantic completion.
+- Do not start a large semantic-promotion wave while the Event IR contract for that same slice is still changing underneath it; finish the bounded G0 stabilization pass first.
 
 ## 4. Acceptance Conditions for This Roadmap
 
@@ -193,3 +230,4 @@ Phase G working rule:
 - Temporary internal breakage is permitted only inside active bulk waves and only until the next stabilization checkpoint.
 - A bulk wave is not complete until the evaluator is functional again and the current verification baseline is green.
 - Structural bulk should reduce future stabilization cost; if a wave adds churn without improving future change velocity, it failed the roadmap intent.
+- G0 is complete only when the Event IR contract is stable enough that Phase G can promote semantics without reopening the same boundary in parallel.

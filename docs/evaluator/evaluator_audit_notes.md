@@ -62,7 +62,7 @@ Historical archive note:
 Snapshot date (workspace): March 6, 2026.
 
 Verification baseline:
-- `./build/nob_v2_test test-evaluator` passes with `passed=105 failed=0` on the March 6, 2026 workspace snapshot.
+- `./build/nob_v2_test test-evaluator` passes with `passed=107 failed=0` on the March 6, 2026 workspace snapshot.
 - local `build/nob_test` is not a source of truth for this audit because `/build` is ignored and stale binaries can predate the post-refactor unit split even when `src_v2/build/nob_test.c` is already current.
 
 Current quantitative baseline:
@@ -109,22 +109,38 @@ Current strengths worth preserving:
 - Phase D6 split `eval_try_compile` into shared helpers plus parse/exec/`try_run` modules while preserving the public API.
 - Phase F5/F6 finished the remaining hotspot tier by moving target property queries, runtime dependency handling, variable parsers, list helpers, `cmake_path()` utilities, and command-line/path helpers into adjacent internal modules while preserving the evaluator baseline.
 - Phase F completed the bulk structural campaign by decomposing the post-D hotspot tier, normalizing the new internal boundaries, and returning the evaluator to a green baseline without reopening dispatcher or context-ownership decisions.
+- The Event IR redesign is now in place, which makes it possible to stabilize the evaluator -> Event IR contract before the next semantic-promotion wave instead of trying to promote semantics while the contract is still moving.
 - The current evaluator suite gives a stable behavioral post-refactor baseline when run through `build/nob_v2_test`.
 
 ## 5. Prioritized Findings
 
 | ID | Severity | Category | Finding (short) |
 |---|---|---|---|
+| F-11 | Medium | Sequencing risk | Semantic promotion should not start as the next large wave until the evaluator -> Event IR contract is stabilized through a bounded pre-G pass. |
 | F-10 | Low | Verification workflow | A stale local `build/nob_test` binary can report false refactor regressions even though the current runner source and `build/nob_v2_test` are aligned. |
 | F-07 | Low | Coverage debt | `PARTIAL` footprint remains high (`43.7%`), concentrated in `ctest_*` and legacy wrappers. |
 
 ## 6. Detailed Findings
 
+### F-11: Semantic promotion sequencing now depends on a short Event IR stabilization pass
+
+Evidence:
+- Phase F completed the structural bulk move, and the evaluator/Event-IR boundary has already been redefined enough that semantic work would otherwise be layered on top of a moving contract.
+- The evaluator now emits first-class Event IR as its canonical output boundary, but the next wave still needs one bounded pass to freeze roles/families, command framing, and directory/global semantic events before broader semantic promotion starts.
+- The build model still does not exist in `src_v2`, so there is no downstream implementation pressure yet to justify an open-ended Event-IR expansion campaign.
+
+Risk:
+- Starting G1/G2/G4 while the Event IR contract for those same slices is still changing would force the team to pay the regression and doc-update tax twice: once for contract churn and again for semantic promotion.
+
+Recommendation:
+- Insert a bounded `G0` stabilization pass before the main semantic-promotion wave.
+- Treat G0 as a gate on contract stability, not as a mandate to complete every Event IR family before Phase G.
+
 ### F-10: Verification workflow drift can come from stale local runner binaries
 
 Evidence:
 - In the March 6, 2026 workspace, `./build/nob_test test-evaluator` can fail at link time against missing symbols from the extracted evaluator units.
-- The current source of `src_v2/build/nob_test.c` already includes the split units, and `./build/nob_v2_test test-evaluator` passes `105/105`.
+- The current source of `src_v2/build/nob_test.c` already includes the split units, and `./build/nob_v2_test test-evaluator` passes `107/107`.
 - `/build` is ignored, so a locally cached runner binary can lag behind source without showing up as a tracked diff.
 
 Risk:
@@ -150,9 +166,12 @@ Recommendation:
 Priority tiers for next engineering/doc pass:
 
 1. P0
-- Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
+- Run a short `G0` Event-IR stabilization pass before broad semantic promotion, then keep the promotion roadmap aligned with `evaluator_coverage_matrix.md` (F-11, F-07).
 
 2. P1
+- Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
+
+3. P2
 - Document or remove ambiguity around stale local runner binaries vs current runner source (`build/nob_test` vs `build/nob_v2_test`) in evaluator verification workflow (F-10).
 
 ## 8. Closed / Documented

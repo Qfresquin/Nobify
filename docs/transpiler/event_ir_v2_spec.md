@@ -1,106 +1,193 @@
-# Event IR Implementation v2 (Normative)
+# Event IR v2 (Normative)
 
 ## 1. Overview
 
-The `event_ir.c` module implements the **canonical data structure** for the communication between the Evaluator and the Build Model Builder. It defines the `Event` types, the stream container, and memory management for event payloads.
+`src_v2/transpiler/event_ir.h` and `src_v2/transpiler/event_ir.c` define the canonical in-memory contract emitted by the evaluator.
 
-**Role:** Pure Data Container. No logic.
+This is no longer a builder-shaped IR. It is the evaluator output contract. A future build-model builder will consume a formal subset of these events.
 
-## 2. Data Structures
+Core properties:
+- one append-only `Event_Stream`
+- per-kind static metadata
+- semantic separation by `Event_Role`, not by multiple streams
+- deep-copy ownership at `event_stream_push(...)`
 
-### 2.1. Event Kinds (`Event_Kind`)
-Defined in `src_v2/transpiler/event_ir.h` through `EVENT_KIND_LIST(...)`.
-*   **Structure:** `EVENT_PROJECT_DECLARE`, `EVENT_TARGET_DECLARE`, `EVENT_TARGET_ADD_SOURCE`, `EVENT_TARGET_LINK_LIBRARIES`, `EVENT_TARGET_INCLUDE_DIRECTORIES`, `EVENT_TARGET_COMPILE_DEFINITIONS`, `EVENT_TARGET_COMPILE_OPTIONS`, `EVENT_TARGET_PROP_SET`.
-*   **Scope/Flow:** `EVENT_SCOPE_PUSH`, `EVENT_SCOPE_POP`, `EVENT_DIR_PUSH`, `EVENT_DIR_POP`, `EVENT_FLOW_*`.
-*   **Variables:** `EVENT_VAR_SET`, `EVENT_VAR_UNSET`.
-*   **Meta bridge:** `EVENT_COMMAND_CALL`, `EVENT_CMAKE_LANGUAGE_*`.
-*   **Diagnostics:** `EVENT_DIAG`.
+## 2. Kind Metadata
 
-### 2.2. Event Payload (`Event`)
-A tagged union structure optimized for size and clarity.
+Every `Event_Kind` has static metadata exposed by:
 
 ```c
-typedef struct {
-    Event_Header h;
-
-    union {
-        Event_Diag diag;
-        Event_Var_Set var_set;
-        Event_Var_Unset var_unset;
-        Event_Scope_Push scope_push;
-        Event_Scope_Pop scope_pop;
-        Event_Project_Declare project_declare;
-        Event_Target_Declare target_declare;
-        Event_Target_Add_Source target_add_source;
-        Event_Target_Link_Libraries target_link_libraries;
-        Event_Target_Include_Directories target_include_directories;
-        Event_Target_Compile_Definitions target_compile_definitions;
-        Event_Target_Compile_Options target_compile_options;
-        Event_Target_Prop_Set target_prop_set;
-        Event_Dir_Push dir_push;
-        Event_Dir_Pop dir_pop;
-        Event_Command_Call command_call;
-        ...
-    } as;
-} Event;
+const Event_Kind_Meta *event_kind_meta(Event_Kind kind);
+bool event_kind_has_role(Event_Kind kind, Event_Role role);
+uint32_t event_kind_role_mask(Event_Kind kind);
 ```
 
-For variable mutation payloads, the canonical semantic contract is:
+`Event_Kind_Meta` carries:
+- `kind`
+- `family`
+- `label`
+- `role_mask`
+- `default_version`
+
+The current role taxonomy is:
+- `EVENT_ROLE_TRACE`
+- `EVENT_ROLE_DIAGNOSTIC`
+- `EVENT_ROLE_RUNTIME_EFFECT`
+- `EVENT_ROLE_STATE`
+- `EVENT_ROLE_BUILD_SEMANTIC`
+
+Consumers must filter by role, not by assumptions about evaluator internals.
+
+## 3. Families and Key Kinds
+
+Current families:
+- `TRACE`
+- `DIAG`
+- `DIRECTORY`
+- `FLOW`
+- `SCOPE`
+- `POLICY`
+- `VAR`
+- `FS`
+- `PROC`
+- `STRING`
+- `LIST`
+- `MATH`
+- `PATH`
+- `PROJECT`
+- `TARGET`
+- `TEST`
+- `INSTALL`
+- `CPACK`
+- `PACKAGE`
+
+Important trace kinds:
+- `EVENT_COMMAND_BEGIN`
+- `EVENT_COMMAND_END`
+- `EVENT_INCLUDE_BEGIN`
+- `EVENT_INCLUDE_END`
+- `EVENT_ADD_SUBDIRECTORY_BEGIN`
+- `EVENT_ADD_SUBDIRECTORY_END`
+- `EVENT_CMAKE_LANGUAGE_*`
+
+Important directory/build-semantic kinds:
+- `EVENT_DIRECTORY_ENTER`
+- `EVENT_DIRECTORY_LEAVE`
+- `EVENT_DIRECTORY_PROPERTY_MUTATE`
+- `EVENT_GLOBAL_PROPERTY_MUTATE`
+
+Important target/build-semantic kinds remain typed:
+- `EVENT_TARGET_DECLARE`
+- `EVENT_TARGET_ADD_SOURCE`
+- `EVENT_TARGET_ADD_DEPENDENCY`
+- `EVENT_TARGET_PROP_SET`
+- `EVENT_TARGET_LINK_LIBRARIES`
+- `EVENT_TARGET_LINK_OPTIONS`
+- `EVENT_TARGET_LINK_DIRECTORIES`
+- `EVENT_TARGET_INCLUDE_DIRECTORIES`
+- `EVENT_TARGET_COMPILE_DEFINITIONS`
+- `EVENT_TARGET_COMPILE_OPTIONS`
+
+## 4. Event Header
+
+`Event_Header` stores only per-instance data:
 
 ```c
 typedef struct {
-    String_View key;
-    String_View value;
-    Event_Var_Target_Kind target_kind; // current, cache, env
-} Event_Var_Set;
+    Event_Kind kind;
+    uint16_t version;
+    uint32_t flags;
+    uint64_t seq;
+    uint32_t scope_depth;
+    uint32_t policy_depth;
+    Event_Origin origin;
+} Event_Header;
 ```
 
-`Event_Command_Call` is the universal command-level breadcrumb emitted for every dispatched command.
+Notes:
+- `family` is not stored in the header anymore; it is derived from `event_kind_meta(kind)`.
+- `seq` is assigned by `event_stream_push(...)` when the caller leaves it as `0`.
+- `version` defaults from kind metadata when the caller leaves it as `0`.
 
-### 2.3. Event Stream (`Event_Stream`)
-A simple dynamic array.
-```c
-typedef struct {
-    Event *items;
-} Event_Stream;
-```
-
-## 3. Memory Management (Refinement D)
-
-### 3.1. Event Arena
-The `Event_Stream` is backed by a dedicated `Arena`.
-*   **Persistence:** This arena must survive until the Builder finishes processing all events.
-*   **Ownership:** The Evaluator writes to it. The Builder reads from it.
-*   **Cleanup:** After the Build Model is frozen (Deep Copy), this arena is destroyed to reclaim memory.
-
-### 3.2. String Copying
-When the Evaluator emits an event, strings (e.g., paths expanded from variables) are often in temporary memory.
-**Rule:** The `event_stream_push` function **must deep copy** `String_View` payloads into the stream's arena to ensure validity.
-
-## 4. Interface
+## 5. Stream Contract
 
 ```c
-// event_ir.h
-
-// Creates a new stream using the provided arena.
-Event_Stream* event_stream_create(Arena *arena);
-
-// Appends an event to the stream. Deep copies string payloads.
-bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event event);
-
-// Iterator for consuming the stream.
-typedef struct {
-    const Event *current;
-    size_t index;
-    const Event_Stream *stream;
-} Event_Stream_Iterator;
-
+Event_Stream *event_stream_create(Arena *arena);
+bool event_stream_push(Event_Stream *stream, const Event *ev);
 Event_Stream_Iterator event_stream_iter(const Event_Stream *stream);
 bool event_stream_next(Event_Stream_Iterator *it);
-
-// Debug helper: Dumps the stream to stdout in human-readable format.
 void event_stream_dump(const Event_Stream *stream);
 ```
 
-## 5. Serialization (Optional Future)
-The simple struct layout allows for easy binary serialization (e.g., dumping events to a file for replay/debugging) if needed later. For v2, in-memory is sufficient.
+`Event_Stream` owns:
+- the backing arena reference
+- the copied payload storage
+- the appended `items`
+- the monotonic `next_seq`
+
+Ordering guarantees:
+- append-only
+- stable stream order equals execution order
+- nested evaluations append into the same stream
+
+## 6. Ownership and Copy Rules
+
+`event_stream_push(...)` is the payload ownership boundary.
+
+Rules:
+- `String_View` payloads are deep-copied into the stream arena
+- `String_View[]` payload arrays are deep-copied into the stream arena
+- stream items remain valid while the stream arena lives
+
+This applies in particular to:
+- `EVENT_FLOW_RETURN.propagate_vars`
+- `EVENT_DIRECTORY_PROPERTY_MUTATE.items`
+- `EVENT_GLOBAL_PROPERTY_MUTATE.items`
+
+## 7. Command Trace Contract
+
+Dispatched commands are represented by:
+- `EVENT_COMMAND_BEGIN`
+- `EVENT_COMMAND_END`
+
+Payload fields:
+- `command_name`
+- `dispatch_kind`: `builtin`, `function`, `macro`, `unknown`
+- `argc`
+- end-only `status`: `success`, `error`, `unsupported`
+
+`EVENT_COMMAND_BEGIN/END` are trace events. They are not a substitute for diagnostic events or semantic build events.
+
+## 8. Directory Property Mutation Contract
+
+Directory/global build-semantics that used to be hidden behind evaluator-private variables must now be represented by first-class events.
+
+`EVENT_DIRECTORY_PROPERTY_MUTATE` and `EVENT_GLOBAL_PROPERTY_MUTATE` carry:
+- `property_name`
+- `op`
+- `modifier_flags`
+- `items[]`
+
+Current mutation ops:
+- `SET`
+- `APPEND_LIST`
+- `APPEND_STRING`
+- `PREPEND_LIST`
+
+Current modifier flags:
+- `BEFORE`
+- `SYSTEM`
+
+These events are the canonical way for future consumers to observe directory/global build semantics.
+
+## 9. Consumer Guidance
+
+Consumers should:
+- derive family from `event_kind_meta(...)`
+- filter by `Event_Role`
+- rely on stream order or `h.seq`, not evaluator internals
+- treat unknown kinds as forward-compatible additions
+
+Future builder guidance:
+- consume only `EVENT_ROLE_BUILD_SEMANTIC`
+- ignore trace/diagnostic events unless explicitly needed for tooling

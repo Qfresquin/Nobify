@@ -141,7 +141,7 @@ Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
     ev.as.diag.error_class = sv_copy_to_event_arena(ctx, eval_error_class_to_sv(cls));
     ev.as.diag.cause = sv_copy_to_event_arena(ctx, cause);
     ev.as.diag.hint = sv_copy_to_event_arena(ctx, hint);
-    if (!event_stream_push(ctx->event_arena, ctx->stream, ev)) {
+    if (!event_stream_push(ctx->stream, &ev)) {
         (void)ctx_oom(ctx);
         return eval_result_fatal();
     }

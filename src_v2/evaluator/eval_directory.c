@@ -134,6 +134,24 @@ static bool split_definition_flag(String_View item, String_View *out_definition)
     return true;
 }
 
+static bool emit_directory_property_items(Evaluator_Context *ctx,
+                                          Event_Origin origin,
+                                          const char *property_name,
+                                          Event_Property_Mutate_Op op,
+                                          uint32_t modifier_flags,
+                                          const SV_List *items) {
+    if (!ctx || !items) return false;
+    size_t count = arena_arr_len(*items);
+    if (count == 0) return true;
+    return eval_emit_directory_property_mutate(ctx,
+                                               origin,
+                                               nob_sv_from_cstr(property_name),
+                                               op,
+                                               modifier_flags,
+                                               *items,
+                                               count);
+}
+
 static size_t gfc_last_separator_index(String_View path) {
     for (size_t i = path.count; i > 0; i--) {
         if (svu_is_path_sep(path.data[i - 1])) return i - 1;
@@ -409,7 +427,7 @@ static bool expand_link_option_token(Evaluator_Context *ctx, String_View tok, SV
 }
 
 Eval_Result eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
-    (void)node;
+    Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
@@ -429,6 +447,14 @@ Eval_Result eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
+    }
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "COMPILE_OPTIONS",
+                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       EVENT_PROPERTY_MODIFIER_NONE,
+                                       &unique)) {
+        return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
 }
@@ -452,6 +478,14 @@ Eval_Result eval_handle_add_compile_definitions(Evaluator_Context *ctx, const No
         if (!added) continue;
         if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return eval_result_fatal();
     }
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "COMPILE_DEFINITIONS",
+                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       EVENT_PROPERTY_MODIFIER_NONE,
+                                       &unique)) {
+        return eval_result_fatal();
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -459,6 +493,9 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    SV_List emitted_defs = {0};
+    SV_List emitted_opts = {0};
 
     for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View item = a[i];
@@ -470,6 +507,7 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
             bool added = false;
             if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return eval_result_fatal();
             if (!added) continue;
+            if (!svu_list_push_temp(ctx, &emitted_defs, definition)) return eval_result_from_ctx(ctx);
             if (!emit_compile_definition_to_current_file_targets(ctx, o, definition)) return eval_result_fatal();
             continue;
         }
@@ -477,7 +515,25 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), item, &added)) return eval_result_fatal();
         if (!added) continue;
+        if (!svu_list_push_temp(ctx, &emitted_opts, item)) return eval_result_from_ctx(ctx);
         if (!emit_compile_option_to_current_file_targets(ctx, o, item)) return eval_result_fatal();
+    }
+
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "COMPILE_DEFINITIONS",
+                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       EVENT_PROPERTY_MODIFIER_NONE,
+                                       &emitted_defs)) {
+        return eval_result_fatal();
+    }
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "COMPILE_OPTIONS",
+                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       EVENT_PROPERTY_MODIFIER_NONE,
+                                       &emitted_opts)) {
+        return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
 }
@@ -549,6 +605,14 @@ Eval_Result eval_handle_add_link_options(Evaluator_Context *ctx, const Node *nod
         if (!added) continue;
         (void)o;
     }
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "LINK_OPTIONS",
+                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       EVENT_PROPERTY_MODIFIER_NONE,
+                                       &unique)) {
+        return eval_result_fatal();
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -591,10 +655,12 @@ Eval_Result eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node)
 }
 
 Eval_Result eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
+    Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     String_View cur_src = eval_current_source_dir(ctx);
+    SV_List resolved_items = {0};
 
     bool is_system = false;
     bool is_before = false;
@@ -614,18 +680,28 @@ Eval_Result eval_handle_include_directories(Evaluator_Context *ctx, const Node *
 
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        (void)resolved;
-        (void)is_system;
-        (void)is_before;
+        if (!svu_list_push_temp(ctx, &resolved_items, resolved)) return eval_result_from_ctx(ctx);
+    }
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "INCLUDE_DIRECTORIES",
+                                       is_before ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                                 : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       (is_before ? EVENT_PROPERTY_MODIFIER_BEFORE : EVENT_PROPERTY_MODIFIER_NONE) |
+                                           (is_system ? EVENT_PROPERTY_MODIFIER_SYSTEM : EVENT_PROPERTY_MODIFIER_NONE),
+                                       &resolved_items)) {
+        return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
+    Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     String_View cur_src = eval_current_source_dir(ctx);
+    SV_List resolved_items = {0};
 
     bool is_before = false;
     for (size_t i = 0; i < arena_arr_len(a); i++) {
@@ -640,8 +716,16 @@ Eval_Result eval_handle_link_directories(Evaluator_Context *ctx, const Node *nod
 
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        (void)resolved;
-        (void)is_before;
+        if (!svu_list_push_temp(ctx, &resolved_items, resolved)) return eval_result_from_ctx(ctx);
+    }
+    if (!emit_directory_property_items(ctx,
+                                       o,
+                                       "LINK_DIRECTORIES",
+                                       is_before ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                                 : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                       is_before ? EVENT_PROPERTY_MODIFIER_BEFORE : EVENT_PROPERTY_MODIFIER_NONE,
+                                       &resolved_items)) {
+        return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
 }

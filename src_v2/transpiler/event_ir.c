@@ -37,13 +37,48 @@ static bool event_copy_sv_array_inplace(Arena *arena, String_View **items, size_
     return true;
 }
 
+static bool event_copy_property_mutate_inplace(Arena *arena, Event_Directory_Property_Mutate *mut) {
+    if (!arena || !mut) return false;
+    if (!event_copy_sv_inplace(arena, &mut->property_name)) return false;
+    if (!event_copy_sv_array_inplace(arena, &mut->items, mut->item_count)) return false;
+    return true;
+}
+
 static const char *event_var_target_name(Event_Var_Target_Kind target_kind) {
     switch (target_kind) {
         case EVENT_VAR_TARGET_CURRENT: return "current";
         case EVENT_VAR_TARGET_CACHE: return "cache";
         case EVENT_VAR_TARGET_ENV: return "env";
     }
+    return "unknown";
+}
 
+static const char *event_command_dispatch_name(Event_Command_Dispatch_Kind kind) {
+    switch (kind) {
+        case EVENT_COMMAND_DISPATCH_BUILTIN: return "builtin";
+        case EVENT_COMMAND_DISPATCH_FUNCTION: return "function";
+        case EVENT_COMMAND_DISPATCH_MACRO: return "macro";
+        case EVENT_COMMAND_DISPATCH_UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+static const char *event_command_status_name(Event_Command_Status status) {
+    switch (status) {
+        case EVENT_COMMAND_STATUS_SUCCESS: return "success";
+        case EVENT_COMMAND_STATUS_ERROR: return "error";
+        case EVENT_COMMAND_STATUS_UNSUPPORTED: return "unsupported";
+    }
+    return "unknown";
+}
+
+static const char *event_property_mutate_op_name(Event_Property_Mutate_Op op) {
+    switch (op) {
+        case EVENT_PROPERTY_MUTATE_SET: return "set";
+        case EVENT_PROPERTY_MUTATE_APPEND_LIST: return "append_list";
+        case EVENT_PROPERTY_MUTATE_APPEND_STRING: return "append_string";
+        case EVENT_PROPERTY_MUTATE_PREPEND_LIST: return "prepend_list";
+    }
     return "unknown";
 }
 
@@ -51,7 +86,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
     if (!arena || !ev) return false;
     if (!event_copy_sv_inplace(arena, &ev->h.origin.file_path)) return false;
 
-    switch ((Event_Kind) ev->h.kind) {
+    switch (ev->h.kind) {
         case EVENT_DIAG:
             if (!event_copy_sv_inplace(arena, &ev->as.diag.component)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.diag.command)) return false;
@@ -61,11 +96,57 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.diag.hint)) return false;
             break;
 
+        case EVENT_COMMAND_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.command_begin.command_name)) return false;
+            break;
+        case EVENT_COMMAND_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.command_end.command_name)) return false;
+            break;
+
+        case EVENT_INCLUDE_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.include_begin.path)) return false;
+            break;
+        case EVENT_INCLUDE_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.include_end.path)) return false;
+            break;
+        case EVENT_ADD_SUBDIRECTORY_BEGIN:
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_begin.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_begin.binary_dir)) return false;
+            break;
+        case EVENT_ADD_SUBDIRECTORY_END:
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_end.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_end.binary_dir)) return false;
+            break;
+        case EVENT_CMAKE_LANGUAGE_CALL:
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_call.command_name)) return false;
+            break;
+        case EVENT_CMAKE_LANGUAGE_EVAL:
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_eval.code)) return false;
+            break;
+        case EVENT_CMAKE_LANGUAGE_DEFER_QUEUE:
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_defer_queue.defer_id)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_defer_queue.command_name)) return false;
+            break;
+
+        case EVENT_DIRECTORY_ENTER:
+            if (!event_copy_sv_inplace(arena, &ev->as.directory_enter.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.directory_enter.binary_dir)) return false;
+            break;
+        case EVENT_DIRECTORY_LEAVE:
+            if (!event_copy_sv_inplace(arena, &ev->as.directory_leave.source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.directory_leave.binary_dir)) return false;
+            break;
+        case EVENT_DIRECTORY_PROPERTY_MUTATE:
+            if (!event_copy_property_mutate_inplace(arena, &ev->as.directory_property_mutate)) return false;
+            break;
+        case EVENT_GLOBAL_PROPERTY_MUTATE:
+            if (!event_copy_property_mutate_inplace(arena, &ev->as.global_property_mutate)) return false;
+            break;
+
         case EVENT_VAR_SET:
             if (!event_copy_sv_inplace(arena, &ev->as.var_set.key)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.var_set.value)) return false;
             break;
-
         case EVENT_VAR_UNSET:
             if (!event_copy_sv_inplace(arena, &ev->as.var_unset.key)) return false;
             break;
@@ -74,6 +155,13 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_SCOPE_POP:
         case EVENT_POLICY_PUSH:
         case EVENT_POLICY_POP:
+        case EVENT_FLOW_IF_EVAL:
+        case EVENT_FLOW_BREAK:
+        case EVENT_FLOW_CONTINUE:
+        case EVENT_FLOW_DEFER_FLUSH:
+        case EVENT_FLOW_BLOCK_BEGIN:
+        case EVENT_FLOW_BLOCK_END:
+        case EVENT_TEST_ENABLE:
             break;
 
         case EVENT_POLICY_SET:
@@ -84,13 +172,6 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_array_inplace(arena,
                                              &ev->as.flow_return.propagate_vars,
                                              ev->as.flow_return.propagate_count)) return false;
-            break;
-        case EVENT_FLOW_IF_EVAL:
-        case EVENT_FLOW_BREAK:
-        case EVENT_FLOW_CONTINUE:
-        case EVENT_FLOW_DEFER_FLUSH:
-        case EVENT_FLOW_BLOCK_BEGIN:
-        case EVENT_FLOW_BLOCK_END:
             break;
         case EVENT_FLOW_BRANCH_TAKEN:
             if (!event_copy_sv_inplace(arena, &ev->as.flow_branch_taken.branch_kind)) return false;
@@ -168,6 +249,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.fs_transfer_upload.source)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.fs_transfer_upload.destination)) return false;
             break;
+
         case EVENT_PROC_EXEC_REQUEST:
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_request.command)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_request.working_directory)) return false;
@@ -178,6 +260,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.stdout_text)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.proc_exec_result.stderr_text)) return false;
             break;
+
         case EVENT_STRING_REPLACE:
             if (!event_copy_sv_inplace(arena, &ev->as.string_replace.out_var)) return false;
             break;
@@ -195,6 +278,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_STRING_TIMESTAMP:
             if (!event_copy_sv_inplace(arena, &ev->as.string_timestamp.out_var)) return false;
             break;
+
         case EVENT_LIST_APPEND:
             if (!event_copy_sv_inplace(arena, &ev->as.list_append.list_var)) return false;
             break;
@@ -213,6 +297,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_LIST_SORT:
             if (!event_copy_sv_inplace(arena, &ev->as.list_sort.list_var)) return false;
             break;
+
         case EVENT_MATH_EXPR:
             if (!event_copy_sv_inplace(arena, &ev->as.math_expr.out_var)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.math_expr.format)) return false;
@@ -227,32 +312,25 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.path_convert.out_var)) return false;
             break;
 
-        case EVENT_TEST_ENABLE:
-            break;
-
         case EVENT_TEST_ADD:
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.command)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.working_dir)) return false;
             break;
-
         case EVENT_INSTALL_RULE_ADD:
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.item)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.destination)) return false;
             break;
-
         case EVENT_CPACK_ADD_INSTALL_TYPE:
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.display_name)) return false;
             break;
-
         case EVENT_CPACK_ADD_COMPONENT_GROUP:
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.display_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.description)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component_group.parent_group)) return false;
             break;
-
         case EVENT_CPACK_ADD_COMPONENT:
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.display_name)) return false;
@@ -263,13 +341,11 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.archive_file)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_component.plist)) return false;
             break;
-
         case EVENT_PACKAGE_FIND_RESULT:
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.package_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.mode)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.found_path)) return false;
             break;
-
         case EVENT_PROJECT_DECLARE:
             if (!event_copy_sv_inplace(arena, &ev->as.project_declare.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.project_declare.version)) return false;
@@ -277,128 +353,91 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.project_declare.homepage_url)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.project_declare.languages)) return false;
             break;
-
         case EVENT_PROJECT_MINIMUM_REQUIRED:
             if (!event_copy_sv_inplace(arena, &ev->as.project_minimum_required.version)) return false;
             break;
-
         case EVENT_TARGET_DECLARE:
             if (!event_copy_sv_inplace(arena, &ev->as.target_declare.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_declare.alias_of)) return false;
             break;
-
         case EVENT_TARGET_ADD_SOURCE:
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.path)) return false;
             break;
-
         case EVENT_TARGET_ADD_DEPENDENCY:
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.dependency_name)) return false;
             break;
-
         case EVENT_TARGET_PROP_SET:
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.key)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.value)) return false;
             break;
-
         case EVENT_TARGET_LINK_LIBRARIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.item)) return false;
             break;
-
         case EVENT_TARGET_LINK_OPTIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.item)) return false;
             break;
-
         case EVENT_TARGET_LINK_DIRECTORIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_directories.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_directories.path)) return false;
             break;
-
         case EVENT_TARGET_INCLUDE_DIRECTORIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_include_directories.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_include_directories.path)) return false;
             break;
-
         case EVENT_TARGET_COMPILE_DEFINITIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_definitions.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_definitions.item)) return false;
             break;
-
         case EVENT_TARGET_COMPILE_OPTIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.item)) return false;
-            break;
-
-        case EVENT_INCLUDE_BEGIN:
-            if (!event_copy_sv_inplace(arena, &ev->as.include_begin.path)) return false;
-            break;
-
-        case EVENT_INCLUDE_END:
-            if (!event_copy_sv_inplace(arena, &ev->as.include_end.path)) return false;
-            break;
-
-        case EVENT_ADD_SUBDIRECTORY_BEGIN:
-            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_begin.source_dir)) return false;
-            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_begin.binary_dir)) return false;
-            break;
-
-        case EVENT_ADD_SUBDIRECTORY_END:
-            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_end.source_dir)) return false;
-            if (!event_copy_sv_inplace(arena, &ev->as.add_subdirectory_end.binary_dir)) return false;
-            break;
-
-        case EVENT_DIR_PUSH:
-            if (!event_copy_sv_inplace(arena, &ev->as.dir_push.source_dir)) return false;
-            if (!event_copy_sv_inplace(arena, &ev->as.dir_push.binary_dir)) return false;
-            break;
-
-        case EVENT_DIR_POP:
-            if (!event_copy_sv_inplace(arena, &ev->as.dir_pop.source_dir)) return false;
-            if (!event_copy_sv_inplace(arena, &ev->as.dir_pop.binary_dir)) return false;
-            break;
-
-        case EVENT_COMMAND_CALL:
-            if (!event_copy_sv_inplace(arena, &ev->as.command_call.command_name)) return false;
-            break;
-
-        case EVENT_CMAKE_LANGUAGE_CALL:
-            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_call.command_name)) return false;
-            break;
-
-        case EVENT_CMAKE_LANGUAGE_EVAL:
-            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_eval.code)) return false;
-            break;
-
-        case EVENT_CMAKE_LANGUAGE_DEFER_QUEUE:
-            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_defer_queue.defer_id)) return false;
-            if (!event_copy_sv_inplace(arena, &ev->as.cmake_language_defer_queue.command_name)) return false;
             break;
     }
 
     return true;
 }
 
+static const Event_Kind_Meta k_event_kind_meta[] = {
+#define DEFINE_EVENT_KIND_META(kind, family, label, roles) \
+    [kind] = {kind, family, label, (uint32_t)(roles), 1},
+    EVENT_KIND_LIST(DEFINE_EVENT_KIND_META)
+#undef DEFINE_EVENT_KIND_META
+};
+
 Event_Stream *event_stream_create(Arena *arena) {
     if (!arena) return NULL;
     Event_Stream *stream = arena_alloc_zero(arena, sizeof(Event_Stream));
     if (!stream) return NULL;
+    stream->arena = arena;
     stream->count = 0;
+    stream->next_seq = 1;
     return stream;
 }
 
-bool event_stream_push(Arena *event_arena, Event_Stream *stream, Event ev) {
-    if (!event_arena || !stream) return false;
+bool event_stream_push(Event_Stream *stream, const Event *src) {
+    if (!stream || !stream->arena || !src) return false;
 
-    ev.h.family = event_kind_family((Event_Kind) ev.h.kind);
-    if (ev.h.version == 0) ev.h.version = 1;
+    Event ev = *src;
+    const Event_Kind_Meta *meta = event_kind_meta(ev.h.kind);
+    if (ev.h.version == 0) {
+        ev.h.version = meta ? meta->default_version : 1;
+    }
+    if (ev.h.seq == 0) {
+        ev.h.seq = stream->next_seq;
+    }
 
-    if (!event_deep_copy_payload(event_arena, &ev)) return false;
-    if (!arena_arr_push(event_arena, stream->items, ev)) return false;
+    if (!event_deep_copy_payload(stream->arena, &ev)) return false;
+    if (!arena_arr_push(stream->arena, stream->items, ev)) return false;
+
     stream->count = arena_arr_len(stream->items);
+    if (stream->next_seq <= ev.h.seq) {
+        stream->next_seq = ev.h.seq + 1;
+    }
     return true;
 }
 
@@ -419,14 +458,27 @@ bool event_stream_next(Event_Stream_Iterator *it) {
     return true;
 }
 
-Event_Family event_kind_family(Event_Kind kind) {
-    switch (kind) {
-#define EVENT_KIND_FAMILY_CASE(kind, family, label) case kind: return family;
-        EVENT_KIND_LIST(EVENT_KIND_FAMILY_CASE)
-#undef EVENT_KIND_FAMILY_CASE
-    }
+const Event_Kind_Meta *event_kind_meta(Event_Kind kind) {
+    size_t count = sizeof(k_event_kind_meta) / sizeof(k_event_kind_meta[0]);
+    if ((size_t)kind >= count) return NULL;
+    if (k_event_kind_meta[kind].label == NULL) return NULL;
+    return &k_event_kind_meta[kind];
+}
 
-    return EVENT_FAMILY_DIAG;
+bool event_kind_has_role(Event_Kind kind, Event_Role role) {
+    const Event_Kind_Meta *meta = event_kind_meta(kind);
+    if (!meta) return false;
+    return (meta->role_mask & (uint32_t)role) != 0;
+}
+
+uint32_t event_kind_role_mask(Event_Kind kind) {
+    const Event_Kind_Meta *meta = event_kind_meta(kind);
+    return meta ? meta->role_mask : 0;
+}
+
+Event_Family event_kind_family(Event_Kind kind) {
+    const Event_Kind_Meta *meta = event_kind_meta(kind);
+    return meta ? meta->family : EVENT_FAMILY_DIAG;
 }
 
 const char *event_family_name(Event_Family family) {
@@ -435,461 +487,176 @@ const char *event_family_name(Event_Family family) {
         EVENT_FAMILY_LIST(EVENT_FAMILY_CASE)
 #undef EVENT_FAMILY_CASE
     }
-
     return "unknown_family";
 }
 
 const char *event_kind_name(Event_Kind kind) {
-    switch (kind) {
-#define EVENT_KIND_NAME_CASE(kind, family, label) case kind: return label;
-        EVENT_KIND_LIST(EVENT_KIND_NAME_CASE)
-#undef EVENT_KIND_NAME_CASE
-    }
-
-    return "unknown_event";
+    const Event_Kind_Meta *meta = event_kind_meta(kind);
+    return meta ? meta->label : "unknown_event";
 }
 
 static void event_dump_one(const Event *ev) {
     if (!ev) return;
 
+    Event_Family family = event_kind_family(ev->h.kind);
     printf("[%llu] %s/%s @ %.*s:%zu:%zu",
-           (unsigned long long) ev->h.seq,
-           event_family_name(ev->h.family),
-           event_kind_name((Event_Kind) ev->h.kind),
-           (int) ev->h.origin.file_path.count,
+           (unsigned long long)ev->h.seq,
+           event_family_name(family),
+           event_kind_name(ev->h.kind),
+           (int)ev->h.origin.file_path.count,
            ev->h.origin.file_path.data ? ev->h.origin.file_path.data : "",
            ev->h.origin.line,
            ev->h.origin.col);
 
-    switch ((Event_Kind) ev->h.kind) {
+    switch (ev->h.kind) {
         case EVENT_DIAG:
             printf(" severity=%d code=%.*s",
-                   (int) ev->as.diag.severity,
-                   (int) ev->as.diag.code.count,
+                   (int)ev->as.diag.severity,
+                   (int)ev->as.diag.code.count,
                    ev->as.diag.code.data ? ev->as.diag.code.data : "");
+            break;
+
+        case EVENT_COMMAND_BEGIN:
+            printf(" command=%.*s dispatch=%s argc=%u",
+                   (int)ev->as.command_begin.command_name.count,
+                   ev->as.command_begin.command_name.data ? ev->as.command_begin.command_name.data : "",
+                   event_command_dispatch_name(ev->as.command_begin.dispatch_kind),
+                   (unsigned)ev->as.command_begin.argc);
+            break;
+        case EVENT_COMMAND_END:
+            printf(" command=%.*s dispatch=%s argc=%u status=%s",
+                   (int)ev->as.command_end.command_name.count,
+                   ev->as.command_end.command_name.data ? ev->as.command_end.command_name.data : "",
+                   event_command_dispatch_name(ev->as.command_end.dispatch_kind),
+                   (unsigned)ev->as.command_end.argc,
+                   event_command_status_name(ev->as.command_end.status));
+            break;
+
+        case EVENT_DIRECTORY_ENTER:
+            printf(" source_dir=%.*s binary_dir=%.*s",
+                   (int)ev->as.directory_enter.source_dir.count,
+                   ev->as.directory_enter.source_dir.data ? ev->as.directory_enter.source_dir.data : "",
+                   (int)ev->as.directory_enter.binary_dir.count,
+                   ev->as.directory_enter.binary_dir.data ? ev->as.directory_enter.binary_dir.data : "");
+            break;
+        case EVENT_DIRECTORY_LEAVE:
+            printf(" source_dir=%.*s binary_dir=%.*s",
+                   (int)ev->as.directory_leave.source_dir.count,
+                   ev->as.directory_leave.source_dir.data ? ev->as.directory_leave.source_dir.data : "",
+                   (int)ev->as.directory_leave.binary_dir.count,
+                   ev->as.directory_leave.binary_dir.data ? ev->as.directory_leave.binary_dir.data : "");
+            break;
+        case EVENT_DIRECTORY_PROPERTY_MUTATE:
+            printf(" property=%.*s op=%s items=%zu modifiers=0x%x",
+                   (int)ev->as.directory_property_mutate.property_name.count,
+                   ev->as.directory_property_mutate.property_name.data ? ev->as.directory_property_mutate.property_name.data : "",
+                   event_property_mutate_op_name(ev->as.directory_property_mutate.op),
+                   ev->as.directory_property_mutate.item_count,
+                   (unsigned)ev->as.directory_property_mutate.modifier_flags);
+            break;
+        case EVENT_GLOBAL_PROPERTY_MUTATE:
+            printf(" property=%.*s op=%s items=%zu modifiers=0x%x",
+                   (int)ev->as.global_property_mutate.property_name.count,
+                   ev->as.global_property_mutate.property_name.data ? ev->as.global_property_mutate.property_name.data : "",
+                   event_property_mutate_op_name(ev->as.global_property_mutate.op),
+                   ev->as.global_property_mutate.item_count,
+                   (unsigned)ev->as.global_property_mutate.modifier_flags);
             break;
 
         case EVENT_VAR_SET:
             printf(" key=%.*s target=%s",
-                   (int) ev->as.var_set.key.count,
+                   (int)ev->as.var_set.key.count,
                    ev->as.var_set.key.data ? ev->as.var_set.key.data : "",
                    event_var_target_name(ev->as.var_set.target_kind));
             break;
-
         case EVENT_VAR_UNSET:
             printf(" key=%.*s target=%s",
-                   (int) ev->as.var_unset.key.count,
+                   (int)ev->as.var_unset.key.count,
                    ev->as.var_unset.key.data ? ev->as.var_unset.key.data : "",
                    event_var_target_name(ev->as.var_unset.target_kind));
             break;
 
-        case EVENT_SCOPE_PUSH:
-        case EVENT_SCOPE_POP:
-        case EVENT_POLICY_PUSH:
-        case EVENT_POLICY_POP:
-            break;
-
-        case EVENT_POLICY_SET:
-            printf(" policy=%.*s",
-                   (int) ev->as.policy_set.policy_id.count,
-                   ev->as.policy_set.policy_id.data ? ev->as.policy_set.policy_id.data : "");
-            break;
-
-        case EVENT_FLOW_RETURN:
-            printf(" propagate=%zu", ev->as.flow_return.propagate_count);
-            break;
-        case EVENT_FLOW_IF_EVAL:
-            printf(" result=%s", ev->as.flow_if_eval.result ? "true" : "false");
-            break;
-        case EVENT_FLOW_BRANCH_TAKEN:
-            printf(" branch=%.*s",
-                   (int) ev->as.flow_branch_taken.branch_kind.count,
-                   ev->as.flow_branch_taken.branch_kind.data ? ev->as.flow_branch_taken.branch_kind.data : "");
-            break;
-        case EVENT_FLOW_LOOP_BEGIN:
-            printf(" loop=%.*s",
-                   (int) ev->as.flow_loop_begin.loop_kind.count,
-                   ev->as.flow_loop_begin.loop_kind.data ? ev->as.flow_loop_begin.loop_kind.data : "");
-            break;
-        case EVENT_FLOW_LOOP_END:
-            printf(" iterations=%u", (unsigned) ev->as.flow_loop_end.iterations);
-            break;
-        case EVENT_FLOW_BREAK:
-            printf(" depth=%u", (unsigned) ev->as.flow_break.loop_depth);
-            break;
-        case EVENT_FLOW_CONTINUE:
-            printf(" depth=%u", (unsigned) ev->as.flow_continue.loop_depth);
-            break;
-        case EVENT_FLOW_DEFER_QUEUE:
-            printf(" command=%.*s",
-                   (int) ev->as.flow_defer_queue.command_name.count,
-                   ev->as.flow_defer_queue.command_name.data ? ev->as.flow_defer_queue.command_name.data : "");
-            break;
-        case EVENT_FLOW_DEFER_FLUSH:
-            printf(" count=%u", (unsigned) ev->as.flow_defer_flush.call_count);
-            break;
-        case EVENT_FLOW_BLOCK_BEGIN:
-            printf(" var_scope=%s policy_scope=%s propagate=%s",
-                   ev->as.flow_block_begin.variable_scope_pushed ? "true" : "false",
-                   ev->as.flow_block_begin.policy_scope_pushed ? "true" : "false",
-                   ev->as.flow_block_begin.has_propagate_vars ? "true" : "false");
-            break;
-        case EVENT_FLOW_BLOCK_END:
-            printf(" propagate_on_return=%s propagate=%s",
-                   ev->as.flow_block_end.propagate_on_return ? "true" : "false",
-                   ev->as.flow_block_end.had_propagate_vars ? "true" : "false");
-            break;
-        case EVENT_FLOW_FUNCTION_BEGIN:
-            printf(" name=%.*s argc=%u",
-                   (int) ev->as.flow_function_begin.name.count,
-                   ev->as.flow_function_begin.name.data ? ev->as.flow_function_begin.name.data : "",
-                   (unsigned) ev->as.flow_function_begin.argc);
-            break;
-        case EVENT_FLOW_FUNCTION_END:
-            printf(" name=%.*s returned=%s",
-                   (int) ev->as.flow_function_end.name.count,
-                   ev->as.flow_function_end.name.data ? ev->as.flow_function_end.name.data : "",
-                   ev->as.flow_function_end.returned ? "true" : "false");
-            break;
-        case EVENT_FLOW_MACRO_BEGIN:
-            printf(" name=%.*s argc=%u",
-                   (int) ev->as.flow_macro_begin.name.count,
-                   ev->as.flow_macro_begin.name.data ? ev->as.flow_macro_begin.name.data : "",
-                   (unsigned) ev->as.flow_macro_begin.argc);
-            break;
-        case EVENT_FLOW_MACRO_END:
-            printf(" name=%.*s returned=%s",
-                   (int) ev->as.flow_macro_end.name.count,
-                   ev->as.flow_macro_end.name.data ? ev->as.flow_macro_end.name.data : "",
-                   ev->as.flow_macro_end.returned ? "true" : "false");
-            break;
-
-        case EVENT_FS_WRITE_FILE:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_write_file.path.count,
-                   ev->as.fs_write_file.path.data ? ev->as.fs_write_file.path.data : "");
-            break;
-        case EVENT_FS_APPEND_FILE:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_append_file.path.count,
-                   ev->as.fs_append_file.path.data ? ev->as.fs_append_file.path.data : "");
-            break;
-        case EVENT_FS_READ_FILE:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_read_file.path.count,
-                   ev->as.fs_read_file.path.data ? ev->as.fs_read_file.path.data : "");
-            break;
-        case EVENT_FS_GLOB:
-            printf(" base=%.*s",
-                   (int) ev->as.fs_glob.base_dir.count,
-                   ev->as.fs_glob.base_dir.data ? ev->as.fs_glob.base_dir.data : "");
-            break;
-        case EVENT_FS_MKDIR:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_mkdir.path.count,
-                   ev->as.fs_mkdir.path.data ? ev->as.fs_mkdir.path.data : "");
-            break;
-        case EVENT_FS_REMOVE:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_remove.path.count,
-                   ev->as.fs_remove.path.data ? ev->as.fs_remove.path.data : "");
-            break;
-        case EVENT_FS_COPY:
-            printf(" src=%.*s",
-                   (int) ev->as.fs_copy.source.count,
-                   ev->as.fs_copy.source.data ? ev->as.fs_copy.source.data : "");
-            break;
-        case EVENT_FS_RENAME:
-            printf(" src=%.*s",
-                   (int) ev->as.fs_rename.source.count,
-                   ev->as.fs_rename.source.data ? ev->as.fs_rename.source.data : "");
-            break;
-        case EVENT_FS_CREATE_LINK:
-            printf(" src=%.*s",
-                   (int) ev->as.fs_create_link.source.count,
-                   ev->as.fs_create_link.source.data ? ev->as.fs_create_link.source.data : "");
-            break;
-        case EVENT_FS_CHMOD:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_chmod.path.count,
-                   ev->as.fs_chmod.path.data ? ev->as.fs_chmod.path.data : "");
-            break;
-        case EVENT_FS_ARCHIVE_CREATE:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_archive_create.path.count,
-                   ev->as.fs_archive_create.path.data ? ev->as.fs_archive_create.path.data : "");
-            break;
-        case EVENT_FS_ARCHIVE_EXTRACT:
-            printf(" path=%.*s",
-                   (int) ev->as.fs_archive_extract.path.count,
-                   ev->as.fs_archive_extract.path.data ? ev->as.fs_archive_extract.path.data : "");
-            break;
-        case EVENT_FS_TRANSFER_DOWNLOAD:
-            printf(" src=%.*s",
-                   (int) ev->as.fs_transfer_download.source.count,
-                   ev->as.fs_transfer_download.source.data ? ev->as.fs_transfer_download.source.data : "");
-            break;
-        case EVENT_FS_TRANSFER_UPLOAD:
-            printf(" src=%.*s",
-                   (int) ev->as.fs_transfer_upload.source.count,
-                   ev->as.fs_transfer_upload.source.data ? ev->as.fs_transfer_upload.source.data : "");
-            break;
-        case EVENT_PROC_EXEC_REQUEST:
-            printf(" cmd=%.*s",
-                   (int) ev->as.proc_exec_request.command.count,
-                   ev->as.proc_exec_request.command.data ? ev->as.proc_exec_request.command.data : "");
-            break;
-        case EVENT_PROC_EXEC_RESULT:
-            printf(" cmd=%.*s error=%s",
-                   (int) ev->as.proc_exec_result.command.count,
-                   ev->as.proc_exec_result.command.data ? ev->as.proc_exec_result.command.data : "",
-                   ev->as.proc_exec_result.had_error ? "true" : "false");
-            break;
-        case EVENT_STRING_REPLACE:
-            printf(" out=%.*s",
-                   (int) ev->as.string_replace.out_var.count,
-                   ev->as.string_replace.out_var.data ? ev->as.string_replace.out_var.data : "");
-            break;
-        case EVENT_STRING_CONFIGURE:
-            printf(" out=%.*s",
-                   (int) ev->as.string_configure.out_var.count,
-                   ev->as.string_configure.out_var.data ? ev->as.string_configure.out_var.data : "");
-            break;
-        case EVENT_STRING_REGEX:
-            printf(" mode=%.*s",
-                   (int) ev->as.string_regex.mode.count,
-                   ev->as.string_regex.mode.data ? ev->as.string_regex.mode.data : "");
-            break;
-        case EVENT_STRING_HASH:
-            printf(" algo=%.*s",
-                   (int) ev->as.string_hash.algorithm.count,
-                   ev->as.string_hash.algorithm.data ? ev->as.string_hash.algorithm.data : "");
-            break;
-        case EVENT_STRING_TIMESTAMP:
-            printf(" out=%.*s",
-                   (int) ev->as.string_timestamp.out_var.count,
-                   ev->as.string_timestamp.out_var.data ? ev->as.string_timestamp.out_var.data : "");
-            break;
-        case EVENT_LIST_APPEND:
-            printf(" list=%.*s",
-                   (int) ev->as.list_append.list_var.count,
-                   ev->as.list_append.list_var.data ? ev->as.list_append.list_var.data : "");
-            break;
-        case EVENT_LIST_PREPEND:
-            printf(" list=%.*s",
-                   (int) ev->as.list_prepend.list_var.count,
-                   ev->as.list_prepend.list_var.data ? ev->as.list_prepend.list_var.data : "");
-            break;
-        case EVENT_LIST_INSERT:
-            printf(" list=%.*s",
-                   (int) ev->as.list_insert.list_var.count,
-                   ev->as.list_insert.list_var.data ? ev->as.list_insert.list_var.data : "");
-            break;
-        case EVENT_LIST_REMOVE:
-            printf(" list=%.*s",
-                   (int) ev->as.list_remove.list_var.count,
-                   ev->as.list_remove.list_var.data ? ev->as.list_remove.list_var.data : "");
-            break;
-        case EVENT_LIST_TRANSFORM:
-            printf(" list=%.*s",
-                   (int) ev->as.list_transform.list_var.count,
-                   ev->as.list_transform.list_var.data ? ev->as.list_transform.list_var.data : "");
-            break;
-        case EVENT_LIST_SORT:
-            printf(" list=%.*s",
-                   (int) ev->as.list_sort.list_var.count,
-                   ev->as.list_sort.list_var.data ? ev->as.list_sort.list_var.data : "");
-            break;
-        case EVENT_MATH_EXPR:
-            printf(" out=%.*s",
-                   (int) ev->as.math_expr.out_var.count,
-                   ev->as.math_expr.out_var.data ? ev->as.math_expr.out_var.data : "");
-            break;
-        case EVENT_PATH_NORMALIZE:
-            printf(" out=%.*s",
-                   (int) ev->as.path_normalize.out_var.count,
-                   ev->as.path_normalize.out_var.data ? ev->as.path_normalize.out_var.data : "");
-            break;
-        case EVENT_PATH_COMPARE:
-            printf(" out=%.*s",
-                   (int) ev->as.path_compare.out_var.count,
-                   ev->as.path_compare.out_var.data ? ev->as.path_compare.out_var.data : "");
-            break;
-        case EVENT_PATH_CONVERT:
-            printf(" out=%.*s",
-                   (int) ev->as.path_convert.out_var.count,
-                   ev->as.path_convert.out_var.data ? ev->as.path_convert.out_var.data : "");
-            break;
-
-        case EVENT_TEST_ENABLE:
-            printf(" enabled=%s", ev->as.test_enable.enabled ? "true" : "false");
-            break;
-
-        case EVENT_TEST_ADD:
-            printf(" name=%.*s",
-                   (int) ev->as.test_add.name.count,
-                   ev->as.test_add.name.data ? ev->as.test_add.name.data : "");
-            break;
-
-        case EVENT_INSTALL_RULE_ADD:
-            printf(" rule=%d", (int) ev->as.install_rule_add.rule_type);
-            break;
-
-        case EVENT_CPACK_ADD_INSTALL_TYPE:
-            printf(" name=%.*s",
-                   (int) ev->as.cpack_add_install_type.name.count,
-                   ev->as.cpack_add_install_type.name.data ? ev->as.cpack_add_install_type.name.data : "");
-            break;
-
-        case EVENT_CPACK_ADD_COMPONENT_GROUP:
-            printf(" name=%.*s",
-                   (int) ev->as.cpack_add_component_group.name.count,
-                   ev->as.cpack_add_component_group.name.data ? ev->as.cpack_add_component_group.name.data : "");
-            break;
-
-        case EVENT_CPACK_ADD_COMPONENT:
-            printf(" name=%.*s",
-                   (int) ev->as.cpack_add_component.name.count,
-                   ev->as.cpack_add_component.name.data ? ev->as.cpack_add_component.name.data : "");
-            break;
-
-        case EVENT_PACKAGE_FIND_RESULT:
-            printf(" pkg=%.*s found=%s",
-                   (int) ev->as.package_find_result.package_name.count,
-                   ev->as.package_find_result.package_name.data ? ev->as.package_find_result.package_name.data : "",
-                   ev->as.package_find_result.found ? "true" : "false");
-            break;
-
         case EVENT_PROJECT_DECLARE:
             printf(" name=%.*s",
-                   (int) ev->as.project_declare.name.count,
+                   (int)ev->as.project_declare.name.count,
                    ev->as.project_declare.name.data ? ev->as.project_declare.name.data : "");
             break;
-
         case EVENT_PROJECT_MINIMUM_REQUIRED:
             printf(" version=%.*s",
-                   (int) ev->as.project_minimum_required.version.count,
+                   (int)ev->as.project_minimum_required.version.count,
                    ev->as.project_minimum_required.version.data ? ev->as.project_minimum_required.version.data : "");
             break;
 
         case EVENT_TARGET_DECLARE:
             printf(" name=%.*s",
-                   (int) ev->as.target_declare.name.count,
+                   (int)ev->as.target_declare.name.count,
                    ev->as.target_declare.name.data ? ev->as.target_declare.name.data : "");
             break;
-
         case EVENT_TARGET_ADD_SOURCE:
-            printf(" target=%.*s",
-                   (int) ev->as.target_add_source.target_name.count,
-                   ev->as.target_add_source.target_name.data ? ev->as.target_add_source.target_name.data : "");
+            printf(" target=%.*s path=%.*s",
+                   (int)ev->as.target_add_source.target_name.count,
+                   ev->as.target_add_source.target_name.data ? ev->as.target_add_source.target_name.data : "",
+                   (int)ev->as.target_add_source.path.count,
+                   ev->as.target_add_source.path.data ? ev->as.target_add_source.path.data : "");
             break;
-
         case EVENT_TARGET_ADD_DEPENDENCY:
-            printf(" target=%.*s",
-                   (int) ev->as.target_add_dependency.target_name.count,
-                   ev->as.target_add_dependency.target_name.data ? ev->as.target_add_dependency.target_name.data : "");
+            printf(" target=%.*s dep=%.*s",
+                   (int)ev->as.target_add_dependency.target_name.count,
+                   ev->as.target_add_dependency.target_name.data ? ev->as.target_add_dependency.target_name.data : "",
+                   (int)ev->as.target_add_dependency.dependency_name.count,
+                   ev->as.target_add_dependency.dependency_name.data ? ev->as.target_add_dependency.dependency_name.data : "");
             break;
-
         case EVENT_TARGET_PROP_SET:
-            printf(" target=%.*s",
-                   (int) ev->as.target_prop_set.target_name.count,
-                   ev->as.target_prop_set.target_name.data ? ev->as.target_prop_set.target_name.data : "");
+            printf(" target=%.*s key=%.*s",
+                   (int)ev->as.target_prop_set.target_name.count,
+                   ev->as.target_prop_set.target_name.data ? ev->as.target_prop_set.target_name.data : "",
+                   (int)ev->as.target_prop_set.key.count,
+                   ev->as.target_prop_set.key.data ? ev->as.target_prop_set.key.data : "");
             break;
-
         case EVENT_TARGET_LINK_LIBRARIES:
-            printf(" target=%.*s",
-                   (int) ev->as.target_link_libraries.target_name.count,
-                   ev->as.target_link_libraries.target_name.data ? ev->as.target_link_libraries.target_name.data : "");
+            printf(" target=%.*s item=%.*s",
+                   (int)ev->as.target_link_libraries.target_name.count,
+                   ev->as.target_link_libraries.target_name.data ? ev->as.target_link_libraries.target_name.data : "",
+                   (int)ev->as.target_link_libraries.item.count,
+                   ev->as.target_link_libraries.item.data ? ev->as.target_link_libraries.item.data : "");
             break;
-
         case EVENT_TARGET_LINK_OPTIONS:
-            printf(" target=%.*s",
-                   (int) ev->as.target_link_options.target_name.count,
-                   ev->as.target_link_options.target_name.data ? ev->as.target_link_options.target_name.data : "");
+            printf(" target=%.*s item=%.*s",
+                   (int)ev->as.target_link_options.target_name.count,
+                   ev->as.target_link_options.target_name.data ? ev->as.target_link_options.target_name.data : "",
+                   (int)ev->as.target_link_options.item.count,
+                   ev->as.target_link_options.item.data ? ev->as.target_link_options.item.data : "");
             break;
-
         case EVENT_TARGET_LINK_DIRECTORIES:
-            printf(" target=%.*s",
-                   (int) ev->as.target_link_directories.target_name.count,
-                   ev->as.target_link_directories.target_name.data ? ev->as.target_link_directories.target_name.data : "");
+            printf(" target=%.*s path=%.*s",
+                   (int)ev->as.target_link_directories.target_name.count,
+                   ev->as.target_link_directories.target_name.data ? ev->as.target_link_directories.target_name.data : "",
+                   (int)ev->as.target_link_directories.path.count,
+                   ev->as.target_link_directories.path.data ? ev->as.target_link_directories.path.data : "");
             break;
-
         case EVENT_TARGET_INCLUDE_DIRECTORIES:
-            printf(" target=%.*s",
-                   (int) ev->as.target_include_directories.target_name.count,
-                   ev->as.target_include_directories.target_name.data ? ev->as.target_include_directories.target_name.data : "");
+            printf(" target=%.*s path=%.*s",
+                   (int)ev->as.target_include_directories.target_name.count,
+                   ev->as.target_include_directories.target_name.data ? ev->as.target_include_directories.target_name.data : "",
+                   (int)ev->as.target_include_directories.path.count,
+                   ev->as.target_include_directories.path.data ? ev->as.target_include_directories.path.data : "");
             break;
-
         case EVENT_TARGET_COMPILE_DEFINITIONS:
-            printf(" target=%.*s",
-                   (int) ev->as.target_compile_definitions.target_name.count,
-                   ev->as.target_compile_definitions.target_name.data ? ev->as.target_compile_definitions.target_name.data : "");
+            printf(" target=%.*s item=%.*s",
+                   (int)ev->as.target_compile_definitions.target_name.count,
+                   ev->as.target_compile_definitions.target_name.data ? ev->as.target_compile_definitions.target_name.data : "",
+                   (int)ev->as.target_compile_definitions.item.count,
+                   ev->as.target_compile_definitions.item.data ? ev->as.target_compile_definitions.item.data : "");
             break;
-
         case EVENT_TARGET_COMPILE_OPTIONS:
-            printf(" target=%.*s",
-                   (int) ev->as.target_compile_options.target_name.count,
-                   ev->as.target_compile_options.target_name.data ? ev->as.target_compile_options.target_name.data : "");
+            printf(" target=%.*s item=%.*s",
+                   (int)ev->as.target_compile_options.target_name.count,
+                   ev->as.target_compile_options.target_name.data ? ev->as.target_compile_options.target_name.data : "",
+                   (int)ev->as.target_compile_options.item.count,
+                   ev->as.target_compile_options.item.data ? ev->as.target_compile_options.item.data : "");
             break;
 
-        case EVENT_INCLUDE_BEGIN:
-            printf(" path=%.*s",
-                   (int) ev->as.include_begin.path.count,
-                   ev->as.include_begin.path.data ? ev->as.include_begin.path.data : "");
-            break;
-
-        case EVENT_INCLUDE_END:
-            printf(" path=%.*s success=%s",
-                   (int) ev->as.include_end.path.count,
-                   ev->as.include_end.path.data ? ev->as.include_end.path.data : "",
-                   ev->as.include_end.success ? "true" : "false");
-            break;
-
-        case EVENT_ADD_SUBDIRECTORY_BEGIN:
-            printf(" src=%.*s",
-                   (int) ev->as.add_subdirectory_begin.source_dir.count,
-                   ev->as.add_subdirectory_begin.source_dir.data ? ev->as.add_subdirectory_begin.source_dir.data : "");
-            break;
-
-        case EVENT_ADD_SUBDIRECTORY_END:
-            printf(" src=%.*s success=%s",
-                   (int) ev->as.add_subdirectory_end.source_dir.count,
-                   ev->as.add_subdirectory_end.source_dir.data ? ev->as.add_subdirectory_end.source_dir.data : "",
-                   ev->as.add_subdirectory_end.success ? "true" : "false");
-            break;
-
-        case EVENT_DIR_PUSH:
-            printf(" src=%.*s",
-                   (int) ev->as.dir_push.source_dir.count,
-                   ev->as.dir_push.source_dir.data ? ev->as.dir_push.source_dir.data : "");
-            break;
-
-        case EVENT_DIR_POP:
-            printf(" src=%.*s",
-                   (int) ev->as.dir_pop.source_dir.count,
-                   ev->as.dir_pop.source_dir.data ? ev->as.dir_pop.source_dir.data : "");
-            break;
-
-        case EVENT_COMMAND_CALL:
-            printf(" command=%.*s",
-                   (int) ev->as.command_call.command_name.count,
-                   ev->as.command_call.command_name.data ? ev->as.command_call.command_name.data : "");
-            break;
-
-        case EVENT_CMAKE_LANGUAGE_CALL:
-            printf(" command=%.*s",
-                   (int) ev->as.cmake_language_call.command_name.count,
-                   ev->as.cmake_language_call.command_name.data ? ev->as.cmake_language_call.command_name.data : "");
-            break;
-
-        case EVENT_CMAKE_LANGUAGE_EVAL:
-            printf(" code_len=%zu", ev->as.cmake_language_eval.code.count);
-            break;
-
-        case EVENT_CMAKE_LANGUAGE_DEFER_QUEUE:
-            printf(" command=%.*s",
-                   (int) ev->as.cmake_language_defer_queue.command_name.count,
-                   ev->as.cmake_language_defer_queue.command_name.data ? ev->as.cmake_language_defer_queue.command_name.data : "");
+        default:
             break;
     }
 
@@ -898,7 +665,6 @@ static void event_dump_one(const Event *ev) {
 
 void event_stream_dump(const Event_Stream *stream) {
     if (!stream) return;
-
     for (size_t i = 0; i < arena_arr_len(stream->items); ++i) {
         event_dump_one(&stream->items[i]);
     }

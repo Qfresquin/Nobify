@@ -477,19 +477,6 @@ static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
     nob_sb_append_cstr(sb, "'");
 }
 
-static void snapshot_append_escaped_sv_list(Nob_String_Builder *sb, String_View *items, size_t count) {
-    nob_sb_append_cstr(sb, "[");
-    if (!items) {
-        nob_sb_append_cstr(sb, "]");
-        return;
-    }
-    for (size_t i = 0; i < count; i++) {
-        if (i > 0) nob_sb_append_cstr(sb, ",");
-        snapshot_append_escaped_sv(sb, items[i]);
-    }
-    nob_sb_append_cstr(sb, "]");
-}
-
 static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
     if (!ev) return "EV_UNKNOWN";
     Cmake_Event_Kind kind = (Cmake_Event_Kind)ev->h.kind;
@@ -519,8 +506,8 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
         case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
         case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
+        default: return "EV_UNKNOWN";
     }
-    return "EV_UNKNOWN";
 }
 
 static bool snapshot_event_is_visible(const Cmake_Event *ev) {
@@ -559,8 +546,9 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_CPACK_ADD_COMPONENT:
         case EV_FIND_PACKAGE:
             return true;
+        default:
+            return false;
     }
-    return false;
 }
 
 static const char *target_type_name(Cmake_Target_Type type) {
@@ -820,6 +808,8 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
                 ev->as.package_find_result.required ? 1 : 0,
                 ev->as.package_find_result.found ? 1 : 0));
             snapshot_append_escaped_sv(sb, ev->as.package_find_result.found_path);
+            break;
+        default:
             break;
     }
 
@@ -3044,7 +3034,8 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
     ASSERT(report != NULL);
     ASSERT(report->error_count == 4);
 
-    size_t custom_target_events = 0;
+    size_t custom_target_success_events = 0;
+    size_t custom_target_error_events = 0;
     bool saw_missing_target = false;
     bool saw_missing_stage = false;
     bool saw_multi_stage = false;
@@ -3052,9 +3043,13 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind == EV_COMMAND_CALL &&
-            nob_sv_eq(ev->as.command_call.command_name, nob_sv_from_cstr("add_custom_command"))) {
-            custom_target_events++;
+        if (ev->h.kind == EVENT_COMMAND_END &&
+            nob_sv_eq(ev->as.command_end.command_name, nob_sv_from_cstr("add_custom_command"))) {
+            if (ev->as.command_end.status == EVENT_COMMAND_STATUS_SUCCESS) {
+                custom_target_success_events++;
+            } else if (ev->as.command_end.status == EVENT_COMMAND_STATUS_ERROR) {
+                custom_target_error_events++;
+            }
         }
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
         if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("add_custom_command(TARGET ...) target was not declared"))) {
@@ -3069,7 +3064,8 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
         }
     }
 
-    ASSERT(custom_target_events == 1);
+    ASSERT(custom_target_success_events == 1);
+    ASSERT(custom_target_error_events == 4);
     ASSERT(saw_missing_target);
     ASSERT(saw_missing_stage);
     ASSERT(saw_multi_stage);
@@ -3119,8 +3115,9 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind == EV_COMMAND_CALL &&
-            nob_sv_eq(ev->as.command_call.command_name, nob_sv_from_cstr("add_custom_command"))) {
+        if (ev->h.kind == EVENT_COMMAND_END &&
+            nob_sv_eq(ev->as.command_end.command_name, nob_sv_from_cstr("add_custom_command")) &&
+            ev->as.command_end.status == EVENT_COMMAND_STATUS_SUCCESS) {
             saw_valid_output_event = true;
         }
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
@@ -3137,6 +3134,204 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
     ASSERT(saw_conflict_error);
     ASSERT(saw_pool_error);
     ASSERT(saw_valid_output_event);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_event_ir_metadata_and_stream_contract) {
+    Arena *arena = arena_create(1024 * 1024);
+    ASSERT(arena != NULL);
+
+    Cmake_Event_Stream *stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    const Event_Kind_Meta *command_begin_meta = event_kind_meta(EVENT_COMMAND_BEGIN);
+    ASSERT(command_begin_meta != NULL);
+    ASSERT(command_begin_meta->family == EVENT_FAMILY_TRACE);
+    ASSERT(event_kind_has_role(EVENT_COMMAND_BEGIN, EVENT_ROLE_TRACE));
+    ASSERT(!event_kind_has_role(EVENT_COMMAND_BEGIN, EVENT_ROLE_BUILD_SEMANTIC));
+
+    const Event_Kind_Meta *dir_prop_meta = event_kind_meta(EVENT_DIRECTORY_PROPERTY_MUTATE);
+    ASSERT(dir_prop_meta != NULL);
+    ASSERT(dir_prop_meta->family == EVENT_FAMILY_DIRECTORY);
+    ASSERT(event_kind_has_role(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_ROLE_BUILD_SEMANTIC));
+    ASSERT(event_kind_has_role(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_ROLE_STATE));
+
+    char origin_path[] = "origin.cmake";
+    char command_name[] = "ephemeral_command";
+    Event ev = {0};
+    ev.h.kind = EVENT_COMMAND_BEGIN;
+    ev.h.origin.file_path = nob_sv_from_parts(origin_path, strlen(origin_path));
+    ev.h.origin.line = 7;
+    ev.h.origin.col = 3;
+    ev.as.command_begin.command_name = nob_sv_from_parts(command_name, strlen(command_name));
+    ev.as.command_begin.dispatch_kind = EVENT_COMMAND_DISPATCH_BUILTIN;
+    ev.as.command_begin.argc = 2;
+    ASSERT(event_stream_push(stream, &ev));
+
+    origin_path[0] = 'X';
+    command_name[0] = 'X';
+
+    ASSERT(stream->count == 1);
+    ASSERT(stream->items[0].h.version == 1);
+    ASSERT(stream->items[0].h.seq == 1);
+    ASSERT(nob_sv_eq(stream->items[0].h.origin.file_path, nob_sv_from_cstr("origin.cmake")));
+    ASSERT(nob_sv_eq(stream->items[0].as.command_begin.command_name, nob_sv_from_cstr("ephemeral_command")));
+
+    char property_name[] = "INCLUDE_DIRECTORIES";
+    char item_buf[] = "include";
+    String_View items[] = {nob_sv_from_parts(item_buf, strlen(item_buf))};
+    ev = (Event){0};
+    ev.h.kind = EVENT_DIRECTORY_PROPERTY_MUTATE;
+    ev.h.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
+    ev.as.directory_property_mutate.property_name = nob_sv_from_parts(property_name, strlen(property_name));
+    ev.as.directory_property_mutate.op = EVENT_PROPERTY_MUTATE_PREPEND_LIST;
+    ev.as.directory_property_mutate.modifier_flags =
+        EVENT_PROPERTY_MODIFIER_BEFORE | EVENT_PROPERTY_MODIFIER_SYSTEM;
+    ev.as.directory_property_mutate.items = items;
+    ev.as.directory_property_mutate.item_count = NOB_ARRAY_LEN(items);
+    ASSERT(event_stream_push(stream, &ev));
+
+    property_name[0] = 'X';
+    item_buf[0] = 'X';
+
+    ASSERT(stream->count == 2);
+    ASSERT(stream->items[1].h.seq == 2);
+    ASSERT(stream->items[1].h.version == 1);
+    ASSERT(nob_sv_eq(stream->items[1].as.directory_property_mutate.property_name,
+                     nob_sv_from_cstr("INCLUDE_DIRECTORIES")));
+    ASSERT(stream->items[1].as.directory_property_mutate.item_count == 1);
+    ASSERT(nob_sv_eq(stream->items[1].as.directory_property_mutate.items[0],
+                     nob_sv_from_cstr("include")));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE ir_include.cmake [=[set(IR_INCLUDED 1)\n]=])\n"
+        "file(MAKE_DIRECTORY ir_subdir)\n"
+        "file(WRITE ir_subdir/CMakeLists.txt [=[add_library(ir_subdir_lib STATIC sub.c)\n]=])\n"
+        "add_compile_options(-Wall)\n"
+        "add_compile_definitions(IR_DEF)\n"
+        "add_link_options(-Wl,--as-needed)\n"
+        "include_directories(BEFORE SYSTEM ir_inc_a ir_inc_b)\n"
+        "link_directories(BEFORE ir_lib)\n"
+        "include(ir_include.cmake)\n"
+        "add_subdirectory(ir_subdir)\n"
+        "unknown_event_ir_cmd()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    bool saw_compile_options = false;
+    bool saw_compile_definitions = false;
+    bool saw_link_options = false;
+    bool saw_include_directories = false;
+    bool saw_link_directories = false;
+    bool saw_include_begin = false;
+    bool saw_include_end = false;
+    bool saw_subdir_begin = false;
+    bool saw_subdir_end = false;
+    bool saw_directory_enter = false;
+    bool saw_directory_leave = false;
+    bool saw_unknown_begin = false;
+    bool saw_unknown_end = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("COMPILE_OPTIONS"))) {
+            saw_compile_options =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_APPEND_LIST &&
+                ev->as.directory_property_mutate.item_count == 1 &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("-Wall"));
+        }
+        if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
+            saw_compile_definitions =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_APPEND_LIST &&
+                ev->as.directory_property_mutate.item_count == 1 &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("IR_DEF"));
+        }
+        if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("LINK_OPTIONS"))) {
+            saw_link_options =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_APPEND_LIST &&
+                ev->as.directory_property_mutate.item_count == 1 &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("-Wl,--as-needed"));
+        }
+        if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("INCLUDE_DIRECTORIES"))) {
+            saw_include_directories =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_PREPEND_LIST &&
+                (ev->as.directory_property_mutate.modifier_flags & EVENT_PROPERTY_MODIFIER_BEFORE) != 0 &&
+                (ev->as.directory_property_mutate.modifier_flags & EVENT_PROPERTY_MODIFIER_SYSTEM) != 0 &&
+                ev->as.directory_property_mutate.item_count == 2 &&
+                sv_contains_sv(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("ir_inc_a")) &&
+                sv_contains_sv(ev->as.directory_property_mutate.items[1], nob_sv_from_cstr("ir_inc_b"));
+        }
+        if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("LINK_DIRECTORIES"))) {
+            saw_link_directories =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_PREPEND_LIST &&
+                (ev->as.directory_property_mutate.modifier_flags & EVENT_PROPERTY_MODIFIER_BEFORE) != 0 &&
+                ev->as.directory_property_mutate.item_count == 1 &&
+                sv_contains_sv(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("ir_lib"));
+        }
+        if (ev->h.kind == EVENT_INCLUDE_BEGIN) saw_include_begin = true;
+        if (ev->h.kind == EVENT_INCLUDE_END) saw_include_end = true;
+        if (ev->h.kind == EVENT_ADD_SUBDIRECTORY_BEGIN) saw_subdir_begin = true;
+        if (ev->h.kind == EVENT_ADD_SUBDIRECTORY_END) saw_subdir_end = true;
+        if (ev->h.kind == EVENT_DIRECTORY_ENTER) saw_directory_enter = true;
+        if (ev->h.kind == EVENT_DIRECTORY_LEAVE) saw_directory_leave = true;
+        if (ev->h.kind == EVENT_COMMAND_BEGIN &&
+            nob_sv_eq(ev->as.command_begin.command_name, nob_sv_from_cstr("unknown_event_ir_cmd")) &&
+            ev->as.command_begin.dispatch_kind == EVENT_COMMAND_DISPATCH_UNKNOWN) {
+            saw_unknown_begin = true;
+        }
+        if (ev->h.kind == EVENT_COMMAND_END &&
+            nob_sv_eq(ev->as.command_end.command_name, nob_sv_from_cstr("unknown_event_ir_cmd")) &&
+            ev->as.command_end.dispatch_kind == EVENT_COMMAND_DISPATCH_UNKNOWN &&
+            ev->as.command_end.status == EVENT_COMMAND_STATUS_UNSUPPORTED) {
+            saw_unknown_end = true;
+        }
+    }
+
+    ASSERT(saw_compile_options);
+    ASSERT(saw_compile_definitions);
+    ASSERT(saw_link_options);
+    ASSERT(saw_include_directories);
+    ASSERT(saw_link_directories);
+    ASSERT(saw_include_begin);
+    ASSERT(saw_include_end);
+    ASSERT(saw_subdir_begin);
+    ASSERT(saw_subdir_end);
+    ASSERT(saw_directory_enter);
+    ASSERT(saw_directory_leave);
+    ASSERT(saw_unknown_begin);
+    ASSERT(saw_unknown_end);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -8238,6 +8433,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);
+    test_evaluator_event_ir_metadata_and_stream_contract(passed, failed);
+    test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed);
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
     test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);

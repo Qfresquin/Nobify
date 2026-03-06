@@ -53,38 +53,96 @@ bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View 
 Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node || node->kind != NODE_COMMAND) return eval_result_fatal();
     Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
+    Event_Origin o = eval_origin_from_node(ctx, node);
+    uint32_t argc = (uint32_t) arena_arr_len(node->as.cmd.args);
 
     const Eval_Native_Command *native = eval_native_cmd_find_const(ctx, node->as.cmd.name);
     if (native) {
+        if (!eval_emit_command_begin(ctx,
+                                     o,
+                                     node->as.cmd.name,
+                                     EVENT_COMMAND_DISPATCH_BUILTIN,
+                                     argc)) {
+            return eval_result_fatal();
+        }
         size_t error_count_before = runtime->run_report.error_count;
         Eval_Result native_result = native->handler(ctx, node);
         Eval_Result running_result = eval_result_ok_if_running(ctx);
         bool native_succeeded = !eval_result_is_fatal(native_result) &&
                                 !eval_result_is_fatal(running_result) &&
                                 runtime->run_report.error_count == error_count_before;
-        if (native_succeeded) {
-            if (!eval_emit_command_call(ctx, eval_origin_from_node(ctx, node), node->as.cmd.name)) return eval_result_fatal();
+        if (!eval_emit_command_end(ctx,
+                                   o,
+                                   node->as.cmd.name,
+                                   EVENT_COMMAND_DISPATCH_BUILTIN,
+                                   argc,
+                                   native_succeeded ? EVENT_COMMAND_STATUS_SUCCESS
+                                                    : EVENT_COMMAND_STATUS_ERROR)) {
+            return eval_result_fatal();
         }
         return eval_result_merge(native_result, running_result);
     }
 
-    Event_Origin o = eval_origin_from_node(ctx, node);
     User_Command *user = eval_user_cmd_find(ctx, node->as.cmd.name);
     if (user) {
+        Event_Command_Dispatch_Kind dispatch_kind =
+            (user->kind == USER_CMD_MACRO) ? EVENT_COMMAND_DISPATCH_MACRO
+                                           : EVENT_COMMAND_DISPATCH_FUNCTION;
+        if (!eval_emit_command_begin(ctx, o, node->as.cmd.name, dispatch_kind, argc)) {
+            return eval_result_fatal();
+        }
         SV_List args = (user->kind == USER_CMD_MACRO)
             ? eval_resolve_args_literal(ctx, &node->as.cmd.args)
             : eval_resolve_args(ctx, &node->as.cmd.args);
-        if (eval_should_stop(ctx)) return eval_result_fatal();
+        if (eval_should_stop(ctx)) {
+            (void)eval_emit_command_end(ctx,
+                                        o,
+                                        node->as.cmd.name,
+                                        dispatch_kind,
+                                        argc,
+                                        EVENT_COMMAND_STATUS_ERROR);
+            return eval_result_fatal();
+        }
         size_t error_count_before = runtime->run_report.error_count;
         if (eval_user_cmd_invoke(ctx, node->as.cmd.name, &args, o)) {
             bool user_succeeded = !eval_result_is_fatal(eval_result_ok_if_running(ctx)) &&
                                   runtime->run_report.error_count == error_count_before;
-            if (user_succeeded) {
-                if (!eval_emit_command_call(ctx, o, node->as.cmd.name)) return eval_result_fatal();
+            if (!eval_emit_command_end(ctx,
+                                       o,
+                                       node->as.cmd.name,
+                                       dispatch_kind,
+                                       argc,
+                                       user_succeeded ? EVENT_COMMAND_STATUS_SUCCESS
+                                                      : EVENT_COMMAND_STATUS_ERROR)) {
+                return eval_result_fatal();
             }
             return eval_result_ok_if_running(ctx);
         }
+        if (!eval_emit_command_end(ctx,
+                                   o,
+                                   node->as.cmd.name,
+                                   dispatch_kind,
+                                   argc,
+                                   EVENT_COMMAND_STATUS_ERROR)) {
+            return eval_result_fatal();
+        }
         return eval_result_from_ctx(ctx);
+    }
+
+    if (!eval_emit_command_begin(ctx,
+                                 o,
+                                 node->as.cmd.name,
+                                 EVENT_COMMAND_DISPATCH_UNKNOWN,
+                                 argc)) {
+        return eval_result_fatal();
+    }
+    if (!eval_emit_command_end(ctx,
+                               o,
+                               node->as.cmd.name,
+                               EVENT_COMMAND_DISPATCH_UNKNOWN,
+                               argc,
+                               EVENT_COMMAND_STATUS_UNSUPPORTED)) {
+        return eval_result_fatal();
     }
 
     Event_Diag_Severity sev = EV_DIAG_WARNING;
