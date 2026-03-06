@@ -104,8 +104,13 @@ This includes:
 
 Unknown-command contract:
 - `EVENT_COMMAND_BEGIN(dispatch=unknown)`
-- `EVENT_COMMAND_END(dispatch=unknown, status=unsupported)`
 - one diagnostic event with the normal unsupported-policy severity
+- `EVENT_COMMAND_END(dispatch=unknown, status=unsupported)`
+
+Sequencing contract:
+- `EVENT_COMMAND_BEGIN` opens the dispatched-command frame
+- diagnostics and semantic side-effect events produced by that dispatch occur before the matching `EVENT_COMMAND_END`
+- `EVENT_COMMAND_END` closes the frame even on non-OOM error/unsupported paths when the allow-stopped emission path can still run
 
 ## 7. Directory and Build-Semantic Guarantees
 

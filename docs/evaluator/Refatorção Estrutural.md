@@ -162,6 +162,7 @@ Recommended stabilization scope:
 2. **G0.2 Normalize command tracing**
    - Ensure dispatched commands emit consistent `COMMAND_BEGIN` / `COMMAND_END` framing, including unknown-command and error paths.
    - Keep trace/diagnostic events distinct from build-semantic events so future consumers do not need to infer intent from mixed payloads.
+   - Status: completed in the workspace on March 6, 2026 by normalizing unknown-command sequencing to `BEGIN -> DIAG -> END`, keeping non-OOM error paths paired, and adding sequence contract tests for builtin/function/macro/unknown dispatch.
 
 3. **G0.3 Finish first-class directory/global semantics**
    - Emit canonical directory/global property mutation events for build-relevant directory state.

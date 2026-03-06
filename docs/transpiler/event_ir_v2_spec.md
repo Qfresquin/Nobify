@@ -165,6 +165,12 @@ Payload fields:
 
 `EVENT_COMMAND_BEGIN/END` are trace events. They are not a substitute for diagnostic events or semantic build events.
 
+Sequencing rule:
+- dispatched commands open with `EVENT_COMMAND_BEGIN`
+- any diagnostic and semantic events caused by that dispatch stay inside the frame
+- `EVENT_COMMAND_END` closes the frame with `success`, `error`, or `unsupported`
+- unknown commands follow the same rule: begin, unsupported diagnostic, end
+
 ## 8. Directory Property Mutation Contract
 
 Directory/global build-semantics that used to be hidden behind evaluator-private variables must now be represented by first-class events.

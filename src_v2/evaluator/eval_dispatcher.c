@@ -136,6 +136,19 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                  argc)) {
         return eval_result_fatal();
     }
+
+    Event_Diag_Severity sev = EV_DIAG_WARNING;
+    if (runtime->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
+    Eval_Result diag_result = EVAL_DIAG_RESULT_SEV(ctx,
+                                                   sev,
+                                                   EVAL_DIAG_UNKNOWN_COMMAND,
+                                                   nob_sv_from_cstr("dispatcher"),
+                                                   node->as.cmd.name,
+                                                   o,
+                                                   nob_sv_from_cstr("Unknown command"),
+                                                   runtime->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
+                                                       ? nob_sv_from_cstr("No-op with warning by policy")
+                                                       : nob_sv_from_cstr("Ignored during evaluation"));
     if (!eval_emit_command_end(ctx,
                                o,
                                node->as.cmd.name,
@@ -144,17 +157,5 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                EVENT_COMMAND_STATUS_UNSUPPORTED)) {
         return eval_result_fatal();
     }
-
-    Event_Diag_Severity sev = EV_DIAG_WARNING;
-    if (runtime->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
-    return EVAL_DIAG_RESULT_SEV(ctx,
-                                sev,
-                                EVAL_DIAG_UNKNOWN_COMMAND,
-                                nob_sv_from_cstr("dispatcher"),
-                                node->as.cmd.name,
-                                o,
-                                nob_sv_from_cstr("Unknown command"),
-                                runtime->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
-                                    ? nob_sv_from_cstr("No-op with warning by policy")
-                                    : nob_sv_from_cstr("Ignored during evaluation"));
+    return diag_result;
 }

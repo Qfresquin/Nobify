@@ -871,6 +871,56 @@ static bool evaluator_snapshot_from_ast(Ast_Root root, const char *current_file,
     return true;
 }
 
+static size_t evaluator_find_command_begin_index(const Cmake_Event_Stream *stream,
+                                                 String_View command_name,
+                                                 size_t origin_line,
+                                                 Event_Command_Dispatch_Kind dispatch_kind) {
+    if (!stream) return (size_t)-1;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_COMMAND_BEGIN) continue;
+        if (ev->h.origin.line != origin_line) continue;
+        if (ev->as.command_begin.dispatch_kind != dispatch_kind) continue;
+        if (!nob_sv_eq(ev->as.command_begin.command_name, command_name)) continue;
+        return i;
+    }
+    return (size_t)-1;
+}
+
+static size_t evaluator_find_command_end_index(const Cmake_Event_Stream *stream,
+                                               String_View command_name,
+                                               size_t origin_line,
+                                               Event_Command_Dispatch_Kind dispatch_kind,
+                                               Event_Command_Status status) {
+    if (!stream) return (size_t)-1;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_COMMAND_END) continue;
+        if (ev->h.origin.line != origin_line) continue;
+        if (ev->as.command_end.dispatch_kind != dispatch_kind) continue;
+        if (ev->as.command_end.status != status) continue;
+        if (!nob_sv_eq(ev->as.command_end.command_name, command_name)) continue;
+        return i;
+    }
+    return (size_t)-1;
+}
+
+static size_t evaluator_find_diag_index(const Cmake_Event_Stream *stream,
+                                        String_View command_name,
+                                        size_t origin_line,
+                                        String_View cause) {
+    if (!stream) return (size_t)-1;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_DIAG) continue;
+        if (ev->h.origin.line != origin_line) continue;
+        if (!nob_sv_eq(ev->as.diag.command, command_name)) continue;
+        if (!nob_sv_eq(ev->as.diag.cause, cause)) continue;
+        return i;
+    }
+    return (size_t)-1;
+}
+
 static bool render_evaluator_case_snapshot_to_sb(Arena *arena,
                                                   Evaluator_Case eval_case,
                                                   Nob_String_Builder *out_sb) {
@@ -3509,6 +3559,151 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     ASSERT(saw_directory_leave);
     ASSERT(saw_unknown_begin);
     ASSERT(saw_unknown_end);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "function(trace_fn)\n"
+        "  math()\n"
+        "endfunction()\n"
+        "macro(trace_macro)\n"
+        "  return()\n"
+        "endmacro()\n"
+        "unknown_trace_cmd()\n"
+        "math()\n"
+        "trace_fn()\n"
+        "trace_macro()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    size_t unknown_begin = evaluator_find_command_begin_index(stream,
+                                                              nob_sv_from_cstr("unknown_trace_cmd"),
+                                                              7,
+                                                              EVENT_COMMAND_DISPATCH_UNKNOWN);
+    size_t unknown_diag = evaluator_find_diag_index(stream,
+                                                    nob_sv_from_cstr("unknown_trace_cmd"),
+                                                    7,
+                                                    nob_sv_from_cstr("Unknown command"));
+    size_t unknown_end = evaluator_find_command_end_index(stream,
+                                                          nob_sv_from_cstr("unknown_trace_cmd"),
+                                                          7,
+                                                          EVENT_COMMAND_DISPATCH_UNKNOWN,
+                                                          EVENT_COMMAND_STATUS_UNSUPPORTED);
+
+    size_t math_begin = evaluator_find_command_begin_index(stream,
+                                                           nob_sv_from_cstr("math"),
+                                                           8,
+                                                           EVENT_COMMAND_DISPATCH_BUILTIN);
+    size_t math_diag = evaluator_find_diag_index(stream,
+                                                 nob_sv_from_cstr("math"),
+                                                 8,
+                                                 nob_sv_from_cstr("math() requires a subcommand"));
+    size_t math_end = evaluator_find_command_end_index(stream,
+                                                       nob_sv_from_cstr("math"),
+                                                       8,
+                                                       EVENT_COMMAND_DISPATCH_BUILTIN,
+                                                       EVENT_COMMAND_STATUS_ERROR);
+
+    size_t fn_begin = evaluator_find_command_begin_index(stream,
+                                                         nob_sv_from_cstr("trace_fn"),
+                                                         9,
+                                                         EVENT_COMMAND_DISPATCH_FUNCTION);
+    size_t fn_inner_begin = evaluator_find_command_begin_index(stream,
+                                                               nob_sv_from_cstr("math"),
+                                                               2,
+                                                               EVENT_COMMAND_DISPATCH_BUILTIN);
+    size_t fn_inner_diag = evaluator_find_diag_index(stream,
+                                                     nob_sv_from_cstr("math"),
+                                                     2,
+                                                     nob_sv_from_cstr("math() requires a subcommand"));
+    size_t fn_inner_end = evaluator_find_command_end_index(stream,
+                                                           nob_sv_from_cstr("math"),
+                                                           2,
+                                                           EVENT_COMMAND_DISPATCH_BUILTIN,
+                                                           EVENT_COMMAND_STATUS_ERROR);
+    size_t fn_end = evaluator_find_command_end_index(stream,
+                                                     nob_sv_from_cstr("trace_fn"),
+                                                     9,
+                                                     EVENT_COMMAND_DISPATCH_FUNCTION,
+                                                     EVENT_COMMAND_STATUS_ERROR);
+
+    size_t macro_begin = evaluator_find_command_begin_index(stream,
+                                                            nob_sv_from_cstr("trace_macro"),
+                                                            10,
+                                                            EVENT_COMMAND_DISPATCH_MACRO);
+    size_t macro_inner_begin = evaluator_find_command_begin_index(stream,
+                                                                  nob_sv_from_cstr("return"),
+                                                                  5,
+                                                                  EVENT_COMMAND_DISPATCH_BUILTIN);
+    size_t macro_inner_diag = evaluator_find_diag_index(stream,
+                                                        nob_sv_from_cstr("return"),
+                                                        5,
+                                                        nob_sv_from_cstr("return() cannot be used inside macro()"));
+    size_t macro_inner_end = evaluator_find_command_end_index(stream,
+                                                              nob_sv_from_cstr("return"),
+                                                              5,
+                                                              EVENT_COMMAND_DISPATCH_BUILTIN,
+                                                              EVENT_COMMAND_STATUS_ERROR);
+    size_t macro_end = evaluator_find_command_end_index(stream,
+                                                        nob_sv_from_cstr("trace_macro"),
+                                                        10,
+                                                        EVENT_COMMAND_DISPATCH_MACRO,
+                                                        EVENT_COMMAND_STATUS_ERROR);
+
+    ASSERT(unknown_begin != (size_t)-1);
+    ASSERT(unknown_diag != (size_t)-1);
+    ASSERT(unknown_end != (size_t)-1);
+    ASSERT(unknown_begin < unknown_diag);
+    ASSERT(unknown_diag < unknown_end);
+
+    ASSERT(math_begin != (size_t)-1);
+    ASSERT(math_diag != (size_t)-1);
+    ASSERT(math_end != (size_t)-1);
+    ASSERT(math_begin < math_diag);
+    ASSERT(math_diag < math_end);
+
+    ASSERT(fn_begin != (size_t)-1);
+    ASSERT(fn_inner_begin != (size_t)-1);
+    ASSERT(fn_inner_diag != (size_t)-1);
+    ASSERT(fn_inner_end != (size_t)-1);
+    ASSERT(fn_end != (size_t)-1);
+    ASSERT(fn_begin < fn_inner_begin);
+    ASSERT(fn_inner_begin < fn_inner_diag);
+    ASSERT(fn_inner_diag < fn_inner_end);
+    ASSERT(fn_inner_end < fn_end);
+
+    ASSERT(macro_begin != (size_t)-1);
+    ASSERT(macro_inner_begin != (size_t)-1);
+    ASSERT(macro_inner_diag != (size_t)-1);
+    ASSERT(macro_inner_end != (size_t)-1);
+    ASSERT(macro_end != (size_t)-1);
+    ASSERT(macro_begin < macro_inner_begin);
+    ASSERT(macro_inner_begin < macro_inner_diag);
+    ASSERT(macro_inner_diag < macro_inner_end);
+    ASSERT(macro_inner_end < macro_end);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -8613,6 +8808,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_event_ir_taxonomy_is_frozen(passed, failed);
     test_evaluator_event_ir_metadata_and_stream_contract(passed, failed);
     test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed);
+    test_evaluator_event_ir_command_trace_sequences_unknown_and_error_paths(passed, failed);
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
     test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);
