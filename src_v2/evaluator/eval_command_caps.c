@@ -14,6 +14,9 @@ static Command_Capability eval_capability_make(String_View name,
 
 bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability) {
     if (!out_capability) return false;
+    // Capability lookup intentionally reuses the runtime native-command registry lookup
+    // so dispatcher routing and capability introspection observe the same case-insensitive
+    // native command namespace.
     const Eval_Native_Command *cmd = eval_native_cmd_find_const(ctx, name);
     if (cmd) {
         *out_capability = eval_capability_make(name, cmd->implemented_level, cmd->fallback_behavior);

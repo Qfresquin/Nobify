@@ -859,6 +859,9 @@ static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node) {
 
 static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
+    // Compatibility variables are refreshed exactly once per command cycle here.
+    // Command handlers and diagnostics then read the stable snapshot already stored
+    // on the context instead of re-reading CMAKE_NOBIFY_* mid-cycle.
     eval_refresh_runtime_compat(ctx);
     if (eval_should_stop(ctx)) return eval_result_fatal();
 

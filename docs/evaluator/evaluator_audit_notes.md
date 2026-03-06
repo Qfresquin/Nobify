@@ -31,26 +31,28 @@ Companion docs used for audit context:
 
 ## 3. Snapshot Baseline
 
-Snapshot date (workspace): March 5, 2026.
+Snapshot date (workspace): March 6, 2026.
 
 Current quantitative baseline:
 - Built-in registry commands: `119`
 - Capability labels: `67 FULL` / `52 PARTIAL` / `0 MISSING`
 - Fallback labels: `116 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
 - Largest implementation files by size:
-  - `eval_string.c` (`2561` lines)
-  - `eval_target.c` (`2320` lines)
-  - `eval_file.c` (`2181` lines)
-  - `eval_flow.c` (`2068` lines)
-  - `eval_package.c` (`1834` lines)
+  - `eval_string.c` (`2513` lines)
+  - `eval_target.c` (`2239` lines)
+  - `eval_file.c` (`2129` lines)
+  - `eval_package.c` (`1823` lines)
+  - `eval_flow.c` (`1766` lines)
 
 ## 4. Positive Findings
 
 Current strengths worth preserving:
 - Dispatcher and capability metadata are generated from one registry macro (`EVAL_COMMAND_REGISTRY`), reducing drift risk.
+- Native dispatch, native known-command checks, and capability lookup now share one case-insensitive runtime index, reducing namespace drift.
 - Stop-state handling is coherent: OOM transitions to `stop_requested` and short-circuits most execution paths.
 - Diagnostic emission is consistent and dual-sink: one external log line plus one `EVENT_DIAG` with run-report updates.
 - Unknown-command behavior is explicit and policy-driven instead of silently ignored.
+- Compatibility refresh timing is centralized at command-cycle entry and covered by evaluator tests.
 
 ## 5. Prioritized Findings
 
@@ -59,8 +61,6 @@ Current strengths worth preserving:
 | F-01 | Medium | Behavioral divergence | `while()` has hard iteration cap (`10000`) that can change valid script outcomes. |
 | F-02 | Medium | Contract coherence | Capability metadata (`implemented_level`/`fallback`) is not enforced by dispatch runtime. |
 | F-03 | Medium | Observability | Evaluator severity and process-global diagnostics severity can diverge under strict modes. |
-| F-04 | Medium | Runtime controls | Compatibility variable refresh is call-site based (not universal), creating timing sensitivity. |
-| F-05 | Low | Performance scalability | Known-command and capability lookup are linear scans over registry size. |
 | F-06 | Low | Maintainability | Large evaluator translation units concentrate many concerns and raise refactor risk. |
 | F-07 | Low | Coverage debt | `PARTIAL` footprint remains high (`43.7%`), concentrated in `ctest_*` and legacy wrappers. |
 
@@ -104,32 +104,6 @@ Risk:
 Recommendation:
 - Define one authority for severity escalation (evaluator vs global diagnostics) and codify a single gating recommendation.
 
-### F-04: Compatibility refresh timing
-
-Evidence:
-- `eval_refresh_runtime_compat(...)` is currently called in `eval_emit_diag(...)` and unknown-command dispatch path.
-- It is not globally invoked at every command entry.
-
-Risk:
-- Runtime variable changes (`CMAKE_NOBIFY_*`) can become effective only when a refresh point is hit.
-
-Recommendation:
-- Either:
-  - refresh once per command dispatch entry, or
-  - explicitly document delayed-application semantics as intentional.
-
-### F-05: Linear lookup paths
-
-Evidence:
-- `eval_dispatcher_is_known_command(...)` scans `DISPATCH` linearly.
-- `eval_command_caps_lookup(...)` scans `COMMAND_CAPS` linearly.
-
-Risk:
-- Current cost is acceptable at `119` commands, but headroom drops as registry grows and introspection frequency increases.
-
-Recommendation:
-- Keep as-is for now; plan optional hash/index table if command surface expands materially.
-
 ### F-06: File-size concentration
 
 Evidence:
@@ -163,14 +137,34 @@ Priority tiers for next engineering/doc pass:
 
 2. P1
 - Add configurable `while()` guard limit and document default semantics (F-01).
-- Define deterministic compatibility-refresh timing contract (F-04).
 
 3. P2
 - Start decomposition of largest evaluator files with stable internal interfaces (F-06).
 - Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
-- Revisit lookup indexing only if profiling justifies it (F-05).
 
-## 8. Verification Checklist for Next Audit Pass
+## 8. Closed / Documented in B+C
+
+### F-04: Compatibility refresh timing
+
+Current state:
+- `eval_refresh_runtime_compat(...)` is called once at `eval_node(...)` command entry,
+- evaluator tests cover next-command activation for `CMAKE_NOBIFY_COMPAT_PROFILE`, `CMAKE_NOBIFY_UNSUPPORTED_POLICY`, and `CMAKE_NOBIFY_CONTINUE_ON_ERROR`,
+- normative docs now treat command-cycle snapshot timing as the official contract.
+
+Disposition:
+- closed as implemented-and-documented for the current baseline.
+
+### F-05: Native lookup scalability
+
+Current state:
+- `eval_dispatch_command(...)`, `eval_dispatcher_is_known_command(...)`, and `eval_command_caps_lookup(...)` all reuse `eval_native_cmd_find_const(...)`,
+- that helper uses the runtime `native_command_index` hash table over the native registry,
+- register/unregister rebuild the same index used by dispatcher and capability introspection.
+
+Disposition:
+- closed as implemented-and-documented for the current baseline.
+
+## 9. Verification Checklist for Next Audit Pass
 
 - Re-run registry stats and fallback distribution from `eval_command_registry.h`.
 - Confirm any new `PARTIAL -> FULL` promotions are reflected in both coverage matrix and capability docs.
@@ -178,13 +172,13 @@ Priority tiers for next engineering/doc pass:
 - Re-check `while()` behavior and guard configurability if implemented.
 - Recompute top evaluator file-size hotspots after any refactor wave.
 
-## 9. Open Questions
+## 10. Open Questions
 
 - Should `CI_STRICT` remain behaviorally equivalent to `STRICT`, or gain CI-specific stop/report semantics?
 - Should unknown-command and known-command fallback policy converge to one unified policy mechanism?
 - Which metric is canonical for build gating: evaluator run report, global diagnostics counters, or both?
 
-## 10. Relationship to Other Docs
+## 11. Relationship to Other Docs
 
 - `evaluator_v2_spec.md`
 Canonical contract; this file is analytical only.
@@ -196,4 +190,4 @@ Quantitative command-coverage snapshot used by this audit.
 Capability API/data contract referenced by finding F-02.
 
 - `evaluator_compatibility_model.md`
-Profile/policy behavior referenced by findings F-03 and F-04.
+Profile/policy behavior referenced by finding F-03 and the closed compatibility-timing note.

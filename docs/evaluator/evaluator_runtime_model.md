@@ -192,8 +192,9 @@ The constructor also initializes:
 - `CMAKE_NOBIFY_FILE_GLOB_STRICT`
 
 Important runtime property:
-- these variables are not only informational
-- parts of runtime behavior re-read them later through `eval_refresh_runtime_compat(...)`
+- these variables are not only informational,
+- `eval_refresh_runtime_compat(...)` re-reads the evaluator-core compatibility subset at command-cycle entry,
+- command-specific knobs such as `CMAKE_NOBIFY_FILE_GLOB_STRICT` remain owned by their local consumers.
 
 ### 6.3 Host / Toolchain Compatibility Built-Ins
 
@@ -387,9 +388,9 @@ Helpers:
 
 Current behavior:
 - `eval_request_stop(...)` unconditionally sets `stop_requested`
-- `eval_request_stop_on_error(...)` respects `CMAKE_NOBIFY_CONTINUE_ON_ERROR`; if that runtime variable is truthy, it does not stop immediately
+- `eval_request_stop_on_error(...)` respects the current-cycle `continue_on_error_snapshot`; if that snapshot is truthy, it does not stop immediately
 
-This makes stop behavior partly data-driven through live evaluator variables, not only through fixed constructor settings.
+This makes stop behavior partly data-driven through command-cycle compatibility snapshots, not only through fixed constructor settings.
 
 ## 10. Runtime Compatibility as Live State
 
@@ -402,19 +403,21 @@ bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile pr
 ```
 
 Internal refresh path:
-- `eval_refresh_runtime_compat(...)`
+- `eval_refresh_runtime_compat(...)`, called once from `eval_node(...)` at command-cycle entry
 
 Current behavior:
 - `evaluator_set_compat_profile(...)` updates `ctx->compat_profile`
 - it also updates the visible variables `CMAKE_NOBIFY_COMPAT_PROFILE` and `CMAKE_NOBIFY_CONTINUE_ON_ERROR`
-- later, `eval_refresh_runtime_compat(...)` re-reads:
+- at the next command-cycle boundary, `eval_refresh_runtime_compat(...)` re-reads:
   - `CMAKE_NOBIFY_COMPAT_PROFILE`
   - `CMAKE_NOBIFY_UNSUPPORTED_POLICY`
   - `CMAKE_NOBIFY_ERROR_BUDGET`
+  - `CMAKE_NOBIFY_CONTINUE_ON_ERROR`
 
 Important consequence:
 - compatibility behavior is a live part of runtime state
-- scripts can influence future evaluator behavior by mutating these variables
+- scripts can influence future evaluator behavior by mutating these variables,
+- those mutations become effective on the next command cycle unless a command documents a local immediate-read rule.
 
 ## 11. Run Lifecycle
 
@@ -561,11 +564,9 @@ Current target boundary:
 Explicit non-target in this roadmap:
 - no child evaluator runtime context model for nested execution (`include`, subdirectory, inline/deferred execution).
 
-## 17. Compatibility Refresh Timing Contract Target
+## 17. Compatibility Refresh Timing Contract
 
-Refactor target for compatibility refresh is one deterministic point per command evaluation cycle.
-
-Target behavior contract:
-- compatibility knobs are refreshed once at a canonical command-cycle boundary before policy/diagnostic decisions,
+Current behavior contract:
+- evaluator-core compatibility knobs are refreshed once at a canonical command-cycle boundary before policy/diagnostic decisions,
 - command-level decisions in that cycle use the same refreshed snapshot,
 - mutations of `CMAKE_NOBIFY_*` variables become effective on the next command cycle unless a command explicitly documents immediate local refresh semantics.

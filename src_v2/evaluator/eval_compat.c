@@ -100,6 +100,10 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
 void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
     if (!ctx) return;
     if (eval_scope_visible_depth(ctx) == 0) return;
+
+    // This refresh snapshots evaluator-local compatibility knobs for the current
+    // command cycle. Callers are expected to invoke it once at command entry and
+    // then keep the resulting snapshot stable for the rest of that cycle.
     String_View profile = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE));
     if (profile.count > 0) ctx->compat_profile = eval_profile_from_sv(profile);
 

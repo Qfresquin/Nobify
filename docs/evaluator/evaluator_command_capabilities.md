@@ -97,8 +97,8 @@ Practical consequence:
 ### 6.1 Matching
 
 Lookup is:
-- linear scan over the context-native registry,
-- case-insensitive by command name (`eval_sv_eq_ci_lit`).
+- delegated to `eval_native_cmd_find_const(...)` over the context-native runtime registry,
+- case-insensitive through the same normalized lookup key used by dispatcher routing.
 
 ### 6.2 Return Value Semantics
 
@@ -106,9 +106,11 @@ Lookup is:
 - `true` when name is found in registry,
 - `false` when name is not found, context is null, or when `out_capability == NULL`.
 
-When not found and `out_capability` is valid, it still writes:
+When `out_capability` is valid and lookup misses, it still writes:
 - `implemented_level = EVAL_CMD_IMPL_MISSING`
 - `fallback_behavior = EVAL_FALLBACK_NOOP_WARN`
+
+That miss contract also applies when `ctx == NULL`.
 
 ### 6.3 `command_name` Field Nuance
 
@@ -173,9 +175,8 @@ This predicate model is broader than capability API coverage because it includes
 ## 12. Performance Characteristics
 
 Current lookup complexity:
-- O(N) linear scan on each query.
-
-There is no hash/index cache for capabilities in current implementation.
+- native capability lookup reuses the runtime hash-backed native-command index,
+- index maintenance happens when the native registry is rebuilt after register/unregister.
 
 ## 13. Current Limits and Non-Goals
 
@@ -184,7 +185,8 @@ Current limitations:
 - no dynamic capability downgrade/upgrade by policy/profile at runtime,
 - no machine-readable reason field for why a command is `PARTIAL`,
 - fallback metadata is not currently enforced by dispatcher as policy logic,
-- no dedicated API to enumerate full registry with stable ordering/versioning guarantees.
+- no dedicated API to enumerate full registry with stable ordering/versioning guarantees,
+- no parallel capability table exists; metadata is intentionally derived from the same native registry dispatcher uses.
 
 ## 14. Relationship to Other Docs
 

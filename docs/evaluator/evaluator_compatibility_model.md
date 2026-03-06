@@ -98,17 +98,21 @@ Current parsing behavior:
 
 ### 5.3 Refresh Timing
 
-The evaluator does not globally refresh compat variables on every operation.
+Compatibility variables are refreshed once per command evaluation cycle.
 
-Current core refresh points:
-- `eval_emit_diag(...)`
-- unknown-command dispatch path in `eval_dispatch_command(...)`
+Current core refresh point:
+- `eval_node(...)` calls `eval_refresh_runtime_compat(...)` before routing the node.
+
+Current snapshot contents:
+- `CMAKE_NOBIFY_COMPAT_PROFILE`
+- `CMAKE_NOBIFY_UNSUPPORTED_POLICY`
+- `CMAKE_NOBIFY_ERROR_BUDGET`
+- `CMAKE_NOBIFY_CONTINUE_ON_ERROR`
 
 Practical consequence:
-- compatibility variable changes are live, but only become effective after a refresh point is reached.
-
-Roadmap direction:
-- migrate to one canonical per-command-cycle refresh boundary (see section 15).
+- compatibility decisions made while executing command `N` read one stable snapshot,
+- writes to those variables during command `N` become effective on command `N+1` by default,
+- dispatcher unknown-command fallback and diagnostic handling do not perform their own ad hoc refresh.
 
 ## 6. Profile Semantics
 
@@ -164,7 +168,7 @@ Current event shape:
 ## 8. Error Budget Model
 
 Budget source:
-- `ctx->error_budget` (refreshed from `CMAKE_NOBIFY_ERROR_BUDGET` when parse succeeds).
+- `ctx->error_budget`, refreshed from `CMAKE_NOBIFY_ERROR_BUDGET` at command-cycle entry when parsing succeeds.
 
 Decision path:
 - `eval_compat_decide_on_diag(...)` runs after `eval_report_record_diag(...)`.
@@ -180,7 +184,7 @@ Important ordering detail:
 ## 9. Continue-on-Error and Stop Requests
 
 `eval_request_stop_on_error(...)` behavior:
-- checks `CMAKE_NOBIFY_CONTINUE_ON_ERROR` through `eval_continue_on_error(...)`,
+- checks the current-cycle `continue_on_error_snapshot` through `eval_continue_on_error(...)`,
 - if truthy, stop is not requested,
 - otherwise `stop_requested` is set.
 
@@ -255,7 +259,7 @@ Current intentional/visible limits:
 - evaluator profiles are an evaluator-specific layer, not native CMake profile concepts.
 - `STRICT` and `CI_STRICT` currently behave the same in compatibility core logic.
 - unknown-command policy only affects unresolved command fallback; capability metadata is not dynamically enforced.
-- compatibility refresh is call-site based, not a universal per-operation refresh.
+- compatibility decisions are intentionally snapshot-based at command-cycle granularity.
 - continuation under strict can still be forced via `CMAKE_NOBIFY_CONTINUE_ON_ERROR`.
 
 ## 14. Relationship to Other Docs
@@ -275,19 +279,17 @@ Diagnostic emission pipeline, severity shaping, and stop behavior.
 - `evaluator_execution_model.md`
 Where compatibility outcomes influence traversal and control flow.
 
-## 15. Refactor Target: Centralized Refresh Boundary
+## 15. Command-Cycle Refresh Contract
 
-Compatibility refresh will converge to one deterministic boundary per command evaluation cycle.
-
-Target contract:
-- at command-cycle entry, evaluator refreshes all `CMAKE_NOBIFY_*` compatibility knobs exactly once,
+Current contract:
+- at command-cycle entry, evaluator refreshes the shared evaluator-core `CMAKE_NOBIFY_*` compatibility knobs exactly once,
 - all compatibility decisions in that cycle (unknown-command policy, severity shaping, budget and stop checks) read that same refreshed snapshot,
-- call-site ad hoc refreshes inside dispatcher/diagnostic internals are reduced to compatibility-core infrastructure.
+- dispatcher/diagnostic internals do not perform extra refreshes for those shared knobs.
 
 Determinism objective:
 - equal command sequence + equal variable state at cycle boundaries yields equal compatibility decisions.
 
-## 16. Inter-Command Mutation Fallback Contract
+## 16. Inter-Command Mutation Contract
 
 Mutation timing rule for compatibility variables:
 - writes to `CMAKE_NOBIFY_*` that happen during command N become normative for command N+1 by default.

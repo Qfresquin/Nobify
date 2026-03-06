@@ -145,7 +145,8 @@ Related runtime controls:
 - continue-on-error variable path
 
 Current behavior:
-- compatibility state can be changed both through API (`evaluator_set_compat_profile`) and by runtime variable refresh (`eval_refresh_runtime_compat`).
+- compatibility state can be changed both through API (`evaluator_set_compat_profile`) and by runtime variable writes sampled through `eval_refresh_runtime_compat(...)`,
+- runtime-variable changes become effective at the next command-cycle refresh boundary by default.
 
 ## 8. Refactor Direction
 
@@ -204,7 +205,8 @@ Current propagation pattern:
 
 Current intentionally visible limits:
 - `while()` execution has a hard iteration guard.
-- dispatcher lookup is linear over the registry table.
+- native dispatcher lookup is case-insensitive and index-backed through the runtime registry.
+- capability lookup shares that same native registry lookup path for introspection.
 - unknown-command fallback is generic and does not dynamically apply capability metadata.
 - nested evaluation remains shared-context; child-context isolation is out of scope in the current roadmap.
 

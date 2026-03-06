@@ -5,6 +5,7 @@
 #include "arena.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
+#include "eval_dispatcher.h"
 #include "evaluator.h"
 #include "evaluator_internal.h"
 #include "event_ir.h"
@@ -244,6 +245,54 @@ static Eval_Result native_test_handler_snapshot_warn_only(Evaluator_Context *ctx
                                         o,
                                         nob_sv_from_cstr("phase2 warning"),
                                         nob_sv_from_cstr(""));
+}
+
+static bool evaluator_find_last_diag_for_command(const Cmake_Event_Stream *stream,
+                                                 String_View command,
+                                                 Event_Diag_Severity *out_severity) {
+    if (!stream || !out_severity) return false;
+    for (size_t i = stream->count; i > 0; i--) {
+        const Cmake_Event *ev = &stream->items[i - 1];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (!nob_sv_eq(ev->as.diag.command, command)) continue;
+        *out_severity = ev->as.diag.severity;
+        return true;
+    }
+    return false;
+}
+
+static Eval_Result native_test_handler_snapshot_set_unsupported_error_and_probe_inline(Evaluator_Context *ctx,
+                                                                                        const Node *node) {
+    if (!ctx || !node || !ctx->stream) return eval_result_fatal();
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"),
+                              nob_sv_from_cstr("ERROR"))) {
+        return eval_result_fatal();
+    }
+
+    Ast_Root probe = parse_cmake(eval_temp_arena(ctx), "unknown_inline_policy_cmd()\n");
+    if (arena_arr_len(probe) == 0) return eval_result_fatal();
+
+    Eval_Result inline_result = eval_dispatch_command(ctx, &probe[0]);
+    if (eval_result_is_fatal(inline_result)) return inline_result;
+
+    String_View result_sv = eval_result_is_soft_error(inline_result)
+        ? nob_sv_from_cstr("SOFT_ERROR")
+        : nob_sv_from_cstr("OK");
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("INLINE_UNSUPPORTED_SNAPSHOT_RESULT"), result_sv)) {
+        return eval_result_fatal();
+    }
+
+    Event_Diag_Severity inline_severity = EV_DIAG_WARNING;
+    if (!evaluator_find_last_diag_for_command(ctx->stream,
+                                              nob_sv_from_cstr("unknown_inline_policy_cmd"),
+                                              &inline_severity)) {
+        return eval_result_fatal();
+    }
+    return eval_result_from_bool(eval_var_set_current(
+        ctx,
+        nob_sv_from_cstr("INLINE_UNSUPPORTED_SNAPSHOT_SEVERITY"),
+        inline_severity == EV_DIAG_ERROR ? nob_sv_from_cstr("ERROR") : nob_sv_from_cstr("WARNING")));
 }
 
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
@@ -1238,6 +1287,8 @@ TEST(evaluator_compat_refresh_snapshot_applies_next_command_cycle) {
     Eval_Result run_res = evaluator_run(ctx, root);
     ASSERT(eval_result_is_fatal(run_res));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SNAPSHOT_PHASE1_NON_FATAL")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE")), nob_sv_from_cstr("STRICT")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR")), nob_sv_from_cstr("0")));
 
     size_t snapshot_diag_count = 0;
     for (size_t i = 0; i < stream->count; i++) {
@@ -1247,10 +1298,78 @@ TEST(evaluator_compat_refresh_snapshot_applies_next_command_cycle) {
     }
     ASSERT(snapshot_diag_count == 2);
 
+    Event_Diag_Severity phase_one_severity = EV_DIAG_ERROR;
+    ASSERT(evaluator_find_last_diag_for_command(stream,
+                                                nob_sv_from_cstr("native_snapshot_phase_one"),
+                                                &phase_one_severity));
+    ASSERT(phase_one_severity == EV_DIAG_WARNING);
+
+    Event_Diag_Severity phase_two_severity = EV_DIAG_WARNING;
+    ASSERT(evaluator_find_last_diag_for_command(stream,
+                                                nob_sv_from_cstr("native_snapshot_phase_two"),
+                                                &phase_two_severity));
+    ASSERT(phase_two_severity == EV_DIAG_ERROR);
+
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->warning_count >= 1);
-    ASSERT(report->error_count >= 1);
+    ASSERT(report->warning_count == 1);
+    ASSERT(report->error_count == 1);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_unsupported_policy_snapshot_applies_next_command_cycle) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Evaluator_Native_Command_Def phase_one = {
+        .name = nob_sv_from_cstr("native_policy_snapshot_phase_one"),
+        .handler = native_test_handler_snapshot_set_unsupported_error_and_probe_inline,
+        .implemented_level = EVAL_CMD_IMPL_PARTIAL,
+        .fallback_behavior = EVAL_FALLBACK_NOOP_WARN,
+    };
+    ASSERT(evaluator_register_native_command(ctx, &phase_one));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "native_policy_snapshot_phase_one()\n"
+        "unknown_after_policy_snapshot()\n");
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY")), nob_sv_from_cstr("ERROR")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("INLINE_UNSUPPORTED_SNAPSHOT_RESULT")), nob_sv_from_cstr("OK")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("INLINE_UNSUPPORTED_SNAPSHOT_SEVERITY")), nob_sv_from_cstr("WARNING")));
+
+    Event_Diag_Severity outer_unknown_severity = EV_DIAG_WARNING;
+    ASSERT(evaluator_find_last_diag_for_command(stream,
+                                                nob_sv_from_cstr("unknown_after_policy_snapshot"),
+                                                &outer_unknown_severity));
+    ASSERT(outer_unknown_severity == EV_DIAG_ERROR);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 1);
+    ASSERT(report->error_count == 1);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -7185,6 +7304,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_native_command_registry_runtime_extension(passed, failed);
     test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed);
     test_evaluator_compat_refresh_snapshot_applies_next_command_cycle(passed, failed);
+    test_evaluator_unsupported_policy_snapshot_applies_next_command_cycle(passed, failed);
     test_evaluator_run_result_kind_tri_state_contract(passed, failed);
     test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed);
     test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed);

@@ -65,11 +65,12 @@ Each entry carries:
 `EVAL_COMMAND_REGISTRY(X)` and registers each built-in into the context registry.
 
 Current routing mechanics:
-- linear scan over `ctx->native_commands`,
-- case-insensitive name comparison.
+- built-ins and dynamically registered native commands live in one runtime registry,
+- register/unregister rebuild a case-insensitive hash-backed index (`native_command_index`) over that registry,
+- dispatch, known-command checks, and capability lookup all reuse `eval_native_cmd_find_const(...)`.
 
 Current implication:
-- dispatch and capability lookup cost are O(N) in registered command count.
+- native lookup semantics are case-insensitive and stay aligned across dispatch and introspection.
 
 ## 5. Command Dispatch Pipeline
 
@@ -84,9 +85,10 @@ Current implication:
 ### 5.2 Native Match Path
 
 On first native registry name match:
-1. emit `EVENT_COMMAND_CALL`,
+1. snapshot `run_report.error_count`,
 2. invoke handler,
-3. return handler `Eval_Result` merged with runtime stop state.
+3. merge handler result with runtime stop state,
+4. emit `EVENT_COMMAND_CALL` only if the handler finished without fatal state and without adding new evaluator errors.
 
 Current event helper:
 - `eval_emit_command_call(...)` copies command name to `event_arena`.
@@ -94,24 +96,23 @@ Current event helper:
 ### 5.3 User Command Fallback Path
 
 If no native command matches:
-1. refresh runtime compatibility knobs (`eval_refresh_runtime_compat(...)`),
-2. lookup user command (`eval_user_cmd_find(...)`),
-3. if found, resolve args with `eval_resolve_args_literal(...)` for macros or `eval_resolve_args(...)` for functions,
-4. emit `EVENT_COMMAND_CALL`,
-5. invoke via `eval_user_cmd_invoke(...)`.
+1. lookup user command (`eval_user_cmd_find(...)`),
+2. if found, resolve args with `eval_resolve_args_literal(...)` for macros or `eval_resolve_args(...)` for functions,
+3. invoke via `eval_user_cmd_invoke(...)`,
+4. emit `EVENT_COMMAND_CALL` only if invocation finished without fatal state and without adding new evaluator errors.
 
 Return behavior on user command invoke:
-- if invoke finishes without stop-state, dispatcher keeps execution in non-fatal state,
-- if invoke enters stop-state, dispatcher returns `EVAL_RESULT_FATAL`.
+- if invoke returns success, dispatcher returns `eval_result_ok_if_running(ctx)`,
+- if invoke fails, dispatcher returns `eval_result_from_ctx(ctx)`.
 
 Practical consequence:
-- non-stop execution failures in user invocation are treated as recoverable at dispatcher return boundary.
+- user-command execution shares the same command-cycle compatibility snapshot that was already refreshed by `eval_node(...)` before dispatcher entry.
 
 ### 5.4 Unknown Command Path
 
 If native and user lookup both miss:
 - emit diagnostic component `dispatcher`, cause `"Unknown command"`,
-- diagnostic severity depends on `ctx->unsupported_policy`,
+- diagnostic severity depends on the current-cycle snapshot in `ctx->unsupported_policy`,
 - dispatcher returns `EVAL_RESULT_SOFT_ERROR` for non-fatal unknown-command diagnostics, or `EVAL_RESULT_FATAL` if policy/stop state escalates.
 
 Current hint text:
@@ -147,15 +148,12 @@ Current behavior:
 ## 8. Unknown-Command Policy Integration
 
 Policy source:
-- `ctx->unsupported_policy`.
+- `ctx->unsupported_policy`, refreshed once at command-cycle entry by `eval_node(...)`.
 
 Current enum:
 - `EVAL_UNSUPPORTED_WARN`
 - `EVAL_UNSUPPORTED_ERROR`
 - `EVAL_UNSUPPORTED_NOOP_WARN`
-
-Runtime refresh:
-- `eval_refresh_runtime_compat(...)` can update `unsupported_policy` from variable `CMAKE_NOBIFY_UNSUPPORTED_POLICY`.
 
 Current severity mapping in dispatcher unknown path:
 - default warning,
@@ -188,7 +186,7 @@ Fallback enum:
 ### 9.2 Lookup Behavior
 
 `eval_command_caps_lookup(...)`:
-- scans registry-derived capability table by case-insensitive name,
+- delegates to `eval_native_cmd_find_const(...)` over the runtime native-command registry,
 - writes matching metadata and returns `true` on hit,
 - on miss writes default `implemented_level = EVAL_CMD_IMPL_MISSING`, `fallback_behavior = EVAL_FALLBACK_NOOP_WARN`, and returns `false`.
 
@@ -213,7 +211,6 @@ This means `COMMAND` predicates observe the same command namespace model used by
 ## 11. Current Limits and Non-Goals
 
 Current limitations visible in implementation:
-- native lookup is linear (no hash/indexed dispatcher).
 - unknown-command handling is generic; per-command fallback metadata is not applied at runtime.
 - there is no `EVENT_COMMAND_CALL` emission for unknown-command attempts.
 - dispatcher contract is `NODE_COMMAND`-only; structural nodes (`if`, `while`, etc.) are routed elsewhere.
@@ -231,19 +228,14 @@ Current limitations visible in implementation:
 - `evaluator_diagnostics.md`
   - diagnostic emission and stop escalation behavior used by unknown-command handling.
 
-## 13. Refactor Target: Lookup Strategy
+## 13. Current Contract: Lookup and Metadata
 
-Planned dispatch lookup direction:
-- move native command lookup from linear scan to indexed/hash-backed lookup over the runtime registry,
-- preserve current command-resolution semantics (case-insensitive behavior and dispatch order) unless a dedicated RFC changes them.
+Current lookup contract:
+- native command lookup is case-insensitive and index-backed through the runtime registry,
+- `eval_dispatch_command(...)`, `eval_dispatcher_is_known_command(...)`, and `eval_command_caps_lookup(...)` share that same native namespace,
+- dynamic `register/unregister` rebuild the same lookup index used by dispatcher and capability introspection.
 
-Target impact:
-- reduce hot-path lookup cost for command dispatch and `if(COMMAND ...)` checks,
-- keep capability lookup behavior compatible while improving runtime lookup efficiency.
-
-## 14. Refactor Target: Metadata Semantics
-
-Planned metadata semantics direction:
+Current metadata semantics:
 - `implemented_level` and `fallback_behavior` remain descriptive first-class metadata for introspection/reporting,
 - runtime stop/continue policy remains mediated by diagnostics + compatibility policy paths.
 
