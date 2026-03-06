@@ -3141,6 +3141,169 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
     TEST_PASS();
 }
 
+typedef struct {
+    Event_Family family;
+    const char *label;
+} Event_Family_Contract_Row;
+
+typedef struct {
+    Event_Kind kind;
+    Event_Family family;
+    const char *label;
+    uint32_t role_mask;
+} Event_Kind_Contract_Row;
+
+TEST(evaluator_event_ir_taxonomy_is_frozen) {
+    static const Event_Family_Contract_Row expected_families[] = {
+        {EVENT_FAMILY_TRACE, "trace"},
+        {EVENT_FAMILY_DIAG, "diag"},
+        {EVENT_FAMILY_DIRECTORY, "directory"},
+        {EVENT_FAMILY_FLOW, "flow"},
+        {EVENT_FAMILY_SCOPE, "scope"},
+        {EVENT_FAMILY_POLICY, "policy"},
+        {EVENT_FAMILY_VAR, "var"},
+        {EVENT_FAMILY_FS, "fs"},
+        {EVENT_FAMILY_PROC, "proc"},
+        {EVENT_FAMILY_STRING, "string"},
+        {EVENT_FAMILY_LIST, "list"},
+        {EVENT_FAMILY_MATH, "math"},
+        {EVENT_FAMILY_PATH, "path"},
+        {EVENT_FAMILY_PROJECT, "project"},
+        {EVENT_FAMILY_TARGET, "target"},
+        {EVENT_FAMILY_TEST, "test"},
+        {EVENT_FAMILY_INSTALL, "install"},
+        {EVENT_FAMILY_CPACK, "cpack"},
+        {EVENT_FAMILY_PACKAGE, "package"},
+    };
+    static const Event_Kind_Contract_Row expected_kinds[] = {
+        {EVENT_DIAG, EVENT_FAMILY_DIAG, "diag", EVENT_ROLE_DIAGNOSTIC},
+        {EVENT_COMMAND_BEGIN, EVENT_FAMILY_TRACE, "command_begin", EVENT_ROLE_TRACE},
+        {EVENT_COMMAND_END, EVENT_FAMILY_TRACE, "command_end", EVENT_ROLE_TRACE},
+        {EVENT_INCLUDE_BEGIN, EVENT_FAMILY_TRACE, "include_begin", EVENT_ROLE_TRACE},
+        {EVENT_INCLUDE_END, EVENT_FAMILY_TRACE, "include_end", EVENT_ROLE_TRACE},
+        {EVENT_ADD_SUBDIRECTORY_BEGIN, EVENT_FAMILY_TRACE, "add_subdirectory_begin", EVENT_ROLE_TRACE},
+        {EVENT_ADD_SUBDIRECTORY_END, EVENT_FAMILY_TRACE, "add_subdirectory_end", EVENT_ROLE_TRACE},
+        {EVENT_CMAKE_LANGUAGE_CALL, EVENT_FAMILY_TRACE, "cmake_language_call", EVENT_ROLE_TRACE},
+        {EVENT_CMAKE_LANGUAGE_EVAL, EVENT_FAMILY_TRACE, "cmake_language_eval", EVENT_ROLE_TRACE},
+        {EVENT_CMAKE_LANGUAGE_DEFER_QUEUE, EVENT_FAMILY_TRACE, "cmake_language_defer_queue", EVENT_ROLE_TRACE},
+        {EVENT_DIRECTORY_ENTER, EVENT_FAMILY_DIRECTORY, "directory_enter", EVENT_ROLE_TRACE | EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_DIRECTORY_LEAVE, EVENT_FAMILY_DIRECTORY, "directory_leave", EVENT_ROLE_TRACE | EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_FAMILY_DIRECTORY, "directory_property_mutate", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_GLOBAL_PROPERTY_MUTATE, EVENT_FAMILY_DIRECTORY, "global_property_mutate", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_VAR_SET, EVENT_FAMILY_VAR, "var_set", EVENT_ROLE_STATE},
+        {EVENT_VAR_UNSET, EVENT_FAMILY_VAR, "var_unset", EVENT_ROLE_STATE},
+        {EVENT_SCOPE_PUSH, EVENT_FAMILY_SCOPE, "scope_push", EVENT_ROLE_STATE},
+        {EVENT_SCOPE_POP, EVENT_FAMILY_SCOPE, "scope_pop", EVENT_ROLE_STATE},
+        {EVENT_POLICY_PUSH, EVENT_FAMILY_POLICY, "policy_push", EVENT_ROLE_STATE},
+        {EVENT_POLICY_POP, EVENT_FAMILY_POLICY, "policy_pop", EVENT_ROLE_STATE},
+        {EVENT_POLICY_SET, EVENT_FAMILY_POLICY, "policy_set", EVENT_ROLE_STATE},
+        {EVENT_FLOW_RETURN, EVENT_FAMILY_FLOW, "flow_return", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_IF_EVAL, EVENT_FAMILY_FLOW, "flow_if_eval", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_BRANCH_TAKEN, EVENT_FAMILY_FLOW, "flow_branch_taken", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_LOOP_BEGIN, EVENT_FAMILY_FLOW, "flow_loop_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_LOOP_END, EVENT_FAMILY_FLOW, "flow_loop_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_BREAK, EVENT_FAMILY_FLOW, "flow_break", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_CONTINUE, EVENT_FAMILY_FLOW, "flow_continue", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_DEFER_QUEUE, EVENT_FAMILY_FLOW, "flow_defer_queue", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_DEFER_FLUSH, EVENT_FAMILY_FLOW, "flow_defer_flush", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_BLOCK_BEGIN, EVENT_FAMILY_FLOW, "flow_block_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_BLOCK_END, EVENT_FAMILY_FLOW, "flow_block_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_FUNCTION_BEGIN, EVENT_FAMILY_FLOW, "flow_function_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_FUNCTION_END, EVENT_FAMILY_FLOW, "flow_function_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_MACRO_BEGIN, EVENT_FAMILY_FLOW, "flow_macro_begin", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FLOW_MACRO_END, EVENT_FAMILY_FLOW, "flow_macro_end", EVENT_ROLE_TRACE | EVENT_ROLE_STATE},
+        {EVENT_FS_WRITE_FILE, EVENT_FAMILY_FS, "fs_write_file", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_APPEND_FILE, EVENT_FAMILY_FS, "fs_append_file", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_READ_FILE, EVENT_FAMILY_FS, "fs_read_file", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_GLOB, EVENT_FAMILY_FS, "fs_glob", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_MKDIR, EVENT_FAMILY_FS, "fs_mkdir", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_REMOVE, EVENT_FAMILY_FS, "fs_remove", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_COPY, EVENT_FAMILY_FS, "fs_copy", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_RENAME, EVENT_FAMILY_FS, "fs_rename", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_CREATE_LINK, EVENT_FAMILY_FS, "fs_create_link", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_CHMOD, EVENT_FAMILY_FS, "fs_chmod", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_ARCHIVE_CREATE, EVENT_FAMILY_FS, "fs_archive_create", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_ARCHIVE_EXTRACT, EVENT_FAMILY_FS, "fs_archive_extract", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_TRANSFER_DOWNLOAD, EVENT_FAMILY_FS, "fs_transfer_download", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_FS_TRANSFER_UPLOAD, EVENT_FAMILY_FS, "fs_transfer_upload", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_PROC_EXEC_REQUEST, EVENT_FAMILY_PROC, "proc_exec_request", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_PROC_EXEC_RESULT, EVENT_FAMILY_PROC, "proc_exec_result", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_STRING_REPLACE, EVENT_FAMILY_STRING, "string_replace", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_STRING_CONFIGURE, EVENT_FAMILY_STRING, "string_configure", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_STRING_REGEX, EVENT_FAMILY_STRING, "string_regex", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_STRING_HASH, EVENT_FAMILY_STRING, "string_hash", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_STRING_TIMESTAMP, EVENT_FAMILY_STRING, "string_timestamp", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_LIST_APPEND, EVENT_FAMILY_LIST, "list_append", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_LIST_PREPEND, EVENT_FAMILY_LIST, "list_prepend", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_LIST_INSERT, EVENT_FAMILY_LIST, "list_insert", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_LIST_REMOVE, EVENT_FAMILY_LIST, "list_remove", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_LIST_TRANSFORM, EVENT_FAMILY_LIST, "list_transform", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_LIST_SORT, EVENT_FAMILY_LIST, "list_sort", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_MATH_EXPR, EVENT_FAMILY_MATH, "math_expr", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_PATH_NORMALIZE, EVENT_FAMILY_PATH, "path_normalize", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_PATH_COMPARE, EVENT_FAMILY_PATH, "path_compare", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_PATH_CONVERT, EVENT_FAMILY_PATH, "path_convert", EVENT_ROLE_RUNTIME_EFFECT},
+        {EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_PROJECT_DECLARE, EVENT_FAMILY_PROJECT, "project_declare", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_PROP_SET, EVENT_FAMILY_TARGET, "target_prop_set", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_LINK_LIBRARIES, EVENT_FAMILY_TARGET, "target_link_libraries", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_LINK_OPTIONS, EVENT_FAMILY_TARGET, "target_link_options", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_LINK_DIRECTORIES, EVENT_FAMILY_TARGET, "target_link_directories", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC},
+    };
+
+    ASSERT(EVENT_FAMILY_COUNT == NOB_ARRAY_LEN(expected_families));
+    ASSERT(EVENT_KIND_COUNT == NOB_ARRAY_LEN(expected_kinds));
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(expected_families); i++) {
+        const Event_Family_Contract_Row *expected = &expected_families[i];
+        ASSERT((Event_Family)i == expected->family);
+        ASSERT(strcmp(event_family_name(expected->family), expected->label) == 0);
+    }
+    ASSERT(strcmp(event_family_name(EVENT_FAMILY_COUNT), "unknown_family") == 0);
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(expected_kinds); i++) {
+        const Event_Kind_Contract_Row *expected = &expected_kinds[i];
+        const Event_Kind_Meta *meta = event_kind_meta(expected->kind);
+        ASSERT((Event_Kind)i == expected->kind);
+        ASSERT(meta != NULL);
+        ASSERT(meta->kind == expected->kind);
+        ASSERT(meta->family == expected->family);
+        ASSERT(meta->role_mask == expected->role_mask);
+        ASSERT(meta->default_version == 1);
+        ASSERT(strcmp(meta->label, expected->label) == 0);
+        ASSERT(strcmp(event_kind_name(expected->kind), expected->label) == 0);
+        ASSERT(event_kind_family(expected->kind) == expected->family);
+        ASSERT(event_kind_role_mask(expected->kind) == expected->role_mask);
+        ASSERT(strcmp(event_family_name(expected->family), "unknown_family") != 0);
+
+        for (uint32_t bit = 1; bit <= EVENT_ROLE_BUILD_SEMANTIC; bit <<= 1) {
+            bool expected_has_role = (expected->role_mask & bit) != 0;
+            ASSERT(event_kind_has_role(expected->kind, (Event_Role)bit) == expected_has_role);
+        }
+    }
+
+    ASSERT(event_kind_meta(EVENT_KIND_COUNT) == NULL);
+    ASSERT(strcmp(event_kind_name(EVENT_KIND_COUNT), "unknown_event") == 0);
+    ASSERT(event_kind_family(EVENT_KIND_COUNT) == EVENT_FAMILY_COUNT);
+    ASSERT(event_kind_role_mask(EVENT_KIND_COUNT) == 0);
+    ASSERT(!event_kind_has_role(EVENT_KIND_COUNT, EVENT_ROLE_TRACE));
+
+    TEST_PASS();
+}
+
 TEST(evaluator_event_ir_metadata_and_stream_contract) {
     Arena *arena = arena_create(1024 * 1024);
     ASSERT(arena != NULL);
@@ -3160,8 +3323,19 @@ TEST(evaluator_event_ir_metadata_and_stream_contract) {
     ASSERT(event_kind_has_role(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_ROLE_BUILD_SEMANTIC));
     ASSERT(event_kind_has_role(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_ROLE_STATE));
 
-    char origin_path[] = "origin.cmake";
-    char command_name[] = "ephemeral_command";
+    Event invalid = {0};
+    invalid.h.kind = EV_UNKNOWN;
+    invalid.h.origin.file_path = nob_sv_from_cstr("invalid.cmake");
+    ASSERT(!event_stream_push(stream, &invalid));
+    ASSERT(stream->count == 0);
+
+    Arena *source_arena = arena_create(64 * 1024);
+    ASSERT(source_arena != NULL);
+
+    char *origin_path = arena_strndup(source_arena, "origin.cmake", strlen("origin.cmake"));
+    char *command_name = arena_strndup(source_arena, "ephemeral_command", strlen("ephemeral_command"));
+    ASSERT(origin_path != NULL);
+    ASSERT(command_name != NULL);
     Event ev = {0};
     ev.h.kind = EVENT_COMMAND_BEGIN;
     ev.h.origin.file_path = nob_sv_from_parts(origin_path, strlen(origin_path));
@@ -3181,8 +3355,10 @@ TEST(evaluator_event_ir_metadata_and_stream_contract) {
     ASSERT(nob_sv_eq(stream->items[0].h.origin.file_path, nob_sv_from_cstr("origin.cmake")));
     ASSERT(nob_sv_eq(stream->items[0].as.command_begin.command_name, nob_sv_from_cstr("ephemeral_command")));
 
-    char property_name[] = "INCLUDE_DIRECTORIES";
-    char item_buf[] = "include";
+    char *property_name = arena_strndup(source_arena, "INCLUDE_DIRECTORIES", strlen("INCLUDE_DIRECTORIES"));
+    char *item_buf = arena_strndup(source_arena, "include", strlen("include"));
+    ASSERT(property_name != NULL);
+    ASSERT(item_buf != NULL);
     String_View items[] = {nob_sv_from_parts(item_buf, strlen(item_buf))};
     ev = (Event){0};
     ev.h.kind = EVENT_DIRECTORY_PROPERTY_MUTATE;
@@ -3197,6 +3373,7 @@ TEST(evaluator_event_ir_metadata_and_stream_contract) {
 
     property_name[0] = 'X';
     item_buf[0] = 'X';
+    arena_destroy(source_arena);
 
     ASSERT(stream->count == 2);
     ASSERT(stream->items[1].h.seq == 2);
@@ -8433,6 +8610,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);
+    test_evaluator_event_ir_taxonomy_is_frozen(passed, failed);
     test_evaluator_event_ir_metadata_and_stream_contract(passed, failed);
     test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed);
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);

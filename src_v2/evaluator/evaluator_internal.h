@@ -301,7 +301,7 @@ typedef struct {
 
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
-    Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
+    Arena *event_arena;    // PERSISTENT ARENA: storage interno do evaluator; Event_Stream owna payloads só no push
     Cmake_Event_Stream *stream;
 
     String_View source_dir;

@@ -157,6 +157,7 @@ Recommended stabilization scope:
 1. **G0.1 Freeze the base contract**
    - Freeze `Event_Kind`, family, and role taxonomy for the currently supported evaluator surface.
    - Freeze the append-only stream API and ownership boundary so `event_stream_push(...)` remains the one deep-copy boundary.
+   - Status: completed in the workspace on March 6, 2026 by locking canonical family/kind counts, rejecting non-canonical stream kinds, and adding explicit taxonomy/deep-copy contract tests.
 
 2. **G0.2 Normalize command tracing**
    - Ensure dispatched commands emit consistent `COMMAND_BEGIN` / `COMMAND_END` framing, including unknown-command and error paths.

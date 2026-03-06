@@ -397,10 +397,18 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.item)) return false;
             break;
+        case EVENT_KIND_COUNT:
+            return false;
     }
 
     return true;
 }
+
+static const char *const k_event_family_names[EVENT_FAMILY_COUNT] = {
+#define DEFINE_EVENT_FAMILY_NAME(kind, label) [kind] = label,
+    EVENT_FAMILY_LIST(DEFINE_EVENT_FAMILY_NAME)
+#undef DEFINE_EVENT_FAMILY_NAME
+};
 
 static const Event_Kind_Meta k_event_kind_meta[] = {
 #define DEFINE_EVENT_KIND_META(kind, family, label, roles) \
@@ -408,6 +416,11 @@ static const Event_Kind_Meta k_event_kind_meta[] = {
     EVENT_KIND_LIST(DEFINE_EVENT_KIND_META)
 #undef DEFINE_EVENT_KIND_META
 };
+
+_Static_assert(sizeof(k_event_family_names) / sizeof(k_event_family_names[0]) == EVENT_FAMILY_COUNT,
+               "event family table must match Event_Family");
+_Static_assert(sizeof(k_event_kind_meta) / sizeof(k_event_kind_meta[0]) == EVENT_KIND_COUNT,
+               "event kind metadata must match Event_Kind");
 
 Event_Stream *event_stream_create(Arena *arena) {
     if (!arena) return NULL;
@@ -424,8 +437,9 @@ bool event_stream_push(Event_Stream *stream, const Event *src) {
 
     Event ev = *src;
     const Event_Kind_Meta *meta = event_kind_meta(ev.h.kind);
+    if (!meta) return false;
     if (ev.h.version == 0) {
-        ev.h.version = meta ? meta->default_version : 1;
+        ev.h.version = meta->default_version;
     }
     if (ev.h.seq == 0) {
         ev.h.seq = stream->next_seq;
@@ -478,16 +492,12 @@ uint32_t event_kind_role_mask(Event_Kind kind) {
 
 Event_Family event_kind_family(Event_Kind kind) {
     const Event_Kind_Meta *meta = event_kind_meta(kind);
-    return meta ? meta->family : EVENT_FAMILY_DIAG;
+    return meta ? meta->family : EVENT_FAMILY_COUNT;
 }
 
 const char *event_family_name(Event_Family family) {
-    switch (family) {
-#define EVENT_FAMILY_CASE(kind, label) case kind: return label;
-        EVENT_FAMILY_LIST(EVENT_FAMILY_CASE)
-#undef EVENT_FAMILY_CASE
-    }
-    return "unknown_family";
+    if ((size_t)family >= EVENT_FAMILY_COUNT) return "unknown_family";
+    return k_event_family_names[family] ? k_event_family_names[family] : "unknown_family";
 }
 
 const char *event_kind_name(Event_Kind kind) {

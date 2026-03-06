@@ -229,7 +229,9 @@ Current event categories produced include:
 - variable/cache-related events in command paths that emit them.
 
 Ownership rule:
-- event payload strings are copied into persistent evaluator-owned arena storage (`event_arena`-backed).
+- `event_stream_push(...)` is the ownership boundary for emitted payloads.
+- evaluator code may stage stable strings in `event_arena` for internal convenience before the push.
+- successful pushes deep-copy payload strings and `String_View[]` arrays into the stream arena.
 
 ## 11. Stop-State Contract
 

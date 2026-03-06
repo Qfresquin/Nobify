@@ -11,6 +11,7 @@ Core properties:
 - per-kind static metadata
 - semantic separation by `Event_Role`, not by multiple streams
 - deep-copy ownership at `event_stream_push(...)`
+- frozen G0.1 base taxonomy: 19 canonical families, 86 canonical kinds
 
 ## 2. Kind Metadata
 
@@ -60,6 +61,11 @@ Current families:
 - `INSTALL`
 - `CPACK`
 - `PACKAGE`
+
+Base-contract freeze rules:
+- canonical `Event_Family` and `Event_Kind` values are append-only
+- new canonical entries append at the tail of the enum lists
+- legacy compatibility sentinels are not valid payload kinds for `event_stream_push(...)`
 
 Important trace kinds:
 - `EVENT_COMMAND_BEGIN`
@@ -129,6 +135,7 @@ Ordering guarantees:
 - append-only
 - stable stream order equals execution order
 - nested evaluations append into the same stream
+- `event_stream_push(...)` rejects kinds that do not have canonical metadata
 
 ## 6. Ownership and Copy Rules
 

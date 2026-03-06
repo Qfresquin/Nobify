@@ -48,6 +48,7 @@ Ordering guarantees:
 Sequencing guarantees:
 - `event_stream_push(...)` assigns `h.seq` when the emitter leaves it at `0`
 - successful pushes therefore get monotonic stream-local sequence numbers
+- `event_stream_push(...)` accepts only canonical `Event_Kind` values with registered metadata
 
 ## 4. Header Population
 
@@ -76,6 +77,7 @@ Ownership guarantee:
 Practical note:
 - some evaluator paths still prepare stable strings in `event_arena` before push for internal convenience
 - consumers must still treat `event_stream_push(...)` as the only supported ownership contract
+- legacy compatibility sentinels in `event_ir.h` are source-compatibility aliases only, not valid emitted kinds
 
 ## 6. Command Trace Guarantees
 

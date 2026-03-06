@@ -43,6 +43,8 @@ typedef enum {
 #define DECLARE_EVENT_FAMILY(kind, label) kind,
     EVENT_FAMILY_LIST(DECLARE_EVENT_FAMILY)
 #undef DECLARE_EVENT_FAMILY
+    // Canonical families are append-only; add new entries above this sentinel.
+    EVENT_FAMILY_COUNT
 } Event_Family;
 
 #define EVENT_KIND_LIST(X) \
@@ -137,6 +139,8 @@ typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label, roles) kind,
     EVENT_KIND_LIST(DECLARE_EVENT_KIND)
 #undef DECLARE_EVENT_KIND
+    // Canonical kinds are append-only; add new entries above this sentinel.
+    EVENT_KIND_COUNT
 } Event_Kind;
 
 typedef enum {
@@ -900,6 +904,9 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_UNKNOWN ((Event_Kind)0x7FFF)
 
 Event_Stream *event_stream_create(Arena *arena);
+// Append one canonical event into the stream. This is the only supported
+// payload ownership boundary: strings and string arrays are deep-copied into
+// the stream arena on success.
 bool event_stream_push(Event_Stream *stream, const Event *ev);
 Event_Stream_Iterator event_stream_iter(const Event_Stream *stream);
 bool event_stream_next(Event_Stream_Iterator *it);
