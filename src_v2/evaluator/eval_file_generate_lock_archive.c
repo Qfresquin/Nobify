@@ -51,8 +51,8 @@ static void file_cmd_reset(Nob_Cmd *cmd) {
 
 static ssize_t eval_file_lock_find(Evaluator_Context *ctx, String_View path) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < arena_arr_len(ctx->file_locks); i++) {
-        if (eval_sv_key_eq(ctx->file_locks[i].path, path)) return (ssize_t)i;
+    for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks); i++) {
+        if (eval_sv_key_eq(ctx->file_state.file_locks[i].path, path)) return (ssize_t)i;
     }
     return -1;
 }
@@ -74,8 +74,8 @@ static void eval_file_lock_close_entry(Eval_File_Lock *lock) {
 
 static void eval_file_lock_release_by_scope(Evaluator_Context *ctx, int guard_kind, size_t owner_depth) {
     if (!ctx) return;
-    for (size_t i = 0; i < arena_arr_len(ctx->file_locks);) {
-        Eval_File_Lock *lock = &ctx->file_locks[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks);) {
+        Eval_File_Lock *lock = &ctx->file_state.file_locks[i];
         if (lock->guard_kind != guard_kind) {
             i++;
             continue;
@@ -88,8 +88,8 @@ static void eval_file_lock_release_by_scope(Evaluator_Context *ctx, int guard_ki
         }
 
         eval_file_lock_close_entry(lock);
-        ctx->file_locks[i] = ctx->file_locks[arena_arr_len(ctx->file_locks) - 1];
-        arena_arr_set_len(ctx->file_locks, arena_arr_len(ctx->file_locks) - 1);
+        ctx->file_state.file_locks[i] = ctx->file_state.file_locks[arena_arr_len(ctx->file_state.file_locks) - 1];
+        arena_arr_set_len(ctx->file_state.file_locks, arena_arr_len(ctx->file_state.file_locks) - 1);
     }
 }
 
@@ -162,11 +162,11 @@ static bool file_parse_permission_token(mode_t *mode, String_View token) {
 
 void eval_file_lock_cleanup(Evaluator_Context *ctx) {
     if (!ctx) return;
-    for (size_t i = 0; i < arena_arr_len(ctx->file_locks); i++) {
-        eval_file_lock_close_entry(&ctx->file_locks[i]);
+    for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks); i++) {
+        eval_file_lock_close_entry(&ctx->file_state.file_locks[i]);
     }
-    if (ctx->file_locks) {
-        arena_arr_set_len(ctx->file_locks, 0);
+    if (ctx->file_state.file_locks) {
+        arena_arr_set_len(ctx->file_state.file_locks, 0);
     }
 }
 
@@ -182,13 +182,13 @@ static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_
 #else
     lock.fd = (int)fd_or_dummy;
 #endif
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_locks, lock);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.file_locks, lock);
 }
 
 static void eval_file_lock_remove_at(Evaluator_Context *ctx, size_t idx) {
-    if (!ctx || idx >= arena_arr_len(ctx->file_locks)) return;
-    ctx->file_locks[idx] = ctx->file_locks[arena_arr_len(ctx->file_locks) - 1];
-    arena_arr_set_len(ctx->file_locks, arena_arr_len(ctx->file_locks) - 1);
+    if (!ctx || idx >= arena_arr_len(ctx->file_state.file_locks)) return;
+    ctx->file_state.file_locks[idx] = ctx->file_state.file_locks[arena_arr_len(ctx->file_state.file_locks) - 1];
+    arena_arr_set_len(ctx->file_state.file_locks, arena_arr_len(ctx->file_state.file_locks) - 1);
 }
 
 static String_View file_apply_newline_style_temp(Evaluator_Context *ctx, String_View in, String_View style) {
@@ -241,7 +241,7 @@ static bool file_generate_is_keyword(String_View t) {
 
 static bool file_generate_enqueue_job(Evaluator_Context *ctx, const Eval_File_Generate_Job *job) {
     if (!ctx || !job) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_generate_jobs, *job);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.file_generate_jobs, *job);
 }
 
 static bool file_read_content_temp(Evaluator_Context *ctx, String_View path, String_View *out_content, struct stat *out_st, bool *out_have_st) {
@@ -389,12 +389,12 @@ typedef struct {
 
 bool eval_file_generate_flush(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    if (arena_arr_len(ctx->file_generate_jobs) == 0) return true;
+    if (arena_arr_len(ctx->file_state.file_generate_jobs) == 0) return true;
 
     File_Generate_Output_Seen *seen = NULL;
     size_t seen_count = 0;
-    for (size_t i = 0; i < arena_arr_len(ctx->file_generate_jobs); i++) {
-        const Eval_File_Generate_Job *job = &ctx->file_generate_jobs[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_generate_jobs); i++) {
+        const Eval_File_Generate_Job *job = &ctx->file_state.file_generate_jobs[i];
         if (job->has_condition && !eval_truthy(ctx, job->condition)) continue;
         if (job->has_target && !eval_target_known(ctx, job->target)) {
             EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, nob_sv_from_cstr("eval_file"), job->command_name, job->origin, nob_sv_from_cstr("file(GENERATE) TARGET does not name an existing target"), job->target);
@@ -464,7 +464,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
 #endif
     }
 
-    arena_arr_set_len(ctx->file_generate_jobs, 0);
+    arena_arr_set_len(ctx->file_state.file_generate_jobs, 0);
     return !ctx->oom;
 }
 
@@ -542,7 +542,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
     ssize_t existing = eval_file_lock_find(ctx, lock_path);
     if (release) {
         if (existing >= 0) {
-            eval_file_lock_close_entry(&ctx->file_locks[existing]);
+            eval_file_lock_close_entry(&ctx->file_state.file_locks[existing]);
             eval_file_lock_remove_at(ctx, (size_t)existing);
         }
         if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));

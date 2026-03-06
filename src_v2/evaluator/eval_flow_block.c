@@ -2,7 +2,7 @@
 
 static bool block_frame_push(Evaluator_Context *ctx, Block_Frame frame) {
     if (!ctx) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->block_frames, frame);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.block_frames, frame);
 }
 
 static bool block_parse_options(Evaluator_Context *ctx,
@@ -97,17 +97,17 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
 }
 
 static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return, Block_Frame *out_frame) {
-    if (!ctx || arena_arr_len(ctx->block_frames) == 0) return true;
+    if (!ctx || arena_arr_len(ctx->scope_state.block_frames) == 0) return true;
 
-    Block_Frame frame = ctx->block_frames[arena_arr_len(ctx->block_frames) - 1];
-    arena_arr_set_len(ctx->block_frames, arena_arr_len(ctx->block_frames) - 1);
+    Block_Frame frame = ctx->scope_state.block_frames[arena_arr_len(ctx->scope_state.block_frames) - 1];
+    arena_arr_set_len(ctx->scope_state.block_frames, arena_arr_len(ctx->scope_state.block_frames) - 1);
     if (out_frame) *out_frame = frame;
 
     bool should_propagate = !for_return || frame.propagate_on_return;
     if (should_propagate) {
-        if (for_return && arena_arr_len(ctx->return_propagate_vars) > 0) {
+        if (for_return && arena_arr_len(ctx->scope_state.return_propagate_vars) > 0) {
             Block_Frame ret_frame = frame;
-            ret_frame.propagate_vars = ctx->return_propagate_vars;
+            ret_frame.propagate_vars = ctx->scope_state.return_propagate_vars;
             if (!block_propagate_to_parent_scope(ctx, &ret_frame)) return false;
         } else if (!block_propagate_to_parent_scope(ctx, &frame)) {
             return false;
@@ -124,7 +124,7 @@ static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_r
 
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    while (arena_arr_len(ctx->block_frames) > 0) {
+    while (arena_arr_len(ctx->scope_state.block_frames) > 0) {
         Block_Frame ended = {0};
         if (!block_pop_frame(ctx, NULL, true, &ended)) return false;
         if (!eval_emit_flow_block_end(ctx,
@@ -183,17 +183,19 @@ Eval_Result eval_handle_return(Evaluator_Context *ctx, const Node *node) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("return(PROPAGATE ...) requires at least one variable"), nob_sv_from_cstr("Usage: return(PROPAGATE <var1> <var2> ...)"));
             return eval_result_from_ctx(ctx);
         }
-        if (!arena_arr_reserve(ctx->event_arena, ctx->return_propagate_vars, arena_arr_len(args) - 1)) {
+        if (!arena_arr_reserve(ctx->event_arena, ctx->scope_state.return_propagate_vars, arena_arr_len(args) - 1)) {
             (void)ctx_oom(ctx);
             return eval_result_fatal();
         }
         for (size_t i = 1; i < arena_arr_len(args); i++) {
-            if (!eval_sv_arr_push_event(ctx, &ctx->return_propagate_vars, args[i])) return eval_result_fatal();
+            if (!eval_sv_arr_push_event(ctx, &ctx->scope_state.return_propagate_vars, args[i])) return eval_result_fatal();
         }
     }
 
-    if (arena_arr_len(ctx->return_propagate_vars) > 0) {
-        for (size_t bi = arena_arr_len(ctx->block_frames); bi-- > 0;) ctx->block_frames[bi].propagate_on_return = true;
+    if (arena_arr_len(ctx->scope_state.return_propagate_vars) > 0) {
+        for (size_t bi = arena_arr_len(ctx->scope_state.block_frames); bi-- > 0;) {
+            ctx->scope_state.block_frames[bi].propagate_on_return = true;
+        }
     }
     ctx->return_requested = true;
     return eval_result_ok();
@@ -233,7 +235,7 @@ Eval_Result eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: endblock()"))) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(ctx->block_frames) == 0) {
+    if (arena_arr_len(ctx->scope_state.block_frames) == 0) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("endblock() called without matching block()"), nob_sv_from_cstr("Add block() before endblock()"));
         return eval_result_from_ctx(ctx);
     }

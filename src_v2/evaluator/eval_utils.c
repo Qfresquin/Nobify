@@ -254,39 +254,6 @@ bool eval_property_scope_upper_temp(Evaluator_Context *ctx, String_View raw_scop
     return out_scope_upper->count > 0;
 }
 
-String_View eval_property_store_key_temp(Evaluator_Context *ctx,
-                                         String_View scope_upper,
-                                         String_View object_id,
-                                         String_View prop_upper) {
-    static const char prefix[] = "NOBIFY_PROPERTY_";
-    if (!ctx) return nob_sv_from_cstr("");
-
-    bool has_obj = object_id.count > 0;
-    size_t total = (sizeof(prefix) - 1) + scope_upper.count + 2 + prop_upper.count;
-    if (has_obj) total += 2 + object_id.count;
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    memcpy(buf + off, prefix, sizeof(prefix) - 1);
-    off += sizeof(prefix) - 1;
-    memcpy(buf + off, scope_upper.data, scope_upper.count);
-    off += scope_upper.count;
-    buf[off++] = ':';
-    buf[off++] = ':';
-    if (has_obj) {
-        memcpy(buf + off, object_id.data, object_id.count);
-        off += object_id.count;
-        buf[off++] = ':';
-        buf[off++] = ':';
-    }
-    memcpy(buf + off, prop_upper.data, prop_upper.count);
-    off += prop_upper.count;
-    buf[off] = '\0';
-    return nob_sv_from_cstr(buf);
-}
-
 String_View eval_property_scoped_object_id_temp(Evaluator_Context *ctx,
                                                 const char *prefix,
                                                 String_View scope_object,
@@ -314,33 +281,6 @@ String_View eval_property_scoped_object_id_temp(Evaluator_Context *ctx,
     }
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
-}
-
-const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context *ctx,
-                                                              String_View scope_upper,
-                                                              String_View property_name) {
-    if (!ctx) return NULL;
-    String_View property_upper = eval_property_upper_name_temp(ctx, property_name);
-    if (eval_should_stop(ctx)) return NULL;
-
-    for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
-        const Eval_Property_Definition *def = &ctx->property_definitions[i];
-        if (!eval_sv_key_eq(def->scope_upper, scope_upper)) continue;
-        if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
-        return def;
-    }
-
-    if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
-        String_View cached_scope = nob_sv_from_cstr("CACHED_VARIABLE");
-        for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
-            const Eval_Property_Definition *def = &ctx->property_definitions[i];
-            if (!eval_sv_key_eq(def->scope_upper, cached_scope)) continue;
-            if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
-            return def;
-        }
-    }
-
-    return NULL;
 }
 
 static String_View eval_file_parent_dir_view(String_View file_path) {

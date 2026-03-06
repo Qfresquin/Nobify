@@ -103,13 +103,4 @@ static inline String_View wrap_link_item_with_config_genex_temp(Evaluator_Contex
     };
     return svu_join_no_sep_temp(ctx, parts, 3);
 }
-
-bool set_non_target_property(Evaluator_Context *ctx,
-                             Cmake_Event_Origin o,
-                             String_View scope_upper,
-                             String_View object_id,
-                             String_View prop_key,
-                             String_View value,
-                             Cmake_Target_Property_Op op);
-
 #endif // EVAL_TARGET_INTERNAL_H_

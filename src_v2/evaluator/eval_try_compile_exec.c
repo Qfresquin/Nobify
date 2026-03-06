@@ -3,7 +3,7 @@
 static bool try_compile_cache_upsert(Evaluator_Context *ctx, String_View key, String_View value) {
     if (!ctx) return false;
     Eval_Cache_Entry *entry = NULL;
-    if (ctx->cache_entries) entry = stbds_shgetp_null(ctx->cache_entries, nob_temp_sv_to_cstr(key));
+    if (ctx->scope_state.cache_entries) entry = stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
     if (entry) {
         entry->value.data = sv_copy_to_event_arena(ctx, value);
         entry->value.type = sv_copy_to_event_arena(ctx, nob_sv_from_cstr("INTERNAL"));
@@ -22,9 +22,9 @@ static bool try_compile_cache_upsert(Evaluator_Context *ctx, String_View key, St
     cv.doc = sv_copy_to_event_arena(ctx, nob_sv_from_cstr("try_compile result"));
     if (eval_should_stop(ctx)) return false;
 
-    Eval_Cache_Entry *entries = ctx->cache_entries;
+    Eval_Cache_Entry *entries = ctx->scope_state.cache_entries;
     stbds_shput(entries, stable_key, cv);
-    ctx->cache_entries = entries;
+    ctx->scope_state.cache_entries = entries;
     return true;
 }
 

@@ -53,8 +53,8 @@ static bool file_same_content(Evaluator_Context *ctx, String_View path, String_V
 }
 
 static String_View file_cache_var_get(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || !ctx->cache_entries || key.count == 0 || !key.data) return nob_sv_from_cstr("");
-    Eval_Cache_Entry *entry = stbds_shgetp_null(ctx->cache_entries, nob_temp_sv_to_cstr(key));
+    if (!ctx || !ctx->scope_state.cache_entries || key.count == 0 || !key.data) return nob_sv_from_cstr("");
+    Eval_Cache_Entry *entry = stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
     return entry ? entry->value.data : nob_sv_from_cstr("");
 }
 

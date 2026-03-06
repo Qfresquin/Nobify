@@ -80,7 +80,14 @@ Eval_Result eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node
         }
 
         (void)vis;
-        if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("LINK_LIBRARIES"), item, EV_PROP_APPEND_LIST)) {
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 tgt,
+                                 nob_sv_from_cstr("LINK_LIBRARIES"),
+                                 item,
+                                 EV_PROP_APPEND_LIST,
+                                 true)) {
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_link_libraries(ctx, o, tgt, vis, item)) return eval_result_from_ctx(ctx);
@@ -127,7 +134,14 @@ Eval_Result eval_handle_target_link_options(Evaluator_Context *ctx, const Node *
 
         (void)vis;
         (void)is_before;
-        if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("LINK_OPTIONS"), a[i], EV_PROP_APPEND_LIST)) {
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 tgt,
+                                 nob_sv_from_cstr("LINK_OPTIONS"),
+                                 a[i],
+                                 EV_PROP_APPEND_LIST,
+                                 true)) {
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_link_options(ctx, o, tgt, vis, a[i], is_before)) return eval_result_from_ctx(ctx);
@@ -167,7 +181,14 @@ Eval_Result eval_handle_target_link_directories(Evaluator_Context *ctx, const No
         String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         (void)vis;
-        if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("LINK_DIRECTORIES"), resolved, EV_PROP_APPEND_LIST)) {
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 tgt,
+                                 nob_sv_from_cstr("LINK_DIRECTORIES"),
+                                 resolved,
+                                 EV_PROP_APPEND_LIST,
+                                 true)) {
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_link_directories(ctx, o, tgt, vis, resolved)) return eval_result_from_ctx(ctx);
@@ -224,7 +245,14 @@ Eval_Result eval_handle_target_include_directories(Evaluator_Context *ctx, const
         (void)vis;
         (void)is_system;
         (void)is_before;
-        if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("INCLUDE_DIRECTORIES"), resolved, EV_PROP_APPEND_LIST)) {
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 tgt,
+                                 nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
+                                 resolved,
+                                 EV_PROP_APPEND_LIST,
+                                 true)) {
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_include_directories(ctx, o, tgt, vis, resolved, is_system, is_before)) {
@@ -266,7 +294,14 @@ Eval_Result eval_handle_target_compile_definitions(Evaluator_Context *ctx, const
         if (item.count == 0) continue;
 
         (void)vis;
-        if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("COMPILE_DEFINITIONS"), item, EV_PROP_APPEND_LIST)) {
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 tgt,
+                                 nob_sv_from_cstr("COMPILE_DEFINITIONS"),
+                                 item,
+                                 EV_PROP_APPEND_LIST,
+                                 true)) {
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_compile_definitions(ctx, o, tgt, vis, item)) return eval_result_from_ctx(ctx);
@@ -308,7 +343,14 @@ Eval_Result eval_handle_target_compile_options(Evaluator_Context *ctx, const Nod
 
         (void)vis;
         (void)is_before;
-        if (!set_non_target_property(ctx, o, nob_sv_from_cstr("TARGET"), tgt, nob_sv_from_cstr("COMPILE_OPTIONS"), a[i], EV_PROP_APPEND_LIST)) {
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 tgt,
+                                 nob_sv_from_cstr("COMPILE_OPTIONS"),
+                                 a[i],
+                                 EV_PROP_APPEND_LIST,
+                                 true)) {
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_compile_options(ctx, o, tgt, vis, a[i], is_before)) return eval_result_from_ctx(ctx);

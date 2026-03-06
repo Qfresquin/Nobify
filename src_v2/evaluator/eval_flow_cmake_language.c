@@ -23,14 +23,14 @@ static bool flow_deferred_call_list_remove_at(Eval_Deferred_Call_List *calls, si
 }
 
 static Eval_Deferred_Dir_Frame *flow_current_defer_dir(Evaluator_Context *ctx) {
-    if (!ctx || arena_arr_len(ctx->deferred_dirs) == 0) return NULL;
-    return &ctx->deferred_dirs[arena_arr_len(ctx->deferred_dirs) - 1];
+    if (!ctx || arena_arr_len(ctx->file_state.deferred_dirs) == 0) return NULL;
+    return &ctx->file_state.deferred_dirs[arena_arr_len(ctx->file_state.deferred_dirs) - 1];
 }
 
 static Eval_Deferred_Dir_Frame *flow_find_defer_dir(Evaluator_Context *ctx, String_View path) {
     if (!ctx || path.count == 0) return NULL;
-    for (size_t i = arena_arr_len(ctx->deferred_dirs); i-- > 0;) {
-        Eval_Deferred_Dir_Frame *frame = &ctx->deferred_dirs[i];
+    for (size_t i = arena_arr_len(ctx->file_state.deferred_dirs); i-- > 0;) {
+        Eval_Deferred_Dir_Frame *frame = &ctx->file_state.deferred_dirs[i];
         if (flow_sv_eq_exact(frame->source_dir, path) || flow_sv_eq_exact(frame->binary_dir, path)) {
             return frame;
         }
@@ -58,8 +58,8 @@ static bool flow_deferred_id_is_valid(String_View id) {
 static String_View flow_make_deferred_id(Evaluator_Context *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     char buf[64];
-    ctx->next_deferred_call_id++;
-    int n = snprintf(buf, sizeof(buf), "_defer_call_%zu", ctx->next_deferred_call_id);
+    ctx->file_state.next_deferred_call_id++;
+    int n = snprintf(buf, sizeof(buf), "_defer_call_%zu", ctx->file_state.next_deferred_call_id);
     if (n <= 0 || (size_t)n >= sizeof(buf)) {
         ctx_oom(ctx);
         return nob_sv_from_cstr("");
@@ -102,13 +102,13 @@ bool eval_defer_push_directory(Evaluator_Context *ctx, String_View source_dir, S
     frame.source_dir = sv_copy_to_event_arena(ctx, source_dir);
     frame.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->deferred_dirs, frame);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.deferred_dirs, frame);
 }
 
 bool eval_defer_pop_directory(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    if (arena_arr_len(ctx->deferred_dirs) == 0) return true;
-    arena_arr_set_len(ctx->deferred_dirs, arena_arr_len(ctx->deferred_dirs) - 1);
+    if (arena_arr_len(ctx->file_state.deferred_dirs) == 0) return true;
+    arena_arr_set_len(ctx->file_state.deferred_dirs, arena_arr_len(ctx->file_state.deferred_dirs) - 1);
     return true;
 }
 

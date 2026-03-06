@@ -85,6 +85,7 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_opt_parser.c",
         "src_v2/evaluator/eval_package_find_item.c",
         "src_v2/evaluator/eval_package.c",
+        "src_v2/evaluator/eval_property.c",
         "src_v2/evaluator/eval_project.c",
         "src_v2/evaluator/eval_list.c",
         "src_v2/evaluator/eval_math.c",

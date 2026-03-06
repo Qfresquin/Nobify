@@ -131,14 +131,16 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     cmd.params = params;
     cmd.body = body;
 
-    return EVAL_ARR_PUSH(ctx, ctx->user_commands_arena, ctx->user_commands, cmd);
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    return EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->user_commands, cmd);
 }
 
 User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return NULL;
-    for (size_t i = arena_arr_len(ctx->user_commands); i-- > 0;) {
-        if (user_cmd_sv_eq_ci(ctx->user_commands[i].name, name)) {
-            return &ctx->user_commands[i];
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = arena_arr_len(commands->user_commands); i-- > 0;) {
+        if (user_cmd_sv_eq_ci(commands->user_commands[i].name, name)) {
+            return &commands->user_commands[i];
         }
     }
     return NULL;
@@ -241,10 +243,10 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     ok = !eval_result_is_fatal(body_result);
 cleanup:
     bool did_return = ctx->return_requested;
-    if (ctx->return_requested && arena_arr_len(ctx->return_propagate_vars) > 0 &&
+    if (ctx->return_requested && arena_arr_len(ctx->scope_state.return_propagate_vars) > 0 &&
         is_function && eval_scope_visible_depth(ctx) > 1) {
-        for (size_t i = 0; i < arena_arr_len(ctx->return_propagate_vars); i++) {
-            String_View key = ctx->return_propagate_vars[i];
+        for (size_t i = 0; i < arena_arr_len(ctx->scope_state.return_propagate_vars); i++) {
+            String_View key = ctx->scope_state.return_propagate_vars[i];
             if (!eval_var_defined_current(ctx, key)) continue;
             String_View value = eval_var_get_visible(ctx, key);
             size_t saved_depth = 0;

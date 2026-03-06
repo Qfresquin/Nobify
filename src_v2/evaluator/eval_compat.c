@@ -85,8 +85,9 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
         profile != EVAL_PROFILE_PERMISSIVE) {
         return false;
     }
-    ctx->compat_profile = profile;
-    ctx->continue_on_error_snapshot = (profile == EVAL_PROFILE_PERMISSIVE);
+    Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
+    runtime->compat_profile = profile;
+    runtime->continue_on_error_snapshot = (profile == EVAL_PROFILE_PERMISSIVE);
 
     if (eval_scope_visible_depth(ctx) == 0) return true;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(profile))) {
@@ -100,30 +101,32 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
 void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
     if (!ctx) return;
     if (eval_scope_visible_depth(ctx) == 0) return;
+    Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
 
     // This refresh snapshots evaluator-local compatibility knobs for the current
     // command cycle. Callers are expected to invoke it once at command entry and
     // then keep the resulting snapshot stable for the rest of that cycle.
     String_View profile = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE));
-    if (profile.count > 0) ctx->compat_profile = eval_profile_from_sv(profile);
+    if (profile.count > 0) runtime->compat_profile = eval_profile_from_sv(profile);
 
     String_View policy = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY));
-    if (policy.count > 0) ctx->unsupported_policy = eval_unsupported_policy_from_sv(policy);
+    if (policy.count > 0) runtime->unsupported_policy = eval_unsupported_policy_from_sv(policy);
 
     String_View budget_sv = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET));
     size_t parsed = 0;
-    if (eval_parse_size_t_sv(budget_sv, &parsed)) ctx->error_budget = parsed;
+    if (eval_parse_size_t_sv(budget_sv, &parsed)) runtime->error_budget = parsed;
 
     String_View continue_on_error = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR));
     if (continue_on_error.count > 0) {
-        ctx->continue_on_error_snapshot = eval_compat_truthy_sv(continue_on_error);
+        runtime->continue_on_error_snapshot = eval_compat_truthy_sv(continue_on_error);
     }
 }
 
 Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx, Cmake_Diag_Severity sev) {
     if (!ctx) return sev;
     if (sev == EV_DIAG_WARNING &&
-        (ctx->compat_profile == EVAL_PROFILE_STRICT || ctx->compat_profile == EVAL_PROFILE_CI_STRICT)) {
+        (ctx->runtime_state.compat_profile == EVAL_PROFILE_STRICT ||
+         ctx->runtime_state.compat_profile == EVAL_PROFILE_CI_STRICT)) {
         return EV_DIAG_ERROR;
     }
     return sev;
@@ -133,8 +136,9 @@ bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effe
     if (!ctx) return false;
     if (effective_sev != EV_DIAG_ERROR) return true;
 
-    if (ctx->compat_profile == EVAL_PROFILE_PERMISSIVE) {
-        if (ctx->error_budget > 0 && ctx->run_report.error_count >= ctx->error_budget) {
+    Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
+    if (runtime->compat_profile == EVAL_PROFILE_PERMISSIVE) {
+        if (runtime->error_budget > 0 && runtime->run_report.error_count >= runtime->error_budget) {
             eval_request_stop(ctx);
         }
     } else {

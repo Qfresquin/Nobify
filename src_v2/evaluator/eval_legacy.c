@@ -398,10 +398,11 @@ Eval_Result eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node)
         return eval_result_from_ctx(ctx);
     }
 
-    for (size_t i = 0; i < arena_arr_len(ctx->watched_variables); i++) {
-        if (!eval_sv_key_eq(ctx->watched_variables[i], a[0])) continue;
-        if (i < arena_arr_len(ctx->watched_variable_commands)) {
-            ctx->watched_variable_commands[i] = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->watched_variables); i++) {
+        if (!eval_sv_key_eq(commands->watched_variables[i], a[0])) continue;
+        if (i < arena_arr_len(commands->watched_variable_commands)) {
+            commands->watched_variable_commands[i] = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
         }
         return eval_result_from_ctx(ctx);
     }
@@ -409,7 +410,7 @@ Eval_Result eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node)
     String_View stable_var = sv_copy_to_event_arena(ctx, a[0]);
     String_View stable_cmd = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
     if (eval_should_stop(ctx)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, ctx->known_targets_arena, ctx->watched_variables, stable_var)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, ctx->known_targets_arena, ctx->watched_variable_commands, stable_cmd)) return eval_result_fatal();
+    if (!EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->watched_variables, stable_var)) return eval_result_fatal();
+    if (!EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->watched_variable_commands, stable_cmd)) return eval_result_fatal();
     return eval_result_from_ctx(ctx);
 }

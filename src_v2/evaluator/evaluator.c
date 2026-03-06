@@ -58,7 +58,7 @@ bool ctx_oom(Evaluator_Context *ctx) {
 }
 
 bool eval_continue_on_error(Evaluator_Context *ctx) {
-    return ctx ? ctx->continue_on_error_snapshot : false;
+    return ctx ? ctx->runtime_state.continue_on_error_snapshot : false;
 }
 
 void eval_request_stop(Evaluator_Context *ctx) {
@@ -176,12 +176,13 @@ static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
 
 String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return nob_sv_from_cstr("");
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
     for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
-        Var_Scope *s = &ctx->scopes[d];
+        Var_Scope *s = &scope->scopes[d];
         Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return b->value;
     }
-    Eval_Cache_Entry *ce = eval_cache_var_find(ctx->cache_entries, key);
+    Eval_Cache_Entry *ce = eval_cache_var_find(scope->cache_entries, key);
     if (ce) return ce->value.data;
     return nob_sv_from_cstr("");
 }
@@ -190,20 +191,23 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
                                        String_View key,
                                        String_View action,
                                        String_View value) {
-    if (!ctx || ctx->in_variable_watch_notification || key.count == 0) return true;
+    if (!ctx || ctx->runtime_state.in_variable_watch_notification || key.count == 0) return true;
     if (nob_sv_starts_with(key, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_"))) return true;
 
+    Eval_Command_State *commands = eval_command_slice(ctx);
     bool watched = false;
     String_View command = nob_sv_from_cstr("");
-    for (size_t i = 0; i < arena_arr_len(ctx->watched_variables); i++) {
-        if (!eval_sv_key_eq(ctx->watched_variables[i], key)) continue;
+    for (size_t i = 0; i < arena_arr_len(commands->watched_variables); i++) {
+        if (!eval_sv_key_eq(commands->watched_variables[i], key)) continue;
         watched = true;
-        if (i < arena_arr_len(ctx->watched_variable_commands)) command = ctx->watched_variable_commands[i];
+        if (i < arena_arr_len(commands->watched_variable_commands)) {
+            command = commands->watched_variable_commands[i];
+        }
         break;
     }
     if (!watched) return true;
 
-    ctx->in_variable_watch_notification = true;
+    ctx->runtime_state.in_variable_watch_notification = true;
     bool ok = true;
     ok = ok && eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_VAR"), key);
     ok = ok && eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_VARIABLE_WATCH_LAST_ACTION"), action);
@@ -215,13 +219,14 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
         Cmake_Event_Origin origin = {0};
         ok = EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_legacy"), nob_sv_from_cstr("variable_watch"), origin, nob_sv_from_cstr("variable_watch() observed a watched variable mutation"), key);
     }
-    ctx->in_variable_watch_notification = false;
+    ctx->runtime_state.in_variable_watch_notification = false;
     return ok;
 }
 
 bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View value) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
-    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
+    Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     if (b) {
         b->value = sv_copy_to_event_arena(ctx, value);
@@ -242,7 +247,8 @@ bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View v
 
 bool eval_var_unset_current(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
-    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
+    Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
     String_View old_value = eval_var_get_visible(ctx, key);
     if (s->vars) {
         (void)stbds_shdel(s->vars, nob_temp_sv_to_cstr(key));
@@ -252,18 +258,20 @@ bool eval_var_unset_current(Evaluator_Context *ctx, String_View key) {
 
 bool eval_var_defined_visible(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
     for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
-        Var_Scope *s = &ctx->scopes[d];
+        Var_Scope *s = &scope->scopes[d];
         Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
         if (b) return true;
     }
-    if (eval_cache_var_find(ctx->cache_entries, key)) return true;
+    if (eval_cache_var_find(scope->cache_entries, key)) return true;
     return false;
 }
 
 bool eval_var_defined_current(Evaluator_Context *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
-    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
+    Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
     Eval_Var_Entry *b = eval_scope_var_find(s->vars, key);
     return b != NULL;
 }
@@ -272,8 +280,9 @@ bool eval_var_collect_visible_names(Evaluator_Context *ctx, SV_List *out_names) 
     if (!ctx || !out_names) return false;
     *out_names = NULL;
 
+    Eval_Scope_State *scope_state = eval_scope_slice(ctx);
     for (size_t depth = 0; depth < eval_scope_visible_depth(ctx); depth++) {
-        Var_Scope *scope = &ctx->scopes[depth];
+        Var_Scope *scope = &scope_state->scopes[depth];
         ptrdiff_t n = stbds_shlen(scope->vars);
         for (ptrdiff_t i = 0; i < n; i++) {
             if (!scope->vars[i].key) continue;
@@ -286,7 +295,7 @@ bool eval_var_collect_visible_names(Evaluator_Context *ctx, SV_List *out_names) 
 
 bool eval_cache_defined(Evaluator_Context *ctx, String_View key) {
     if (!ctx || key.count == 0) return false;
-    return eval_cache_var_find(ctx->cache_entries, key) != NULL;
+    return eval_cache_var_find(ctx->scope_state.cache_entries, key) != NULL;
 }
 
 bool eval_cache_set(Evaluator_Context *ctx,
@@ -296,7 +305,8 @@ bool eval_cache_set(Evaluator_Context *ctx,
                     String_View doc) {
     if (!ctx || key.count == 0 || eval_should_stop(ctx)) return false;
 
-    Eval_Cache_Entry *entry = eval_cache_var_find(ctx->cache_entries, key);
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
+    Eval_Cache_Entry *entry = eval_cache_var_find(scope->cache_entries, key);
     if (entry) {
         entry->value.data = sv_copy_to_event_arena(ctx, value);
         if (eval_should_stop(ctx)) return false;
@@ -309,7 +319,7 @@ bool eval_cache_set(Evaluator_Context *ctx,
     char *stable_key = eval_copy_key_cstr_event(ctx, key);
     if (!stable_key) return false;
 
-    Eval_Cache_Entry *entries = ctx->cache_entries;
+    Eval_Cache_Entry *entries = scope->cache_entries;
     Eval_Cache_Value cache_value = {
         .data = sv_copy_to_event_arena(ctx, value),
         .type = sv_copy_to_event_arena(ctx, type),
@@ -317,38 +327,25 @@ bool eval_cache_set(Evaluator_Context *ctx,
     };
     if (eval_should_stop(ctx)) return false;
     stbds_shput(entries, stable_key, cache_value);
-    ctx->cache_entries = entries;
+    scope->cache_entries = entries;
     return true;
-}
-
-static const Eval_Property_Definition *eval_property_definition_find_impl(Evaluator_Context *ctx,
-                                                                          String_View scope_upper,
-                                                                          String_View property_upper) {
-    if (!ctx) return NULL;
-    for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
-        const Eval_Property_Definition *def = &ctx->property_definitions[i];
-        if (!eval_sv_key_eq(def->scope_upper, scope_upper)) continue;
-        if (!eval_sv_key_eq(def->property_upper, property_upper)) continue;
-        return def;
-    }
-    return NULL;
 }
 
 bool eval_macro_frame_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->macro_frames, frame);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.macro_frames, frame);
 }
 
 void eval_macro_frame_pop(Evaluator_Context *ctx) {
-    if (!ctx || arena_arr_len(ctx->macro_frames) == 0) return;
-    arena_arr_set_len(ctx->macro_frames, arena_arr_len(ctx->macro_frames) - 1);
+    if (!ctx || arena_arr_len(ctx->scope_state.macro_frames) == 0) return;
+    arena_arr_set_len(ctx->scope_state.macro_frames, arena_arr_len(ctx->scope_state.macro_frames) - 1);
 }
 
 bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View value) {
-    if (!ctx || arena_arr_len(ctx->macro_frames) == 0) return false;
+    if (!ctx || arena_arr_len(ctx->scope_state.macro_frames) == 0) return false;
 
-    Macro_Frame *top = &ctx->macro_frames[arena_arr_len(ctx->macro_frames) - 1];
+    Macro_Frame *top = &ctx->scope_state.macro_frames[arena_arr_len(ctx->scope_state.macro_frames) - 1];
     key = sv_copy_to_event_arena(ctx, key);
     value = sv_copy_to_event_arena(ctx, value);
     if (eval_should_stop(ctx)) return false;
@@ -368,8 +365,8 @@ bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View va
 
 bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *out_value) {
     if (!ctx || !out_value) return false;
-    for (size_t fi = arena_arr_len(ctx->macro_frames); fi-- > 0;) {
-        const Macro_Frame *f = &ctx->macro_frames[fi];
+    for (size_t fi = arena_arr_len(ctx->scope_state.macro_frames); fi-- > 0;) {
+        const Macro_Frame *f = &ctx->scope_state.macro_frames[fi];
         for (size_t i = arena_arr_len(f->bindings); i-- > 0;) {
             if (eval_sv_key_eq(f->bindings[i].key, key)) {
                 *out_value = f->bindings[i].value;
@@ -382,79 +379,36 @@ bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *o
 
 bool eval_target_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    for (size_t i = 0; i < arena_arr_len(ctx->known_targets); i++) {
-        if (eval_sv_key_eq(ctx->known_targets[i], name)) return true;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
+        if (eval_sv_key_eq(commands->known_targets[i], name)) return true;
     }
     return false;
 }
 
 bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
+    Eval_Command_State *commands = eval_command_slice(ctx);
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->known_targets_arena, ctx->known_targets, name);
+    return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->known_targets, name);
 }
 
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    for (size_t i = 0; i < arena_arr_len(ctx->alias_targets); i++) {
-        if (eval_sv_key_eq(ctx->alias_targets[i], name)) return true;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->alias_targets); i++) {
+        if (eval_sv_key_eq(commands->alias_targets[i], name)) return true;
     }
     return false;
 }
 
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_alias_known(ctx, name)) return true;
+    Eval_Command_State *commands = eval_command_slice(ctx);
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->known_targets_arena, ctx->alias_targets, name);
-}
-
-bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition) {
-    if (!ctx || !definition) return false;
-    if (eval_property_definition_find_impl(ctx, definition->scope_upper, definition->property_upper)) {
-        return true;
-    }
-
-    Eval_Property_Definition stored = *definition;
-    stored.scope_upper = sv_copy_to_event_arena(ctx, definition->scope_upper);
-    stored.property_upper = sv_copy_to_event_arena(ctx, definition->property_upper);
-    if (definition->has_brief_docs) stored.brief_docs = sv_copy_to_event_arena(ctx, definition->brief_docs);
-    if (definition->has_full_docs) stored.full_docs = sv_copy_to_event_arena(ctx, definition->full_docs);
-    if (definition->has_initialize_from_variable) {
-        stored.initialize_from_variable = sv_copy_to_event_arena(ctx, definition->initialize_from_variable);
-    }
-    if (eval_should_stop(ctx)) return false;
-
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->property_definitions, stored);
-}
-
-bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name) {
-    if (!ctx) return false;
-    String_View property_upper = eval_property_upper_name_temp(ctx, property_name);
-    if (eval_should_stop(ctx)) return false;
-    return eval_property_definition_find_impl(ctx, scope_upper, property_upper) != NULL;
-}
-
-bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Cmake_Event_Origin origin, String_View target_name) {
-    if (!ctx || eval_should_stop(ctx)) return false;
-
-    for (size_t i = 0; i < arena_arr_len(ctx->property_definitions); i++) {
-        const Eval_Property_Definition *def = &ctx->property_definitions[i];
-        if (!eval_sv_eq_ci_lit(def->scope_upper, "TARGET")) continue;
-        if (!def->has_initialize_from_variable) continue;
-        if (!eval_var_defined_visible(ctx, def->initialize_from_variable)) continue;
-        if (!eval_emit_target_prop_set(ctx,
-                                       origin,
-                                       target_name,
-                                       def->property_upper,
-                                       eval_var_get_visible(ctx, def->initialize_from_variable),
-                                       EV_PROP_SET)) {
-            return false;
-        }
-    }
-
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->alias_targets, name);
 }
 
 // -----------------------------------------------------------------------------
@@ -607,21 +561,22 @@ SV_List eval_resolve_args_literal(Evaluator_Context *ctx, const Args *raw_args) 
 
 static bool eval_native_cmd_index_rebuild(Evaluator_Context *ctx) {
     if (!ctx) return false;
+    Eval_Command_State *commands = eval_command_slice(ctx);
 
-    if (ctx->native_command_index) {
-        stbds_shfree(ctx->native_command_index);
-        ctx->native_command_index = NULL;
+    if (commands->native_command_index) {
+        stbds_shfree(commands->native_command_index);
+        commands->native_command_index = NULL;
     }
 
-    size_t count = arena_arr_len(ctx->native_commands);
+    size_t count = arena_arr_len(commands->native_commands);
     for (size_t i = 0; i < count; i++) {
-        Eval_Native_Command *cmd = &ctx->native_commands[i];
+        Eval_Native_Command *cmd = &commands->native_commands[i];
         if (!cmd->normalized_name) {
-            Arena *registry_arena = ctx->native_commands_arena ? ctx->native_commands_arena : ctx->event_arena;
+            Arena *registry_arena = commands->native_commands_arena ? commands->native_commands_arena : ctx->event_arena;
             cmd->normalized_name = sv_ascii_upper_copy(registry_arena, cmd->name);
             EVAL_OOM_RETURN_IF_NULL(ctx, cmd->normalized_name, false);
         }
-        stbds_shput(ctx->native_command_index, cmd->normalized_name, i);
+        stbds_shput(commands->native_command_index, cmd->normalized_name, i);
     }
 
     return true;
@@ -631,22 +586,23 @@ const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *c
     if (!ctx || !name.data || name.count == 0) return NULL;
 
     Evaluator_Context *mutable_ctx = (Evaluator_Context*)ctx;
+    Eval_Command_State *commands = eval_command_slice(mutable_ctx);
     char *lookup_key = sv_ascii_upper_heap(name);
     if (!lookup_key) {
         (void)ctx_oom(mutable_ctx);
         return NULL;
     }
 
-    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(mutable_ctx->native_command_index, lookup_key);
+    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(commands->native_command_index, lookup_key);
     if (!entry) {
         free(lookup_key);
         return NULL;
     }
-    if (entry->value >= arena_arr_len(mutable_ctx->native_commands)) {
+    if (entry->value >= arena_arr_len(commands->native_commands)) {
         free(lookup_key);
         return NULL;
     }
-    const Eval_Native_Command *out = &mutable_ctx->native_commands[entry->value];
+    const Eval_Native_Command *out = &commands->native_commands[entry->value];
     free(lookup_key);
     return out;
 }
@@ -664,7 +620,8 @@ bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
     if (eval_native_cmd_find(ctx, def->name)) return false;
     if (eval_user_cmd_find(ctx, def->name)) return false;
 
-    Arena *registry_arena = ctx->native_commands_arena ? ctx->native_commands_arena : ctx->event_arena;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    Arena *registry_arena = commands->native_commands_arena ? commands->native_commands_arena : ctx->event_arena;
 
     Eval_Native_Command cmd = {0};
     cmd.name = sv_copy_to_event_arena(ctx, def->name);
@@ -676,7 +633,7 @@ bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
     cmd.fallback_behavior = def->fallback_behavior;
     cmd.is_builtin = is_builtin;
 
-    if (!EVAL_ARR_PUSH(ctx, registry_arena, ctx->native_commands, cmd)) return false;
+    if (!EVAL_ARR_PUSH(ctx, registry_arena, commands->native_commands, cmd)) return false;
     return eval_native_cmd_index_rebuild(ctx);
 }
 
@@ -687,30 +644,31 @@ bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
     if (!ctx || name.count == 0 || !name.data) return false;
     if (!allow_during_run && ctx->file_eval_depth > 0) return false;
 
+    Eval_Command_State *commands = eval_command_slice(ctx);
     char *lookup_key = sv_ascii_upper_heap(name);
     EVAL_OOM_RETURN_IF_NULL(ctx, lookup_key, false);
 
-    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(ctx->native_command_index, lookup_key);
+    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(commands->native_command_index, lookup_key);
     if (!entry) {
         free(lookup_key);
         return false;
     }
 
     size_t idx = entry->value;
-    size_t count = arena_arr_len(ctx->native_commands);
+    size_t count = arena_arr_len(commands->native_commands);
     if (idx >= count) {
         free(lookup_key);
         return false;
     }
-    if (ctx->native_commands[idx].is_builtin && !allow_builtin_remove) {
+    if (commands->native_commands[idx].is_builtin && !allow_builtin_remove) {
         free(lookup_key);
         return false;
     }
 
     for (size_t j = idx + 1; j < count; j++) {
-        ctx->native_commands[j - 1] = ctx->native_commands[j];
+        commands->native_commands[j - 1] = commands->native_commands[j];
     }
-    arena_arr_set_len(ctx->native_commands, count - 1);
+    arena_arr_set_len(commands->native_commands, count - 1);
     free(lookup_key);
     return eval_native_cmd_index_rebuild(ctx);
 }
@@ -721,30 +679,32 @@ bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
 
 bool eval_scope_push(Evaluator_Context *ctx) {
     if (!ctx) return false;
+    Eval_Scope_State *scope = eval_scope_slice(ctx);
     size_t depth = eval_scope_visible_depth(ctx);
-    if (depth < arena_arr_len(ctx->scopes)) {
-        Var_Scope *s = &ctx->scopes[depth];
+    if (depth < arena_arr_len(scope->scopes)) {
+        Var_Scope *s = &scope->scopes[depth];
         if (s->vars) {
             stbds_shfree(s->vars);
             s->vars = NULL;
         }
     } else {
-        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return false;
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, scope->scopes, ((Var_Scope){0}))) return false;
     }
-    ctx->visible_scope_depth = depth + 1;
-    Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
+    scope->visible_scope_depth = depth + 1;
+    Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
     s->vars = NULL;
     return true;
 }
 
 void eval_scope_pop(Evaluator_Context *ctx) {
     if (ctx && eval_scope_visible_depth(ctx) > 1) {
-        Var_Scope *s = &ctx->scopes[eval_scope_visible_depth(ctx) - 1];
+        Eval_Scope_State *scope = eval_scope_slice(ctx);
+        Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
         if (s->vars) {
             stbds_shfree(s->vars);
             s->vars = NULL;
         }
-        ctx->visible_scope_depth--;
+        scope->visible_scope_depth--;
     }
 }
 
@@ -777,36 +737,36 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     ctx->binary_dir = init->binary_dir;
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
     eval_clear_return_state(ctx);
-    ctx->compat_profile = EVAL_PROFILE_PERMISSIVE;
+    ctx->runtime_state.compat_profile = EVAL_PROFILE_PERMISSIVE;
     if (init->compat_profile == EVAL_PROFILE_STRICT || init->compat_profile == EVAL_PROFILE_CI_STRICT) {
-        ctx->compat_profile = init->compat_profile;
+        ctx->runtime_state.compat_profile = init->compat_profile;
     }
-    ctx->unsupported_policy = EVAL_UNSUPPORTED_WARN;
-    ctx->error_budget = 0; // 0 == unlimited in permissive profile
-    ctx->continue_on_error_snapshot = (ctx->compat_profile == EVAL_PROFILE_PERMISSIVE);
+    ctx->runtime_state.unsupported_policy = EVAL_UNSUPPORTED_WARN;
+    ctx->runtime_state.error_budget = 0; // 0 == unlimited in permissive profile
+    ctx->runtime_state.continue_on_error_snapshot = (ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
     eval_report_reset(ctx);
 
-    ctx->native_commands_arena = arena_create(4096);
-    if (!ctx->native_commands_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->native_commands_arena)) {
-        arena_destroy(ctx->native_commands_arena);
-        ctx->native_commands_arena = NULL;
+    ctx->command_state.native_commands_arena = arena_create(4096);
+    if (!ctx->command_state.native_commands_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.native_commands_arena)) {
+        arena_destroy(ctx->command_state.native_commands_arena);
+        ctx->command_state.native_commands_arena = NULL;
         return NULL;
     }
 
-    ctx->known_targets_arena = arena_create(4096);
-    if (!ctx->known_targets_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->known_targets_arena)) {
-        arena_destroy(ctx->known_targets_arena);
-        ctx->known_targets_arena = NULL;
+    ctx->command_state.known_targets_arena = arena_create(4096);
+    if (!ctx->command_state.known_targets_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.known_targets_arena)) {
+        arena_destroy(ctx->command_state.known_targets_arena);
+        ctx->command_state.known_targets_arena = NULL;
         return NULL;
     }
 
-    ctx->user_commands_arena = arena_create(4096);
-    if (!ctx->user_commands_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->user_commands_arena)) {
-        arena_destroy(ctx->user_commands_arena);
-        ctx->user_commands_arena = NULL;
+    ctx->command_state.user_commands_arena = arena_create(4096);
+    if (!ctx->command_state.user_commands_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.user_commands_arena)) {
+        arena_destroy(ctx->command_state.user_commands_arena);
+        ctx->command_state.user_commands_arena = NULL;
         return NULL;
     }
 
@@ -818,8 +778,8 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     }
 
     // Global scope always exists at visible depth 1.
-    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scopes, ((Var_Scope){0}))) return NULL;
-    ctx->visible_scope_depth = 1;
+    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.scopes, ((Var_Scope){0}))) return NULL;
+    ctx->scope_state.visible_scope_depth = 1;
 
     // Bootstrap canonical CMAKE_* variables.
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
@@ -886,14 +846,23 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
-                      ctx->compat_profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(ctx->compat_profile))) return NULL;
+                      ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(ctx->runtime_state.compat_profile))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY), nob_sv_from_cstr("WARN"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_WHILE_MAX_ITERATIONS), nob_sv_from_cstr("10000"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
+    if (!eval_property_write(ctx,
+                             (Event_Origin){0},
+                             nob_sv_from_cstr("GLOBAL"),
+                             nob_sv_from_cstr(""),
+                             nob_sv_from_cstr("ENABLED_LANGUAGES"),
+                             nob_sv_from_cstr(""),
+                             EV_PROP_SET,
+                             false)) {
+        return NULL;
+    }
 
     {
         const char *cc = getenv("CC");
@@ -916,18 +885,18 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 void evaluator_destroy(Evaluator_Context *ctx) {
     if (!ctx) return;
     eval_file_lock_cleanup(ctx);
-    if (ctx->native_command_index) {
-        stbds_shfree(ctx->native_command_index);
-        ctx->native_command_index = NULL;
+    if (ctx->command_state.native_command_index) {
+        stbds_shfree(ctx->command_state.native_command_index);
+        ctx->command_state.native_command_index = NULL;
     }
-    if (ctx->cache_entries) {
-        stbds_shfree(ctx->cache_entries);
-        ctx->cache_entries = NULL;
+    if (ctx->scope_state.cache_entries) {
+        stbds_shfree(ctx->scope_state.cache_entries);
+        ctx->scope_state.cache_entries = NULL;
     }
-    for (size_t i = 0; i < arena_arr_len(ctx->scopes); i++) {
-        if (ctx->scopes[i].vars) {
-            stbds_shfree(ctx->scopes[i].vars);
-            ctx->scopes[i].vars = NULL;
+    for (size_t i = 0; i < arena_arr_len(ctx->scope_state.scopes); i++) {
+        if (ctx->scope_state.scopes[i].vars) {
+            stbds_shfree(ctx->scope_state.scopes[i].vars);
+            ctx->scope_state.scopes[i].vars = NULL;
         }
     }
 }
@@ -948,7 +917,7 @@ Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
     if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
     eval_report_finalize(ctx);
     result = eval_result_merge(result, eval_result_ok_if_running(ctx));
-    if (!eval_result_is_fatal(result) && ctx->run_report.error_count > 0) {
+    if (!eval_result_is_fatal(result) && ctx->runtime_state.run_report.error_count > 0) {
         result = eval_result_merge(result, eval_result_soft_error());
     }
     return result;
@@ -961,7 +930,7 @@ Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast) {
 
 const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx) {
     if (!ctx) return NULL;
-    return &ctx->run_report;
+    return &ctx->runtime_state.run_report;
 }
 
 const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx) {

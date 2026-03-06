@@ -291,8 +291,8 @@ static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *c
                                                             Cmake_Event_Origin origin,
                                                             String_View item) {
     if (!ctx || item.count == 0) return false;
-    for (size_t i = 0; i < arena_arr_len(ctx->known_targets); i++) {
-        String_View target_name = ctx->known_targets[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->command_state.known_targets); i++) {
+        String_View target_name = ctx->command_state.known_targets[i];
         if (target_name.count == 0) continue;
         if (eval_target_alias_known(ctx, target_name)) continue;
         if (!eval_emit_target_compile_definitions(ctx,
@@ -310,8 +310,8 @@ static bool emit_compile_option_to_current_file_targets(Evaluator_Context *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View item) {
     if (!ctx || item.count == 0) return false;
-    for (size_t i = 0; i < arena_arr_len(ctx->known_targets); i++) {
-        String_View target_name = ctx->known_targets[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->command_state.known_targets); i++) {
+        String_View target_name = ctx->command_state.known_targets[i];
         if (target_name.count == 0) continue;
         if (eval_target_alias_known(ctx, target_name)) continue;
         if (!eval_emit_target_compile_options(ctx,
@@ -775,4 +775,3 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
     if (!gfc_set_output_value(ctx, o, out_var, result, cache_result)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
-

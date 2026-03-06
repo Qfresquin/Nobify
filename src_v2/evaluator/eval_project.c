@@ -473,7 +473,16 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
     String_View merged = eval_sv_join_semi_temp(ctx, enabled, arena_arr_len(enabled));
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), merged)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), merged)) return false;
+    if (!eval_property_write(ctx,
+                             o,
+                             nob_sv_from_cstr("GLOBAL"),
+                             nob_sv_from_cstr(""),
+                             nob_sv_from_cstr("ENABLED_LANGUAGES"),
+                             merged,
+                             EV_PROP_SET,
+                             false)) {
+        return false;
+    }
     return true;
 }
 
@@ -487,7 +496,7 @@ Eval_Result eval_handle_enable_language(Evaluator_Context *ctx, const Node *node
         return eval_result_from_ctx(ctx);
     }
 
-    if (ctx->function_eval_depth > 0 || arena_arr_len(ctx->block_frames) > 0) {
+    if (ctx->function_eval_depth > 0 || arena_arr_len(ctx->scope_state.block_frames) > 0) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "dispatcher", nob_sv_from_cstr("enable_language() must be called at file scope"), nob_sv_from_cstr("Do not call enable_language() from inside function() or block() scopes"));
         return eval_result_from_ctx(ctx);
     }
@@ -931,4 +940,3 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     }
     return eval_result_from_ctx(ctx);
 }
-

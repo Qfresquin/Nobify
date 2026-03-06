@@ -393,7 +393,7 @@ Eval_Result eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires index, prefix and three keyword lists"), nob_sv_from_cstr("Usage: cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one_value_keywords> <multi_value_keywords>)"));
             return eval_result_from_ctx(ctx);
         }
-        if (ctx->function_eval_depth == 0 || arena_arr_len(ctx->macro_frames) > 0) {
+        if (ctx->function_eval_depth == 0 || arena_arr_len(ctx->scope_state.macro_frames) > 0) {
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) may only be used in function() scope"), nob_sv_from_cstr("Use the direct signature in macro() or top-level scope"));
             return eval_result_from_ctx(ctx);
         }
@@ -572,13 +572,13 @@ static bool cache_promote_untyped_path_value_if_needed(Evaluator_Context *ctx,
 }
 
 static Eval_Cache_Entry *cache_find(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || !ctx->cache_entries) return NULL;
-    return stbds_shgetp_null(ctx->cache_entries, nob_temp_sv_to_cstr(key));
+    if (!ctx || !ctx->scope_state.cache_entries) return NULL;
+    return stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
 }
 
 static bool cache_remove(Evaluator_Context *ctx, String_View key) {
-    if (!ctx || !ctx->cache_entries) return true;
-    (void)stbds_shdel(ctx->cache_entries, nob_temp_sv_to_cstr(key));
+    if (!ctx || !ctx->scope_state.cache_entries) return true;
+    (void)stbds_shdel(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
     return true;
 }
 
@@ -614,16 +614,16 @@ static bool cache_upsert(Evaluator_Context *ctx,
     cv.doc = sv_copy_to_event_arena(ctx, doc);
     if (eval_should_stop(ctx)) return false;
 
-    Eval_Cache_Entry *entries = ctx->cache_entries;
+    Eval_Cache_Entry *entries = ctx->scope_state.cache_entries;
     stbds_shput(entries, stable_key, cv);
-    ctx->cache_entries = entries;
+    ctx->scope_state.cache_entries = entries;
     return true;
 }
 
 static bool visible_scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
     if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
     for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
-        Var_Scope *scope = &ctx->scopes[depth];
+        Var_Scope *scope = &ctx->scope_state.scopes[depth];
         if (!scope->vars) continue;
         if (stbds_shgetp_null(scope->vars, nob_temp_sv_to_cstr(key)) != NULL) return true;
     }
@@ -633,7 +633,7 @@ static bool visible_scope_has_normal_binding(Evaluator_Context *ctx, String_View
 static bool unset_visible_normal_binding(Evaluator_Context *ctx, String_View key) {
     if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
     for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
-        Var_Scope *scope = &ctx->scopes[depth];
+        Var_Scope *scope = &ctx->scope_state.scopes[depth];
         if (!scope->vars) continue;
         if (stbds_shgetp_null(scope->vars, nob_temp_sv_to_cstr(key)) == NULL) continue;
         (void)stbds_shdel(scope->vars, nob_temp_sv_to_cstr(key));
@@ -662,13 +662,14 @@ static bool mark_as_advanced_apply(Evaluator_Context *ctx,
                                    String_View var_name,
                                    bool clear_mode) {
     if (!ctx || var_name.count == 0) return false;
-    String_View prop_key = eval_property_store_key_temp(ctx,
-                                                        nob_sv_from_cstr("CACHE"),
-                                                        var_name,
-                                                        nob_sv_from_cstr("ADVANCED"));
-    if (eval_should_stop(ctx)) return false;
-    return eval_var_set_current(ctx, prop_key, clear_mode ? nob_sv_from_cstr("0")
-                                                  : nob_sv_from_cstr("1"));
+    return eval_property_write(ctx,
+                               (Event_Origin){0},
+                               nob_sv_from_cstr("CACHE"),
+                               var_name,
+                               nob_sv_from_cstr("ADVANCED"),
+                               clear_mode ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"),
+                               EV_PROP_SET,
+                               false);
 }
 
 static bool join_sv_with_spaces_temp(Evaluator_Context *ctx,

@@ -973,7 +973,7 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
         bool pushed_pkg = false;
         String_View active_pkg = sv_copy_to_event_arena(ctx, opt->pkg);
         if (!eval_should_stop(ctx)) {
-            pushed_pkg = arena_arr_push(ctx->event_arena, ctx->active_find_packages, active_pkg);
+            pushed_pkg = arena_arr_push(ctx->event_arena, ctx->command_state.active_find_packages, active_pkg);
             if (!pushed_pkg) ctx_oom(ctx);
         }
 
@@ -1010,8 +1010,8 @@ static void find_package_publish_vars(Evaluator_Context *ctx,
             *io_found = false;
         }
 
-        if (pushed_pkg && arena_arr_len(ctx->active_find_packages) > 0) {
-            arena_arr_set_len(ctx->active_find_packages, arena_arr_len(ctx->active_find_packages) - 1);
+        if (pushed_pkg && arena_arr_len(ctx->command_state.active_find_packages) > 0) {
+            arena_arr_set_len(ctx->command_state.active_find_packages, arena_arr_len(ctx->command_state.active_find_packages) - 1);
         }
 
         if (*io_found && opt->requested_version.count > 0) {

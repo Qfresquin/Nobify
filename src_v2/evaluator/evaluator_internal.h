@@ -209,6 +209,14 @@ typedef struct {
 
 typedef Eval_Property_Definition *Eval_Property_Definition_List;
 
+typedef enum {
+    EVAL_PROP_QUERY_VALUE = 0,
+    EVAL_PROP_QUERY_SET,
+    EVAL_PROP_QUERY_DEFINED,
+    EVAL_PROP_QUERY_BRIEF_DOCS,
+    EVAL_PROP_QUERY_FULL_DOCS,
+} Eval_Property_Query_Mode;
+
 typedef struct {
     Cmake_Event_Origin origin;
     String_View id;
@@ -233,12 +241,51 @@ typedef enum {
     EVAL_RETURN_CTX_MACRO,
 } Eval_Return_Context;
 
-struct Evaluator_Context {
-    Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
-    Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
+typedef struct {
+    Var_Scope *scopes;
+    // Invariant: visible_scope_depth <= arena_arr_len(scopes)
+    size_t visible_scope_depth;
+    Eval_Cache_Entry *cache_entries;
+    Macro_Frame_Stack macro_frames;
+    Block_Frame_Stack block_frames;
+    String_View *return_propagate_vars;
+} Eval_Scope_State;
+
+typedef struct {
+    Eval_Compat_Profile compat_profile;
+    Eval_Unsupported_Policy unsupported_policy;
+    size_t error_budget;
+    // Snapshot refreshed at command-cycle boundary (eval_node entry).
+    bool continue_on_error_snapshot;
+    Eval_Run_Report run_report;
+    bool in_variable_watch_notification;
+} Eval_Runtime_State;
+
+typedef struct {
     Arena *native_commands_arena;
     Arena *known_targets_arena;
     Arena *user_commands_arena;
+    SV_List known_targets;
+    SV_List alias_targets;
+    Eval_Native_Command_List native_commands;
+    // Case-insensitive lookup index: normalized command name -> native_commands index.
+    Eval_Native_Command_Index_Entry *native_command_index;
+    User_Command_List user_commands;
+    SV_List active_find_packages;
+    SV_List watched_variables;
+    SV_List watched_variable_commands;
+} Eval_Command_State;
+
+typedef struct {
+    Eval_File_Lock_List file_locks;
+    Eval_File_Generate_Job_List file_generate_jobs;
+    Eval_Deferred_Dir_Frame_Stack deferred_dirs;
+    size_t next_deferred_call_id;
+} Eval_File_State;
+
+struct Evaluator_Context {
+    Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
+    Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
     Cmake_Event_Stream *stream;
 
     String_View source_dir;
@@ -246,28 +293,12 @@ struct Evaluator_Context {
 
     const char *current_file;
 
-    Var_Scope *scopes;
-    // Invariant: visible_scope_depth <= arena_arr_len(scopes)
-    size_t visible_scope_depth;
-    Eval_Cache_Entry *cache_entries;
+    Eval_Scope_State scope_state;
 
-    SV_List known_targets; 
-    SV_List alias_targets;
     SV_List message_check_stack;
-    Eval_Native_Command_List native_commands;
-    // Case-insensitive lookup index: normalized command name -> native_commands index.
-    Eval_Native_Command_Index_Entry *native_command_index;
-    User_Command_List user_commands;
-    Macro_Frame_Stack macro_frames;
-    Block_Frame_Stack block_frames;
-    Eval_File_Lock_List file_locks;
-    Eval_File_Generate_Job_List file_generate_jobs;
+    Eval_Command_State command_state;
+    Eval_File_State file_state;
     Eval_Property_Definition_List property_definitions;
-    Eval_Deferred_Dir_Frame_Stack deferred_dirs;
-    SV_List active_find_packages;
-    SV_List watched_variables;
-    SV_List watched_variable_commands;
-    size_t next_deferred_call_id;
     Eval_Policy_Level *policy_levels;
     // Invariant: visible_policy_depth <= arena_arr_len(policy_levels)
     size_t visible_policy_depth;
@@ -280,17 +311,10 @@ struct Evaluator_Context {
     bool continue_requested;
     bool return_requested;
     Eval_Return_Context return_context;
-    String_View *return_propagate_vars;
-    Eval_Compat_Profile compat_profile;
-    Eval_Unsupported_Policy unsupported_policy;
-    size_t error_budget;
-    // Snapshot refreshed at command-cycle boundary (eval_node entry).
-    bool continue_on_error_snapshot;
-    Eval_Run_Report run_report;
+    Eval_Runtime_State runtime_state;
 
     bool oom;
     bool stop_requested;
-    bool in_variable_watch_notification;
 };
 
 // ---- controle e memória ----
@@ -332,7 +356,7 @@ static inline Eval_Result eval_result_from_bool(bool ok) {
 
 static inline Eval_Result eval_result_from_ctx(Evaluator_Context *ctx) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
-    return ctx->run_report.error_count > 0 ? eval_result_soft_error() : eval_result_ok();
+    return ctx->runtime_state.run_report.error_count > 0 ? eval_result_soft_error() : eval_result_ok();
 }
 
 static inline Eval_Result eval_result_ok_if_running(Evaluator_Context *ctx) {
@@ -340,7 +364,7 @@ static inline Eval_Result eval_result_ok_if_running(Evaluator_Context *ctx) {
 }
 
 static inline size_t eval_scope_visible_depth(const Evaluator_Context *ctx) {
-    return ctx ? ctx->visible_scope_depth : 0;
+    return ctx ? ctx->scope_state.visible_scope_depth : 0;
 }
 
 static inline size_t eval_policy_visible_depth(const Evaluator_Context *ctx) {
@@ -365,7 +389,7 @@ static inline bool eval_scope_use_parent_view(Evaluator_Context *ctx, size_t *sa
     size_t depth = eval_scope_visible_depth(ctx);
     if (depth <= 1) return false;
     *saved_depth = depth;
-    ctx->visible_scope_depth = depth - 1;
+    ctx->scope_state.visible_scope_depth = depth - 1;
     return true;
 }
 
@@ -374,12 +398,44 @@ static inline bool eval_scope_use_global_view(Evaluator_Context *ctx, size_t *sa
     size_t depth = eval_scope_visible_depth(ctx);
     if (depth == 0) return false;
     *saved_depth = depth;
-    ctx->visible_scope_depth = 1;
+    ctx->scope_state.visible_scope_depth = 1;
     return true;
 }
 
 static inline void eval_scope_restore_view(Evaluator_Context *ctx, size_t saved_depth) {
-    if (ctx) ctx->visible_scope_depth = saved_depth;
+    if (ctx) ctx->scope_state.visible_scope_depth = saved_depth;
+}
+
+static inline Eval_Scope_State *eval_scope_slice(Evaluator_Context *ctx) {
+    return ctx ? &ctx->scope_state : NULL;
+}
+
+static inline const Eval_Scope_State *eval_scope_slice_const(const Evaluator_Context *ctx) {
+    return ctx ? &ctx->scope_state : NULL;
+}
+
+static inline Eval_Runtime_State *eval_runtime_slice(Evaluator_Context *ctx) {
+    return ctx ? &ctx->runtime_state : NULL;
+}
+
+static inline const Eval_Runtime_State *eval_runtime_slice_const(const Evaluator_Context *ctx) {
+    return ctx ? &ctx->runtime_state : NULL;
+}
+
+static inline Eval_Command_State *eval_command_slice(Evaluator_Context *ctx) {
+    return ctx ? &ctx->command_state : NULL;
+}
+
+static inline const Eval_Command_State *eval_command_slice_const(const Evaluator_Context *ctx) {
+    return ctx ? &ctx->command_state : NULL;
+}
+
+static inline Eval_File_State *eval_file_slice(Evaluator_Context *ctx) {
+    return ctx ? &ctx->file_state : NULL;
+}
+
+static inline const Eval_File_State *eval_file_slice_const(const Evaluator_Context *ctx) {
+    return ctx ? &ctx->file_state : NULL;
 }
 
 static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr) {
@@ -530,7 +586,7 @@ static inline bool eval_diag_emit_with_severity_bool(Evaluator_Context *ctx,
 static inline void eval_clear_return_state(Evaluator_Context *ctx) {
     if (!ctx) return;
     ctx->return_requested = false;
-    ctx->return_propagate_vars = NULL;
+    ctx->scope_state.return_propagate_vars = NULL;
 }
 
 Arena *eval_temp_arena(Evaluator_Context *ctx);
@@ -1561,6 +1617,36 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
 bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name);
 bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Event_Origin origin, String_View target_name);
+bool eval_property_write(Evaluator_Context *ctx,
+                         Event_Origin origin,
+                         String_View scope_upper,
+                         String_View object_id,
+                         String_View property_name,
+                         String_View value,
+                         Cmake_Target_Property_Op op,
+                         bool emit_var_event);
+bool eval_property_query_mode_parse(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    Event_Origin origin,
+                                    String_View token,
+                                    Eval_Property_Query_Mode *out_mode);
+bool eval_property_query(Evaluator_Context *ctx,
+                         const Node *node,
+                         Event_Origin origin,
+                         String_View out_var,
+                         String_View scope_upper,
+                         String_View object_id,
+                         String_View validation_object,
+                         String_View property_name,
+                         Eval_Property_Query_Mode mode,
+                         String_View inherit_directory,
+                         bool validate_object,
+                         bool missing_as_notfound);
+bool eval_property_query_cmake(Evaluator_Context *ctx,
+                               const Node *node,
+                               Event_Origin origin,
+                               String_View out_var,
+                               String_View property_name);
 
 // ---- native commands ----
 Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name);
@@ -1586,10 +1672,6 @@ String_View eval_normalize_compile_definition_item(String_View item);
 String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx);
 String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name);
 bool eval_property_scope_upper_temp(Evaluator_Context *ctx, String_View raw_scope, String_View *out_scope_upper);
-String_View eval_property_store_key_temp(Evaluator_Context *ctx,
-                                         String_View scope_upper,
-                                         String_View object_id,
-                                         String_View prop_upper);
 String_View eval_property_scoped_object_id_temp(Evaluator_Context *ctx,
                                                 const char *prefix,
                                                 String_View scope_object,

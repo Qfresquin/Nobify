@@ -86,6 +86,9 @@ Status: decision-complete roadmap for evaluator architecture/documentation align
 
 Recommended wave order:
 
+- F1 completed explicit `Evaluator_Context` state slices for scope/cache/bindings, runtime compatibility/report, command registry, and deferred/file queues while preserving one owning context.
+- F2 completed the property store/query service boundary on March 6, 2026 by internalizing synthetic property-key composition, centralizing property definition/query/write behavior in `eval_property.c`, and simplifying the residual property core in `eval_target.c`.
+
 1. **F1 State Partition Around `Evaluator_Context`**
    - Introduce explicit internal state groupings over the existing context-centric model.
    - Candidate slices:
