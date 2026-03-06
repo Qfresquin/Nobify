@@ -18,6 +18,10 @@ It does not try to fully document the internals of every command handler.
 
 Primary implementation files for this slice:
 - `src_v2/evaluator/evaluator.c`
+- `src_v2/evaluator/eval_exec_core.h`
+- `src_v2/evaluator/eval_exec_core.c`
+- `src_v2/evaluator/eval_user_command.c`
+- `src_v2/evaluator/eval_nested_exec.c`
 - `src_v2/evaluator/eval_dispatcher.c`
 - `src_v2/evaluator/eval_flow.c`
 - `src_v2/evaluator/eval_include.c`
@@ -35,7 +39,7 @@ Current high-level behavior:
 - Returns `EVAL_RESULT_FATAL` if `ctx == NULL`.
 - Returns `EVAL_RESULT_FATAL` if execution is already in a stop state.
 - Resets `Eval_Run_Report` at the start of the run.
-- Executes the root AST through `eval_node_list(...)`.
+- Executes the root AST through `eval_execute_node_list(...)` via the thin public wrapper in `evaluator.c`.
 - Flushes deferred directory work if execution remained healthy.
 - Flushes deferred file-generation work if execution remained healthy.
 - Clears return state before finishing.
@@ -52,14 +56,14 @@ Secondary internal-style entry point:
 Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
 ```
 
-This executes a node list directly without the full top-level run-finalization path.
+This executes the same execution-core entrypoint directly without the full top-level run-finalization path.
 
 ## 4. Root Traversal Model
 
 The evaluator executes AST blocks through:
 
 ```c
-static Eval_Result eval_node_list(Evaluator_Context *ctx, const Node_List *list);
+Eval_Result eval_execute_node_list(Evaluator_Context *ctx, const Node_List *list);
 ```
 
 Current block traversal contract:
@@ -85,6 +89,10 @@ Each AST node is executed by:
 ```c
 static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node);
 ```
+
+Implementation location:
+- `eval_execute_node_list(...)` and `eval_node(...)` live in `src_v2/evaluator/eval_exec_core.c`
+- `evaluator.c` now keeps runtime ownership and public wrappers, not the per-node traversal loop
 
 Current per-node sequence:
 
@@ -267,7 +275,7 @@ Current behavior:
   - emits `FLOW_BLOCK_END`
 
 Return interaction:
-- on `return_requested`, `eval_node_list(...)` calls `eval_unwind_blocks_for_return(...)`
+- on `return_requested`, `eval_execute_node_list(...)` calls `eval_unwind_blocks_for_return(...)`
 - this drains pending block frames before the return bubbles further upward
 
 Practical consequence:
@@ -279,6 +287,9 @@ Practical consequence:
 
 When the evaluator encounters `NODE_FUNCTION` or `NODE_MACRO`, it calls:
 - `eval_user_cmd_register(...)`
+
+Implementation location:
+- registration, lookup, invocation, and AST/body cloning live in `src_v2/evaluator/eval_user_command.c`
 
 Current registration behavior:
 - Copy the command name into `event_arena`
@@ -323,7 +334,7 @@ Then the evaluator:
   - `ARGV`
   - `ARGN`
   - `ARGV0`, `ARGV1`, ...
-- executes the stored body through `eval_node_list(...)`
+- executes the stored body through `eval_execute_node_list(...)`
 
 Cleanup behavior:
 - captures whether a return happened
@@ -373,7 +384,7 @@ Current execution sequence:
 5. Parse it into a new AST.
 6. Push temporary file/list-dir context.
 7. For `add_subdirectory`, optionally push a new variable scope and directory context.
-8. Execute the nested AST through `eval_node_list(...)`.
+8. Execute the nested AST through `eval_execute_node_list(...)`.
 9. Flush deferred work for the nested directory when needed.
 10. Clear return state.
 11. Restore previous context.
@@ -382,6 +393,9 @@ Current execution sequence:
 Important consequence:
 - the evaluator can recursively re-enter its own lex/parse/execute pipeline for external files,
 - but it still uses the same evaluator context and event stream.
+
+Implementation location:
+- external-file read/lex/parse/context push-pop and `eval_execute_file(...)` live in `src_v2/evaluator/eval_nested_exec.c`
 
 ## 13. Deferred Work at Execution Boundaries
 

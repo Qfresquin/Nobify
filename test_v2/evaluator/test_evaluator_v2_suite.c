@@ -2640,6 +2640,53 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     TEST_PASS();
 }
 
+TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(BEFORE_INLINE_FILE ${CMAKE_CURRENT_LIST_FILE})\n"
+        "cmake_language(EVAL CODE [[message(SEND_ERROR inline_soft)\n"
+        "set(INLINE_FILE ${CMAKE_CURRENT_LIST_FILE})]])\n"
+        "set(AFTER_INLINE ok)\n");
+
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BEFORE_INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("AFTER_INLINE")), nob_sv_from_cstr("ok")));
+    ASSERT(ctx->current_file != NULL);
+    ASSERT(strcmp(ctx->current_file, "CMakeLists.txt") == 0);
+    ASSERT(nob_sv_eq(eval_current_list_file(ctx), nob_sv_from_cstr("CMakeLists.txt")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_compile_definitions_normalizes_dash_d_items) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -6806,6 +6853,88 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_dispatcher_routes_glob_rw_and_copy_families) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY dispatch_glob/sub)\n"
+        "file(WRITE dispatch_glob/a.c \"int a = 0;\\n\")\n"
+        "file(WRITE dispatch_glob/sub/b.c \"int b = 0;\\n\")\n"
+        "file(GLOB_RECURSE DISPATCH_GLOB RELATIVE dispatch_glob dispatch_glob/*.c dispatch_glob/*/*.c)\n"
+        "file(WRITE dispatch_rw.txt \"alpha\")\n"
+        "file(READ dispatch_rw.txt DISPATCH_READ)\n"
+        "file(COPY dispatch_rw.txt DESTINATION dispatch_copy)\n"
+        "file(READ dispatch_copy/dispatch_rw.txt DISPATCH_COPY)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    String_View glob_out = eval_var_get(ctx, nob_sv_from_cstr("DISPATCH_GLOB"));
+    ASSERT(sv_contains_sv(glob_out, nob_sv_from_cstr("a.c")));
+    ASSERT(sv_contains_sv(glob_out, nob_sv_from_cstr("sub/b.c")));
+    const char *a_pos = strstr(nob_temp_sv_to_cstr(glob_out), "a.c");
+    const char *b_pos = strstr(nob_temp_sv_to_cstr(glob_out), "sub/b.c");
+    ASSERT(a_pos != NULL && b_pos != NULL && a_pos < b_pos);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DISPATCH_READ")), nob_sv_from_cstr("alpha")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DISPATCH_COPY")), nob_sv_from_cstr("alpha")));
+
+    bool saw_glob_event = false;
+    bool saw_write_event = false;
+    bool saw_read_event = false;
+    bool saw_copy_read_event = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_FS_GLOB &&
+            nob_sv_eq(ev->as.fs_glob.out_var, nob_sv_from_cstr("DISPATCH_GLOB")) &&
+            ev->as.fs_glob.recursive &&
+            sv_contains_sv(ev->as.fs_glob.base_dir, nob_sv_from_cstr("dispatch_glob"))) {
+            saw_glob_event = true;
+        } else if (ev->h.kind == EVENT_FS_WRITE_FILE &&
+                   sv_contains_sv(ev->as.fs_write_file.path, nob_sv_from_cstr("dispatch_rw.txt"))) {
+            saw_write_event = true;
+        } else if (ev->h.kind == EVENT_FS_READ_FILE &&
+                   nob_sv_eq(ev->as.fs_read_file.out_var, nob_sv_from_cstr("DISPATCH_READ")) &&
+                   sv_contains_sv(ev->as.fs_read_file.path, nob_sv_from_cstr("dispatch_rw.txt"))) {
+            saw_read_event = true;
+        } else if (ev->h.kind == EVENT_FS_READ_FILE &&
+                   nob_sv_eq(ev->as.fs_read_file.out_var, nob_sv_from_cstr("DISPATCH_COPY")) &&
+                   sv_contains_sv(ev->as.fs_read_file.path, nob_sv_from_cstr("dispatch_copy/dispatch_rw.txt"))) {
+            saw_copy_read_event = true;
+        }
+    }
+
+    ASSERT(saw_glob_event);
+    ASSERT(saw_write_event);
+    ASSERT(saw_read_event);
+    ASSERT(saw_copy_read_event);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -7330,6 +7459,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
+    test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);
     test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);
@@ -7383,6 +7513,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
+    test_evaluator_file_dispatcher_routes_glob_rw_and_copy_families(passed, failed);
     test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed);
     test_evaluator_file_real_path_cmp0152_old_and_new(passed, failed);
     test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed);

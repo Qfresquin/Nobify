@@ -16,9 +16,18 @@ It does not redefine evaluator contracts. Canonical behavior remains in `evaluat
 
 Primary implementation sources:
 - `src_v2/evaluator/evaluator.c`
+- `src_v2/evaluator/eval_exec_core.c`
+- `src_v2/evaluator/eval_user_command.c`
+- `src_v2/evaluator/eval_nested_exec.c`
 - `src_v2/evaluator/eval_dispatcher.c`
 - `src_v2/evaluator/eval_command_caps.c`
 - `src_v2/evaluator/eval_command_registry.h`
+- `src_v2/evaluator/eval_file.c`
+- `src_v2/evaluator/eval_file_internal.h`
+- `src_v2/evaluator/eval_file_path.c`
+- `src_v2/evaluator/eval_file_glob.c`
+- `src_v2/evaluator/eval_file_rw.c`
+- `src_v2/evaluator/eval_file_copy.c`
 - `src_v2/evaluator/eval_compat.c`
 - `src_v2/evaluator/eval_report.c`
 
@@ -40,9 +49,12 @@ Current quantitative baseline:
 - Largest implementation files by size:
   - `eval_string.c` (`2513` lines)
   - `eval_target.c` (`2239` lines)
-  - `eval_file.c` (`2129` lines)
   - `eval_package.c` (`1823` lines)
   - `eval_flow.c` (`1766` lines)
+  - `eval_try_compile.c` (`1500` lines)
+- `evaluator.c` after Phase E1 execution-service extraction: `977` lines
+- `eval_file.c` after Phase D1 dispatcher split: `57` lines
+- `eval_file_{path,glob,rw,copy}.c`: `409` / `422` / `612` / `637` lines
 
 ## 4. Positive Findings
 
@@ -53,6 +65,8 @@ Current strengths worth preserving:
 - Diagnostic emission is consistent and dual-sink: one external log line plus one `EVENT_DIAG` with run-report updates.
 - Unknown-command behavior is explicit and policy-driven instead of silently ignored.
 - Compatibility refresh timing is centralized at command-cycle entry and covered by evaluator tests.
+- Phase E1 reduced `evaluator.c` by extracting execution traversal, user-command lifecycle, and nested file execution without changing public API or golden output.
+- Phase D1 reduced `eval_file.c` to a thin dispatcher/orchestrator and moved path/glob/rw/copy families into explicit internal modules without changing public API or golden output.
 
 ## 5. Prioritized Findings
 
@@ -69,7 +83,7 @@ Current strengths worth preserving:
 ### F-01: `while()` hard cap
 
 Evidence:
-- `src_v2/evaluator/evaluator.c` (`eval_while`) sets `const size_t kMaxIter = 10000` and emits `"Iteration limit exceeded"` when exhausted.
+- `src_v2/evaluator/eval_exec_core.c` (`eval_while`) sets `const size_t kMaxIter = 10000` and emits `"Iteration limit exceeded"` when exhausted.
 
 Risk:
 - Long but valid loops can terminate with evaluator error even when original CMake flow would continue.
@@ -107,13 +121,13 @@ Recommendation:
 ### F-06: File-size concentration
 
 Evidence:
-- Multiple core `.c` files exceed ~1800 lines (`eval_string.c`, `eval_target.c`, `eval_file.c`, `eval_flow.c`, `eval_package.c`).
+- Multiple core `.c` files still exceed ~1500 lines (`eval_string.c`, `eval_target.c`, `eval_package.c`, `eval_flow.c`, `eval_try_compile.c`), even after the execution-service split reduced `evaluator.c` to `977` lines and Phase D1 reduced `eval_file.c` to `57` lines.
 
 Risk:
 - Review complexity and regression probability increase, especially for cross-cutting edits.
 
 Recommendation:
-- Refactor by domain boundaries (for example: split `eval_file` by subcommand families and `eval_string` by mode families).
+- Continue refactoring by domain boundaries, with `eval_target` and `eval_string` now the clearest remaining hotspots.
 
 ### F-07: Coverage debt concentration
 

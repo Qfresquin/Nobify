@@ -26,12 +26,26 @@ Detailed semantics are delegated to annexes in `docs/evaluator/`, but those anne
 Primary implementation files:
 - `src_v2/evaluator/evaluator.h`
 - `src_v2/evaluator/evaluator.c`
+- `src_v2/evaluator/eval_exec_core.h`
+- `src_v2/evaluator/eval_exec_core.c`
+- `src_v2/evaluator/eval_user_command.c`
+- `src_v2/evaluator/eval_nested_exec.c`
 - `src_v2/evaluator/evaluator_internal.h`
 - `src_v2/evaluator/eval_dispatcher.c`
 - `src_v2/evaluator/eval_compat.c`
 - `src_v2/evaluator/eval_report.c`
 - `src_v2/evaluator/eval_diag_classify.c`
 - `src_v2/evaluator/eval_flow.c`
+- `src_v2/evaluator/eval_file.c`
+- `src_v2/evaluator/eval_file_internal.h`
+- `src_v2/evaluator/eval_file_path.c`
+- `src_v2/evaluator/eval_file_glob.c`
+- `src_v2/evaluator/eval_file_rw.c`
+- `src_v2/evaluator/eval_file_copy.c`
+- `src_v2/evaluator/eval_file_extra.c`
+- `src_v2/evaluator/eval_file_fsops.c`
+- `src_v2/evaluator/eval_file_transfer.c`
+- `src_v2/evaluator/eval_file_generate_lock_archive.c`
 - `src_v2/evaluator/eval_vars.c`
 - `src_v2/evaluator/eval_include.c`
 
@@ -86,7 +100,7 @@ Current top-level API behavior:
 
 `evaluator_run(...)` performs:
 1. run-report reset and file-depth entry,
-2. AST traversal,
+2. AST traversal through the internal execution-core service,
 3. deferred directory flush,
 4. deferred file-generation flush,
 5. return-state cleanup,
@@ -156,6 +170,7 @@ Strategic roadmap source:
 Direction constraints for refactor waves:
 - architecture remains context-centric (`Evaluator_Context` is still the integration boundary),
 - subsystem extraction is incremental and service-oriented, not a one-shot object-graph rewrite,
+- execution traversal, user-command lifecycle, and nested external execution may move into dedicated internal services while preserving the public API,
 - evaluator boundary remains AST -> Event IR.
 
 Declared non-goals for the current roadmap:

@@ -19,6 +19,10 @@ It does not try to restate the detailed node-by-node execution rules. Those belo
 Primary implementation files for this slice:
 - `src_v2/evaluator/evaluator.h`
 - `src_v2/evaluator/evaluator.c`
+- `src_v2/evaluator/eval_exec_core.h`
+- `src_v2/evaluator/eval_exec_core.c`
+- `src_v2/evaluator/eval_user_command.c`
+- `src_v2/evaluator/eval_nested_exec.c`
 - `src_v2/evaluator/evaluator_internal.h`
 - `src_v2/evaluator/eval_compat.c`
 - `src_v2/evaluator/eval_flow.c`
@@ -439,7 +443,7 @@ This means each top-level run gets a fresh report, but it does not get a brand-n
 ### 11.2 Main Execution Phase
 
 The main body of the run:
-- executes the AST through `eval_node_list(...)`
+- executes the AST through `eval_execute_node_list(...)`
 
 The runtime state mutated during that traversal remains on the same context unless explicitly unwound by control-flow handlers.
 
@@ -475,7 +479,7 @@ Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast);
 
 This is a lighter-weight runtime path:
 - it rejects `NULL` / stopped contexts
-- it executes `eval_node_list(...)`
+- it executes `eval_execute_node_list(...)`
 - it does not perform the full top-level report/flush/finalization sequence
 
 This path is used for re-entrant execution such as deferred synthetic calls and similar nested runtime work.
@@ -559,7 +563,14 @@ Refactor direction for runtime architecture is incremental extraction over share
 
 Current target boundary:
 - scope, policy, flow, diagnostics, dispatcher, file execution, and deferred queues evolve as internal services,
+- Phase E1 has already extracted execution traversal, user-command lifecycle, and nested file execution into dedicated internal modules,
 - those services continue to operate over the same `Evaluator_Context` integration boundary.
+
+Current ownership split:
+- `evaluator.c` keeps runtime bootstrap, teardown, stop-state writes, registry ownership, and public wrappers
+- `eval_exec_core.c` owns per-node traversal
+- `eval_user_command.c` owns `function()` / `macro()` lifecycle
+- `eval_nested_exec.c` owns shared-context external-file execution
 
 Explicit non-target in this roadmap:
 - no child evaluator runtime context model for nested execution (`include`, subdirectory, inline/deferred execution).
