@@ -74,7 +74,7 @@ static bool string_configure_expand_temp(Evaluator_Context *ctx,
                     EVAL_OOM_RETURN_IF_NULL(ctx, env_buf, false);
                     memcpy(env_buf, env_key.data, env_key.count);
                     env_buf[env_key.count] = '\0';
-                    const char *env_val = getenv(env_buf);
+                    const char *env_val = eval_getenv_temp(ctx, env_buf);
                     if (env_val) val = nob_sv_from_cstr(env_val);
                 } else {
                     val = eval_var_get_visible(ctx, key);

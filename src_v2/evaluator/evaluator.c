@@ -865,9 +865,9 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     }
 
     {
-        const char *cc = getenv("CC");
+        const char *cc = eval_getenv_temp(ctx, "CC");
         if (!cc || cc[0] == '\0') cc = "cc";
-        const char *cxx = getenv("CXX");
+        const char *cxx = eval_getenv_temp(ctx, "CXX");
         if (!cxx || cxx[0] == '\0') cxx = "c++";
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), nob_sv_from_cstr(cc))) return NULL;
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), nob_sv_from_cstr(cxx))) return NULL;
@@ -892,6 +892,10 @@ void evaluator_destroy(Evaluator_Context *ctx) {
     if (ctx->scope_state.cache_entries) {
         stbds_shfree(ctx->scope_state.cache_entries);
         ctx->scope_state.cache_entries = NULL;
+    }
+    if (ctx->process_state.env_overrides) {
+        stbds_shfree(ctx->process_state.env_overrides);
+        ctx->process_state.env_overrides = NULL;
     }
     for (size_t i = 0; i < arena_arr_len(ctx->scope_state.scopes); i++) {
         if (ctx->scope_state.scopes[i].vars) {

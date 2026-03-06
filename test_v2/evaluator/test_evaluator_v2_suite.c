@@ -5560,6 +5560,64 @@ TEST(evaluator_set_and_unset_env_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_process_env_service_overlays_execute_process_and_timestamp) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+#if defined(_WIN32)
+    const char *script =
+        "set(ENV{NOBIFY_ENV_CHILD_F3} valueB)\n"
+        "execute_process(COMMAND cmd /C \"echo %NOBIFY_ENV_CHILD_F3%\" "
+        "OUTPUT_VARIABLE CHILD_B OUTPUT_STRIP_TRAILING_WHITESPACE)\n"
+        "set(ENV{SOURCE_DATE_EPOCH} 946684800)\n"
+        "string(TIMESTAMP ENV_TS \"%Y\" UTC)\n"
+        "unset(ENV{NOBIFY_ENV_CHILD_F3})\n"
+        "unset(ENV{SOURCE_DATE_EPOCH})\n";
+#else
+    const char *script =
+        "set(ENV{NOBIFY_ENV_CHILD_F3} valueB)\n"
+        "execute_process(COMMAND /bin/sh -c \"printf '%s' $NOBIFY_ENV_CHILD_F3\" "
+        "OUTPUT_VARIABLE CHILD_B)\n"
+        "set(ENV{SOURCE_DATE_EPOCH} 946684800)\n"
+        "string(TIMESTAMP ENV_TS \"%Y\" UTC)\n"
+        "unset(ENV{NOBIFY_ENV_CHILD_F3})\n"
+        "unset(ENV{SOURCE_DATE_EPOCH})\n";
+#endif
+
+    Ast_Root root = parse_cmake(temp_arena, script);
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CHILD_B")), nob_sv_from_cstr("valueB")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ENV_TS")), nob_sv_from_cstr("2000")));
+    ASSERT(!eval_has_env(ctx, "NOBIFY_ENV_CHILD_F3"));
+    ASSERT(getenv("NOBIFY_ENV_CHILD_F3") == NULL);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -8217,6 +8275,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_message_deprecation_respects_control_variables(passed, failed);
     test_evaluator_message_configure_log_persists_yaml_file(passed, failed);
     test_evaluator_set_and_unset_env_forms(passed, failed);
+    test_evaluator_process_env_service_overlays_execute_process_and_timestamp(passed, failed);
     test_evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms(passed, failed);
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);

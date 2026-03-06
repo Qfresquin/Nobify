@@ -196,6 +196,18 @@ typedef struct {
 } Eval_Process_Run_Result;
 
 typedef struct {
+    String_View text;
+    bool is_set;
+} Eval_Process_Env_Value;
+
+typedef struct {
+    char *key;
+    Eval_Process_Env_Value value;
+} Eval_Process_Env_Entry;
+
+typedef Eval_Process_Env_Entry *Eval_Process_Env_Table;
+
+typedef struct {
     String_View scope_upper;
     String_View property_upper;
     bool inherited;
@@ -283,6 +295,10 @@ typedef struct {
     size_t next_deferred_call_id;
 } Eval_File_State;
 
+typedef struct {
+    Eval_Process_Env_Table env_overrides;
+} Eval_Process_State;
+
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: Sobrevive até o Build Model (usado p/ eventos)
@@ -298,6 +314,7 @@ struct Evaluator_Context {
     SV_List message_check_stack;
     Eval_Command_State command_state;
     Eval_File_State file_state;
+    Eval_Process_State process_state;
     Eval_Property_Definition_List property_definitions;
     Eval_Policy_Level *policy_levels;
     // Invariant: visible_policy_depth <= arena_arr_len(policy_levels)
@@ -436,6 +453,14 @@ static inline Eval_File_State *eval_file_slice(Evaluator_Context *ctx) {
 
 static inline const Eval_File_State *eval_file_slice_const(const Evaluator_Context *ctx) {
     return ctx ? &ctx->file_state : NULL;
+}
+
+static inline Eval_Process_State *eval_process_slice(Evaluator_Context *ctx) {
+    return ctx ? &ctx->process_state : NULL;
+}
+
+static inline const Eval_Process_State *eval_process_slice_const(const Evaluator_Context *ctx) {
+    return ctx ? &ctx->process_state : NULL;
 }
 
 static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr) {
@@ -1694,6 +1719,14 @@ bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_Lis
 bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out);
 bool eval_split_command_line_temp(Evaluator_Context *ctx, Eval_Cmdline_Mode mode, String_View input, SV_List *out_tokens);
 bool eval_process_run_capture(Evaluator_Context *ctx, const Eval_Process_Run_Request *req, Eval_Process_Run_Result *out);
+bool eval_process_run_nob_cmd_capture(Evaluator_Context *ctx,
+                                      const Nob_Cmd *cmd,
+                                      String_View working_directory,
+                                      String_View stdin_data,
+                                      Eval_Process_Run_Result *out);
+bool eval_process_env_set(Evaluator_Context *ctx, String_View name, String_View value);
+bool eval_process_env_unset(Evaluator_Context *ctx, String_View name);
+String_View eval_process_cwd_temp(Evaluator_Context *ctx);
 bool eval_sv_is_abs_path(String_View p);
 String_View eval_sv_path_join(Arena *arena, String_View a, String_View b);
 String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input);

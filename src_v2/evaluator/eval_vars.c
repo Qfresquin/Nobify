@@ -711,32 +711,6 @@ static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
                                         out);
 }
 
-static bool set_process_env(Evaluator_Context *ctx, String_View name, String_View value) {
-    if (!ctx) return false;
-    char *name_c = eval_sv_to_cstr_temp(ctx, name);
-    EVAL_OOM_RETURN_IF_NULL(ctx, name_c, false);
-    char *value_c = eval_sv_to_cstr_temp(ctx, value);
-    EVAL_OOM_RETURN_IF_NULL(ctx, value_c, false);
-
-#if defined(_WIN32)
-    return _putenv_s(name_c, value_c) == 0;
-#else
-    return setenv(name_c, value_c, 1) == 0;
-#endif
-}
-
-static bool unset_process_env(Evaluator_Context *ctx, String_View name) {
-    if (!ctx) return false;
-    char *name_c = eval_sv_to_cstr_temp(ctx, name);
-    EVAL_OOM_RETURN_IF_NULL(ctx, name_c, false);
-
-#if defined(_WIN32)
-    return _putenv_s(name_c, "") == 0;
-#else
-    return unsetenv(name_c) == 0;
-#endif
-}
-
 Eval_Result eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -753,7 +727,7 @@ Eval_Result eval_handle_set(Evaluator_Context *ctx, const Node *node) {
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_LEGACY_WARNING, "set", nob_sv_from_cstr("set(ENV{...}) ignores extra arguments after value"), nob_sv_from_cstr("Only the first value argument is used"));
         }
 
-        if (!set_process_env(ctx, env_name, env_value)) {
+        if (!eval_process_env_set(ctx, env_name, env_value)) {
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "set", nob_sv_from_cstr("Failed to set environment variable"), env_name);
         }
         return eval_result_from_ctx(ctx);
@@ -880,7 +854,7 @@ Eval_Result eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "unset", nob_sv_from_cstr("unset(ENV{...}) does not accept options"), nob_sv_from_cstr("Usage: unset(ENV{<var>})"));
             return eval_result_from_ctx(ctx);
         }
-        if (!unset_process_env(ctx, env_name)) {
+        if (!eval_process_env_unset(ctx, env_name)) {
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "unset", nob_sv_from_cstr("Failed to unset environment variable"), env_name);
         }
         return eval_result_from_ctx(ctx);

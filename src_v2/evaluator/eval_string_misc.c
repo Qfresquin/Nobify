@@ -262,7 +262,7 @@ static String_View string_timestamp_format_temp(Evaluator_Context *ctx,
     if (format.count == 0) format = nob_sv_from_cstr("%Y-%m-%dT%H:%M:%S");
 
     time_t now = time(NULL);
-    const char *sde = getenv("SOURCE_DATE_EPOCH");
+    const char *sde = eval_getenv_temp(ctx, "SOURCE_DATE_EPOCH");
     if (sde && *sde) {
         char *end = NULL;
         errno = 0;

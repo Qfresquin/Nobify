@@ -144,6 +144,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_compat.c",
         "src_v2/evaluator/eval_policy_engine.c",
         "src_v2/evaluator/eval_report.c",
+        "src_v2/evaluator/eval_runtime_process.c",
         "src_v2/evaluator/eval_string_text.c",
         "src_v2/evaluator/eval_string_regex.c",
         "src_v2/evaluator/eval_string_json.c",

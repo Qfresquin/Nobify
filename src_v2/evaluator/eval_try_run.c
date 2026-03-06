@@ -58,13 +58,10 @@ Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
 
     String_View exec_path = exec_res.artifact_path;
     if (!eval_sv_is_abs_path(exec_path)) {
-        char cwd_buf[4096] = {0};
-#if defined(_WIN32)
-        if (_getcwd(cwd_buf, (int)sizeof(cwd_buf) - 1)) {
-#else
-        if (getcwd(cwd_buf, sizeof(cwd_buf) - 1)) {
-#endif
-            exec_path = eval_sv_path_join(eval_temp_arena(ctx), nob_sv_from_cstr(cwd_buf), exec_res.artifact_path);
+        String_View cwd = eval_process_cwd_temp(ctx);
+        if (eval_should_stop(ctx)) return eval_result_fatal();
+        if (cwd.count > 0) {
+            exec_path = eval_sv_path_join(eval_temp_arena(ctx), cwd, exec_res.artifact_path);
             if (eval_should_stop(ctx)) return eval_result_fatal();
         }
     }

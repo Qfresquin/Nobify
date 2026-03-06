@@ -191,37 +191,32 @@ bool try_compile_append_file_to_log(Evaluator_Context *ctx,
     return true;
 }
 
+static bool try_compile_append_text_to_log(Nob_String_Builder *log, String_View text) {
+    if (!log || text.count == 0) return true;
+    nob_sb_append_buf(log, text.data, text.count);
+    if (log->count > 0 && log->items[log->count - 1] != '\n') nob_sb_append(log, '\n');
+    return true;
+}
+
 bool try_compile_run_command_captured(Evaluator_Context *ctx,
                                       Nob_Cmd *cmd,
                                       String_View bindir,
                                       Nob_String_Builder *log,
                                       bool *out_ok) {
-    static size_t s_cmd_counter = 0;
     if (!ctx || !cmd || !log) return false;
-    s_cmd_counter++;
+    (void)bindir;
+    Eval_Process_Run_Result proc_res = {0};
+    if (!eval_process_run_nob_cmd_capture(ctx, cmd, nob_sv_from_cstr(""), nob_sv_from_cstr(""), &proc_res)) {
+        return false;
+    }
 
-    String_View out_path = eval_sv_path_join(eval_temp_arena(ctx),
-                                             bindir,
-                                             sv_copy_to_arena(eval_temp_arena(ctx),
-                                                              nob_sv_from_cstr(nob_temp_sprintf("try_compile_cmd_%zu.out",
-                                                                                               s_cmd_counter))));
-    String_View err_path = eval_sv_path_join(eval_temp_arena(ctx),
-                                             bindir,
-                                             sv_copy_to_arena(eval_temp_arena(ctx),
-                                                              nob_sv_from_cstr(nob_temp_sprintf("try_compile_cmd_%zu.err",
-                                                                                               s_cmd_counter))));
-    char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
-    char *err_c = eval_sv_to_cstr_temp(ctx, err_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
-    EVAL_OOM_RETURN_IF_NULL(ctx, err_c, false);
+    if (!try_compile_append_text_to_log(log, proc_res.stdout_text)) return false;
+    if (!try_compile_append_text_to_log(log, proc_res.stderr_text)) return false;
+    if ((!proc_res.started || proc_res.timed_out) && proc_res.result_text.count > 0) {
+        if (!try_compile_append_text_to_log(log, proc_res.result_text)) return false;
+    }
 
-    bool ok = nob_cmd_run(cmd, .stdout_path = out_c, .stderr_path = err_c);
-    if (!try_compile_append_file_to_log(ctx, out_c, log)) return false;
-    if (!try_compile_append_file_to_log(ctx, err_c, log)) return false;
-    (void)nob_delete_file(out_c);
-    (void)nob_delete_file(err_c);
-
-    if (out_ok) *out_ok = ok;
+    if (out_ok) *out_ok = proc_res.started && !proc_res.timed_out && proc_res.exit_code == 0;
     return true;
 }
 
