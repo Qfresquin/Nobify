@@ -447,15 +447,14 @@ static String_View file_convert_path_list_temp(Evaluator_Context *ctx, String_Vi
 static bool handle_file_append(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(APPEND) requires <path> and <content>"),
-                       nob_sv_from_cstr("Usage: file(APPEND <path> <content>...)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(APPEND) requires <path> and <content>"), nob_sv_from_cstr("Usage: file(APPEND <path> <content>...)"));
         return true;
     }
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_bin_dir(ctx), &path)) return true;
     if (!file_prepare_parent_dir(ctx, path)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(APPEND) failed to create parent directory"), path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(APPEND) failed to create parent directory"), path);
         return true;
     }
 
@@ -463,7 +462,7 @@ static bool handle_file_append(Evaluator_Context *ctx, const Node *node, SV_List
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
     FILE *f = fopen(path_c, "ab");
     if (!f) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(APPEND) failed to open file"), path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(APPEND) failed to open file"), path);
         return true;
     }
     for (size_t i = 2; i < arena_arr_len(args); i++) {
@@ -476,8 +475,7 @@ static bool handle_file_append(Evaluator_Context *ctx, const Node *node, SV_List
 static bool handle_file_size(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(SIZE) requires <path> and <out-var>"),
-                       nob_sv_from_cstr("Usage: file(SIZE <path> <out-var>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(SIZE) requires <path> and <out-var>"), nob_sv_from_cstr("Usage: file(SIZE <path> <out-var>)"));
         return true;
     }
 
@@ -488,7 +486,7 @@ static bool handle_file_size(Evaluator_Context *ctx, const Node *node, SV_List a
 
     struct stat st = {0};
     if (stat(path_c, &st) != 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(SIZE) failed to stat file"), path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(SIZE) failed to stat file"), path);
         return true;
     }
     (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(nob_temp_sprintf("%lld", (long long)st.st_size)));
@@ -498,8 +496,7 @@ static bool handle_file_size(Evaluator_Context *ctx, const Node *node, SV_List a
 static bool handle_file_rename(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(RENAME) requires old and new path"),
-                       nob_sv_from_cstr("Usage: file(RENAME <old> <new> [NO_REPLACE] [RESULT <var>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(RENAME) requires old and new path"), nob_sv_from_cstr("Usage: file(RENAME <old> <new> [NO_REPLACE] [RESULT <var>])"));
         return true;
     }
 
@@ -524,7 +521,7 @@ static bool handle_file_rename(Evaluator_Context *ctx, const Node *node, SV_List
     EVAL_OOM_RETURN_IF_NULL(ctx, new_c, true);
 
     if (!file_prepare_parent_dir(ctx, new_path)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(RENAME) failed to create destination directory"), new_path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(RENAME) failed to create destination directory"), new_path);
         return true;
     }
 
@@ -538,7 +535,7 @@ static bool handle_file_rename(Evaluator_Context *ctx, const Node *node, SV_List
             (void)file_emit_result_code(ctx, result_var, 1, "rename failed");
             return true;
         }
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(RENAME) failed"), old_path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(RENAME) failed"), old_path);
         return true;
     }
 
@@ -549,9 +546,8 @@ static bool handle_file_rename(Evaluator_Context *ctx, const Node *node, SV_List
 static bool handle_file_remove(Evaluator_Context *ctx, const Node *node, SV_List args, bool recurse) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", recurse ? nob_sv_from_cstr("file(REMOVE_RECURSE) requires at least one path")
-                               : nob_sv_from_cstr("file(REMOVE) requires at least one path"),
-                       recurse ? nob_sv_from_cstr("Usage: file(REMOVE_RECURSE <path>...)")
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", recurse ? nob_sv_from_cstr("file(REMOVE_RECURSE) requires at least one path")
+                               : nob_sv_from_cstr("file(REMOVE) requires at least one path"), recurse ? nob_sv_from_cstr("Usage: file(REMOVE_RECURSE <path>...)")
                                : nob_sv_from_cstr("Usage: file(REMOVE <path>...)"));
         return true;
     }
@@ -565,9 +561,8 @@ static bool handle_file_remove(Evaluator_Context *ctx, const Node *node, SV_List
         bool ok = recurse ? file_remove_tree_recursive(path_c) : file_remove_leaf(path_c, false);
         if (!ok && !file_leaf_exists(path_c)) ok = true;
         if (!ok) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", recurse ? nob_sv_from_cstr("file(REMOVE_RECURSE) failed to remove path")
-                                   : nob_sv_from_cstr("file(REMOVE) failed to remove path"),
-                           path);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", recurse ? nob_sv_from_cstr("file(REMOVE_RECURSE) failed to remove path")
+                                   : nob_sv_from_cstr("file(REMOVE) failed to remove path"), path);
             return true;
         }
     }
@@ -577,8 +572,7 @@ static bool handle_file_remove(Evaluator_Context *ctx, const Node *node, SV_List
 static bool handle_file_read_symlink(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) requires path and out-var"),
-                       nob_sv_from_cstr("Usage: file(READ_SYMLINK <path> <out-var>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) requires path and out-var"), nob_sv_from_cstr("Usage: file(READ_SYMLINK <path> <out-var>)"));
         return true;
     }
 
@@ -588,14 +582,13 @@ static bool handle_file_read_symlink(Evaluator_Context *ctx, const Node *node, S
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
 
 #if defined(_WIN32)
-    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) is not supported on Windows backend"),
-                   path);
+    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) is not supported on Windows backend"), path);
     return true;
 #else
     char tmp[PATH_MAX];
     ssize_t n = readlink(path_c, tmp, sizeof(tmp) - 1);
     if (n < 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) failed"), path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) failed"), path);
         return true;
     }
     tmp[n] = '\0';
@@ -607,8 +600,7 @@ static bool handle_file_read_symlink(Evaluator_Context *ctx, const Node *node, S
 static bool handle_file_create_link(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CREATE_LINK) requires source and link path"),
-                       nob_sv_from_cstr("Usage: file(CREATE_LINK <orig> <link> [SYMBOLIC] [COPY_ON_ERROR] [RESULT <var>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(CREATE_LINK) requires source and link path"), nob_sv_from_cstr("Usage: file(CREATE_LINK <orig> <link> [SYMBOLIC] [COPY_ON_ERROR] [RESULT <var>])"));
         return true;
     }
 
@@ -652,7 +644,7 @@ static bool handle_file_create_link(Evaluator_Context *ctx, const Node *node, SV
             (void)file_emit_result_code(ctx, result_var, 1, "CREATE_LINK failed");
             return true;
         }
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CREATE_LINK) failed"), dst);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(CREATE_LINK) failed"), dst);
         return true;
     }
 
@@ -669,7 +661,7 @@ static bool parse_mode_from_args(Evaluator_Context *ctx, const Node *node, Cmake
             has_any = true;
             continue;
         }
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("file(CHMOD) unknown permission token"), values[i]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(CHMOD) unknown permission token"), values[i]);
     }
     if (!has_any) return false;
     *out_mode = mode;
@@ -679,9 +671,8 @@ static bool parse_mode_from_args(Evaluator_Context *ctx, const Node *node, Cmake
 static bool handle_file_chmod(Evaluator_Context *ctx, const Node *node, SV_List args, bool recurse) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", recurse ? nob_sv_from_cstr("file(CHMOD_RECURSE) requires paths and PERMISSIONS")
-                               : nob_sv_from_cstr("file(CHMOD) requires paths and PERMISSIONS"),
-                       recurse ? nob_sv_from_cstr("Usage: file(CHMOD_RECURSE <path>... PERMISSIONS <tokens...>)")
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", recurse ? nob_sv_from_cstr("file(CHMOD_RECURSE) requires paths and PERMISSIONS")
+                               : nob_sv_from_cstr("file(CHMOD) requires paths and PERMISSIONS"), recurse ? nob_sv_from_cstr("Usage: file(CHMOD_RECURSE <path>... PERMISSIONS <tokens...>)")
                                : nob_sv_from_cstr("Usage: file(CHMOD <path>... PERMISSIONS <tokens...>)"));
         return true;
     }
@@ -694,8 +685,7 @@ static bool handle_file_chmod(Evaluator_Context *ctx, const Node *node, SV_List 
         }
     }
     if (perm_idx == SIZE_MAX || perm_idx + 1 >= arena_arr_len(args) || perm_idx == 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CHMOD) missing PERMISSIONS or paths"),
-                       nob_sv_from_cstr("Usage: file(CHMOD <path>... PERMISSIONS <tokens...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(CHMOD) missing PERMISSIONS or paths"), nob_sv_from_cstr("Usage: file(CHMOD <path>... PERMISSIONS <tokens...>)"));
         return true;
     }
 
@@ -707,7 +697,7 @@ static bool handle_file_chmod(Evaluator_Context *ctx, const Node *node, SV_List 
     }
     mode_t mode = 0;
     if (!parse_mode_from_args(ctx, node, o, perm_values, &mode)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(CHMOD) has no valid permission token"), nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(CHMOD) has no valid permission token"), nob_sv_from_cstr(""));
         return true;
     }
 
@@ -718,9 +708,8 @@ static bool handle_file_chmod(Evaluator_Context *ctx, const Node *node, SV_List 
         EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
         bool ok = recurse ? file_chmod_recursive_c(path_c, mode) : file_apply_mode_one(path_c, mode);
         if (!ok) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", recurse ? nob_sv_from_cstr("file(CHMOD_RECURSE) failed")
-                                   : nob_sv_from_cstr("file(CHMOD) failed"),
-                           path);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", recurse ? nob_sv_from_cstr("file(CHMOD_RECURSE) failed")
+                                   : nob_sv_from_cstr("file(CHMOD) failed"), path);
             return true;
         }
     }
@@ -730,8 +719,7 @@ static bool handle_file_chmod(Evaluator_Context *ctx, const Node *node, SV_List 
 static bool handle_file_real_path(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(REAL_PATH) requires input and out-var"),
-                       nob_sv_from_cstr("Usage: file(REAL_PATH <path> <out-var> [BASE_DIRECTORY <dir>] [EXPAND_TILDE])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(REAL_PATH) requires input and out-var"), nob_sv_from_cstr("Usage: file(REAL_PATH <path> <out-var> [BASE_DIRECTORY <dir>] [EXPAND_TILDE])"));
         return true;
     }
 
@@ -767,8 +755,7 @@ static bool handle_file_real_path(Evaluator_Context *ctx, const Node *node, SV_L
 static bool handle_file_relative_path(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(RELATIVE_PATH) requires out-var, directory and file"),
-                       nob_sv_from_cstr("Usage: file(RELATIVE_PATH <out-var> <directory> <file>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(RELATIVE_PATH) requires out-var, directory and file"), nob_sv_from_cstr("Usage: file(RELATIVE_PATH <out-var> <directory> <file>)"));
         return true;
     }
 
@@ -783,9 +770,8 @@ static bool handle_file_relative_path(Evaluator_Context *ctx, const Node *node, 
 static bool handle_file_to_path(Evaluator_Context *ctx, const Node *node, SV_List args, bool to_cmake) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", to_cmake ? nob_sv_from_cstr("file(TO_CMAKE_PATH) requires input and out-var")
-                                : nob_sv_from_cstr("file(TO_NATIVE_PATH) requires input and out-var"),
-                       to_cmake ? nob_sv_from_cstr("Usage: file(TO_CMAKE_PATH <path> <out-var>)")
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", to_cmake ? nob_sv_from_cstr("file(TO_CMAKE_PATH) requires input and out-var")
+                                : nob_sv_from_cstr("file(TO_NATIVE_PATH) requires input and out-var"), to_cmake ? nob_sv_from_cstr("Usage: file(TO_CMAKE_PATH <path> <out-var>)")
                                 : nob_sv_from_cstr("Usage: file(TO_NATIVE_PATH <path> <out-var>)"));
         return true;
     }
@@ -796,8 +782,7 @@ static bool handle_file_to_path(Evaluator_Context *ctx, const Node *node, SV_Lis
 static bool handle_file_timestamp(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(TIMESTAMP) requires path and out-var"),
-                       nob_sv_from_cstr("Usage: file(TIMESTAMP <path> <out-var> [format] [UTC])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(TIMESTAMP) requires path and out-var"), nob_sv_from_cstr("Usage: file(TIMESTAMP <path> <out-var> [format] [UTC])"));
         return true;
     }
 
@@ -817,7 +802,7 @@ static bool handle_file_timestamp(Evaluator_Context *ctx, const Node *node, SV_L
 
     struct stat st = {0};
     if (stat(path_c, &st) != 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(TIMESTAMP) failed to stat file"), path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(TIMESTAMP) failed to stat file"), path);
         return true;
     }
 
@@ -839,8 +824,7 @@ static bool handle_file_timestamp(Evaluator_Context *ctx, const Node *node, SV_L
 static bool handle_file_install(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(INSTALL) requires sources and DESTINATION"),
-                       nob_sv_from_cstr("Usage: file(INSTALL <src>... DESTINATION <dir>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(INSTALL) requires sources and DESTINATION"), nob_sv_from_cstr("Usage: file(INSTALL <src>... DESTINATION <dir>)"));
         return true;
     }
 
@@ -861,7 +845,7 @@ static bool handle_file_install(Evaluator_Context *ctx, const Node *node, SV_Lis
         }
     }
     if (dest_idx == SIZE_MAX || dest_idx + 1 >= arena_arr_len(args)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(INSTALL) missing DESTINATION"), nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(INSTALL) missing DESTINATION"), nob_sv_from_cstr(""));
         return true;
     }
 

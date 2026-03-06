@@ -11,13 +11,7 @@ static bool install_emit_diag(Evaluator_Context *ctx,
                               Cmake_Diag_Severity severity,
                               String_View cause,
                               String_View hint) {
-    return EVAL_DIAG(ctx,
-                          severity,
-                          nob_sv_from_cstr("eval_install"),
-                          node->as.cmd.name,
-                          o,
-                          cause,
-                          hint);
+    return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_install"), node->as.cmd.name, o, cause, hint);
 }
 
 static bool install_emit_rule(Evaluator_Context *ctx,
@@ -485,4 +479,3 @@ Eval_Result eval_handle_install(Evaluator_Context *ctx, const Node *node) {
     }
     return eval_result_from_ctx(ctx);
 }
-

@@ -52,7 +52,7 @@ typedef enum {
 } Eval_Compat_Profile;
 
 typedef enum {
-#define DECLARE_EVAL_DIAG_CODE(code, text) code,
+#define DECLARE_EVAL_DIAG_CODE(code, text, default_sev, error_class, counts_as_unsupported, hint_contract) code,
     EVAL_DIAG_CODE_LIST(DECLARE_EVAL_DIAG_CODE)
 #undef DECLARE_EVAL_DIAG_CODE
 } Eval_Diag_Code;

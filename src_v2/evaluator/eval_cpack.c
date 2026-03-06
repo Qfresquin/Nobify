@@ -8,13 +8,7 @@ static bool require_cpack_component_module(Evaluator_Context *ctx,
                                            Cmake_Event_Origin origin) {
     if (!ctx) return false;
     if (ctx->cpack_component_module_loaded) return true;
-    EVAL_DIAG(ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("dispatcher"),
-                   command,
-                   origin,
-                   nob_sv_from_cstr("Unknown command"),
-                   nob_sv_from_cstr("include(CPackComponent) must be called before using this command"));
+    EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNKNOWN_COMMAND, nob_sv_from_cstr("dispatcher"), command, origin, nob_sv_from_cstr("Unknown command"), nob_sv_from_cstr("include(CPackComponent) must be called before using this command"));
     return false;
 }
 
@@ -48,13 +42,7 @@ static bool cpack_install_type_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
-    EVAL_DIAG(ctx,
-                   EV_DIAG_WARNING,
-                   nob_sv_from_cstr("dispatcher"),
-                   st->command_name,
-                   st->origin,
-                   nob_sv_from_cstr("cpack_add_install_type() unexpected argument"),
-                   value);
+    EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_install_type() unexpected argument"), value);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
@@ -113,13 +101,7 @@ static bool cpack_group_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
-    EVAL_DIAG(ctx,
-                   EV_DIAG_WARNING,
-                   nob_sv_from_cstr("dispatcher"),
-                   st->command_name,
-                   st->origin,
-                   nob_sv_from_cstr("cpack_add_component_group() unexpected argument"),
-                   value);
+    EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_component_group() unexpected argument"), value);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
@@ -207,13 +189,7 @@ static bool cpack_component_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
-    EVAL_DIAG(ctx,
-                   EV_DIAG_WARNING,
-                   nob_sv_from_cstr("dispatcher"),
-                   st->command_name,
-                   st->origin,
-                   nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"),
-                   value);
+    EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"), value);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
@@ -223,8 +199,7 @@ Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Nod
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_install_type() missing name"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_install_type() missing name"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -266,8 +241,7 @@ Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const 
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_component_group() missing name"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_component_group() missing name"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -326,8 +300,7 @@ Eval_Result eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cpack_add_component() missing name"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_component() missing name"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 

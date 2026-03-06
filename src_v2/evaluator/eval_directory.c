@@ -508,8 +508,7 @@ Eval_Result eval_handle_include_regular_expression(Evaluator_Context *ctx, const
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1 || arena_arr_len(a) > 2) {
-        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "include_regular_expression", nob_sv_from_cstr("include_regular_expression() requires one or two regex arguments"),
-                             nob_sv_from_cstr("Usage: include_regular_expression(<regex_match> [<regex_complain>])"));
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "include_regular_expression", nob_sv_from_cstr("include_regular_expression() requires one or two regex arguments"), nob_sv_from_cstr("Usage: include_regular_expression(<regex_match> [<regex_complain>])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -565,8 +564,7 @@ Eval_Result eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node)
             eval_sv_eq_ci_lit(a[i], "OPTIMIZED") ||
             eval_sv_eq_ci_lit(a[i], "GENERAL")) {
             if (qualifier.count > 0) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"),
-                               qualifier);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"), qualifier);
             }
             qualifier = a[i];
             continue;
@@ -587,8 +585,7 @@ Eval_Result eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node)
     }
 
     if (qualifier.count > 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"),
-                       qualifier);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("link_libraries() qualifier without following item"), qualifier);
     }
     return eval_result_from_ctx(ctx);
 }
@@ -657,8 +654,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3) {
-        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() requires <var> <file> <component>"),
-                             nob_sv_from_cstr("Usage: get_filename_component(<var> <file> <DIRECTORY|NAME|EXT|NAME_WE|LAST_EXT|NAME_WLE|PATH|ABSOLUTE|REALPATH|PROGRAM> ...)"));
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_filename_component() requires <var> <file> <component>"), nob_sv_from_cstr("Usage: get_filename_component(<var> <file> <DIRECTORY|NAME|EXT|NAME_WE|LAST_EXT|NAME_WLE|PATH|ABSOLUTE|REALPATH|PROGRAM> ...)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -676,8 +672,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 cache_result = true;
                 continue;
             }
-            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(DIRECTORY) received unexpected argument"),
-                                 a[i]);
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(DIRECTORY) received unexpected argument"), a[i]);
             return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -689,8 +684,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 cache_result = true;
                 continue;
             }
-            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(NAME) received unexpected argument"),
-                                 a[i]);
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(NAME) received unexpected argument"), a[i]);
             return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -703,8 +697,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 cache_result = true;
                 continue;
             }
-            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() received unexpected argument for name/extension mode"),
-                                 a[i]);
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component() received unexpected argument for name/extension mode"), a[i]);
             return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -721,8 +714,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
         for (size_t i = 3; i < arena_arr_len(a); i++) {
             if (eval_sv_eq_ci_lit(a[i], "BASE_DIR")) {
                 if (i + 1 >= arena_arr_len(a)) {
-                    (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(BASE_DIR) requires a value"),
-                                         nob_sv_from_cstr("Usage: get_filename_component(<var> <file> ABSOLUTE|REALPATH [BASE_DIR <dir>] [CACHE])"));
+                    (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_filename_component(BASE_DIR) requires a value"), nob_sv_from_cstr("Usage: get_filename_component(<var> <file> ABSOLUTE|REALPATH [BASE_DIR <dir>] [CACHE])"));
                     return eval_result_from_ctx(ctx);
                 }
                 base_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], current_src, false);
@@ -733,8 +725,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 cache_result = true;
                 continue;
             }
-            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(ABSOLUTE/REALPATH) received unexpected argument"),
-                                 a[i]);
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(ABSOLUTE/REALPATH) received unexpected argument"), a[i]);
             return eval_result_from_ctx(ctx);
         }
 
@@ -750,8 +741,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
         for (size_t i = 3; i < arena_arr_len(a); i++) {
             if (eval_sv_eq_ci_lit(a[i], "PROGRAM_ARGS")) {
                 if (i + 1 >= arena_arr_len(a)) {
-                    (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(PROGRAM_ARGS) requires an output variable"),
-                                         nob_sv_from_cstr("Usage: get_filename_component(<var> <file> PROGRAM [PROGRAM_ARGS <arg-var>] [CACHE])"));
+                    (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_filename_component(PROGRAM_ARGS) requires an output variable"), nob_sv_from_cstr("Usage: get_filename_component(<var> <file> PROGRAM [PROGRAM_ARGS <arg-var>] [CACHE])"));
                     return eval_result_from_ctx(ctx);
                 }
                 args_var = a[++i];
@@ -761,8 +751,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 cache_result = true;
                 continue;
             }
-            (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component(PROGRAM) received unexpected argument"),
-                                 a[i]);
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(PROGRAM) received unexpected argument"), a[i]);
             return eval_result_from_ctx(ctx);
         }
 
@@ -779,8 +768,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
             if (!eval_var_set_current(ctx, args_var, arg_value)) return eval_result_from_ctx(ctx);
         }
     } else {
-        (void)EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_filename_component() unsupported component"),
-                             mode);
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "dispatcher", nob_sv_from_cstr("get_filename_component() unsupported component"), mode);
         return eval_result_from_ctx(ctx);
     }
 

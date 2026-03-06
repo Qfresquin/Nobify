@@ -11,13 +11,7 @@ static bool legacy_emit_diag(Evaluator_Context *ctx,
                              Cmake_Diag_Severity severity,
                              String_View cause,
                              String_View hint) {
-    return EVAL_DIAG(ctx,
-                          severity,
-                          nob_sv_from_cstr("eval_legacy"),
-                          node ? node->as.cmd.name : nob_sv_from_cstr(""),
-                          node ? eval_origin_from_node(ctx, node) : (Cmake_Event_Origin){0},
-                          cause,
-                          hint);
+    return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_legacy"), node ? node->as.cmd.name : nob_sv_from_cstr(""), node ? eval_origin_from_node(ctx, node) : (Cmake_Event_Origin){0}, cause, hint);
 }
 
 static String_View legacy_current_binary_dir(Evaluator_Context *ctx) {

@@ -36,25 +36,21 @@ String_View eval_file_current_bin_dir(Evaluator_Context *ctx) {
 static bool file_diag(Evaluator_Context *ctx,
                       const Node *node,
                       Cmake_Diag_Severity severity,
+                      Eval_Diag_Code code,
                       Cmake_Event_Origin origin,
                       String_View cause,
                       String_View hint) {
     if (!ctx || !node) return false;
-    return EVAL_DIAG(ctx,
-                          severity,
-                          nob_sv_from_cstr("eval_file"),
-                          node->as.cmd.name,
-                          origin,
-                          cause,
-                          hint);
+    return EVAL_DIAG_BOOL_SEV(ctx, severity, code, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, cause, hint);
 }
 
 static bool file_diag_error(Evaluator_Context *ctx,
                             const Node *node,
+                            Eval_Diag_Code code,
                             Cmake_Event_Origin origin,
                             String_View cause,
                             String_View hint) {
-    return file_diag(ctx, node, EV_DIAG_ERROR, origin, cause, hint);
+    return file_diag(ctx, node, EV_DIAG_ERROR, code, origin, cause, hint);
 }
 
 Eval_Result eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
@@ -65,6 +61,7 @@ Eval_Result eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node 
     if (arena_arr_len(a) != 2) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_MISSING_REQUIRED,
                         o,
                         nob_sv_from_cstr("aux_source_directory() requires a directory and an output variable"),
                         nob_sv_from_cstr("Usage: aux_source_directory(<dir> <var>)"));
@@ -81,6 +78,7 @@ Eval_Result eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node 
     if (!eval_list_dir_sources_sorted_temp(ctx, dir, &sources)) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_IO_FAILURE,
                         o,
                         nob_sv_from_cstr("aux_source_directory() failed to enumerate the source directory"),
                         dir);
@@ -476,13 +474,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
 
     if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
         if (!is_path_safe(input_path)) {
-            EVAL_DIAG(ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("eval_file"),
-                           node->as.cmd.name,
-                           origin,
-                           nob_sv_from_cstr("Security Violation: Path traversal (..) is not allowed"),
-                           input_path);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Path traversal (..) is not allowed"), input_path);
             return false;
         }
     }
@@ -502,13 +494,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
     if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
         if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
             !scope_path_has_prefix(path, ctx->source_dir, ci)) {
-            EVAL_DIAG(ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("eval_file"),
-                           node->as.cmd.name,
-                           origin,
-                           nob_sv_from_cstr("Security Violation: Absolute path outside project scope"),
-                           path);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Absolute path outside project scope"), path);
             return false;
         }
     }
@@ -531,13 +517,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
 
         if (!scope_path_has_prefix(resolved_probe, binary_scope, ci) &&
             !scope_path_has_prefix(resolved_probe, source_scope, ci)) {
-            EVAL_DIAG(ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("eval_file"),
-                           node->as.cmd.name,
-                           origin,
-                           nob_sv_from_cstr("Security Violation: Absolute path outside project scope"),
-                           input_path);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Absolute path outside project scope"), input_path);
             return false;
         }
     }
@@ -917,13 +897,7 @@ static void file_glob_walk(Evaluator_Context *ctx,
             cause = nob_sv_from_cstr(nob_temp_sprintf("file(GLOB) failed to open directory: %s", err));
         }
         if (io_open_failures) (*io_open_failures)++;
-        EVAL_DIAG(ctx,
-                       strict_failures ? EV_DIAG_ERROR : EV_DIAG_WARNING,
-                       nob_sv_from_cstr("eval_file"),
-                       node ? node->as.cmd.name : nob_sv_from_cstr("file"),
-                       origin,
-                       cause,
-                       dir_full);
+        EVAL_DIAG_EMIT_SEV(ctx, strict_failures ? EV_DIAG_ERROR : EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("eval_file"), node ? node->as.cmd.name : nob_sv_from_cstr("file"), origin, cause, dir_full);
         return;
     }
 
@@ -963,6 +937,7 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
     if (arena_arr_len(args) < 3) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_MISSING_REQUIRED,
                         o,
                         nob_sv_from_cstr("file(GLOB) requires <var> and patterns"),
                         nob_sv_from_cstr(""));
@@ -1030,6 +1005,7 @@ static void handle_file_glob(Evaluator_Context *ctx, const Node *node, SV_List a
         file_diag(ctx,
                   node,
                   glob_strict ? EV_DIAG_ERROR : EV_DIAG_WARNING,
+                  EVAL_DIAG_IO_FAILURE,
                   o,
                   nob_sv_from_cstr(nob_temp_sprintf("file(GLOB) completed with %zu directory open failure(s); matches may be incomplete", open_failures)),
                   glob_strict
@@ -1075,6 +1051,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
     if (arena_arr_len(args) < 3) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_MISSING_REQUIRED,
                         o,
                         nob_sv_from_cstr("file(WRITE) requires <path> and <content>"),
                         nob_sv_from_cstr(""));
@@ -1100,6 +1077,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
         if (dir.count > 0 && !eval_file_mkdir_p(ctx, dir)) {
             file_diag_error(ctx,
                             node,
+                            EVAL_DIAG_IO_FAILURE,
                             o,
                             nob_sv_from_cstr("file(WRITE) failed to create parent directory"),
                             dir);
@@ -1111,6 +1089,7 @@ static void handle_file_write(Evaluator_Context *ctx, const Node *node, SV_List 
     if (!f) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_IO_FAILURE,
                         o,
                         nob_sv_from_cstr("file(WRITE) failed to open/create file"),
                         path);
@@ -1129,6 +1108,7 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
     if (arena_arr_len(args) < 2) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_MISSING_REQUIRED,
                         o,
                         nob_sv_from_cstr("file(MAKE_DIRECTORY) requires at least one path"),
                         nob_sv_from_cstr("Usage: file(MAKE_DIRECTORY <dir>...)"));
@@ -1142,6 +1122,7 @@ static void handle_file_make_directory(Evaluator_Context *ctx, const Node *node,
         if (!eval_file_mkdir_p(ctx, path)) {
             file_diag_error(ctx,
                             node,
+                            EVAL_DIAG_IO_FAILURE,
                             o,
                             nob_sv_from_cstr("file(MAKE_DIRECTORY) failed to create directory"),
                             path);
@@ -1156,6 +1137,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
     if (arena_arr_len(args) < 3) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_MISSING_REQUIRED,
                         o,
                         nob_sv_from_cstr("file(READ) requires <path> and <out-var>"),
                         nob_sv_from_cstr("Usage: file(READ <path> <out-var> [OFFSET n] [LIMIT n] [HEX])"));
@@ -1192,6 +1174,7 @@ static void handle_file_read(Evaluator_Context *ctx, const Node *node, SV_List a
     if (!nob_read_entire_file(path_c, &sb)) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_IO_FAILURE,
                         o,
                         nob_sv_from_cstr("file(READ) failed to read file"),
                         path);
@@ -1233,6 +1216,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     if (arena_arr_len(args) < 3) {
         file_diag_error(ctx,
                         node,
+                        EVAL_DIAG_MISSING_REQUIRED,
                         o,
                         nob_sv_from_cstr("file(STRINGS) requires <path> and <out-var>"),
                         nob_sv_from_cstr("Usage: file(STRINGS <path> <out-var>)"));
@@ -1272,8 +1256,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MINIMUM value"),
-                               args[i]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MINIMUM value"), args[i]);
                 return;
             }
             opt.has_len_min = true;
@@ -1283,8 +1266,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MAXIMUM value"),
-                               args[i]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MAXIMUM value"), args[i]);
                 return;
             }
             opt.has_len_max = true;
@@ -1294,8 +1276,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_sv_eq_ci_lit(t, "LIMIT_COUNT") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_COUNT value"),
-                               args[i]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_COUNT value"), args[i]);
                 return;
             }
             opt.has_limit_count = true;
@@ -1305,8 +1286,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_sv_eq_ci_lit(t, "LIMIT_INPUT") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_INPUT value"),
-                               args[i]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_INPUT value"), args[i]);
                 return;
             }
             opt.has_limit_input = true;
@@ -1316,8 +1296,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         if (eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT") && i + 1 < arena_arr_len(args)) {
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_OUTPUT value"),
-                               args[i]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_OUTPUT value"), args[i]);
                 return;
             }
             opt.has_limit_output = true;
@@ -1339,15 +1318,13 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         }
         if (eval_sv_eq_ci_lit(t, "ENCODING")) {
             if (i + 1 >= arena_arr_len(args)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) ENCODING requires a value"),
-                               t);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(STRINGS) ENCODING requires a value"), t);
                 return;
             }
             String_View encoding_sv = args[++i];
             File_Strings_Encoding enc = file_strings_parse_encoding_sv(encoding_sv);
             if (enc == FILE_STRINGS_ENCODING_INVALID) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid ENCODING value"),
-                               encoding_sv);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid ENCODING value"), encoding_sv);
                 return;
             }
             opt.has_encoding = true;
@@ -1359,15 +1336,13 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     }
 
     if (opt.has_len_min && opt.has_len_max && opt.len_min > opt.len_max) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) LENGTH_MINIMUM cannot be greater than LENGTH_MAXIMUM"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_CONFLICTING_OPTIONS, "eval_file", nob_sv_from_cstr("file(STRINGS) LENGTH_MINIMUM cannot be greater than LENGTH_MAXIMUM"), nob_sv_from_cstr(""));
         return;
     }
 
     if (unsupported_count > 0) {
         opt.unsupported = eval_sv_join_semi_temp(ctx, unsupported_items, unsupported_count);
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("file(STRINGS) has unsupported options"),
-                       opt.unsupported);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_file", nob_sv_from_cstr("file(STRINGS) has unsupported options"), opt.unsupported);
         if (eval_should_stop(ctx)) return;
     }
 
@@ -1377,8 +1352,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
 
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(path_c, &sb)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) failed to read file"),
-                       path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(STRINGS) failed to read file"), path);
         return;
     }
 
@@ -1388,8 +1362,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
     File_Strings_Encoding requested_encoding = opt.has_encoding ? opt.encoding : FILE_STRINGS_ENCODING_AUTO;
     if (!file_strings_decode_to_utf8_temp(ctx, sb.items, input_n, requested_encoding, &decoded_input)) {
         nob_sb_free(sb);
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) failed to decode input with requested ENCODING"),
-                       path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(STRINGS) failed to decode input with requested ENCODING"), path);
         return;
     }
     const char *input_data = decoded_input.data ? decoded_input.data : "";
@@ -1402,8 +1375,7 @@ static void handle_file_strings(Evaluator_Context *ctx, const Node *node, SV_Lis
         EVAL_OOM_RETURN_VOID_IF_NULL(ctx, regex_c);
         if (regcomp(&re, regex_c, REG_EXTENDED) != 0) {
             nob_sb_free(sb);
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid REGEX"),
-                           opt.regex);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid REGEX"), opt.regex);
             return;
         }
         re_compiled = true;
@@ -1743,8 +1715,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
 
             bool src_is_dir = false;
             if (!copy_copy_entry_raw(current_c, dst_c, &src_is_dir)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) failed to copy entry"),
-                               current);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) failed to copy entry"), current);
                 return false;
             }
 
@@ -1759,8 +1730,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
                 bool alias_ok = src_is_dir ? nob_copy_directory_recursively(dst_c, alias_dst_c)
                                            : nob_copy_file(dst_c, alias_dst_c);
                 if (!alias_ok) {
-                    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) failed to materialize FOLLOW_SYMLINK_CHAIN alias on Windows"),
-                                   alias_dst);
+                    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) failed to materialize FOLLOW_SYMLINK_CHAIN alias on Windows"), alias_dst);
                     return false;
                 }
             }
@@ -1769,8 +1739,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
             mode_t mode = 0;
             if (perms && copy_permissions_pick_mode(perms, src_is_dir, &mode)) {
                 if (!copy_apply_permissions(dst_c, mode)) {
-                    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("file(COPY) copied entry but failed to apply permissions"),
-                                   dst);
+                    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) copied entry but failed to apply permissions"), dst);
                 } else if (io_applied_any_permissions) {
                     *io_applied_any_permissions = true;
                 }
@@ -1781,8 +1750,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
 
         String_View target = nob_sv_from_cstr("");
         if (!copy_read_symlink_target_temp(ctx, current_c, &target) || target.count == 0) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) failed to resolve symlink target in FOLLOW_SYMLINK_CHAIN"),
-                           current);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) failed to resolve symlink target in FOLLOW_SYMLINK_CHAIN"), current);
             return false;
         }
 
@@ -1795,8 +1763,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
         char *target_c = eval_sv_to_cstr_temp(ctx, target);
         EVAL_OOM_RETURN_IF_NULL(ctx, target_c, false);
         if (!copy_create_symlink_like(target_c, dst_link_c)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) failed to recreate symlink in FOLLOW_SYMLINK_CHAIN"),
-                           dst_link);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) failed to recreate symlink in FOLLOW_SYMLINK_CHAIN"), dst_link);
             return false;
         }
 #else
@@ -1812,8 +1779,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
         if (eval_should_stop(ctx) || current.count == 0) return false;
     }
 
-    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) FOLLOW_SYMLINK_CHAIN exceeded maximum link depth"),
-                   src);
+    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_OUT_OF_RANGE, "eval_file", nob_sv_from_cstr("file(COPY) FOLLOW_SYMLINK_CHAIN exceeded maximum link depth"), src);
     return false;
 }
 
@@ -1874,15 +1840,11 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
     }
     if (id == COPY_KEY_PATTERN || id == COPY_KEY_REGEX) {
         if (arena_arr_len(values) == 0) {
-            EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
-                           nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"),
-                           token);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"), token);
             return false;
         }
         if (st->filter_count >= NOB_ARRAY_LEN(st->filters)) {
-            EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
-                           nob_sv_from_cstr("file(COPY) filter limit reached; extra filters ignored"),
-                           token);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) filter limit reached; extra filters ignored"), token);
             return true;
         }
         st->filters[st->filter_count].is_regex = (id == COPY_KEY_REGEX);
@@ -1892,9 +1854,7 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
     }
     if (id == COPY_KEY_EXCLUDE) {
         if (st->filter_count == 0) {
-            EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
-                           nob_sv_from_cstr("file(COPY) EXCLUDE without a previous PATTERN/REGEX is ignored"),
-                           token);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) EXCLUDE without a previous PATTERN/REGEX is ignored"), token);
         } else {
             st->filters[st->filter_count - 1].exclude = true;
         }
@@ -1923,15 +1883,11 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
                 has_any = true;
             } else {
                 st->saw_unknown_permission_token = true;
-                EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
-                               nob_sv_from_cstr("file(COPY) unknown permission token"),
-                               values[i]);
+                EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) unknown permission token"), values[i]);
             }
         }
         if (!has_any) {
-            EVAL_DIAG(ctx, EV_DIAG_WARNING, nob_sv_from_cstr("eval_file"), st->command_name, st->origin,
-                           nob_sv_from_cstr("file(COPY) permission list has no valid tokens"),
-                           token);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) permission list has no valid tokens"), token);
         } else if (id == COPY_KEY_PERMISSIONS) {
             st->perms.has_permissions = true;
             st->perms.permissions_mode = parsed_mode;
@@ -1962,8 +1918,7 @@ static bool copy_parse_on_positional(Evaluator_Context *ctx,
 void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) requires sources and DESTINATION"),
-                       nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(COPY) requires sources and DESTINATION"), nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));
         return;
     }
 
@@ -1975,8 +1930,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
         }
     }
     if (dest_idx == SIZE_MAX || dest_idx + 1 >= arena_arr_len(args) || dest_idx == 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) missing DESTINATION or sources"),
-                       nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(COPY) missing DESTINATION or sources"), nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));
         return;
     }
 
@@ -2038,8 +1992,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
         char *expr_c = eval_sv_to_cstr_temp(ctx, filters[i].expr);
         EVAL_OOM_RETURN_VOID_IF_NULL(ctx, expr_c);
         if (regcomp(&filters[i].regex, expr_c, REG_EXTENDED) != 0) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) invalid REGEX filter"),
-                           filters[i].expr);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(COPY) invalid REGEX filter"), filters[i].expr);
             for (size_t j = 0; j < i; j++) {
                 if (filters[j].is_regex && filters[j].regex_ready) regfree(&filters[j].regex);
             }
@@ -2049,8 +2002,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
     }
 
     if (!eval_file_mkdir_p(ctx, dest)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) failed to create destination"),
-                       dest);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) failed to create destination"), dest);
         return;
     }
 
@@ -2085,8 +2037,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
 
         bool src_is_dir = false;
         if (!copy_copy_entry_raw(src_c, dst_c, &src_is_dir)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_file", nob_sv_from_cstr("file(COPY) failed to copy entry"),
-                           src);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) failed to copy entry"), src);
             return;
         }
 
@@ -2107,8 +2058,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
         mode_t mode = 0;
         if (copy_permissions_pick_mode(&perms, src_is_dir, &mode)) {
             if (!copy_apply_permissions(dst_c, mode)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("file(COPY) copied entry but failed to apply permissions"),
-                               dst_sv);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) copied entry but failed to apply permissions"), dst_sv);
             } else {
                 applied_any_permissions = true;
             }
@@ -2118,8 +2068,7 @@ void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List arg
     if ((perms.has_permissions || perms.has_file_permissions || perms.has_directory_permissions) &&
         !applied_any_permissions &&
         !saw_unknown_permission_token) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("file(COPY) permissions were requested but not applied"),
-                       nob_sv_from_cstr("Check destination type and platform permission support"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) permissions were requested but not applied"), nob_sv_from_cstr("Check destination type and platform permission support"));
     }
     for (size_t i = 0; i < filter_count; i++) {
         if (filters[i].is_regex && filters[i].regex_ready) regfree(&filters[i].regex);
@@ -2174,8 +2123,7 @@ Eval_Result eval_handle_file(Evaluator_Context *ctx, const Node *node) {
         // handled in eval_file_extra.c
     } else {
         Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "eval_file", nob_sv_from_cstr("Unsupported file() subcommand"),
-                       subcmd);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_file", nob_sv_from_cstr("Unsupported file() subcommand"), subcmd);
     }
     return eval_result_from_ctx(ctx);
 }

@@ -92,13 +92,7 @@ static bool add_target_name_must_be_new(Evaluator_Context *ctx,
                                         Cmake_Event_Origin o,
                                         String_View target_name) {
     if (!eval_target_known(ctx, target_name)) return true;
-    EVAL_DIAG(ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("dispatcher"),
-                   cmd_name,
-                   o,
-                   nob_sv_from_cstr("Target name already exists"),
-                   target_name);
+    EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), cmd_name, o, nob_sv_from_cstr("Target name already exists"), target_name);
     return false;
 }
 
@@ -108,23 +102,11 @@ static bool add_alias_target_validate(Evaluator_Context *ctx,
                                       String_View alias_name,
                                       String_View real_target) {
     if (!eval_target_known(ctx, real_target)) {
-        EVAL_DIAG(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       cmd_name,
-                       o,
-                       nob_sv_from_cstr("ALIAS target does not exist"),
-                       real_target);
+        EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, nob_sv_from_cstr("dispatcher"), cmd_name, o, nob_sv_from_cstr("ALIAS target does not exist"), real_target);
         return false;
     }
     if (eval_target_alias_known(ctx, real_target)) {
-        EVAL_DIAG(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("dispatcher"),
-                       cmd_name,
-                       o,
-                       nob_sv_from_cstr("ALIAS target cannot reference another ALIAS target"),
-                       real_target);
+        EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), cmd_name, o, nob_sv_from_cstr("ALIAS target cannot reference another ALIAS target"), real_target);
         return false;
     }
     if (!eval_target_register(ctx, alias_name)) return false;
@@ -211,13 +193,11 @@ Eval_Result eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Nod
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2 || !eval_sv_eq_ci_lit(a[0], "VERSION")) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() expects VERSION"),
-                       nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() expects VERSION"), nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
         return eval_result_from_ctx(ctx);
     }
     if (arena_arr_len(a) > 3 || (arena_arr_len(a) == 3 && !eval_sv_eq_ci_lit(a[2], "FATAL_ERROR"))) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() received invalid arguments"),
-                       nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() received invalid arguments"), nob_sv_from_cstr("Usage: cmake_minimum_required(VERSION <min>[...<max>] [FATAL_ERROR])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -232,18 +212,15 @@ Eval_Result eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Nod
                                            &has_max,
                                            &max_token,
                                            &max_version)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() received invalid VERSION token"),
-                       a[1]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() received invalid VERSION token"), a[1]);
         return eval_result_from_ctx(ctx);
     }
     if (eval_semver_compare(&min_version, &k_running_cmake_328) > 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() requires a newer CMake than evaluator baseline"),
-                       min_token);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() requires a newer CMake than evaluator baseline"), min_token);
         return eval_result_from_ctx(ctx);
     }
     if (has_max && eval_semver_compare(&max_version, &min_version) < 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() requires max version >= min version"),
-                       a[1]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_minimum_required() requires max version >= min version"), a[1]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -271,15 +248,13 @@ Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy() missing subcommand"),
-                       nob_sv_from_cstr("Expected one of: VERSION, SET, GET, PUSH, POP"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_policy() missing subcommand"), nob_sv_from_cstr("Expected one of: VERSION, SET, GET, PUSH, POP"));
         return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[0], "VERSION")) {
         if (arena_arr_len(a) != 2) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) expects exactly one version argument"),
-                           nob_sv_from_cstr("Usage: cmake_policy(VERSION <min>[...<max>])"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) expects exactly one version argument"), nob_sv_from_cstr("Usage: cmake_policy(VERSION <min>[...<max>])"));
             return eval_result_from_ctx(ctx);
         }
 
@@ -294,23 +269,19 @@ Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
                                                &has_max,
                                                &max_token,
                                                &max_version)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) received invalid version token"),
-                           a[1]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) received invalid version token"), a[1]);
             return eval_result_from_ctx(ctx);
         }
         if (eval_semver_compare(&min_version, &k_policy_floor_24) < 0) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) requires minimum version >= 2.4"),
-                           min_token);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) requires minimum version >= 2.4"), min_token);
             return eval_result_from_ctx(ctx);
         }
         if (eval_semver_compare(&min_version, &k_running_cmake_328) > 0) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) min version exceeds evaluator baseline"),
-                           min_token);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) min version exceeds evaluator baseline"), min_token);
             return eval_result_from_ctx(ctx);
         }
         if (has_max && eval_semver_compare(&max_version, &min_version) < 0) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) requires max version >= min version"),
-                           a[1]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_policy(VERSION ...) requires max version >= min version"), a[1]);
             return eval_result_from_ctx(ctx);
         }
 
@@ -323,18 +294,15 @@ Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(a[0], "SET")) {
         if (arena_arr_len(a) != 3) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(SET ...) expects exactly policy id and value"),
-                           nob_sv_from_cstr("Usage: cmake_policy(SET CMP0077 NEW)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_policy(SET ...) expects exactly policy id and value"), nob_sv_from_cstr("Usage: cmake_policy(SET CMP0077 NEW)"));
             return eval_result_from_ctx(ctx);
         }
         if (!eval_policy_is_known(a[1])) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(SET ...) requires a known CMP policy id"),
-                           a[1]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_POLICY_CONFLICT, "dispatcher", nob_sv_from_cstr("cmake_policy(SET ...) requires a known CMP policy id"), a[1]);
             return eval_result_from_ctx(ctx);
         }
         if (!(eval_sv_eq_ci_lit(a[2], "OLD") || eval_sv_eq_ci_lit(a[2], "NEW"))) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(SET ...) requires OLD or NEW"),
-                           a[2]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "dispatcher", nob_sv_from_cstr("cmake_policy(SET ...) requires OLD or NEW"), a[2]);
             return eval_result_from_ctx(ctx);
         }
         if (!eval_policy_set(ctx, a[1], a[2])) return eval_result_from_ctx(ctx);
@@ -343,13 +311,11 @@ Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(a[0], "GET")) {
         if (arena_arr_len(a) != 3) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(GET ...) expects exactly policy id and output variable"),
-                           nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cmake_policy(GET ...) expects exactly policy id and output variable"), nob_sv_from_cstr("Usage: cmake_policy(GET CMP0077 out_var)"));
             return eval_result_from_ctx(ctx);
         }
         if (!eval_policy_is_known(a[1])) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(GET ...) requires a known CMP policy id"),
-                           a[1]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_POLICY_CONFLICT, "dispatcher", nob_sv_from_cstr("cmake_policy(GET ...) requires a known CMP policy id"), a[1]);
             return eval_result_from_ctx(ctx);
         }
         String_View val = eval_policy_get_effective(ctx, a[1]);
@@ -359,8 +325,7 @@ Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(a[0], "PUSH")) {
         if (arena_arr_len(a) != 1) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(PUSH) does not accept extra arguments"),
-                           nob_sv_from_cstr("Usage: cmake_policy(PUSH)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("cmake_policy(PUSH) does not accept extra arguments"), nob_sv_from_cstr("Usage: cmake_policy(PUSH)"));
             return eval_result_from_ctx(ctx);
         }
         if (!eval_policy_push(ctx)) return eval_result_from_ctx(ctx);
@@ -369,21 +334,18 @@ Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(a[0], "POP")) {
         if (arena_arr_len(a) != 1) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(POP) does not accept extra arguments"),
-                           nob_sv_from_cstr("Usage: cmake_policy(POP)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("cmake_policy(POP) does not accept extra arguments"), nob_sv_from_cstr("Usage: cmake_policy(POP)"));
             return eval_result_from_ctx(ctx);
         }
         if (!eval_policy_pop(ctx)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("cmake_policy(POP) called without matching PUSH"),
-                           nob_sv_from_cstr("Add cmake_policy(PUSH) before POP"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_POLICY_CONFLICT, "dispatcher", nob_sv_from_cstr("cmake_policy(POP) called without matching PUSH"), nob_sv_from_cstr("Add cmake_policy(PUSH) before POP"));
             eval_request_stop_on_error(ctx);
             return eval_result_from_ctx(ctx);
         }
         return eval_result_from_ctx(ctx);
     }
 
-    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("Unknown cmake_policy() subcommand"),
-                   a[0]);
+    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("Unknown cmake_policy() subcommand"), a[0]);
     eval_request_stop_on_error(ctx);
     return eval_result_from_ctx(ctx);
 }
@@ -496,13 +458,7 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
     for (size_t i = 0; i < arena_arr_len(*requested); i++) {
         String_View lang = (*requested)[i];
         if (!language_token_is_known(lang)) {
-            EVAL_DIAG(ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("dispatcher"),
-                           cmd_name,
-                           o,
-                           nob_sv_from_cstr("Unknown language in language-enabling command"),
-                           lang);
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), cmd_name, o, nob_sv_from_cstr("Unknown language in language-enabling command"), lang);
             return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
         if (!enabled_languages_contains(enabled, lang)) {
@@ -527,14 +483,12 @@ Eval_Result eval_handle_enable_language(Evaluator_Context *ctx, const Node *node
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("enable_language() requires at least one language"),
-                       nob_sv_from_cstr("Usage: enable_language(<lang>... [OPTIONAL])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("enable_language() requires at least one language"), nob_sv_from_cstr("Usage: enable_language(<lang>... [OPTIONAL])"));
         return eval_result_from_ctx(ctx);
     }
 
     if (ctx->function_eval_depth > 0 || arena_arr_len(ctx->block_frames) > 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("enable_language() must be called at file scope"),
-                       nob_sv_from_cstr("Do not call enable_language() from inside function() or block() scopes"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "dispatcher", nob_sv_from_cstr("enable_language() must be called at file scope"), nob_sv_from_cstr("Do not call enable_language() from inside function() or block() scopes"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -546,22 +500,19 @@ Eval_Result eval_handle_enable_language(Evaluator_Context *ctx, const Node *node
             continue;
         }
         if (eval_sv_eq_ci_lit(a[i], "NONE")) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("enable_language() does not accept NONE"),
-                           nob_sv_from_cstr("Use project(... LANGUAGES NONE) to leave all languages disabled"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("enable_language() does not accept NONE"), nob_sv_from_cstr("Use project(... LANGUAGES NONE) to leave all languages disabled"));
             return eval_result_from_ctx(ctx);
         }
         if (!svu_list_push_temp(ctx, &requested, a[i])) return eval_result_from_ctx(ctx);
     }
 
     if (arena_arr_len(requested) == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("enable_language() requires at least one real language"),
-                       nob_sv_from_cstr("Usage: enable_language(<lang>... [OPTIONAL])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("enable_language() requires at least one real language"), nob_sv_from_cstr("Usage: enable_language(<lang>... [OPTIONAL])"));
         return eval_result_from_ctx(ctx);
     }
 
     if (saw_optional) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("enable_language(OPTIONAL) is not supported"),
-                       nob_sv_from_cstr("CMake documents OPTIONAL as a placeholder; use CheckLanguage instead"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "dispatcher", nob_sv_from_cstr("enable_language(OPTIONAL) is not supported"), nob_sv_from_cstr("CMake documents OPTIONAL as a placeholder; use CheckLanguage instead"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -575,8 +526,7 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() missing name"),
-                       nob_sv_from_cstr("Usage: project(<name> [VERSION v] ...)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("project() missing name"), nob_sv_from_cstr("Usage: project(<name> [VERSION v] ...)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -597,13 +547,11 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         if (eval_sv_eq_ci_lit(token, "VERSION")) {
             seen_named_options = true;
             if (seen_version) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() received duplicate VERSION keyword"),
-                               nob_sv_from_cstr("Use VERSION only once"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_DUPLICATE_ARGUMENT, "dispatcher", nob_sv_from_cstr("project() received duplicate VERSION keyword"), nob_sv_from_cstr("Use VERSION only once"));
                 return eval_result_from_ctx(ctx);
             }
             if (i + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project(VERSION ...) requires a version value"),
-                               nob_sv_from_cstr("Usage: project(<name> VERSION <major>[.<minor>[.<patch>[.<tweak>]])"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("project(VERSION ...) requires a version value"), nob_sv_from_cstr("Usage: project(<name> VERSION <major>[.<minor>[.<patch>[.<tweak>]])"));
                 return eval_result_from_ctx(ctx);
             }
             seen_version = true;
@@ -615,13 +563,11 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         if (eval_sv_eq_ci_lit(token, "DESCRIPTION")) {
             seen_named_options = true;
             if (seen_description) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() received duplicate DESCRIPTION keyword"),
-                               nob_sv_from_cstr("Use DESCRIPTION only once"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_DUPLICATE_ARGUMENT, "dispatcher", nob_sv_from_cstr("project() received duplicate DESCRIPTION keyword"), nob_sv_from_cstr("Use DESCRIPTION only once"));
                 return eval_result_from_ctx(ctx);
             }
             if (i + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project(DESCRIPTION ...) requires a value"),
-                               nob_sv_from_cstr("Usage: project(<name> DESCRIPTION <text>)"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("project(DESCRIPTION ...) requires a value"), nob_sv_from_cstr("Usage: project(<name> DESCRIPTION <text>)"));
                 return eval_result_from_ctx(ctx);
             }
             seen_description = true;
@@ -632,13 +578,11 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         if (eval_sv_eq_ci_lit(token, "HOMEPAGE_URL")) {
             seen_named_options = true;
             if (seen_homepage) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() received duplicate HOMEPAGE_URL keyword"),
-                               nob_sv_from_cstr("Use HOMEPAGE_URL only once"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_DUPLICATE_ARGUMENT, "dispatcher", nob_sv_from_cstr("project() received duplicate HOMEPAGE_URL keyword"), nob_sv_from_cstr("Use HOMEPAGE_URL only once"));
                 return eval_result_from_ctx(ctx);
             }
             if (i + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project(HOMEPAGE_URL ...) requires a value"),
-                               nob_sv_from_cstr("Usage: project(<name> HOMEPAGE_URL <url>)"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("project(HOMEPAGE_URL ...) requires a value"), nob_sv_from_cstr("Usage: project(<name> HOMEPAGE_URL <url>)"));
                 return eval_result_from_ctx(ctx);
             }
             seen_homepage = true;
@@ -649,8 +593,7 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         if (eval_sv_eq_ci_lit(token, "LANGUAGES")) {
             seen_named_options = true;
             if (seen_languages_keyword) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() received duplicate LANGUAGES keyword"),
-                               nob_sv_from_cstr("Use LANGUAGES only once"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_DUPLICATE_ARGUMENT, "dispatcher", nob_sv_from_cstr("project() received duplicate LANGUAGES keyword"), nob_sv_from_cstr("Use LANGUAGES only once"));
                 return eval_result_from_ctx(ctx);
             }
             seen_languages_keyword = true;
@@ -661,8 +604,7 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
         }
 
         if (seen_named_options) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() received unexpected argument in keyword signature"),
-                           token);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("project() received unexpected argument in keyword signature"), token);
             return eval_result_from_ctx(ctx);
         }
 
@@ -674,8 +616,7 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
 
     Project_Version_Info version_info = {0};
     if (has_version_arg && !project_parse_version_token(version_token, &version_info)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project(VERSION ...) expects numeric components"),
-                       version_token);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("project(VERSION ...) expects numeric components"), version_token);
         return eval_result_from_ctx(ctx);
     }
 
@@ -690,8 +631,7 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     }
     if (none_count > 0) {
         if (arena_arr_len(lang_items) != 1 || none_count != 1) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("project() LANGUAGES NONE cannot be combined with other languages"),
-                           nob_sv_from_cstr("Use only NONE to skip enabling languages"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("project() LANGUAGES NONE cannot be combined with other languages"), nob_sv_from_cstr("Use only NONE to skip enabling languages"));
             return eval_result_from_ctx(ctx);
         }
         arena_arr_set_len(lang_items, 0);
@@ -768,8 +708,7 @@ Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node)
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_executable() missing target name"),
-                       nob_sv_from_cstr("Usage: add_executable(<name> [WIN32] [MACOSX_BUNDLE] [EXCLUDE_FROM_ALL] <sources...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_executable() missing target name"), nob_sv_from_cstr("Usage: add_executable(<name> [WIN32] [MACOSX_BUNDLE] [EXCLUDE_FROM_ALL] <sources...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -778,8 +717,7 @@ Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node)
 
     if (arena_arr_len(a) >= 2 && eval_sv_eq_ci_lit(a[1], "ALIAS")) {
         if (arena_arr_len(a) != 3) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_executable(ALIAS ...) expects exactly alias name and real target"),
-                           nob_sv_from_cstr("Usage: add_executable(<name> ALIAS <target>)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_executable(ALIAS ...) expects exactly alias name and real target"), nob_sv_from_cstr("Usage: add_executable(<name> ALIAS <target>)"));
             return eval_result_from_ctx(ctx);
         }
         (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2]);
@@ -801,8 +739,7 @@ Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node)
             source_start++;
         }
         if (source_start < arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_executable(IMPORTED ...) does not accept source files"),
-                           nob_sv_from_cstr("Usage: add_executable(<name> IMPORTED [GLOBAL])"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("add_executable(IMPORTED ...) does not accept source files"), nob_sv_from_cstr("Usage: add_executable(<name> IMPORTED [GLOBAL])"));
             return eval_result_from_ctx(ctx);
         }
     }
@@ -879,8 +816,7 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_library() missing target name"),
-                       nob_sv_from_cstr("Usage: add_library(<name> [STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN] [EXCLUDE_FROM_ALL] <sources...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_library() missing target name"), nob_sv_from_cstr("Usage: add_library(<name> [STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN] [EXCLUDE_FROM_ALL] <sources...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -889,8 +825,7 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
 
     if (arena_arr_len(a) >= 2 && eval_sv_eq_ci_lit(a[1], "ALIAS")) {
         if (arena_arr_len(a) != 3) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_library(ALIAS ...) expects exactly alias name and real target"),
-                           nob_sv_from_cstr("Usage: add_library(<name> ALIAS <target>)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_library(ALIAS ...) expects exactly alias name and real target"), nob_sv_from_cstr("Usage: add_library(<name> ALIAS <target>)"));
             return eval_result_from_ctx(ctx);
         }
         (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2]);
@@ -937,8 +872,7 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
         is_imported = true;
         i++;
         if (!has_explicit_type) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_library(IMPORTED ...) requires an explicit library type"),
-                           nob_sv_from_cstr("Usage: add_library(<name> <STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN> IMPORTED [GLOBAL])"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_library(IMPORTED ...) requires an explicit library type"), nob_sv_from_cstr("Usage: add_library(<name> <STATIC|SHARED|MODULE|OBJECT|INTERFACE|UNKNOWN> IMPORTED [GLOBAL])"));
             return eval_result_from_ctx(ctx);
         }
         if (i < arena_arr_len(a) && eval_sv_eq_ci_lit(a[i], "GLOBAL")) {
@@ -946,8 +880,7 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
             i++;
         }
         if (i < arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_library(IMPORTED ...) does not accept source files"),
-                           nob_sv_from_cstr("Usage: add_library(<name> <type> IMPORTED [GLOBAL])"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("add_library(IMPORTED ...) does not accept source files"), nob_sv_from_cstr("Usage: add_library(<name> <type> IMPORTED [GLOBAL])"));
             return eval_result_from_ctx(ctx);
         }
     }

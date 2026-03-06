@@ -30,13 +30,7 @@ static void math_skip_ws(Math_Parser *p) {
 }
 
 static bool math_emit_error(Math_Parser *p, const char *cause) {
-    EVAL_DIAG(p->ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("math"),
-                   p->command,
-                   p->origin,
-                   nob_sv_from_cstr(cause),
-                   nob_sv_from_cstr("Use integer expression with + - * / % << >> & ^ | ~ and parentheses"));
+    EVAL_DIAG_EMIT_SEV(p->ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("math"), p->command, p->origin, nob_sv_from_cstr(cause), nob_sv_from_cstr("Use integer expression with + - * / % << >> & ^ | ~ and parentheses"));
     p->ok = false;
     return false;
 }
@@ -295,21 +289,18 @@ Eval_Result eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math() requires a subcommand"),
-                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "math", nob_sv_from_cstr("math() requires a subcommand"), nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return eval_result_from_ctx(ctx);
     }
 
     if (!eval_sv_eq_ci_lit(a[0], "EXPR")) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("Unsupported math() subcommand"),
-                       nob_sv_from_cstr("Implemented: EXPR"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "math", nob_sv_from_cstr("Unsupported math() subcommand"), nob_sv_from_cstr("Implemented: EXPR"));
         eval_request_stop_on_error(ctx);
         return eval_result_from_ctx(ctx);
     }
 
     if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
-                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"), nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -327,18 +318,15 @@ Eval_Result eval_handle_math(Evaluator_Context *ctx, const Node *node) {
 
     if (output_format_idx < arena_arr_len(a)) {
         if (output_format_idx + 1 >= arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"),
-                           nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "math", nob_sv_from_cstr("math(EXPR) missing value after OUTPUT_FORMAT"), nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
             return eval_result_from_ctx(ctx);
         }
         if (!math_parse_output_format_sv(a[output_format_idx + 1], &out_fmt)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"),
-                           a[output_format_idx + 1]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "math", nob_sv_from_cstr("math(EXPR) invalid OUTPUT_FORMAT value"), a[output_format_idx + 1]);
             return eval_result_from_ctx(ctx);
         }
         if (output_format_idx + 2 != arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"),
-                           nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "math", nob_sv_from_cstr("math(EXPR) has unexpected tokens after OUTPUT_FORMAT"), nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
             return eval_result_from_ctx(ctx);
         }
         expr_end = output_format_idx;
@@ -351,8 +339,7 @@ Eval_Result eval_handle_math(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (expr_end <= expr_begin) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"),
-                       nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "math", nob_sv_from_cstr("math(EXPR) requires output variable and expression"), nob_sv_from_cstr("Usage: math(EXPR <out-var> <expression> [OUTPUT_FORMAT <DECIMAL|HEXADECIMAL>])"));
         return eval_result_from_ctx(ctx);
     }
 

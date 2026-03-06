@@ -67,8 +67,7 @@ Eval_Result eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node)
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) > 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("Command does not accept arguments"),
-                       nob_sv_from_cstr("Usage: enable_testing()"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("Command does not accept arguments"), nob_sv_from_cstr("Usage: enable_testing()"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -107,13 +106,7 @@ static bool add_test_on_option(Evaluator_Context *ctx,
     }
     if (id == ADD_TEST_OPT_CONFIGURATIONS) {
         if (arena_arr_len(values) == 0) {
-            EVAL_DIAG(ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("eval_test"),
-                           st->command_name,
-                           st->origin,
-                           nob_sv_from_cstr("add_test(NAME ...) CONFIGURATIONS requires at least one value"),
-                           nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...> [CONFIGURATIONS <cfg>...])"));
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("eval_test"), st->command_name, st->origin, nob_sv_from_cstr("add_test(NAME ...) CONFIGURATIONS requires at least one value"), nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...> [CONFIGURATIONS <cfg>...])"));
             return false;
         }
         return true;
@@ -128,13 +121,7 @@ static bool add_test_on_positional(Evaluator_Context *ctx,
     (void)token_index;
     if (!ctx || !userdata) return false;
     Add_Test_Option_State *st = (Add_Test_Option_State*)userdata;
-    EVAL_DIAG(ctx,
-                   EV_DIAG_ERROR,
-                   nob_sv_from_cstr("eval_test"),
-                   st->command_name,
-                   st->origin,
-                   nob_sv_from_cstr("add_test(NAME ...) received unexpected argument"),
-                   value);
+    EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("eval_test"), st->command_name, st->origin, nob_sv_from_cstr("add_test(NAME ...) received unexpected argument"), value);
     return false;
 }
 
@@ -143,8 +130,7 @@ Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_test() requires at least test name and command"),
-                       nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>) or add_test(<name> <cmd...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_test() requires at least test name and command"), nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>) or add_test(<name> <cmd...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -155,16 +141,14 @@ Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
 
     if (eval_sv_eq_ci_lit(a[0], "NAME")) {
         if (arena_arr_len(a) < 4) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) requires COMMAND clause"),
-                           nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) requires COMMAND clause"), nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
             return eval_result_from_ctx(ctx);
         }
         name = a[1];
 
         size_t cmd_i = 2;
         if (!eval_sv_eq_ci_lit(a[cmd_i], "COMMAND")) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) missing COMMAND"),
-                           nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) missing COMMAND"), nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
             return eval_result_from_ctx(ctx);
         }
         cmd_i++;
@@ -180,8 +164,7 @@ Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
             cmd_end++;
         }
         if (cmd_end <= cmd_start) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) has empty COMMAND"),
-                           nob_sv_from_cstr(""));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) has empty COMMAND"), nob_sv_from_cstr(""));
             return eval_result_from_ctx(ctx);
         }
         command = svu_join_space_temp(ctx, &a[cmd_start], cmd_end - cmd_start);
@@ -236,8 +219,7 @@ Eval_Result eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Nod
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_test", nob_sv_from_cstr("create_test_sourcelist() requires an output variable, driver, and at least one test"),
-                       nob_sv_from_cstr("Usage: create_test_sourcelist(<sourceListVar> <driver> <tests>... [EXTRA_INCLUDE <inc>] [FUNCTION <fn>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_test", nob_sv_from_cstr("create_test_sourcelist() requires an output variable, driver, and at least one test"), nob_sv_from_cstr("Usage: create_test_sourcelist(<sourceListVar> <driver> <tests>... [EXTRA_INCLUDE <inc>] [FUNCTION <fn>])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -256,8 +238,7 @@ Eval_Result eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Nod
     while (i < arena_arr_len(a)) {
         if (eval_sv_eq_ci_lit(a[i], "EXTRA_INCLUDE")) {
             if (i + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_test", nob_sv_from_cstr("create_test_sourcelist(EXTRA_INCLUDE ...) requires a value"),
-                               nob_sv_from_cstr("Usage: ... EXTRA_INCLUDE <header>"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_test", nob_sv_from_cstr("create_test_sourcelist(EXTRA_INCLUDE ...) requires a value"), nob_sv_from_cstr("Usage: ... EXTRA_INCLUDE <header>"));
                 return eval_result_from_ctx(ctx);
             }
             extra_include = a[i + 1];
@@ -266,22 +247,19 @@ Eval_Result eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Nod
         }
         if (eval_sv_eq_ci_lit(a[i], "FUNCTION")) {
             if (i + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_test", nob_sv_from_cstr("create_test_sourcelist(FUNCTION ...) requires a value"),
-                               nob_sv_from_cstr("Usage: ... FUNCTION <fn>"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_test", nob_sv_from_cstr("create_test_sourcelist(FUNCTION ...) requires a value"), nob_sv_from_cstr("Usage: ... FUNCTION <fn>"));
                 return eval_result_from_ctx(ctx);
             }
             hook_fn = a[i + 1];
             i += 2;
             continue;
         }
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_test", nob_sv_from_cstr("create_test_sourcelist() received an unsupported argument"),
-                       a[i]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_test", nob_sv_from_cstr("create_test_sourcelist() received an unsupported argument"), a[i]);
         return eval_result_from_ctx(ctx);
     }
 
     if (arena_arr_len(tests) == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_test", nob_sv_from_cstr("create_test_sourcelist() requires at least one test source"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_test", nob_sv_from_cstr("create_test_sourcelist() requires at least one test source"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -338,8 +316,7 @@ Eval_Result eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Nod
     nob_sb_append_cstr(&sb, "  return 0;\n}\n");
 
     if (!eval_write_text_file(ctx, driver, nob_sv_from_parts(sb.items, sb.count), false)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_test", nob_sv_from_cstr("create_test_sourcelist() failed to write the generated driver"),
-                       driver);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_test", nob_sv_from_cstr("create_test_sourcelist() failed to write the generated driver"), driver);
         return eval_result_from_ctx(ctx);
     }
 

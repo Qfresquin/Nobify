@@ -281,8 +281,7 @@ Eval_Result eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) 
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) > 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include_guard() accepts at most one scope argument"),
-                       nob_sv_from_cstr("Usage: include_guard([DIRECTORY|GLOBAL])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_include", nob_sv_from_cstr("include_guard() accepts at most one scope argument"), nob_sv_from_cstr("Usage: include_guard([DIRECTORY|GLOBAL])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -293,8 +292,7 @@ Eval_Result eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) 
         } else if (eval_sv_eq_ci_lit(a[0], "GLOBAL")) {
             mode = INCLUDE_GUARD_GLOBAL;
         } else {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include_guard() received invalid scope"),
-                           nob_sv_from_cstr("Expected one of: DIRECTORY, GLOBAL"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_include", nob_sv_from_cstr("include_guard() received invalid scope"), nob_sv_from_cstr("Expected one of: DIRECTORY, GLOBAL"));
             return eval_result_from_ctx(ctx);
         }
     }
@@ -345,8 +343,7 @@ Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() missing file or module argument"),
-                       nob_sv_from_cstr("Usage: include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_include", nob_sv_from_cstr("include() missing file or module argument"), nob_sv_from_cstr("Usage: include(<file|module> [OPTIONAL] [RESULT_VARIABLE <var>] [NO_POLICY_SCOPE])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -366,15 +363,13 @@ Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         }
         if (eval_sv_eq_ci_lit(a[i], "RESULT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include(RESULT_VARIABLE) requires an output variable name"),
-                               nob_sv_from_cstr("Usage: include(<file|module> ... RESULT_VARIABLE <var>)"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_include", nob_sv_from_cstr("include(RESULT_VARIABLE) requires an output variable name"), nob_sv_from_cstr("Usage: include(<file|module> ... RESULT_VARIABLE <var>)"));
                 return eval_result_from_ctx(ctx);
             }
             result_variable = a[++i];
             continue;
         }
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() received unexpected argument"),
-                       a[i]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_include", nob_sv_from_cstr("include() received unexpected argument"), a[i]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -396,8 +391,7 @@ Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
             (void)eval_var_set_current(ctx, result_variable, nob_sv_from_cstr("NOTFOUND"));
         }
         if (!optional) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() could not find requested file or module"),
-                           file_or_module);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_include", nob_sv_from_cstr("include() could not find requested file or module"), file_or_module);
         }
         return eval_result_from_ctx(ctx);
     }
@@ -425,14 +419,12 @@ Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     Eval_Result exec_res = eval_execute_file(ctx, file_path, false, nob_sv_from_cstr(""));
     bool success = !eval_result_is_fatal(exec_res);
     if (pushed_policy && !eval_policy_pop(ctx) && !eval_should_stop(ctx)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("include() failed to restore policy stack"),
-                       nob_sv_from_cstr("cmake_policy(POP) underflow while leaving include()"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_POLICY_CONFLICT, "dispatcher", nob_sv_from_cstr("include() failed to restore policy stack"), nob_sv_from_cstr("cmake_policy(POP) underflow while leaving include()"));
     }
     if (!emit_dir_pop_event(ctx, o, scope_source, scope_binary)) return eval_result_from_ctx(ctx);
     if (!eval_emit_include_end(ctx, o, file_path, success)) return eval_result_from_ctx(ctx);
     if (!success && !optional && !eval_should_stop(ctx)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "eval_include", nob_sv_from_cstr("include() failed to read or evaluate file"),
-                       file_path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_include", nob_sv_from_cstr("include() failed to read or evaluate file"), file_path);
     }
     return eval_result_from_ctx(ctx);
 }
@@ -443,8 +435,7 @@ Eval_Result eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *nod
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_subdirectory() missing source_dir"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_subdirectory() missing source_dir"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -466,8 +457,7 @@ Eval_Result eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *nod
             binary_dir = a[i];
             continue;
         }
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("add_subdirectory() ignoring extra argument"),
-                       a[i]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_LEGACY_WARNING, "dispatcher", nob_sv_from_cstr("add_subdirectory() ignoring extra argument"), a[i]);
     }
 
     String_View current_src = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
@@ -515,8 +505,7 @@ Eval_Result eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *nod
     if (!emit_dir_pop_event(ctx, o, source_dir, scope_binary)) return eval_result_from_ctx(ctx);
     if (!eval_emit_add_subdirectory_end(ctx, o, source_dir, scope_binary, success)) return eval_result_from_ctx(ctx);
     if (!success && !eval_should_stop(ctx)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_subdirectory() failed to read or evaluate CMakeLists.txt"),
-                       full_path);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "dispatcher", nob_sv_from_cstr("add_subdirectory() failed to read or evaluate CMakeLists.txt"), full_path);
     }
     return eval_result_from_ctx(ctx);
 }

@@ -16,13 +16,7 @@ static bool target_diag(Evaluator_Context *ctx,
                         String_View cause,
                         String_View hint) {
     if (!ctx || !node) return false;
-    return EVAL_DIAG(ctx,
-                          severity,
-                          nob_sv_from_cstr("dispatcher"),
-                          node->as.cmd.name,
-                          eval_origin_from_node(ctx, node),
-                          cause,
-                          hint);
+    return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), cause, hint);
 }
 
 static bool target_diag_error(Evaluator_Context *ctx,
@@ -542,8 +536,7 @@ static bool parse_property_query_mode(Evaluator_Context *ctx,
         return true;
     }
 
-    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_property() received unsupported query mode"),
-                   token);
+    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "dispatcher", nob_sv_from_cstr("get_property() received unsupported query mode"), token);
     return false;
 }
 
@@ -590,21 +583,18 @@ static bool get_property_impl(Evaluator_Context *ctx,
     if (validate_object) {
         if (eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
             if (!eval_target_known(ctx, object_id)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_property(TARGET ...) target was not declared"),
-                               object_id);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("get_property(TARGET ...) target was not declared"), object_id);
                 return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
         } else if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
             if (!eval_cache_defined(ctx, object_id)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_property(CACHE ...) cache entry does not exist"),
-                               object_id);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("get_property(CACHE ...) cache entry does not exist"), object_id);
                 return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
         } else if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
             String_View test_dir = inherit_directory.count > 0 ? inherit_directory : eval_current_source_dir_for_paths(ctx);
             if (!eval_test_exists_in_directory_scope(ctx, object_id, test_dir)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_property(TEST ...) test was not declared in selected directory scope"),
-                               object_id);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("get_property(TEST ...) test was not declared in selected directory scope"), object_id);
                 return !eval_result_is_fatal(eval_result_from_ctx(ctx));
             }
         }
@@ -634,16 +624,14 @@ Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_property() requires output variable, scope, PROPERTY and property name"),
-                       nob_sv_from_cstr("Usage: get_property(<var> <GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE|VARIABLE> ... PROPERTY <name> [SET|DEFINED|BRIEF_DOCS|FULL_DOCS])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_property() requires output variable, scope, PROPERTY and property name"), nob_sv_from_cstr("Usage: get_property(<var> <GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE|VARIABLE> ... PROPERTY <name> [SET|DEFINED|BRIEF_DOCS|FULL_DOCS])"));
         return eval_result_from_ctx(ctx);
     }
 
     String_View out_var = a[0];
     String_View scope_upper = nob_sv_from_cstr("");
     if (!eval_property_scope_upper_temp(ctx, a[1], &scope_upper)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_property() unknown scope"),
-                       a[1]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_property() unknown scope"), a[1]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -841,8 +829,7 @@ Eval_Result eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *n
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) != 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_cmake_property() expects output variable and property name"),
-                       nob_sv_from_cstr("Usage: get_cmake_property(<var> <property>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_cmake_property() expects output variable and property name"), nob_sv_from_cstr("Usage: get_cmake_property(<var> <property>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -910,8 +897,7 @@ Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Nod
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_directory_property() requires output variable and query"),
-                       nob_sv_from_cstr("Usage: get_directory_property(<var> [DIRECTORY <dir>] <prop-name>|DEFINITION <var-name>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_directory_property() requires output variable and query"), nob_sv_from_cstr("Usage: get_directory_property(<var> [DIRECTORY <dir>] <prop-name>|DEFINITION <var-name>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -920,8 +906,7 @@ Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Nod
     String_View dir = eval_current_source_dir_for_paths(ctx);
     if (eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
         if (i + 1 >= arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_directory_property(DIRECTORY ...) requires a directory"),
-                           nob_sv_from_cstr(""));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_directory_property(DIRECTORY ...) requires a directory"), nob_sv_from_cstr(""));
             return eval_result_from_ctx(ctx);
         }
         dir = eval_path_resolve_for_cmake_arg(ctx, a[i + 1], dir, true);
@@ -929,20 +914,17 @@ Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Nod
         i += 2;
     }
     if (i >= arena_arr_len(a)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_directory_property() missing property query"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_directory_property() missing property query"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
     if (eval_sv_eq_ci_lit(a[i], "DEFINITION")) {
         if (i + 1 >= arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_directory_property(DEFINITION ...) requires a variable name"),
-                           nob_sv_from_cstr(""));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_directory_property(DEFINITION ...) requires a variable name"), nob_sv_from_cstr(""));
             return eval_result_from_ctx(ctx);
         }
         if (i + 2 != arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_directory_property(DEFINITION ...) expects exactly one variable name"),
-                           nob_sv_from_cstr(""));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_directory_property(DEFINITION ...) expects exactly one variable name"), nob_sv_from_cstr(""));
             return eval_result_from_ctx(ctx);
         }
         String_View value = eval_var_get_visible(ctx, a[i + 1]);
@@ -950,8 +932,7 @@ Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Nod
     }
 
     if (i + 1 != arena_arr_len(a)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_directory_property() received unexpected trailing arguments"),
-                       a[i + 1]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_directory_property() received unexpected trailing arguments"), a[i + 1]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -977,8 +958,7 @@ Eval_Result eval_handle_get_source_file_property(Evaluator_Context *ctx, const N
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) != 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_source_file_property() expects output variable, source and property"),
-                       nob_sv_from_cstr("Usage: get_source_file_property(<var> <source> <property>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_source_file_property() expects output variable, source and property"), nob_sv_from_cstr("Usage: get_source_file_property(<var> <source> <property>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1005,13 +985,11 @@ Eval_Result eval_handle_get_target_property(Evaluator_Context *ctx, const Node *
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) != 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_target_property() expects output variable, target and property"),
-                       nob_sv_from_cstr("Usage: get_target_property(<var> <target> <property>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_target_property() expects output variable, target and property"), nob_sv_from_cstr("Usage: get_target_property(<var> <target> <property>)"));
         return eval_result_from_ctx(ctx);
     }
     if (!eval_target_known(ctx, a[1])) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_target_property() target was not declared"),
-                       a[1]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("get_target_property() target was not declared"), a[1]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -1037,15 +1015,13 @@ Eval_Result eval_handle_get_test_property(Evaluator_Context *ctx, const Node *no
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) != 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_test_property() expects output variable, test and property"),
-                       nob_sv_from_cstr("Usage: get_test_property(<var> <test> <property>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_test_property() expects output variable, test and property"), nob_sv_from_cstr("Usage: get_test_property(<var> <test> <property>)"));
         return eval_result_from_ctx(ctx);
     }
 
     String_View test_dir = eval_current_source_dir_for_paths(ctx);
     if (!eval_test_exists_in_directory_scope(ctx, a[1], test_dir)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("get_test_property() test was not declared in current directory scope"),
-                       a[1]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("get_test_property() test was not declared in current directory scope"), a[1]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -1071,13 +1047,11 @@ Eval_Result eval_handle_set_directory_properties(Evaluator_Context *ctx, const N
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3 || !eval_sv_eq_ci_lit(a[0], "PROPERTIES")) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_directory_properties() requires PROPERTIES key/value pairs"),
-                       nob_sv_from_cstr("Usage: set_directory_properties(PROPERTIES <k> <v> [<k> <v>...])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_directory_properties() requires PROPERTIES key/value pairs"), nob_sv_from_cstr("Usage: set_directory_properties(PROPERTIES <k> <v> [<k> <v>...])"));
         return eval_result_from_ctx(ctx);
     }
     if (((arena_arr_len(a) - 1) % 2) != 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_directory_properties() has dangling property key without value"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("set_directory_properties() has dangling property key without value"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1097,8 +1071,7 @@ Eval_Result eval_handle_set_source_files_properties(Evaluator_Context *ctx, cons
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_source_files_properties() requires files and PROPERTIES pairs"),
-                       nob_sv_from_cstr("Usage: set_source_files_properties(<file>... [DIRECTORY <dir>...] [TARGET_DIRECTORY <target>...] PROPERTIES <k> <v> [<k> <v>...])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_source_files_properties() requires files and PROPERTIES pairs"), nob_sv_from_cstr("Usage: set_source_files_properties(<file>... [DIRECTORY <dir>...] [TARGET_DIRECTORY <target>...] PROPERTIES <k> <v> [<k> <v>...])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1133,14 +1106,12 @@ Eval_Result eval_handle_set_source_files_properties(Evaluator_Context *ctx, cons
     }
 
     if (arena_arr_len(files) == 0 || i >= arena_arr_len(a)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_source_files_properties() requires at least one source file and PROPERTIES"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_source_files_properties() requires at least one source file and PROPERTIES"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
     i++;
     if (i >= arena_arr_len(a) || ((arena_arr_len(a) - i) % 2) != 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_source_files_properties() has invalid PROPERTIES key/value pairs"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "dispatcher", nob_sv_from_cstr("set_source_files_properties() has invalid PROPERTIES key/value pairs"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1151,8 +1122,7 @@ Eval_Result eval_handle_set_source_files_properties(Evaluator_Context *ctx, cons
     }
     for (size_t ti = 0; ti < arena_arr_len(target_dirs); ti++) {
         if (!eval_target_known(ctx, target_dirs[ti])) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_source_files_properties(TARGET_DIRECTORY ...) target was not declared"),
-                           target_dirs[ti]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_source_files_properties(TARGET_DIRECTORY ...) target was not declared"), target_dirs[ti]);
             return eval_result_from_ctx(ctx);
         }
     }
@@ -1201,8 +1171,7 @@ Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node 
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_tests_properties() requires tests and PROPERTIES pairs"),
-                       nob_sv_from_cstr("Usage: set_tests_properties(<test>... [DIRECTORY <dir>] PROPERTIES <k> <v> [<k> <v>...])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_tests_properties() requires tests and PROPERTIES pairs"), nob_sv_from_cstr("Usage: set_tests_properties(<test>... [DIRECTORY <dir>] PROPERTIES <k> <v> [<k> <v>...])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1214,8 +1183,7 @@ Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node 
     }
 
     if (arena_arr_len(tests) == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_tests_properties() requires at least one test name"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_tests_properties() requires at least one test name"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1223,8 +1191,7 @@ Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node 
     bool saw_directory_clause = false;
     if (i < arena_arr_len(a) && eval_sv_eq_ci_lit(a[i], "DIRECTORY")) {
         if (i + 1 >= arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_tests_properties(DIRECTORY ...) requires a directory"),
-                           nob_sv_from_cstr(""));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_tests_properties(DIRECTORY ...) requires a directory"), nob_sv_from_cstr(""));
             return eval_result_from_ctx(ctx);
         }
         test_dir = eval_path_resolve_for_cmake_arg(ctx, a[i + 1], test_dir, true);
@@ -1234,21 +1201,18 @@ Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node 
     }
 
     if (i >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[i], "PROPERTIES")) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_tests_properties() missing PROPERTIES keyword"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_tests_properties() missing PROPERTIES keyword"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
     i++;
     if (i >= arena_arr_len(a) || ((arena_arr_len(a) - i) % 2) != 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_tests_properties() has invalid PROPERTIES key/value pairs"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "dispatcher", nob_sv_from_cstr("set_tests_properties() has invalid PROPERTIES key/value pairs"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
     for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {
         if (eval_test_exists_in_directory_scope(ctx, tests[ti], test_dir)) continue;
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_tests_properties() test was not declared in selected directory scope"),
-                       tests[ti]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_tests_properties() test was not declared in selected directory scope"), tests[ti]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -1276,20 +1240,17 @@ Eval_Result eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *nod
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_dependencies() requires target and at least one dependency"),
-                       nob_sv_from_cstr("Usage: add_dependencies(<target> <target-dependency>...)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_dependencies() requires target and at least one dependency"), nob_sv_from_cstr("Usage: add_dependencies(<target> <target-dependency>...)"));
         return eval_result_from_ctx(ctx);
     }
 
     String_View target_name = a[0];
     if (!eval_target_known(ctx, target_name)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_dependencies() target was not declared"),
-                       target_name);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("add_dependencies() target was not declared"), target_name);
         return eval_result_from_ctx(ctx);
     }
     if (eval_target_alias_known(ctx, target_name)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_dependencies() cannot be used on ALIAS targets"),
-                       target_name);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("add_dependencies() cannot be used on ALIAS targets"), target_name);
         return eval_result_from_ctx(ctx);
     }
 
@@ -1298,13 +1259,11 @@ Eval_Result eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *nod
         if (dep.count == 0) continue;
 
         if (!eval_target_known(ctx, dep)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_dependencies() dependency target was not declared"),
-                           dep);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("add_dependencies() dependency target was not declared"), dep);
             return eval_result_from_ctx(ctx);
         }
         if (eval_target_alias_known(ctx, dep)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("add_dependencies() cannot depend on ALIAS targets"),
-                           dep);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("add_dependencies() cannot depend on ALIAS targets"), dep);
             return eval_result_from_ctx(ctx);
         }
         if (!eval_emit_target_dependency(ctx, o, target_name, dep)) return eval_result_from_ctx(ctx);
@@ -1363,8 +1322,7 @@ Eval_Result eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node
     }
 
     if (qualifier.count > 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("target_link_libraries() qualifier without following item"),
-                       qualifier);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("target_link_libraries() qualifier without following item"), qualifier);
     }
     return eval_result_from_ctx(ctx);
 }
@@ -1375,8 +1333,7 @@ Eval_Result eval_handle_target_link_options(Evaluator_Context *ctx, const Node *
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_link_options() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_link_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_link_options() requires target and items"), nob_sv_from_cstr("Usage: target_link_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1419,8 +1376,7 @@ Eval_Result eval_handle_target_link_directories(Evaluator_Context *ctx, const No
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_link_directories() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_link_directories(<tgt> <PUBLIC|PRIVATE|INTERFACE> <dirs...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_link_directories() requires target and items"), nob_sv_from_cstr("Usage: target_link_directories(<tgt> <PUBLIC|PRIVATE|INTERFACE> <dirs...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1460,8 +1416,7 @@ Eval_Result eval_handle_target_include_directories(Evaluator_Context *ctx, const
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_include_directories() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_include_directories(<tgt> [SYSTEM] [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_include_directories() requires target and items"), nob_sv_from_cstr("Usage: target_include_directories(<tgt> [SYSTEM] [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1520,8 +1475,7 @@ Eval_Result eval_handle_target_compile_definitions(Evaluator_Context *ctx, const
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_compile_definitions() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_compile_definitions(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_compile_definitions() requires target and items"), nob_sv_from_cstr("Usage: target_compile_definitions(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1560,8 +1514,7 @@ Eval_Result eval_handle_target_compile_options(Evaluator_Context *ctx, const Nod
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_compile_options() requires target and items"),
-                       nob_sv_from_cstr("Usage: target_compile_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_compile_options() requires target and items"), nob_sv_from_cstr("Usage: target_compile_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1603,8 +1556,7 @@ Eval_Result eval_handle_target_sources(Evaluator_Context *ctx, const Node *node)
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_sources() requires target, visibility and items"),
-                       nob_sv_from_cstr("Usage: target_sources(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_sources() requires target, visibility and items"), nob_sv_from_cstr("Usage: target_sources(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1616,8 +1568,7 @@ Eval_Result eval_handle_target_sources(Evaluator_Context *ctx, const Node *node)
     for (size_t i = 1; i < arena_arr_len(a); i++) {
         if (target_usage_parse_visibility(a[i], &vis)) continue;
         if (eval_sv_eq_ci_lit(a[i], "FILE_SET")) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_sources(FILE_SET ...) is not implemented yet"),
-                           nob_sv_from_cstr("Supported in this batch: source item groups with PRIVATE, PUBLIC and INTERFACE"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_IMPLEMENTED, "dispatcher", nob_sv_from_cstr("target_sources(FILE_SET ...) is not implemented yet"), nob_sv_from_cstr("Supported in this batch: source item groups with PRIVATE, PUBLIC and INTERFACE"));
             return eval_result_from_ctx(ctx);
         }
         if (vis == EV_VISIBILITY_UNSPECIFIED) {
@@ -1652,8 +1603,7 @@ Eval_Result eval_handle_target_compile_features(Evaluator_Context *ctx, const No
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_compile_features() requires target, visibility and features"),
-                       nob_sv_from_cstr("Usage: target_compile_features(<tgt> <PUBLIC|PRIVATE|INTERFACE> <features...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_compile_features() requires target, visibility and features"), nob_sv_from_cstr("Usage: target_compile_features(<tgt> <PUBLIC|PRIVATE|INTERFACE> <features...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1700,8 +1650,7 @@ Eval_Result eval_handle_target_precompile_headers(Evaluator_Context *ctx, const 
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_precompile_headers() requires target and arguments"),
-                       nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> <PUBLIC|PRIVATE|INTERFACE> <headers...>)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_precompile_headers() requires target and arguments"), nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> <PUBLIC|PRIVATE|INTERFACE> <headers...>)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1710,8 +1659,7 @@ Eval_Result eval_handle_target_precompile_headers(Evaluator_Context *ctx, const 
 
     if (eval_sv_eq_ci_lit(a[1], "REUSE_FROM")) {
         if (arena_arr_len(a) != 3) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("target_precompile_headers(REUSE_FROM) expects exactly one donor target"),
-                           nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> REUSE_FROM <other-target>)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_precompile_headers(REUSE_FROM) expects exactly one donor target"), nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> REUSE_FROM <other-target>)"));
             return eval_result_from_ctx(ctx);
         }
         if (!target_usage_validate_target(ctx, node, a[2])) return eval_result_from_ctx(ctx);
@@ -1772,16 +1720,14 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group() requires a group descriptor and mapping input"),
-                       nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...]) or source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group() requires a group descriptor and mapping input"), nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...]) or source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
         return eval_result_from_ctx(ctx);
     }
 
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
     if (eval_sv_eq_ci_lit(a[0], "TREE")) {
         if (arena_arr_len(a) < 4) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group(TREE ...) requires root and FILES list"),
-                           nob_sv_from_cstr("Usage: source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group(TREE ...) requires root and FILES list"), nob_sv_from_cstr("Usage: source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
             return eval_result_from_ctx(ctx);
         }
 
@@ -1791,16 +1737,14 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
         size_t files_index = 2;
         if (files_index < arena_arr_len(a) && eval_sv_eq_ci_lit(a[files_index], "PREFIX")) {
             if (files_index + 1 >= arena_arr_len(a)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group(TREE ... PREFIX) requires a value"),
-                               nob_sv_from_cstr("Usage: source_group(TREE <root> PREFIX <prefix> FILES <src>...)"));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group(TREE ... PREFIX) requires a value"), nob_sv_from_cstr("Usage: source_group(TREE <root> PREFIX <prefix> FILES <src>...)"));
                 return eval_result_from_ctx(ctx);
             }
             prefix = a[files_index + 1];
             files_index += 2;
         }
         if (files_index >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[files_index], "FILES") || files_index + 1 >= arena_arr_len(a)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group(TREE ...) requires FILES followed by at least one source"),
-                           nob_sv_from_cstr("Usage: source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group(TREE ...) requires FILES followed by at least one source"), nob_sv_from_cstr("Usage: source_group(TREE <root> [PREFIX <prefix>] FILES <src>...)"));
             return eval_result_from_ctx(ctx);
         }
 
@@ -1809,8 +1753,7 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
             String_View relative = nob_sv_from_cstr("");
             if (!source_group_path_relative_to_root(ctx, root, file_path, &relative)) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group(TREE ...) file is outside the declared tree root"),
-                               file_path);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("source_group(TREE ...) file is outside the declared tree root"), file_path);
                 return eval_result_from_ctx(ctx);
             }
             String_View group_name = source_group_join_tree_name_temp(ctx, prefix, source_group_dirname(relative));
@@ -1837,8 +1780,7 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
             if (eval_sv_eq_ci_lit(a[i], "FILES")) {
                 i++;
                 if (i >= arena_arr_len(a) || eval_sv_eq_ci_lit(a[i], "REGULAR_EXPRESSION")) {
-                    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group(FILES) requires at least one source"),
-                                   nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
+                    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group(FILES) requires at least one source"), nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
                     return eval_result_from_ctx(ctx);
                 }
                 while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "REGULAR_EXPRESSION")) {
@@ -1850,8 +1792,7 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
             }
             if (eval_sv_eq_ci_lit(a[i], "REGULAR_EXPRESSION")) {
                 if (have_regex || i + 1 >= arena_arr_len(a)) {
-                    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group(REGULAR_EXPRESSION) requires exactly one regex"),
-                                   nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
+                    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group(REGULAR_EXPRESSION) requires exactly one regex"), nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
                     return eval_result_from_ctx(ctx);
                 }
                 have_regex = true;
@@ -1861,8 +1802,7 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
             }
 
             if (have_files) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group() received unexpected argument"),
-                               a[i]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("source_group() received unexpected argument"), a[i]);
                 return eval_result_from_ctx(ctx);
             }
 
@@ -1873,8 +1813,7 @@ Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (!have_files && !have_regex) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("source_group() requires source files and/or a regular expression"),
-                       nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("source_group() requires source files and/or a regular expression"), nob_sv_from_cstr("Usage: source_group(<name> [FILES <src>...] [REGULAR_EXPRESSION <regex>])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1897,21 +1836,18 @@ Eval_Result eval_handle_define_property(Evaluator_Context *ctx, const Node *node
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property() requires scope and PROPERTY name"),
-                       nob_sv_from_cstr("Usage: define_property(<GLOBAL|DIRECTORY|TARGET|SOURCE|TEST|VARIABLE|CACHED_VARIABLE> PROPERTY <name> [INHERITED] [BRIEF_DOCS <docs>...] [FULL_DOCS <docs>...] [INITIALIZE_FROM_VARIABLE <var>])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("define_property() requires scope and PROPERTY name"), nob_sv_from_cstr("Usage: define_property(<GLOBAL|DIRECTORY|TARGET|SOURCE|TEST|VARIABLE|CACHED_VARIABLE> PROPERTY <name> [INHERITED] [BRIEF_DOCS <docs>...] [FULL_DOCS <docs>...] [INITIALIZE_FROM_VARIABLE <var>])"));
         return eval_result_from_ctx(ctx);
     }
 
     String_View scope_upper = nob_sv_from_cstr("");
     if (!eval_property_scope_upper_temp(ctx, a[0], &scope_upper)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property() unknown scope"),
-                       a[0]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("define_property() unknown scope"), a[0]);
         return eval_result_from_ctx(ctx);
     }
 
     if (!eval_sv_eq_ci_lit(a[1], "PROPERTY")) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property() missing PROPERTY keyword"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("define_property() missing PROPERTY keyword"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1920,8 +1856,7 @@ Eval_Result eval_handle_define_property(Evaluator_Context *ctx, const Node *node
     def.property_upper = eval_property_upper_name_temp(ctx, a[2]);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (def.property_upper.count == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property() missing property name"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("define_property() missing property name"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -1954,18 +1889,15 @@ Eval_Result eval_handle_define_property(Evaluator_Context *ctx, const Node *node
         }
         if (eval_sv_eq_ci_lit(a[i], "INITIALIZE_FROM_VARIABLE")) {
             if (!eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property(INITIALIZE_FROM_VARIABLE) is only valid for TARGET scope"),
-                               scope_upper);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "dispatcher", nob_sv_from_cstr("define_property(INITIALIZE_FROM_VARIABLE) is only valid for TARGET scope"), scope_upper);
                 return eval_result_from_ctx(ctx);
             }
             if (def.has_initialize_from_variable) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property() received duplicate INITIALIZE_FROM_VARIABLE"),
-                               nob_sv_from_cstr(""));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_DUPLICATE_ARGUMENT, "dispatcher", nob_sv_from_cstr("define_property() received duplicate INITIALIZE_FROM_VARIABLE"), nob_sv_from_cstr(""));
                 return eval_result_from_ctx(ctx);
             }
             if (i + 1 >= arena_arr_len(a) || define_property_keyword(a[i + 1])) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property(INITIALIZE_FROM_VARIABLE) requires a variable name"),
-                               nob_sv_from_cstr(""));
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("define_property(INITIALIZE_FROM_VARIABLE) requires a variable name"), nob_sv_from_cstr(""));
                 return eval_result_from_ctx(ctx);
             }
             def.has_initialize_from_variable = true;
@@ -1974,8 +1906,7 @@ Eval_Result eval_handle_define_property(Evaluator_Context *ctx, const Node *node
             continue;
         }
 
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("define_property() received unexpected argument"),
-                       a[i]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("define_property() received unexpected argument"), a[i]);
         return eval_result_from_ctx(ctx);
     }
 
@@ -1989,8 +1920,7 @@ Eval_Result eval_handle_set_target_properties(Evaluator_Context *ctx, const Node
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 4) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_target_properties() requires targets and PROPERTIES key/value pairs"),
-                       nob_sv_from_cstr("Usage: set_target_properties(<t1> [<t2> ...] PROPERTIES <k1> <v1> ...)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_target_properties() requires targets and PROPERTIES key/value pairs"), nob_sv_from_cstr("Usage: set_target_properties(<t1> [<t2> ...] PROPERTIES <k1> <v1> ...)"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -2003,34 +1933,29 @@ Eval_Result eval_handle_set_target_properties(Evaluator_Context *ctx, const Node
     }
 
     if (props_i == 0 || props_i >= arena_arr_len(a) - 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_target_properties() missing PROPERTIES section"),
-                       nob_sv_from_cstr("Expected: set_target_properties(<targets...> PROPERTIES <key> <value> ...)"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_target_properties() missing PROPERTIES section"), nob_sv_from_cstr("Expected: set_target_properties(<targets...> PROPERTIES <key> <value> ...)"));
         return eval_result_from_ctx(ctx);
     }
 
     size_t kv_start = props_i + 1;
     size_t kv_count = arena_arr_len(a) - kv_start;
     if (kv_count < 2) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_target_properties() missing property key/value"),
-                       nob_sv_from_cstr("Provide at least one <key> <value> pair"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_target_properties() missing property key/value"), nob_sv_from_cstr("Provide at least one <key> <value> pair"));
         return eval_result_from_ctx(ctx);
     }
 
     if ((kv_count % 2) != 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "dispatcher", nob_sv_from_cstr("set_target_properties() has dangling property key without value"),
-                       nob_sv_from_cstr("Ignoring the last unmatched key"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("set_target_properties() has dangling property key without value"), nob_sv_from_cstr("Ignoring the last unmatched key"));
     }
 
     for (size_t ti = 0; ti < props_i; ti++) {
         String_View tgt = a[ti];
         if (!eval_target_known(ctx, tgt)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_target_properties() target was not declared"),
-                           tgt);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_target_properties() target was not declared"), tgt);
             continue;
         }
         if (eval_target_alias_known(ctx, tgt)) {
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_target_properties() cannot be used on ALIAS targets"),
-                           tgt);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("set_target_properties() cannot be used on ALIAS targets"), tgt);
             continue;
         }
         for (size_t i = kv_start; i + 1 < arena_arr_len(a); i += 2) {
@@ -2059,8 +1984,7 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property() missing scope"),
-                       nob_sv_from_cstr("Usage: set_property(<GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE> ... PROPERTY <k> [v...])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property() missing scope"), nob_sv_from_cstr("Usage: set_property(<GLOBAL|DIRECTORY|TARGET|SOURCE|INSTALL|TEST|CACHE> ... PROPERTY <k> [v...])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -2073,8 +1997,7 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     bool is_test_scope = eval_sv_eq_ci_lit(scope, "TEST");
     bool is_cache_scope = eval_sv_eq_ci_lit(scope, "CACHE");
     if (!(is_target_scope || is_global_scope || is_dir_scope || is_source_scope || is_install_scope || is_test_scope || is_cache_scope)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property() unknown scope"),
-                       scope);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("set_property() unknown scope"), scope);
         return eval_result_from_ctx(ctx);
     }
 
@@ -2138,29 +2061,24 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (saw_source_directory_clause && arena_arr_len(source_dirs) == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(SOURCE DIRECTORY ...) requires at least one directory"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property(SOURCE DIRECTORY ...) requires at least one directory"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
     if (saw_source_target_directory_clause && arena_arr_len(source_target_dirs) == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(SOURCE TARGET_DIRECTORY ...) requires at least one target"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property(SOURCE TARGET_DIRECTORY ...) requires at least one target"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
     if (saw_test_directory_clause && arena_arr_len(test_dirs) == 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(TEST DIRECTORY ...) requires at least one directory"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property(TEST DIRECTORY ...) requires at least one directory"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
     if (saw_test_directory_clause && arena_arr_len(test_dirs) > 1) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(TEST DIRECTORY ...) expects exactly one directory"),
-                       nob_sv_from_cstr("Use: set_property(TEST [<test>...] [DIRECTORY <dir>] PROPERTY <key> [value...])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property(TEST DIRECTORY ...) expects exactly one directory"), nob_sv_from_cstr("Use: set_property(TEST [<test>...] [DIRECTORY <dir>] PROPERTY <key> [value...])"));
         return eval_result_from_ctx(ctx);
     }
 
     if (is_global_scope && arena_arr_len(objects) > 0) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(GLOBAL ...) does not take object names"),
-                       nob_sv_from_cstr("Use: set_property(GLOBAL PROPERTY <key> [value...])"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("set_property(GLOBAL ...) does not take object names"), nob_sv_from_cstr("Use: set_property(GLOBAL PROPERTY <key> [value...])"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -2177,14 +2095,12 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (i >= arena_arr_len(a) || !eval_sv_eq_ci_lit(a[i], "PROPERTY")) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property() missing PROPERTY keyword"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property() missing PROPERTY keyword"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
     i++;
     if (i >= arena_arr_len(a)) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property() missing property key"),
-                       nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("set_property() missing property key"), nob_sv_from_cstr(""));
         return eval_result_from_ctx(ctx);
     }
 
@@ -2200,21 +2116,18 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     else if (append) op = EV_PROP_APPEND_LIST;
 
     if (append && append_string) {
-        EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property() received both APPEND and APPEND_STRING"),
-                       nob_sv_from_cstr("Use only one of APPEND or APPEND_STRING"));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_CONFLICTING_OPTIONS, "dispatcher", nob_sv_from_cstr("set_property() received both APPEND and APPEND_STRING"), nob_sv_from_cstr("Use only one of APPEND or APPEND_STRING"));
         return eval_result_from_ctx(ctx);
     }
 
     if (is_target_scope) {
         for (size_t ti = 0; ti < arena_arr_len(objects); ti++) {
             if (!eval_target_known(ctx, objects[ti])) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(TARGET ...) target was not declared"),
-                               objects[ti]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_property(TARGET ...) target was not declared"), objects[ti]);
                 continue;
             }
             if (eval_target_alias_known(ctx, objects[ti])) {
-                EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(TARGET ...) cannot be used on ALIAS targets"),
-                               objects[ti]);
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("set_property(TARGET ...) cannot be used on ALIAS targets"), objects[ti]);
                 continue;
             }
             if (!eval_emit_target_prop_set(ctx, o, objects[ti], key, value, op)) {
@@ -2245,8 +2158,7 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     if (is_source_scope) {
         for (size_t ti = 0; ti < arena_arr_len(source_target_dirs); ti++) {
             if (eval_target_known(ctx, source_target_dirs[ti])) continue;
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(SOURCE TARGET_DIRECTORY ...) target was not declared"),
-                           source_target_dirs[ti]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_property(SOURCE TARGET_DIRECTORY ...) target was not declared"), source_target_dirs[ti]);
             return eval_result_from_ctx(ctx);
         }
 
@@ -2290,8 +2202,7 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
 
         for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
             if (eval_test_exists_in_directory_scope(ctx, objects[oi], test_scope_dir)) continue;
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(TEST ...) test was not declared in selected directory scope"),
-                           objects[oi]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_property(TEST ...) test was not declared in selected directory scope"), objects[oi]);
             return eval_result_from_ctx(ctx);
         }
 
@@ -2313,8 +2224,7 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
     if (is_cache_scope) {
         for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
             if (eval_cache_defined(ctx, objects[oi])) continue;
-            EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr("set_property(CACHE ...) cache entry does not exist"),
-                           objects[oi]);
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_property(CACHE ...) cache entry does not exist"), objects[oi]);
             return eval_result_from_ctx(ctx);
         }
     }
@@ -2327,4 +2237,3 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
 
     return eval_result_from_ctx(ctx);
 }
-

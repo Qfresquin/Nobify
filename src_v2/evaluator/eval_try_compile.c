@@ -1110,13 +1110,7 @@ static bool try_compile_parse_source_options(Evaluator_Context *ctx,
             eval_sv_eq_ci_lit(tok, "SOURCE_DIR") ||
             eval_sv_eq_ci_lit(tok, "BINARY_DIR") ||
             eval_sv_eq_ci_lit(tok, "TARGET")) {
-            return EVAL_DIAG(ctx,
-                                  EV_DIAG_ERROR,
-                                  nob_sv_from_cstr("dispatcher"),
-                                  node->as.cmd.name,
-                                  eval_origin_from_node(ctx, node),
-                                  nob_sv_from_cstr("PROJECT-signature keywords are invalid in try_compile(SOURCE ...)"),
-                                  nob_sv_from_cstr("Use try_compile(<out-var> PROJECT ... SOURCE_DIR ...)"));
+            return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("PROJECT-signature keywords are invalid in try_compile(SOURCE ...)"), nob_sv_from_cstr("Use try_compile(<out-var> PROJECT ... SOURCE_DIR ...)"));
         }
 
         if (!try_compile_add_source_item(ctx, req, tok, current_type)) return false;
@@ -1144,13 +1138,7 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
                                                   Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 2) {
-        return EVAL_DIAG(ctx,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_compile() requires at least a result variable"),
-                              nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile() requires at least a result variable"), nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
     try_compile_init_request(ctx, (*args)[0], out_req);
@@ -1169,13 +1157,7 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
 
     if (!try_compile_parse_source_options(ctx, node, args, opt_start, out_req)) return false;
     if (out_req->source_items.count == 0) {
-        return EVAL_DIAG(ctx,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_compile(SOURCE ...) requires at least one source input"),
-                              nob_sv_from_cstr("Use SOURCES, SOURCE_FROM_CONTENT, SOURCE_FROM_VAR or SOURCE_FROM_FILE"));
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile(SOURCE ...) requires at least one source input"), nob_sv_from_cstr("Use SOURCES, SOURCE_FROM_CONTENT, SOURCE_FROM_VAR or SOURCE_FROM_FILE"));
     }
 
     return true;
@@ -1187,13 +1169,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
                                       Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 2) {
-        return EVAL_DIAG(ctx,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_compile() requires at least a result variable"),
-                              nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile() requires at least a result variable"), nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
     try_compile_init_request(ctx, (*args)[0], out_req);
@@ -1238,13 +1214,7 @@ static bool try_compile_parse_request(Evaluator_Context *ctx,
         }
 
         if (out_req->source_dir.count == 0) {
-            return EVAL_DIAG(ctx,
-                                  EV_DIAG_ERROR,
-                                  nob_sv_from_cstr("dispatcher"),
-                                  node->as.cmd.name,
-                                  eval_origin_from_node(ctx, node),
-                                  nob_sv_from_cstr("try_compile(PROJECT ...) requires SOURCE_DIR"),
-                                  nob_sv_from_cstr("Usage: try_compile(<out-var> PROJECT <name> SOURCE_DIR <dir> ...)"));
+            return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile(PROJECT ...) requires SOURCE_DIR"), nob_sv_from_cstr("Usage: try_compile(<out-var> PROJECT <name> SOURCE_DIR <dir> ...)"));
         }
 
         if (out_req->binary_dir.count == 0) {
@@ -1264,13 +1234,7 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
                                   Try_Run_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 4) {
-        return EVAL_DIAG(ctx,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_run() requires run result, compile result, binary directory and sources"),
-                              nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires run result, compile result, binary directory and sources"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
     }
 
     *out_req = (Try_Run_Request){
@@ -1278,23 +1242,11 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
     };
 
     if (eval_sv_eq_ci_lit((*args)[2], "PROJECT")) {
-        return EVAL_DIAG(ctx,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"),
-                              nob_sv_from_cstr("Use source-file forms only"));
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"), nob_sv_from_cstr("Use source-file forms only"));
     }
 
     if (try_compile_is_keyword((*args)[2])) {
-        return EVAL_DIAG(ctx,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              eval_origin_from_node(ctx, node),
-                              nob_sv_from_cstr("try_run() requires an explicit binary directory"),
-                              nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires an explicit binary directory"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
     }
 
     SV_List compile_args = NULL;
@@ -1304,76 +1256,40 @@ static bool try_run_parse_request(Evaluator_Context *ctx,
         String_View tok = (*args)[i];
 
         if (eval_sv_eq_ci_lit(tok, "PROJECT")) {
-            return EVAL_DIAG(ctx,
-                                  EV_DIAG_ERROR,
-                                  nob_sv_from_cstr("dispatcher"),
-                                  node->as.cmd.name,
-                                  eval_origin_from_node(ctx, node),
-                                  nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"),
-                                  nob_sv_from_cstr("Use source-file forms only"));
+            return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"), nob_sv_from_cstr("Use source-file forms only"));
         }
 
         if (eval_sv_eq_ci_lit(tok, "COMPILE_OUTPUT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return EVAL_DIAG(ctx,
-                                      EV_DIAG_ERROR,
-                                      nob_sv_from_cstr("dispatcher"),
-                                      node->as.cmd.name,
-                                      eval_origin_from_node(ctx, node),
-                                      nob_sv_from_cstr("try_run(COMPILE_OUTPUT_VARIABLE) requires an output variable"),
-                                      nob_sv_from_cstr("Usage: try_run(... COMPILE_OUTPUT_VARIABLE <var>)"));
+                return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run(COMPILE_OUTPUT_VARIABLE) requires an output variable"), nob_sv_from_cstr("Usage: try_run(... COMPILE_OUTPUT_VARIABLE <var>)"));
             }
             out_req->compile_output_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return EVAL_DIAG(ctx,
-                                      EV_DIAG_ERROR,
-                                      nob_sv_from_cstr("dispatcher"),
-                                      node->as.cmd.name,
-                                      eval_origin_from_node(ctx, node),
-                                      nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) requires an output variable"),
-                                      nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_VARIABLE <var>)"));
+                return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) requires an output variable"), nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_VARIABLE <var>)"));
             }
             out_req->run_output_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDOUT_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return EVAL_DIAG(ctx,
-                                      EV_DIAG_ERROR,
-                                      nob_sv_from_cstr("dispatcher"),
-                                      node->as.cmd.name,
-                                      eval_origin_from_node(ctx, node),
-                                      nob_sv_from_cstr("try_run(RUN_OUTPUT_STDOUT_VARIABLE) requires an output variable"),
-                                      nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDOUT_VARIABLE <var>)"));
+                return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run(RUN_OUTPUT_STDOUT_VARIABLE) requires an output variable"), nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDOUT_VARIABLE <var>)"));
             }
             out_req->run_stdout_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "RUN_OUTPUT_STDERR_VARIABLE")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return EVAL_DIAG(ctx,
-                                      EV_DIAG_ERROR,
-                                      nob_sv_from_cstr("dispatcher"),
-                                      node->as.cmd.name,
-                                      eval_origin_from_node(ctx, node),
-                                      nob_sv_from_cstr("try_run(RUN_OUTPUT_STDERR_VARIABLE) requires an output variable"),
-                                      nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDERR_VARIABLE <var>)"));
+                return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run(RUN_OUTPUT_STDERR_VARIABLE) requires an output variable"), nob_sv_from_cstr("Usage: try_run(... RUN_OUTPUT_STDERR_VARIABLE <var>)"));
             }
             out_req->run_stderr_var = (*args)[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(tok, "WORKING_DIRECTORY")) {
             if (i + 1 >= arena_arr_len(*args)) {
-                return EVAL_DIAG(ctx,
-                                      EV_DIAG_ERROR,
-                                      nob_sv_from_cstr("dispatcher"),
-                                      node->as.cmd.name,
-                                      eval_origin_from_node(ctx, node),
-                                      nob_sv_from_cstr("try_run(WORKING_DIRECTORY) requires a path"),
-                                      nob_sv_from_cstr("Usage: try_run(... WORKING_DIRECTORY <dir>)"));
+                return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run(WORKING_DIRECTORY) requires a path"), nob_sv_from_cstr("Usage: try_run(... WORKING_DIRECTORY <dir>)"));
             }
             out_req->working_directory = (*args)[++i];
             continue;
@@ -1506,26 +1422,14 @@ Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
 
     String_View cross_compiling = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
     if (cross_compiling.count > 0 && !try_compile_is_false(cross_compiling)) {
-        (void)EVAL_DIAG(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("dispatcher"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"),
-                             nob_sv_from_cstr("This batch only supports native execution"));
+        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_NOT_IMPLEMENTED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"), nob_sv_from_cstr("This batch only supports native execution"));
         if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
         if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
         return eval_result_from_ctx(ctx);
     }
 
     if (exec_res.artifact_path.count == 0) {
-        (void)EVAL_DIAG(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("dispatcher"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("try_run() failed to start compiled executable"),
-                             nob_sv_from_cstr("compiled artifact path is empty"));
+        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() failed to start compiled executable"), nob_sv_from_cstr("compiled artifact path is empty"));
         if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
         if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
         return eval_result_from_ctx(ctx);
@@ -1564,13 +1468,7 @@ Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     if (!eval_process_run_capture(ctx, &proc_req, &proc_res)) return eval_result_fatal();
 
     if (!proc_res.started) {
-        (void)EVAL_DIAG(ctx,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("dispatcher"),
-                             node->as.cmd.name,
-                             eval_origin_from_node(ctx, node),
-                             nob_sv_from_cstr("try_run() failed to start compiled executable"),
-                             exec_res.artifact_path);
+        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() failed to start compiled executable"), exec_res.artifact_path);
         if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
         if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
         return eval_result_from_ctx(ctx);

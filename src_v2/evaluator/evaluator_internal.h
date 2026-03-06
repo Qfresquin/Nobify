@@ -396,32 +396,135 @@ static inline bool eval_mark_oom_if_null(Evaluator_Context *ctx, const void *ptr
 #define EVAL_ARR_PUSH(ctx, arena, arr, value) \
     (arena_arr_push((arena), (arr), (value)) ? true : ctx_oom((ctx)))
 
-#define EVAL_NODE_ORIGIN_DIAG_RESULT(ctx, node, origin, severity, component_lit, cause, hint) \
-    eval_emit_diag((ctx),                                                                       \
-                   (severity),                                                                  \
-                   nob_sv_from_cstr((component_lit)),                                           \
-                   (node)->as.cmd.name,                                                         \
-                   (origin),                                                                    \
-                   (cause),                                                                     \
+Eval_Result eval_emit_diag(Evaluator_Context *ctx,
+                           Eval_Diag_Code code,
+                           String_View component,
+                           String_View command,
+                           Cmake_Event_Origin origin,
+                           String_View cause,
+                           String_View hint);
+Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
+                                         Cmake_Diag_Severity severity,
+                                         Eval_Diag_Code code,
+                                         String_View component,
+                                         String_View command,
+                                         Cmake_Event_Origin origin,
+                                         String_View cause,
+                                         String_View hint);
+
+#define EVAL_NODE_ORIGIN_DIAG_RESULT(ctx, node, origin, code, component_lit, cause, hint) \
+    eval_emit_diag((ctx),                                                                   \
+                   (code),                                                                  \
+                   nob_sv_from_cstr((component_lit)),                                       \
+                   (node)->as.cmd.name,                                                     \
+                   (origin),                                                                \
+                   (cause),                                                                 \
                    (hint))
 
-#define EVAL_NODE_ORIGIN_DIAG(ctx, node, origin, severity, component_lit, cause, hint) \
-    (!eval_result_is_fatal(EVAL_NODE_ORIGIN_DIAG_RESULT((ctx), (node), (origin), (severity), (component_lit), (cause), (hint))))
+#define EVAL_NODE_ORIGIN_DIAG_RESULT_SEV(ctx, node, origin, severity, code, component_lit, cause, hint) \
+    eval_emit_diag_with_severity((ctx),                                                                   \
+                                 (severity),                                                              \
+                                 (code),                                                                  \
+                                 nob_sv_from_cstr((component_lit)),                                       \
+                                 (node)->as.cmd.name,                                                     \
+                                 (origin),                                                                \
+                                 (cause),                                                                 \
+                                 (hint))
 
-#define EVAL_NODE_DIAG(ctx, node, severity, component_lit, cause, hint) \
-    EVAL_NODE_ORIGIN_DIAG((ctx),                                         \
-                          (node),                                        \
-                          eval_origin_from_node((ctx), (node)),          \
-                          (severity),                                    \
-                          (component_lit),                               \
-                          (cause),                                       \
-                          (hint))
+#define EVAL_NODE_ORIGIN_DIAG_BOOL(ctx, node, origin, code, component_lit, cause, hint) \
+    eval_diag_emit_bool((ctx),                                                                  \
+                        (code),                                                                 \
+                        nob_sv_from_cstr((component_lit)),                                      \
+                        (node)->as.cmd.name,                                                    \
+                        (origin),                                                               \
+                        (cause),                                                                \
+                        (hint))
 
-#define EVAL_DIAG_RESULT(ctx, severity, component, command, origin, cause, hint) \
-    eval_emit_diag((ctx), (severity), (component), (command), (origin), (cause), (hint))
+#define EVAL_NODE_ORIGIN_DIAG_BOOL_SEV(ctx, node, origin, severity, code, component_lit, cause, hint) \
+    eval_diag_emit_with_severity_bool((ctx),                                                            \
+                                      (severity),                                                       \
+                                      (code),                                                           \
+                                      nob_sv_from_cstr((component_lit)),                                \
+                                      (node)->as.cmd.name,                                              \
+                                      (origin),                                                         \
+                                      (cause),                                                          \
+                                      (hint))
 
-#define EVAL_DIAG(ctx, severity, component, command, origin, cause, hint) \
-    (!eval_result_is_fatal(EVAL_DIAG_RESULT((ctx), (severity), (component), (command), (origin), (cause), (hint))))
+#define EVAL_NODE_ORIGIN_DIAG_EMIT(ctx, node, origin, code, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG_BOOL((ctx), (node), (origin), (code), (component_lit), (cause), (hint))
+
+#define EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, severity, code, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG_BOOL_SEV((ctx), (node), (origin), (severity), (code), (component_lit), (cause), (hint))
+
+#define EVAL_NODE_DIAG_RESULT(ctx, node, code, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG_RESULT((ctx),                                     \
+                                 (node),                                    \
+                                 eval_origin_from_node((ctx), (node)),      \
+                                 (code),                                    \
+                                 (component_lit),                           \
+                                 (cause),                                   \
+                                 (hint))
+
+#define EVAL_NODE_DIAG_RESULT_SEV(ctx, node, severity, code, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG_RESULT_SEV((ctx),                                                \
+                                     (node),                                               \
+                                     eval_origin_from_node((ctx), (node)),                 \
+                                     (severity),                                           \
+                                     (code),                                               \
+                                     (component_lit),                                      \
+                                     (cause),                                              \
+                                     (hint))
+
+#define EVAL_NODE_DIAG_BOOL(ctx, node, code, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG_BOOL((ctx), (node), eval_origin_from_node((ctx), (node)), (code), (component_lit), (cause), (hint))
+
+#define EVAL_NODE_DIAG_BOOL_SEV(ctx, node, severity, code, component_lit, cause, hint) \
+    EVAL_NODE_ORIGIN_DIAG_BOOL_SEV((ctx), (node), eval_origin_from_node((ctx), (node)), (severity), (code), (component_lit), (cause), (hint))
+
+#define EVAL_NODE_DIAG_EMIT(ctx, node, code, component_lit, cause, hint) \
+    EVAL_NODE_DIAG_BOOL((ctx), (node), (code), (component_lit), (cause), (hint))
+
+#define EVAL_NODE_DIAG_EMIT_SEV(ctx, node, severity, code, component_lit, cause, hint) \
+    EVAL_NODE_DIAG_BOOL_SEV((ctx), (node), (severity), (code), (component_lit), (cause), (hint))
+
+#define EVAL_DIAG_RESULT(ctx, code, component, command, origin, cause, hint) \
+    eval_emit_diag((ctx), (code), (component), (command), (origin), (cause), (hint))
+
+#define EVAL_DIAG_RESULT_SEV(ctx, severity, code, component, command, origin, cause, hint) \
+    eval_emit_diag_with_severity((ctx), (severity), (code), (component), (command), (origin), (cause), (hint))
+
+#define EVAL_DIAG_BOOL(ctx, code, component, command, origin, cause, hint) \
+    eval_diag_emit_bool((ctx), (code), (component), (command), (origin), (cause), (hint))
+
+#define EVAL_DIAG_BOOL_SEV(ctx, severity, code, component, command, origin, cause, hint) \
+    eval_diag_emit_with_severity_bool((ctx), (severity), (code), (component), (command), (origin), (cause), (hint))
+
+#define EVAL_DIAG_EMIT(ctx, code, component, command, origin, cause, hint) \
+    EVAL_DIAG_BOOL((ctx), (code), (component), (command), (origin), (cause), (hint))
+
+#define EVAL_DIAG_EMIT_SEV(ctx, severity, code, component, command, origin, cause, hint) \
+    EVAL_DIAG_BOOL_SEV((ctx), (severity), (code), (component), (command), (origin), (cause), (hint))
+
+static inline bool eval_diag_emit_bool(Evaluator_Context *ctx,
+                                       Eval_Diag_Code code,
+                                       String_View component,
+                                       String_View command,
+                                       Cmake_Event_Origin origin,
+                                       String_View cause,
+                                       String_View hint) {
+    return !eval_result_is_fatal(eval_emit_diag(ctx, code, component, command, origin, cause, hint));
+}
+
+static inline bool eval_diag_emit_with_severity_bool(Evaluator_Context *ctx,
+                                                     Cmake_Diag_Severity severity,
+                                                     Eval_Diag_Code code,
+                                                     String_View component,
+                                                     String_View command,
+                                                     Cmake_Event_Origin origin,
+                                                     String_View cause,
+                                                     String_View hint) {
+    return !eval_result_is_fatal(eval_emit_diag_with_severity(ctx, severity, code, component, command, origin, cause, hint));
+}
 
 static inline void eval_clear_return_state(Evaluator_Context *ctx) {
     if (!ctx) return;
@@ -1380,24 +1483,29 @@ static inline bool eval_emit_path_convert(Evaluator_Context *ctx,
     return emit_event(ctx, ev);
 }
 Eval_Result eval_emit_diag(Evaluator_Context *ctx,
-                           Event_Diag_Severity sev,
+                           Eval_Diag_Code code,
                            String_View component,
                            String_View command,
                            Event_Origin origin,
                            String_View cause,
                            String_View hint);
-void eval_diag_classify(String_View component,
-                        String_View cause,
-                        Event_Diag_Severity sev,
-                        Eval_Diag_Code *out_code,
-                        Eval_Error_Class *out_class);
+Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
+                                         Event_Diag_Severity sev,
+                                         Eval_Diag_Code code,
+                                         String_View component,
+                                         String_View command,
+                                         Event_Origin origin,
+                                         String_View cause,
+                                         String_View hint);
 String_View eval_diag_code_to_sv(Eval_Diag_Code code);
+Eval_Error_Class eval_diag_error_class(Eval_Diag_Code code);
+Cmake_Diag_Severity eval_diag_default_severity(Eval_Diag_Code code);
+bool eval_diag_counts_as_unsupported(Eval_Diag_Code code);
 String_View eval_error_class_to_sv(Eval_Error_Class cls);
 void eval_report_reset(Evaluator_Context *ctx);
 void eval_report_record_diag(Evaluator_Context *ctx,
                              Event_Diag_Severity sev,
-                             Eval_Diag_Code code,
-                             Eval_Error_Class cls);
+                             Eval_Diag_Code code);
 void eval_report_finalize(Evaluator_Context *ctx);
 bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
 bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg);

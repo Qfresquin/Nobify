@@ -82,17 +82,33 @@ bool eval_should_stop(Evaluator_Context *ctx) {
 // -----------------------------------------------------------------------------
 
 Eval_Result eval_emit_diag(Evaluator_Context *ctx,
-                           Event_Diag_Severity sev,
+                           Eval_Diag_Code code,
                            String_View component,
                            String_View command,
                            Event_Origin origin,
                            String_View cause,
                            String_View hint) {
+    return eval_emit_diag_with_severity(ctx,
+                                        eval_diag_default_severity(code),
+                                        code,
+                                        component,
+                                        command,
+                                        origin,
+                                        cause,
+                                        hint);
+}
+
+Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
+                                         Event_Diag_Severity sev,
+                                         Eval_Diag_Code code,
+                                         String_View component,
+                                         String_View command,
+                                         Event_Origin origin,
+                                         String_View cause,
+                                         String_View hint) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
 
-    Eval_Diag_Code code = EVAL_ERR_NONE;
-    Eval_Error_Class cls = EVAL_ERR_CLASS_NONE;
-    eval_diag_classify(component, cause, sev, &code, &cls);
+    Eval_Error_Class cls = eval_diag_error_class(code);
 
     Event_Diag_Severity effective_sev = eval_compat_effective_severity(ctx, sev);
 
@@ -121,7 +137,7 @@ Eval_Result eval_emit_diag(Evaluator_Context *ctx,
         (void)ctx_oom(ctx);
         return eval_result_fatal();
     }
-    eval_report_record_diag(ctx, effective_sev, code, cls);
+    eval_report_record_diag(ctx, effective_sev, code);
     (void)eval_compat_decide_on_diag(ctx, effective_sev);
     if (eval_should_stop(ctx)) return eval_result_fatal();
     if (effective_sev == EV_DIAG_ERROR) return eval_result_soft_error();
@@ -189,13 +205,7 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
     }
     if (ok) {
         Cmake_Event_Origin origin = {0};
-        ok = EVAL_DIAG(ctx,
-                            EV_DIAG_WARNING,
-                            nob_sv_from_cstr("eval_legacy"),
-                            nob_sv_from_cstr("variable_watch"),
-                            origin,
-                            nob_sv_from_cstr("variable_watch() observed a watched variable mutation"),
-                            key);
+        ok = EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_legacy"), nob_sv_from_cstr("variable_watch"), origin, nob_sv_from_cstr("variable_watch() observed a watched variable mutation"), key);
     }
     ctx->in_variable_watch_notification = false;
     return ok;
@@ -656,13 +666,7 @@ static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node) {
     if (idx < arena_arr_len(a) && eval_sv_eq_ci_lit(a[idx], "RANGE")) {
         idx++;
         if (arena_arr_len(a) - idx < 1 || arena_arr_len(a) - idx > 3) {
-            (void)EVAL_DIAG(ctx,
-                            EV_DIAG_ERROR,
-                            nob_sv_from_cstr("flow"),
-                            nob_sv_from_cstr("foreach"),
-                            eval_origin_from_node(ctx, node),
-                            nob_sv_from_cstr("foreach(RANGE ...) expects 1..3 numeric arguments"),
-                            nob_sv_from_cstr("Usage: foreach(v RANGE stop) or RANGE start stop [step]"));
+            (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"), eval_origin_from_node(ctx, node), nob_sv_from_cstr("foreach(RANGE ...) expects 1..3 numeric arguments"), nob_sv_from_cstr("Usage: foreach(v RANGE stop) or RANGE start stop [step]"));
             return eval_result_from_ctx(ctx);
         }
         long start = 0, stop = 0, step = 1;
@@ -674,10 +678,7 @@ static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node) {
             if (arena_arr_len(a) - idx == 3 && !sv_parse_long(a[idx + 2], &step)) return eval_result_fatal();
         }
         if (step == 0) {
-            (void)EVAL_DIAG(ctx, EV_DIAG_ERROR, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"),
-                            eval_origin_from_node(ctx, node),
-                            nob_sv_from_cstr("foreach(RANGE ...) step must be non-zero"),
-                            nob_sv_from_cstr(""));
+            (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), nob_sv_from_cstr("foreach"), eval_origin_from_node(ctx, node), nob_sv_from_cstr("foreach(RANGE ...) step must be non-zero"), nob_sv_from_cstr(""));
             return eval_result_from_ctx(ctx);
         }
         if (arena_arr_len(a) - idx == 1) start = 0;
@@ -845,13 +846,14 @@ static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node) {
         }
     }
     ctx->loop_depth--;
-    Eval_Result loop_diag = EVAL_DIAG_RESULT(ctx,
-                                             EV_DIAG_ERROR,
-                                             nob_sv_from_cstr("while"),
-                                             nob_sv_from_cstr("while"),
-                                             origin,
-                                             nob_sv_from_cstr("Iteration limit exceeded"),
-                                             nob_sv_from_cstr("Infinite loop detected"));
+    Eval_Result loop_diag = EVAL_DIAG_RESULT_SEV(ctx,
+                                                 EV_DIAG_ERROR,
+                                                 EVAL_DIAG_OUT_OF_RANGE,
+                                                 nob_sv_from_cstr("while"),
+                                                 nob_sv_from_cstr("while"),
+                                                 origin,
+                                                 nob_sv_from_cstr("Iteration limit exceeded"),
+                                                 nob_sv_from_cstr("Infinite loop detected"));
     return eval_result_merge(eval_result_soft_error(), loop_diag);
 }
 
@@ -1398,13 +1400,7 @@ static bool eval_lex_external_tokens(Evaluator_Context *ctx,
             o.file_path = nob_sv_from_cstr(path_c);
             o.line = token.line;
             o.col = token.col;
-            EVAL_DIAG(ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("lexer"),
-                           nob_sv_from_cstr("parse"),
-                           o,
-                           nob_sv_from_cstr("Invalid token while evaluating external file"),
-                           nob_sv_from_cstr("Check escaping, quoting and variable syntax"));
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_PARSE_ERROR, nob_sv_from_cstr("lexer"), nob_sv_from_cstr("parse"), o, nob_sv_from_cstr("Invalid token while evaluating external file"), nob_sv_from_cstr("Check escaping, quoting and variable syntax"));
             return false;
         }
         if (!token_list_append(ctx->arena, out_tokens, token)) {

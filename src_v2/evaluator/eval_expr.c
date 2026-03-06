@@ -475,13 +475,7 @@ String_View eval_expand_vars(struct Evaluator_Context *ctx, String_View input) {
         // Proper cycle detection: any repeated expansion state means cycle.
         for (size_t j = 0; j < seen_count; j++) {
             if (sv_eq(next, seen[j])) {
-                (void)EVAL_DIAG(ctx,
-                                     EV_DIAG_WARNING,
-                                     nob_sv_from_cstr("eval_expr"),
-                                     nob_sv_from_cstr("expand_vars"),
-                                     (Cmake_Event_Origin){0},
-                                     nob_sv_from_cstr("Cyclic variable expansion detected"),
-                                     nob_sv_from_cstr("Check mutually recursive set() definitions"));
+                (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("expand_vars"), (Cmake_Event_Origin){0}, nob_sv_from_cstr("Cyclic variable expansion detected"), nob_sv_from_cstr("Check mutually recursive set() definitions"));
                 return next;
             }
         }
@@ -490,13 +484,7 @@ String_View eval_expand_vars(struct Evaluator_Context *ctx, String_View input) {
         cur = next;
     }
 
-    (void)EVAL_DIAG(ctx,
-                         EV_DIAG_WARNING,
-                         nob_sv_from_cstr("eval_expr"),
-                         nob_sv_from_cstr("expand_vars"),
-                         (Cmake_Event_Origin){0},
-                         nob_sv_from_cstr("Recursion limit exceeded"),
-                         nob_sv_from_cstr("Tune CMAKE_NOBIFY_EXPAND_MAX_RECURSION or NOBIFY_EVAL_EXPAND_MAX_RECURSION"));
+    (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("expand_vars"), (Cmake_Event_Origin){0}, nob_sv_from_cstr("Recursion limit exceeded"), nob_sv_from_cstr("Tune CMAKE_NOBIFY_EXPAND_MAX_RECURSION or NOBIFY_EVAL_EXPAND_MAX_RECURSION"));
     return cur;
 }
 
@@ -522,13 +510,7 @@ static bool parse_primary(Expr *e) {
         if (expr_has(e) && eval_sv_eq_ci_lit(expr_peek(e), ")")) {
             expr_next(e);
         } else {
-            EVAL_DIAG(e->ctx,
-                           EV_DIAG_ERROR,
-                           nob_sv_from_cstr("eval_expr"),
-                           nob_sv_from_cstr("if"),
-                           e->origin,
-                           nob_sv_from_cstr("Missing ')' in expression"),
-                           nob_sv_from_cstr("Close parentheses"));
+            EVAL_DIAG_EMIT_SEV(e->ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("if"), e->origin, nob_sv_from_cstr("Missing ')' in expression"), nob_sv_from_cstr("Close parentheses"));
         }
         return v;
     }
@@ -836,13 +818,7 @@ bool eval_condition(struct Evaluator_Context *ctx, const Args *raw_condition) {
     bool v = parse_expr(&e);
 
     if (e.pos != e.count) {
-        EVAL_DIAG(ctx,
-                       EV_DIAG_ERROR,
-                       nob_sv_from_cstr("eval_expr"),
-                       nob_sv_from_cstr("if"),
-                       e.origin,
-                       nob_sv_from_cstr("Invalid if() syntax"),
-                       nob_sv_from_cstr("Check operators and parentheses"));
+        EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("if"), e.origin, nob_sv_from_cstr("Invalid if() syntax"), nob_sv_from_cstr("Check operators and parentheses"));
         return false;
     }
 

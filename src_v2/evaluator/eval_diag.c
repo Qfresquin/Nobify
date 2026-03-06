@@ -194,8 +194,7 @@ Eval_Result eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     } else if (mode == MSG_MODE_CHECK_PASS || mode == MSG_MODE_CHECK_FAIL) {
         String_View start_msg = {0};
         if (!msg_check_stack_pop(ctx, &start_msg)) {
-            if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "message", nob_sv_from_cstr("message(CHECK_PASS/CHECK_FAIL) requires a preceding CHECK_START"),
-                                nob_sv_from_cstr("Use message(CHECK_START ...) before CHECK_PASS/CHECK_FAIL"))) {
+            if (!EVAL_NODE_ORIGIN_DIAG_BOOL_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_SCRIPT_ERROR, "message", nob_sv_from_cstr("message(CHECK_PASS/CHECK_FAIL) requires a preceding CHECK_START"), nob_sv_from_cstr("Use message(CHECK_START ...) before CHECK_PASS/CHECK_FAIL"))) {
                 return eval_result_fatal();
             }
             return eval_result_from_ctx(ctx);
@@ -235,13 +234,13 @@ Eval_Result eval_handle_message(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (mode == MSG_MODE_FATAL_ERROR || mode == MSG_MODE_SEND_ERROR) {
-        if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "message", msg, nob_sv_from_cstr(""))) {
+        if (!EVAL_NODE_ORIGIN_DIAG_BOOL_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_SCRIPT_ERROR, "message", msg, nob_sv_from_cstr(""))) {
             return eval_result_fatal();
         }
         return eval_result_from_ctx(ctx);
     }
     if (mode == MSG_MODE_WARNING || mode == MSG_MODE_AUTHOR_WARNING || mode == MSG_MODE_DEPRECATION) {
-        if (!EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_WARNING, "message", msg, nob_sv_from_cstr(""))) {
+        if (!EVAL_NODE_ORIGIN_DIAG_BOOL_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_SCRIPT_WARNING, "message", msg, nob_sv_from_cstr(""))) {
             return eval_result_fatal();
         }
     }

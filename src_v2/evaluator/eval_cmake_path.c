@@ -12,8 +12,7 @@ static void cmk_path_error(Evaluator_Context *ctx,
                            Cmake_Event_Origin o,
                            const char *cause,
                            String_View hint) {
-    EVAL_NODE_ORIGIN_DIAG(ctx, node, o, EV_DIAG_ERROR, "dispatcher", nob_sv_from_cstr(cause),
-                   hint);
+    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr(cause), hint);
 }
 
 static size_t path_last_separator_index(String_View path) {

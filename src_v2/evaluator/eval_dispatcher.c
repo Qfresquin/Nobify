@@ -88,13 +88,14 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
 
     Event_Diag_Severity sev = EV_DIAG_WARNING;
     if (ctx->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
-    return EVAL_DIAG_RESULT(ctx,
-                            sev,
-                            nob_sv_from_cstr("dispatcher"),
-                            node->as.cmd.name,
-                            o,
-                            nob_sv_from_cstr("Unknown command"),
-                            ctx->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
-                                ? nob_sv_from_cstr("No-op with warning by policy")
-                                : nob_sv_from_cstr("Ignored during evaluation"));
+    return EVAL_DIAG_RESULT_SEV(ctx,
+                                sev,
+                                EVAL_DIAG_UNKNOWN_COMMAND,
+                                nob_sv_from_cstr("dispatcher"),
+                                node->as.cmd.name,
+                                o,
+                                nob_sv_from_cstr("Unknown command"),
+                                ctx->unsupported_policy == EVAL_UNSUPPORTED_NOOP_WARN
+                                    ? nob_sv_from_cstr("No-op with warning by policy")
+                                    : nob_sv_from_cstr("Ignored during evaluation"));
 }

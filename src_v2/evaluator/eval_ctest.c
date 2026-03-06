@@ -35,13 +35,7 @@ static bool ctest_emit_diag(Evaluator_Context *ctx,
                             Cmake_Diag_Severity severity,
                             String_View cause,
                             String_View hint) {
-    return EVAL_DIAG(ctx,
-                          severity,
-                          nob_sv_from_cstr("eval_ctest"),
-                          node->as.cmd.name,
-                          eval_origin_from_node(ctx, node),
-                          cause,
-                          hint);
+    return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_ctest"), node->as.cmd.name, eval_origin_from_node(ctx, node), cause, hint);
 }
 
 static bool ctest_set_field(Evaluator_Context *ctx,

@@ -49,13 +49,7 @@ bool eval_opt_parse_walk(Evaluator_Context *ctx,
             if (cfg.unknown_as_positional) {
                 if (on_positional && !on_positional(ctx, userdata, tok, i)) return false;
             } else if (cfg.warn_unknown) {
-                EVAL_DIAG(ctx,
-                               EV_DIAG_WARNING,
-                               cfg.component,
-                               cfg.command,
-                               cfg.origin,
-                               nob_sv_from_cstr("Unknown option token"),
-                               tok);
+                EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, cfg.component, cfg.command, cfg.origin, nob_sv_from_cstr("Unknown option token"), tok);
                 if (eval_should_stop(ctx)) return false;
             }
             i++;
@@ -69,13 +63,7 @@ bool eval_opt_parse_walk(Evaluator_Context *ctx,
 
         if (spec->kind == EVAL_OPT_SINGLE) {
             if (i >= arena_arr_len(args)) {
-                EVAL_DIAG(ctx,
-                               EV_DIAG_ERROR,
-                               cfg.component,
-                               cfg.command,
-                               cfg.origin,
-                               nob_sv_from_cstr("Missing value after option"),
-                               tok);
+                EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, cfg.component, cfg.command, cfg.origin, nob_sv_from_cstr("Missing value after option"), tok);
                 return false;
             }
             if (!eval_sv_arr_push_temp(ctx, &values, args[i])) return false;

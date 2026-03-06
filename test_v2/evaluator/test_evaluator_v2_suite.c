@@ -218,13 +218,14 @@ static Eval_Result native_test_handler_snapshot_set_strict_and_warn(Evaluator_Co
     }
 
     Event_Origin o = eval_origin_from_node(ctx, node);
-    Eval_Result diag = eval_emit_diag(ctx,
-                                      EV_DIAG_WARNING,
-                                      nob_sv_from_cstr("native_snapshot"),
-                                      node->as.cmd.name,
-                                      o,
-                                      nob_sv_from_cstr("phase1 warning"),
-                                      nob_sv_from_cstr(""));
+    Eval_Result diag = eval_emit_diag_with_severity(ctx,
+                                                    EV_DIAG_WARNING,
+                                                    EVAL_DIAG_SCRIPT_WARNING,
+                                                    nob_sv_from_cstr("native_snapshot"),
+                                                    node->as.cmd.name,
+                                                    o,
+                                                    nob_sv_from_cstr("phase1 warning"),
+                                                    nob_sv_from_cstr(""));
     if (eval_result_is_fatal(diag)) return diag;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("SNAPSHOT_PHASE1_NON_FATAL"), nob_sv_from_cstr("1"))) {
         return eval_result_fatal();
@@ -235,13 +236,14 @@ static Eval_Result native_test_handler_snapshot_set_strict_and_warn(Evaluator_Co
 static Eval_Result native_test_handler_snapshot_warn_only(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || !node) return eval_result_fatal();
     Event_Origin o = eval_origin_from_node(ctx, node);
-    return eval_emit_diag(ctx,
-                          EV_DIAG_WARNING,
-                          nob_sv_from_cstr("native_snapshot"),
-                          node->as.cmd.name,
-                          o,
-                          nob_sv_from_cstr("phase2 warning"),
-                          nob_sv_from_cstr(""));
+    return eval_emit_diag_with_severity(ctx,
+                                        EV_DIAG_WARNING,
+                                        EVAL_DIAG_SCRIPT_WARNING,
+                                        nob_sv_from_cstr("native_snapshot"),
+                                        node->as.cmd.name,
+                                        o,
+                                        nob_sv_from_cstr("phase2 warning"),
+                                        nob_sv_from_cstr(""));
 }
 
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
@@ -6318,6 +6320,110 @@ TEST(evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_
     TEST_PASS();
 }
 
+TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "unknown_diag_case()\n"
+        "cmake_policy(POP)\n"
+        "file(READ missing_diag_input.txt OUT_VAR)\n"
+        "math()\n"
+        "message(WARNING warn-msg)\n"
+        "message(SEND_ERROR err-msg)\n"
+        "separate_arguments(BAD_PROGRAM UNIX_COMMAND PROGRAM alpha)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 2);
+    ASSERT(report->error_count == 5);
+    ASSERT(report->input_error_count == 3);
+    ASSERT(report->engine_limitation_count == 2);
+    ASSERT(report->io_env_error_count == 1);
+    ASSERT(report->policy_conflict_count == 1);
+    ASSERT(report->unsupported_count == 2);
+
+    bool saw_unknown_command = false;
+    bool saw_policy_conflict = false;
+    bool saw_file_io_failure = false;
+    bool saw_math_missing_required = false;
+    bool saw_message_warning = false;
+    bool saw_message_error = false;
+    bool saw_not_implemented = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Unknown command"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_WARNING);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_UNKNOWN_COMMAND")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("ENGINE_LIMITATION")));
+            saw_unknown_command = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_policy(POP) called without matching PUSH"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_POLICY_CONFLICT")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("POLICY_CONFLICT")));
+            saw_policy_conflict = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("file(READ) failed to read file"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_IO_FAILURE")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("IO_ENV_ERROR")));
+            saw_file_io_failure = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("math() requires a subcommand"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_MISSING_REQUIRED")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
+            saw_math_missing_required = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("warn-msg"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_WARNING);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_SCRIPT_WARNING")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
+            saw_message_warning = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("err-msg"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_SCRIPT_ERROR")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
+            saw_message_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"))) {
+            ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
+            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_NOT_IMPLEMENTED")));
+            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("ENGINE_LIMITATION")));
+            saw_not_implemented = true;
+        }
+    }
+
+    ASSERT(saw_unknown_command);
+    ASSERT(saw_policy_conflict);
+    ASSERT(saw_file_io_failure);
+    ASSERT(saw_math_missing_required);
+    ASSERT(saw_message_warning);
+    ASSERT(saw_message_error);
+    ASSERT(saw_not_implemented);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_string_hash_repeat_and_json_full_surface) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -7154,6 +7260,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
+    test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
     test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed);

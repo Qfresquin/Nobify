@@ -1,5 +1,7 @@
 #include "eval_report.h"
 
+#include "eval_diag_classify.h"
+
 #include <string.h>
 
 void eval_report_reset(Evaluator_Context *ctx) {
@@ -10,9 +12,10 @@ void eval_report_reset(Evaluator_Context *ctx) {
 
 void eval_report_record_diag(Evaluator_Context *ctx,
                              Cmake_Diag_Severity sev,
-                             Eval_Diag_Code code,
-                             Eval_Error_Class cls) {
+                             Eval_Diag_Code code) {
     if (!ctx) return;
+    Eval_Error_Class cls = eval_diag_error_class(code);
+
     if (sev == EV_DIAG_WARNING) ctx->run_report.warning_count++;
     else ctx->run_report.error_count++;
 
@@ -21,7 +24,7 @@ void eval_report_record_diag(Evaluator_Context *ctx,
     else if (cls == EVAL_ERR_CLASS_IO_ENV_ERROR) ctx->run_report.io_env_error_count++;
     else if (cls == EVAL_ERR_CLASS_POLICY_CONFLICT) ctx->run_report.policy_conflict_count++;
 
-    if (code == EVAL_ERR_UNSUPPORTED) ctx->run_report.unsupported_count++;
+    if (eval_diag_counts_as_unsupported(code)) ctx->run_report.unsupported_count++;
     eval_report_finalize(ctx);
 }
 
