@@ -51,6 +51,13 @@ Status: decision-complete roadmap for evaluator architecture/documentation align
 - Split oversized modules into domain-focused units (for example string/target/file families).
 - Add shared internal headers where needed for internal contracts and helper reuse.
 - Keep behavioral contracts unchanged while reducing maintenance and review surface area.
+- Status: completed in the workspace on March 6, 2026.
+- D1 completed `eval_file` decomposition into dispatcher + path/glob/rw/copy/extra/fsops/transfer units.
+- D2 completed `eval_string` decomposition into dispatcher + text/regex/json/misc units.
+- D3 completed `eval_target` decomposition into core/property handling + usage/linkage + `source_group()` units.
+- D4 completed `eval_package` decomposition into `find_package()` core + shared `find_*` item-resolution unit.
+- D5 completed `eval_flow` decomposition into shared helpers + block + `cmake_language()` + process units.
+- D6 completed `eval_try_compile` decomposition into shared helpers + parse + compile exec + `try_run` units.
 
 ### Phase E — Incremental Subsystem Extraction Boundaries
 

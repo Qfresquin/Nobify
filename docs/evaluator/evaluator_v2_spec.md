@@ -42,6 +42,10 @@ Primary implementation files:
 - `src_v2/evaluator/eval_string_json.c`
 - `src_v2/evaluator/eval_string_misc.c`
 - `src_v2/evaluator/eval_flow.c`
+- `src_v2/evaluator/eval_flow_internal.h`
+- `src_v2/evaluator/eval_flow_block.c`
+- `src_v2/evaluator/eval_flow_cmake_language.c`
+- `src_v2/evaluator/eval_flow_process.c`
 - `src_v2/evaluator/eval_file.c`
 - `src_v2/evaluator/eval_file_internal.h`
 - `src_v2/evaluator/eval_file_path.c`
@@ -52,6 +56,18 @@ Primary implementation files:
 - `src_v2/evaluator/eval_file_fsops.c`
 - `src_v2/evaluator/eval_file_transfer.c`
 - `src_v2/evaluator/eval_file_generate_lock_archive.c`
+- `src_v2/evaluator/eval_package.c`
+- `src_v2/evaluator/eval_package_internal.h`
+- `src_v2/evaluator/eval_package_find_item.c`
+- `src_v2/evaluator/eval_target.c`
+- `src_v2/evaluator/eval_target_internal.h`
+- `src_v2/evaluator/eval_target_usage.c`
+- `src_v2/evaluator/eval_target_source_group.c`
+- `src_v2/evaluator/eval_try_compile.c`
+- `src_v2/evaluator/eval_try_compile_internal.h`
+- `src_v2/evaluator/eval_try_compile_parse.c`
+- `src_v2/evaluator/eval_try_compile_exec.c`
+- `src_v2/evaluator/eval_try_run.c`
 - `src_v2/evaluator/eval_vars.c`
 - `src_v2/evaluator/eval_include.c`
 

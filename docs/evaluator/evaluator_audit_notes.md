@@ -47,16 +47,20 @@ Current quantitative baseline:
 - Capability labels: `67 FULL` / `52 PARTIAL` / `0 MISSING`
 - Fallback labels: `116 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
 - Largest implementation files by size:
-  - `eval_target.c` (`2239` lines)
-  - `eval_package.c` (`1823` lines)
-  - `eval_flow.c` (`1766` lines)
-  - `eval_try_compile.c` (`1500` lines)
+  - `eval_target.c` (`1440` lines)
   - `eval_file_extra.c` (`1295` lines)
-- `evaluator.c` after Phase E1 execution-service extraction: `977` lines
+- `eval_utils.c` (`1242` lines)
+- `eval_vars.c` (`1222` lines)
+- `eval_list.c` (`1169` lines)
+- `evaluator.c` after Phase E1 execution-service extraction: `987` lines
 - `eval_file.c` after Phase D1 dispatcher split: `57` lines
 - `eval_file_{path,glob,rw,copy}.c`: `409` / `422` / `612` / `637` lines
 - `eval_string.c` after Phase D2 dispatcher split: `58` lines
 - `eval_string_{text,regex,json,misc}.c`: `545` / `185` / `874` / `541` lines
+- `eval_target` after Phase D3 split: `1440` / `481` / `227` lines (`core` / `usage` / `source_group`)
+- `eval_package` after Phase D4 split: `1078` / `733` lines (`core` / `find_item`)
+- `eval_flow` after Phase D5 split: `269` / `251` / `459` / `784` lines (`core` / `block` / `cmake_language` / `process`)
+- `eval_try_compile` after Phase D6 split: `243` / `414` / `568` / `121` lines (`core` / `parse` / `exec` / `try_run`)
 
 ## 4. Positive Findings
 
@@ -70,6 +74,10 @@ Current strengths worth preserving:
 - Phase E1 reduced `evaluator.c` by extracting execution traversal, user-command lifecycle, and nested file execution without changing public API or golden output.
 - Phase D1 reduced `eval_file.c` to a thin dispatcher/orchestrator and moved path/glob/rw/copy families into explicit internal modules without changing public API or golden output.
 - Phase D2 reduced `eval_string.c` to a thin dispatcher and moved text/regex/json/misc families into explicit internal modules without changing public API or golden output.
+- Phase D3 split `eval_target` into core/property handling, usage/linkage handlers, and `source_group()` helpers without changing public API or golden output.
+- Phase D4 split `eval_package` into `find_package()` core flow and shared `find_*` item resolution without changing public API or golden output.
+- Phase D5 split `eval_flow` into shared helpers plus dedicated block, `cmake_language()`, and process-execution modules without changing public API or golden output.
+- Phase D6 split `eval_try_compile` into shared helpers plus parse/exec/`try_run` modules without changing public API or golden output.
 
 ## 5. Prioritized Findings
 
@@ -83,13 +91,14 @@ Current strengths worth preserving:
 ### F-06: File-size concentration
 
 Evidence:
-- Multiple core `.c` files still exceed ~1500 lines (`eval_target.c`, `eval_package.c`, `eval_flow.c`, `eval_try_compile.c`), even after the execution-service split reduced `evaluator.c` to `977` lines, Phase D1 reduced `eval_file.c` to `57` lines, and Phase D2 reduced `eval_string.c` to `58` lines.
+- Phase D completed the planned decomposition of `eval_target`, `eval_package`, `eval_flow`, and `eval_try_compile`.
+- The remaining size hotspots now cluster in the `1.1k-1.4k` range (`eval_target.c`, `eval_file_extra.c`, `eval_utils.c`, `eval_vars.c`, `eval_list.c`, `eval_cmake_path.c`) instead of the old `1.5k-2.2k` tier.
 
 Risk:
 - Review complexity and regression probability increase, especially for cross-cutting edits.
 
 Recommendation:
-- Continue refactoring by domain boundaries, with `eval_target` now the clearest remaining hotspot, followed by `eval_package`, `eval_flow`, and `eval_try_compile`.
+- Treat Phase D as complete and shift the next decomposition wave toward the remaining post-D hotspot tier, starting with `eval_target` residual core, then `eval_file_extra`, `eval_utils`, `eval_vars`, and `eval_list`.
 
 ### F-07: Coverage debt concentration
 
@@ -108,7 +117,7 @@ Recommendation:
 Priority tiers for next engineering/doc pass:
 
 1. P0
-- Start decomposition of largest evaluator files with stable internal interfaces (F-06).
+- Plan the post-Phase-D hotspot tier with the same stable-internal-interface rule used for Phases D1-D6 (F-06).
 - Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
 
 ## 8. Closed / Documented
