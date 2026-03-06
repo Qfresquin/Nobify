@@ -1,5 +1,7 @@
 #include "eval_try_compile_internal.h"
 
+#include <sys/stat.h>
+
 bool try_compile_file_exists_sv(Evaluator_Context *ctx, String_View path) {
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
@@ -175,6 +177,9 @@ bool try_compile_append_file_to_log(Evaluator_Context *ctx,
                                     Nob_String_Builder *log) {
     if (!ctx || !path || !log) return false;
     if (nob_file_exists(path) == 0) return true;
+
+    struct stat st = {0};
+    if (stat(path, &st) == 0 && st.st_size == 0) return true;
 
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(path, &sb)) return true;

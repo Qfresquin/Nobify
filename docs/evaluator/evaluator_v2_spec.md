@@ -247,6 +247,9 @@ Current intentionally visible limits:
 - `while()` execution is guarded by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`, defaulting to `10000`.
 - the `while()` guard is read once at `while` node entry; mutations inside the loop affect only the next `while()` node.
 - invalid `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` values emit a warning and fall back to `10000`.
+- `try_run()` currently supports the source-file/native-execution subset built on the `try_compile(SOURCE ...)` path.
+- `try_run(PROJECT ...)` is rejected in the current batch.
+- the `try_run()` cross-compiling answer-file workflow is not implemented yet; current support is native execution only.
 - native dispatcher lookup is case-insensitive and index-backed through the runtime registry.
 - capability lookup shares that same native registry lookup path for native-command introspection only.
 - unknown-command fallback is generic and does not dynamically apply capability metadata.

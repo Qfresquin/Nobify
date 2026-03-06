@@ -23,8 +23,7 @@ Primary files for this matrix:
 - `src_v2/evaluator/evaluator.c` (structural nodes outside dispatcher)
 
 Historical reference set (archived):
-- `docs/Evaluatorr/evaluator_v2_coverage_status.md`
-- `docs/Evaluatorr/event_ir_coverage_matrix.md`
+- no evaluator coverage archive is currently kept in-tree; previous `docs/Evaluatorr/...` references were stale path leftovers.
 
 ## 3. Method and Legend
 
@@ -43,7 +42,7 @@ Important boundary:
 
 ## 4. Registry Coverage Snapshot
 
-Snapshot date (workspace): March 5, 2026.
+Snapshot date (workspace): March 6, 2026.
 
 ### 4.1 Built-in Command Counts
 
@@ -169,6 +168,7 @@ write_file
 Current high-level interpretation:
 - core modern command surface has broad `FULL` coverage,
 - residual risk is concentrated in `ctest_*`, legacy wrappers, and query/introspection paths,
+- `try_run` remains correctly tagged `PARTIAL`: native source-file execution works, but `PROJECT` signature support and the cross-compiling answer-file workflow are still unimplemented,
 - fallback metadata remains overwhelmingly `NOOP_WARN`, so runtime strictness is mostly shaped by command handlers and compat policy rather than fallback enum diversity.
 
 ## 10. Priority Promotion Candidates
@@ -176,7 +176,7 @@ Current high-level interpretation:
 Highest-leverage candidates to reduce `PARTIAL` footprint:
 1. `ctest_*` cluster (largest group, 13 commands).
 2. `target_compile_features` / `target_precompile_headers` / `target_sources`.
-3. `try_run`.
+3. `try_run` (`PROJECT` signature + cross-compiling answer-file workflow).
 4. `get_property` and related query wrappers.
 5. `cmake_language` advanced surface.
 

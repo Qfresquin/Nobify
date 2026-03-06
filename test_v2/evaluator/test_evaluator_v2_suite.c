@@ -6,6 +6,7 @@
 #include "arena_dyn.h"
 #include "diagnostics.h"
 #include "eval_dispatcher.h"
+#include "eval_try_compile_internal.h"
 #include "evaluator.h"
 #include "evaluator_internal.h"
 #include "event_ir.h"
@@ -36,6 +37,31 @@ typedef struct {
     size_t count;
     size_t capacity;
 } Evaluator_Case_List;
+
+static Nob_String_Builder g_evaluator_captured_nob_logs = {0};
+static nob_log_handler *g_evaluator_prev_log_handler = NULL;
+
+static void evaluator_capture_nob_log(Nob_Log_Level level, const char *fmt, va_list args) {
+    char message[4096] = {0};
+    va_list copy;
+    va_copy(copy, args);
+    int n = vsnprintf(message, sizeof(message), fmt, copy);
+    va_end(copy);
+    if (n < 0) return;
+    nob_sb_appendf(&g_evaluator_captured_nob_logs, "[%d] %s\n", (int)level, message);
+}
+
+static void evaluator_begin_nob_log_capture(void) {
+    nob_sb_free(g_evaluator_captured_nob_logs);
+    g_evaluator_captured_nob_logs = (Nob_String_Builder){0};
+    g_evaluator_prev_log_handler = nob_get_log_handler();
+    nob_set_log_handler(evaluator_capture_nob_log);
+}
+
+static void evaluator_end_nob_log_capture(void) {
+    nob_set_log_handler(g_evaluator_prev_log_handler);
+    g_evaluator_prev_log_handler = NULL;
+}
 
 static void evaluator_set_source_date_epoch_value(const char *value) {
 #if defined(_WIN32)
@@ -6055,6 +6081,56 @@ TEST(evaluator_find_item_command_rejects_missing_registry_or_validator_values) {
     TEST_PASS();
 }
 
+TEST(evaluator_find_item_command_rejects_malformed_env_clause) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "find_file(BAD_ENV_END NAMES ENV)\n"
+        "find_file(BAD_ENV_KEYWORD NAMES ENV PATHS find_items2)\n");
+    Eval_Result result = evaluator_run(ctx, root);
+    ASSERT(result.kind == EVAL_RESULT_SOFT_ERROR);
+    ASSERT(!ctx->oom);
+    ASSERT(!ctx->stop_requested);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    size_t malformed_env_diags = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("find_file"))) continue;
+        if (!nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_MISSING_REQUIRED"))) continue;
+        if (!nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_*(ENV) requires an environment variable name"))) continue;
+        malformed_env_diags++;
+    }
+    ASSERT(malformed_env_diags == 2);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_get_filename_component_covers_documented_modes) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -8013,6 +8089,44 @@ TEST(evaluator_try_compile_failure_populates_output_variable) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_compile_empty_capture_file_is_silent) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_write_entire_file("tc_empty_capture.txt", "", 0));
+
+    Nob_String_Builder log = {0};
+    evaluator_begin_nob_log_capture();
+    ASSERT(try_compile_append_file_to_log(ctx, "./tc_empty_capture.txt", &log));
+    evaluator_end_nob_log_capture();
+
+    ASSERT(log.count == 0);
+    ASSERT(g_evaluator_captured_nob_logs.count == 0);
+
+    nob_sb_free(log);
+    nob_sb_free(g_evaluator_captured_nob_logs);
+    g_evaluator_captured_nob_logs = (Nob_String_Builder){0};
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -8110,6 +8224,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_find_item_command_rejects_unknown_option(passed, failed);
     test_evaluator_find_item_command_rejects_missing_output_variable(passed, failed);
     test_evaluator_find_item_command_rejects_missing_registry_or_validator_values(passed, failed);
+    test_evaluator_find_item_command_rejects_malformed_env_clause(passed, failed);
     test_evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies(passed, failed);
     test_evaluator_get_filename_component_covers_documented_modes(passed, failed);
     test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);
@@ -8135,6 +8250,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_file_download_probe_mode_without_destination(passed, failed);
     test_evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak(passed, failed);
     test_evaluator_try_compile_failure_populates_output_variable(passed, failed);
+    test_evaluator_try_compile_empty_capture_file_is_silent(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

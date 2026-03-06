@@ -131,17 +131,28 @@ static bool find_item_list_append_env(Evaluator_Context *ctx, SV_List *list, Str
 }
 
 static bool find_item_collect_multi(Evaluator_Context *ctx,
+                                    const Node *node,
                                     const SV_List *args,
                                     size_t *io_index,
                                     SV_List *out_values) {
-    if (!ctx || !args || !io_index || !out_values) return false;
+    if (!ctx || !node || !args || !io_index || !out_values) return false;
     while (*io_index < arena_arr_len(*args)) {
         String_View value = (*args)[*io_index];
         if (find_item_is_keyword(value)) break;
         if (find_item_keyword_eq(value, "ENV")) {
             (*io_index)++;
-            if (*io_index >= arena_arr_len(*args)) return ctx_oom(ctx);
-            if (find_item_is_keyword((*args)[*io_index])) return false;
+            if (*io_index >= arena_arr_len(*args) || find_item_is_keyword((*args)[*io_index])) {
+                Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                     node,
+                                                     o,
+                                                     EV_DIAG_ERROR,
+                                                     EVAL_DIAG_MISSING_REQUIRED,
+                                                     "dispatcher",
+                                                     nob_sv_from_cstr("find_*(ENV) requires an environment variable name"),
+                                                     nob_sv_from_cstr("Usage: find_<cmd>(... <section> ENV <env-var> ...)"));
+                return false;
+            }
             if (!find_item_list_append_env(ctx, out_values, (*args)[*io_index])) return false;
             (*io_index)++;
             continue;
@@ -245,22 +256,22 @@ static bool find_item_parse_option(Evaluator_Context *ctx,
     switch (id) {
         case FIND_ITEM_OPT_NAMES: {
             size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->names)) return false;
+            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->names)) return false;
             return true;
         }
         case FIND_ITEM_OPT_HINTS: {
             size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->hints)) return false;
+            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->hints)) return false;
             return true;
         }
         case FIND_ITEM_OPT_PATHS: {
             size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->paths)) return false;
+            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->paths)) return false;
             return true;
         }
         case FIND_ITEM_OPT_PATH_SUFFIXES: {
             size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->path_suffixes)) return false;
+            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->path_suffixes)) return false;
             return true;
         }
         case FIND_ITEM_OPT_DOC:
@@ -349,7 +360,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (!find_item_validate_out_var(ctx, node, args, out_opt)) {
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        return false;
     }
 
     static const Eval_Opt_Spec k_find_item_specs[] = {
@@ -398,7 +409,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
                              find_item_parse_option,
                              find_item_parse_positional,
                              &state)) {
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        return false;
     }
 
     if (arena_arr_len(out_opt->names) == 0) {
@@ -410,7 +421,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
                                               "dispatcher",
                                               nob_sv_from_cstr("find_*() requires at least one search name"),
                                               nob_sv_from_cstr("Usage: find_<cmd>(<out-var> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        return false;
     }
     return true;
 }
@@ -869,33 +880,34 @@ static bool find_item_set_result(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool find_item_handle(Evaluator_Context *ctx,
-                             const Node *node,
-                             Find_Item_Kind kind) {
-    if (!ctx || !node || eval_should_stop(ctx)) return false;
+static Eval_Result find_item_handle(Evaluator_Context *ctx,
+                                    const Node *node,
+                                    Find_Item_Kind kind) {
+    if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     Find_Item_Options opt = {0};
-    if (!find_item_parse_options(ctx, node, args, &opt)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!find_item_parse_options(ctx, node, args, &opt)) return eval_result_from_ctx(ctx);
 
     String_View found = nob_sv_from_cstr("");
-    if (!find_item_search(ctx, &opt, kind, &found)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
-    return find_item_set_result(ctx, node, &opt, found);
+    if (!find_item_search(ctx, &opt, kind, &found)) return eval_result_from_ctx(ctx);
+    if (!find_item_set_result(ctx, node, &opt, found)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_find_program(Evaluator_Context *ctx, const Node *node) {
-    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_PROGRAM));
+    return find_item_handle(ctx, node, FIND_ITEM_PROGRAM);
 }
 
 Eval_Result eval_handle_find_file(Evaluator_Context *ctx, const Node *node) {
-    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_FILE));
+    return find_item_handle(ctx, node, FIND_ITEM_FILE);
 }
 
 Eval_Result eval_handle_find_path(Evaluator_Context *ctx, const Node *node) {
-    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_PATH));
+    return find_item_handle(ctx, node, FIND_ITEM_PATH);
 }
 
 Eval_Result eval_handle_find_library(Evaluator_Context *ctx, const Node *node) {
-    return eval_result_from_bool(find_item_handle(ctx, node, FIND_ITEM_LIBRARY));
+    return find_item_handle(ctx, node, FIND_ITEM_LIBRARY);
 }
