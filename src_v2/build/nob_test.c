@@ -105,6 +105,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/evaluator.c",
         "src_v2/evaluator/eval_cpack.c",
         "src_v2/evaluator/eval_cmake_path.c",
+        "src_v2/evaluator/eval_cmake_path_utils.c",
         "src_v2/evaluator/eval_custom.c",
         "src_v2/evaluator/eval_ctest.c",
         "src_v2/evaluator/eval_directory.c",
@@ -120,6 +121,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_file_rw.c",
         "src_v2/evaluator/eval_file_copy.c",
         "src_v2/evaluator/eval_file_extra.c",
+        "src_v2/evaluator/eval_file_runtime_deps.c",
         "src_v2/evaluator/eval_file_fsops.c",
         "src_v2/evaluator/eval_file_backend_curl.c",
         "src_v2/evaluator/eval_file_backend_archive.c",
@@ -140,6 +142,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_property.c",
         "src_v2/evaluator/eval_project.c",
         "src_v2/evaluator/eval_list.c",
+        "src_v2/evaluator/eval_list_helpers.c",
         "src_v2/evaluator/eval_math.c",
         "src_v2/evaluator/eval_compat.c",
         "src_v2/evaluator/eval_policy_engine.c",
@@ -150,6 +153,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_string_json.c",
         "src_v2/evaluator/eval_string_misc.c",
         "src_v2/evaluator/eval_string.c",
+        "src_v2/evaluator/eval_target_property_query.c",
         "src_v2/evaluator/eval_target_usage.c",
         "src_v2/evaluator/eval_target_source_group.c",
         "src_v2/evaluator/eval_target.c",
@@ -159,7 +163,9 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_try_compile_exec.c",
         "src_v2/evaluator/eval_try_run.c",
         "src_v2/evaluator/eval_utils.c",
-        "src_v2/evaluator/eval_vars.c");
+        "src_v2/evaluator/eval_utils_path.c",
+        "src_v2/evaluator/eval_vars.c",
+        "src_v2/evaluator/eval_vars_parse.c");
 }
 
 static void append_v2_parser_runtime_sources(Nob_Cmd *cmd) {

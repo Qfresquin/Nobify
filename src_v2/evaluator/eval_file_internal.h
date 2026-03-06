@@ -55,6 +55,7 @@ void eval_file_handle_make_directory(Evaluator_Context *ctx, const Node *node, S
 void eval_file_handle_read(Evaluator_Context *ctx, const Node *node, SV_List args);
 void eval_file_handle_strings(Evaluator_Context *ctx, const Node *node, SV_List args);
 void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List args);
+bool eval_file_handle_runtime_dependencies(Evaluator_Context *ctx, const Node *node, SV_List args);
 
 bool eval_file_handle_fsops(Evaluator_Context *ctx, const Node *node, SV_List args);
 bool eval_file_handle_transfer(Evaluator_Context *ctx, const Node *node, SV_List args);

@@ -90,6 +90,7 @@ Recommended wave order:
 - F2 completed the property store/query service boundary on March 6, 2026 by internalizing synthetic property-key composition, centralizing property definition/query/write behavior in `eval_property.c`, and simplifying the residual property core in `eval_target.c`.
 - F3 completed the runtime process/environment service on March 6, 2026 by centralizing subprocess launch/capture/timeout/cwd handling in `eval_runtime_process.c`, routing `set(ENV{...})` and environment reads through one overlay service, and moving `try_compile` off open-coded output-file capture.
 - F4 completed the declarative command grammar layer on March 6, 2026 by extending `eval_opt_parser` with tail/missing-value/duplicate-rule support, migrating `find_*`, `try_compile`, `try_run`, and explicit-mode `separate_arguments` to grammar specs/callbacks, and keeping `cmake_parse_arguments` on its existing keyword-table parser.
+- F5 completed the remaining hotspot decomposition on March 6, 2026 by splitting property queries, runtime dependency handling, parse helpers, list helpers, path helpers, and command-line/path utilities out of `eval_target.c`, `eval_file_extra.c`, `eval_vars.c`, `eval_list.c`, `eval_cmake_path.c`, and `eval_utils.c` into adjacent internal modules.
 
 1. **F1 State Partition Around `Evaluator_Context`**
    - Introduce explicit internal state groupings over the existing context-centric model.
