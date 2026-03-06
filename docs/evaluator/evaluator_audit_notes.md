@@ -16,25 +16,35 @@ It does not redefine evaluator contracts. Canonical behavior remains in `evaluat
 
 Primary implementation sources:
 - `src_v2/evaluator/evaluator.c`
+- `src_v2/evaluator/evaluator_internal.h`
 - `src_v2/evaluator/eval_exec_core.c`
 - `src_v2/evaluator/eval_user_command.c`
 - `src_v2/evaluator/eval_nested_exec.c`
 - `src_v2/evaluator/eval_dispatcher.c`
 - `src_v2/evaluator/eval_command_caps.c`
 - `src_v2/evaluator/eval_command_registry.h`
+- `src_v2/evaluator/eval_property.c`
+- `src_v2/evaluator/eval_runtime_process.c`
 - `src_v2/evaluator/eval_package_find_item.c`
+- `src_v2/evaluator/eval_cmake_path.c`
+- `src_v2/evaluator/eval_cmake_path_utils.c`
 - `src_v2/evaluator/eval_file.c`
 - `src_v2/evaluator/eval_file_internal.h`
 - `src_v2/evaluator/eval_file_path.c`
 - `src_v2/evaluator/eval_file_glob.c`
 - `src_v2/evaluator/eval_file_rw.c`
 - `src_v2/evaluator/eval_file_copy.c`
+- `src_v2/evaluator/eval_file_runtime_deps.c`
+- `src_v2/evaluator/eval_list_helpers.c`
+- `src_v2/evaluator/eval_target_property_query.c`
 - `src_v2/evaluator/eval_try_compile.c`
 - `src_v2/evaluator/eval_try_compile_parse.c`
 - `src_v2/evaluator/eval_try_compile_exec.c`
 - `src_v2/evaluator/eval_try_run.c`
 - `src_v2/evaluator/eval_compat.c`
 - `src_v2/evaluator/eval_report.c`
+- `src_v2/evaluator/eval_utils_path.c`
+- `src_v2/evaluator/eval_vars_parse.c`
 - `src_v2/build/nob_test.c` (verification runner source)
 
 Companion docs used for audit context:
@@ -62,18 +72,24 @@ Current quantitative baseline:
 - Largest implementation files by size:
   - `eval_package.c` (`1078` lines)
   - `eval_file_generate_lock_archive.c` (`984` lines)
+  - `evaluator.c` (`960` lines)
   - `eval_project.c` (`942` lines)
   - `eval_file_transfer.c` (`919` lines)
-  - `eval_file_fsops.c` (`911` lines)
-- `evaluator.c` after Phase E1 execution-service extraction: `987` lines
+- `evaluator.c` after Phase E1 execution-service extraction and Phase F cleanup: `960` lines
 - `eval_file.c` after Phase D1 dispatcher split: `57` lines
 - `eval_file_{path,glob,rw,copy}.c`: `409` / `422` / `612` / `637` lines
 - `eval_string.c` after Phase D2 dispatcher split: `58` lines
-- `eval_string_{text,regex,json,misc}.c`: `545` / `185` / `874` / `541` lines
-- `eval_target` after Phase D3 split: `1440` / `481` / `227` lines (`core` / `usage` / `source_group`)
-- `eval_package` after Phase D4 split: `1078` / `733` lines (`core` / `find_item`)
-- `eval_flow` after Phase D5 split: `269` / `251` / `459` / `784` lines (`core` / `block` / `cmake_language` / `process`)
-- `eval_try_compile` after Phase D6 split: `243` / `414` / `568` / `121` lines (`core` / `parse` / `exec` / `try_run`)
+- `eval_string_{text,regex,json,misc}.c`: `545` / `185` / `874` / `507` lines
+- post-Phase-F5 target cluster `eval_target{,_usage,_property_query,_source_group}.c`: `695` / `523` / `359` / `227` lines
+- `eval_package` after Phase D4 split: `1078` / `874` lines (`core` / `find_item`)
+- `eval_flow` after Phase D5 split: `269` / `253` / `459` / `784` lines (`core` / `block` / `cmake_language` / `process`)
+- post-Phase-F4/F6 `eval_try_compile{,_parse,_exec}.c` + `eval_try_run.c`: `243` / `553` / `568` / `118` lines
+- Phase F adjacent modules:
+  - `eval_file_{extra,runtime_deps}.c`: `723` / `583` lines
+  - `eval_vars{,_parse}.c`: `659` / `604` lines
+  - `eval_list{,_helpers}.c`: `817` / `339` lines
+  - `eval_cmake_path{,_utils}.c`: `721` / `390` lines
+  - `eval_utils{,_path}.c`: `609` / `307` lines
 
 ## 4. Positive Findings
 
@@ -91,6 +107,7 @@ Current strengths worth preserving:
 - Phase D4 split `eval_package` into `find_package()` core flow and shared `find_*` item resolution while preserving the public API.
 - Phase D5 split `eval_flow` into shared helpers plus dedicated block, `cmake_language()`, and process-execution modules while preserving the public API.
 - Phase D6 split `eval_try_compile` into shared helpers plus parse/exec/`try_run` modules while preserving the public API.
+- Phase F5/F6 finished the remaining hotspot tier by moving target property queries, runtime dependency handling, variable parsers, list helpers, `cmake_path()` utilities, and command-line/path helpers into adjacent internal modules while preserving the evaluator baseline.
 - Phase F completed the bulk structural campaign by decomposing the post-D hotspot tier, normalizing the new internal boundaries, and returning the evaluator to a green baseline without reopening dispatcher or context-ownership decisions.
 - The current evaluator suite gives a stable behavioral post-refactor baseline when run through `build/nob_v2_test`.
 
@@ -198,7 +215,8 @@ Disposition:
 
 Current state:
 - Phase F completed the planned post-Phase-D hotspot decomposition and follow-up cleanup.
-- The largest remaining evaluator translation unit is now `eval_package.c` at `1078` lines, with the rest of the top tier below `1k`.
+- The largest remaining evaluator translation unit is `eval_package.c` at `1078` lines; the next tier is `eval_file_generate_lock_archive.c` (`984`), `evaluator.c` (`960`), `eval_project.c` (`942`), and `eval_file_transfer.c` (`919`).
+- The former F5 hotspot families now live in adjacent modules such as `eval_target_property_query.c` (`359`), `eval_file_runtime_deps.c` (`583`), `eval_vars_parse.c` (`604`), `eval_list_helpers.c` (`339`), `eval_cmake_path_utils.c` (`390`), and `eval_utils_path.c` (`307`).
 - The temporary low-level helper leaks introduced during the bulk move were normalized before closing the campaign.
 
 Disposition:
@@ -230,6 +248,7 @@ Disposition:
 Current state:
 - this audit pass no longer claims that Phases D1-D6 preserved golden output across the full March 6, 2026 snapshot; the wording is now limited to public-API preservation,
 - the verification baseline is explicitly tied to `./build/nob_v2_test test-evaluator`,
+- the source-of-truth list and quantitative snapshot now include the post-Phase-F adjacent modules and their current March 6, 2026 file-size baseline,
 - stale `docs/Evaluatorr/...` references were removed and replaced by an explicit note that no legacy evaluator audit archive is present in-tree.
 
 Disposition:
