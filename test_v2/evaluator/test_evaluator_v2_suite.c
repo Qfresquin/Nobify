@@ -375,6 +375,32 @@ static bool sv_contains_sv(String_View haystack, String_View needle) {
     return false;
 }
 
+static size_t semicolon_list_count(String_View list) {
+    if (list.count == 0) return 0;
+    size_t count = 1;
+    for (size_t i = 0; i < list.count; i++) {
+        if (list.data[i] == ';') count++;
+    }
+    return count;
+}
+
+static String_View semicolon_list_item_at(String_View list, size_t index) {
+    if (list.count == 0) return nob_sv_from_cstr("");
+
+    size_t current = 0;
+    const char *part = list.data;
+    for (size_t i = 0; i <= list.count; i++) {
+        bool at_end = (i == list.count);
+        if (!at_end && list.data[i] != ';') continue;
+        if (current == index) return nob_sv_from_parts(part, (size_t)((list.data + i) - part));
+        current++;
+        if (at_end) break;
+        part = list.data + i + 1;
+    }
+
+    return nob_sv_from_cstr("");
+}
+
 static String_View sv_trim_cr(String_View sv) {
     if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
         return nob_sv_from_parts(sv.data, sv.count - 1);
@@ -919,6 +945,17 @@ static size_t evaluator_find_diag_index(const Cmake_Event_Stream *stream,
         return i;
     }
     return (size_t)-1;
+}
+
+static bool evaluator_stream_has_monotonic_sequence(const Cmake_Event_Stream *stream) {
+    if (!stream) return false;
+    uint64_t prev_seq = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].h.version != 1) return false;
+        if (stream->items[i].h.seq <= prev_seq) return false;
+        prev_seq = stream->items[i].h.seq;
+    }
+    return true;
 }
 
 static bool render_evaluator_case_snapshot_to_sb(Arena *arena,
@@ -3373,6 +3410,12 @@ TEST(evaluator_event_ir_metadata_and_stream_contract) {
     ASSERT(event_kind_has_role(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_ROLE_BUILD_SEMANTIC));
     ASSERT(event_kind_has_role(EVENT_DIRECTORY_PROPERTY_MUTATE, EVENT_ROLE_STATE));
 
+    const Event_Kind_Meta *global_prop_meta = event_kind_meta(EVENT_GLOBAL_PROPERTY_MUTATE);
+    ASSERT(global_prop_meta != NULL);
+    ASSERT(global_prop_meta->family == EVENT_FAMILY_DIRECTORY);
+    ASSERT(event_kind_has_role(EVENT_GLOBAL_PROPERTY_MUTATE, EVENT_ROLE_BUILD_SEMANTIC));
+    ASSERT(event_kind_has_role(EVENT_GLOBAL_PROPERTY_MUTATE, EVENT_ROLE_STATE));
+
     Event invalid = {0};
     invalid.h.kind = EV_UNKNOWN;
     invalid.h.origin.file_path = nob_sv_from_cstr("invalid.cmake");
@@ -3421,18 +3464,48 @@ TEST(evaluator_event_ir_metadata_and_stream_contract) {
     ev.as.directory_property_mutate.item_count = NOB_ARRAY_LEN(items);
     ASSERT(event_stream_push(stream, &ev));
 
+    char *global_property_name =
+        arena_strndup(source_arena, "IR_GLOBAL_PROP", strlen("IR_GLOBAL_PROP"));
+    char *global_item_a = arena_strndup(source_arena, "global_a", strlen("global_a"));
+    char *global_item_b = arena_strndup(source_arena, "global_b", strlen("global_b"));
+    ASSERT(global_property_name != NULL);
+    ASSERT(global_item_a != NULL);
+    ASSERT(global_item_b != NULL);
+    String_View global_items[] = {
+        nob_sv_from_parts(global_item_a, strlen(global_item_a)),
+        nob_sv_from_parts(global_item_b, strlen(global_item_b)),
+    };
+    ev = (Event){0};
+    ev.h.kind = EVENT_GLOBAL_PROPERTY_MUTATE;
+    ev.h.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
+    ev.as.global_property_mutate.property_name =
+        nob_sv_from_parts(global_property_name, strlen(global_property_name));
+    ev.as.global_property_mutate.op = EVENT_PROPERTY_MUTATE_SET;
+    ev.as.global_property_mutate.items = global_items;
+    ev.as.global_property_mutate.item_count = NOB_ARRAY_LEN(global_items);
+    ASSERT(event_stream_push(stream, &ev));
+
     property_name[0] = 'X';
     item_buf[0] = 'X';
+    global_property_name[0] = 'X';
+    global_item_a[0] = 'X';
+    global_item_b[0] = 'X';
     arena_destroy(source_arena);
 
-    ASSERT(stream->count == 2);
-    ASSERT(stream->items[1].h.seq == 2);
-    ASSERT(stream->items[1].h.version == 1);
+    ASSERT(stream->count == 3);
+    ASSERT(evaluator_stream_has_monotonic_sequence(stream));
     ASSERT(nob_sv_eq(stream->items[1].as.directory_property_mutate.property_name,
                      nob_sv_from_cstr("INCLUDE_DIRECTORIES")));
     ASSERT(stream->items[1].as.directory_property_mutate.item_count == 1);
     ASSERT(nob_sv_eq(stream->items[1].as.directory_property_mutate.items[0],
                      nob_sv_from_cstr("include")));
+    ASSERT(nob_sv_eq(stream->items[2].as.global_property_mutate.property_name,
+                     nob_sv_from_cstr("IR_GLOBAL_PROP")));
+    ASSERT(stream->items[2].as.global_property_mutate.item_count == 2);
+    ASSERT(nob_sv_eq(stream->items[2].as.global_property_mutate.items[0],
+                     nob_sv_from_cstr("global_a")));
+    ASSERT(nob_sv_eq(stream->items[2].as.global_property_mutate.items[1],
+                     nob_sv_from_cstr("global_b")));
 
     arena_destroy(arena);
     TEST_PASS();
@@ -3467,6 +3540,13 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
         "add_link_options(-Wl,--as-needed)\n"
         "include_directories(BEFORE SYSTEM ir_inc_a ir_inc_b)\n"
         "link_directories(BEFORE ir_lib)\n"
+        "set_property(GLOBAL PROPERTY IR_GLOBAL_PROP ir_global_a ir_global_b)\n"
+        "get_property(IR_COMPILE_OPTIONS DIRECTORY PROPERTY COMPILE_OPTIONS)\n"
+        "get_property(IR_COMPILE_DEFINITIONS DIRECTORY PROPERTY COMPILE_DEFINITIONS)\n"
+        "get_property(IR_LINK_OPTIONS DIRECTORY PROPERTY LINK_OPTIONS)\n"
+        "get_property(IR_INCLUDE_DIRECTORIES DIRECTORY PROPERTY INCLUDE_DIRECTORIES)\n"
+        "get_property(IR_LINK_DIRECTORIES DIRECTORY PROPERTY LINK_DIRECTORIES)\n"
+        "get_property(IR_GLOBAL_PROP_OUT GLOBAL PROPERTY IR_GLOBAL_PROP)\n"
         "include(ir_include.cmake)\n"
         "add_subdirectory(ir_subdir)\n"
         "unknown_event_ir_cmd()\n");
@@ -3477,6 +3557,7 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     bool saw_link_options = false;
     bool saw_include_directories = false;
     bool saw_link_directories = false;
+    bool saw_global_property = false;
     bool saw_include_begin = false;
     bool saw_include_end = false;
     bool saw_subdir_begin = false;
@@ -3485,6 +3566,10 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     bool saw_directory_leave = false;
     bool saw_unknown_begin = false;
     bool saw_unknown_end = false;
+    size_t include_begin = (size_t)-1;
+    size_t include_end = (size_t)-1;
+    size_t subdir_begin = (size_t)-1;
+    size_t subdir_end = (size_t)-1;
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -3527,10 +3612,34 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
                 ev->as.directory_property_mutate.item_count == 1 &&
                 sv_contains_sv(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("ir_lib"));
         }
-        if (ev->h.kind == EVENT_INCLUDE_BEGIN) saw_include_begin = true;
-        if (ev->h.kind == EVENT_INCLUDE_END) saw_include_end = true;
-        if (ev->h.kind == EVENT_ADD_SUBDIRECTORY_BEGIN) saw_subdir_begin = true;
-        if (ev->h.kind == EVENT_ADD_SUBDIRECTORY_END) saw_subdir_end = true;
+        if (ev->h.kind == EVENT_GLOBAL_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.global_property_mutate.property_name, nob_sv_from_cstr("IR_GLOBAL_PROP"))) {
+            saw_global_property =
+                ev->as.global_property_mutate.op == EVENT_PROPERTY_MUTATE_SET &&
+                ev->as.global_property_mutate.item_count == 2 &&
+                nob_sv_eq(ev->as.global_property_mutate.items[0], nob_sv_from_cstr("ir_global_a")) &&
+                nob_sv_eq(ev->as.global_property_mutate.items[1], nob_sv_from_cstr("ir_global_b"));
+        }
+        if (ev->h.kind == EVENT_INCLUDE_BEGIN &&
+            sv_contains_sv(ev->as.include_begin.path, nob_sv_from_cstr("ir_include.cmake"))) {
+            saw_include_begin = true;
+            include_begin = i;
+        }
+        if (ev->h.kind == EVENT_INCLUDE_END &&
+            sv_contains_sv(ev->as.include_end.path, nob_sv_from_cstr("ir_include.cmake"))) {
+            saw_include_end = true;
+            include_end = i;
+        }
+        if (ev->h.kind == EVENT_ADD_SUBDIRECTORY_BEGIN &&
+            sv_contains_sv(ev->as.add_subdirectory_begin.source_dir, nob_sv_from_cstr("ir_subdir"))) {
+            saw_subdir_begin = true;
+            subdir_begin = i;
+        }
+        if (ev->h.kind == EVENT_ADD_SUBDIRECTORY_END &&
+            sv_contains_sv(ev->as.add_subdirectory_end.source_dir, nob_sv_from_cstr("ir_subdir"))) {
+            saw_subdir_end = true;
+            subdir_end = i;
+        }
         if (ev->h.kind == EVENT_DIRECTORY_ENTER) saw_directory_enter = true;
         if (ev->h.kind == EVENT_DIRECTORY_LEAVE) saw_directory_leave = true;
         if (ev->h.kind == EVENT_COMMAND_BEGIN &&
@@ -3551,6 +3660,7 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     ASSERT(saw_link_options);
     ASSERT(saw_include_directories);
     ASSERT(saw_link_directories);
+    ASSERT(saw_global_property);
     ASSERT(saw_include_begin);
     ASSERT(saw_include_end);
     ASSERT(saw_subdir_begin);
@@ -3559,6 +3669,65 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     ASSERT(saw_directory_leave);
     ASSERT(saw_unknown_begin);
     ASSERT(saw_unknown_end);
+    ASSERT(include_begin != (size_t)-1);
+    ASSERT(include_end != (size_t)-1);
+    ASSERT(subdir_begin != (size_t)-1);
+    ASSERT(subdir_end != (size_t)-1);
+
+    size_t include_enter = (size_t)-1;
+    size_t include_leave = (size_t)-1;
+    for (size_t i = include_begin + 1; i < include_end; i++) {
+        if (stream->items[i].h.kind == EVENT_DIRECTORY_ENTER) {
+            include_enter = i;
+            break;
+        }
+    }
+    for (size_t i = include_enter + 1; i < include_end; i++) {
+        if (stream->items[i].h.kind == EVENT_DIRECTORY_LEAVE) {
+            include_leave = i;
+            break;
+        }
+    }
+    ASSERT(include_enter != (size_t)-1);
+    ASSERT(include_leave != (size_t)-1);
+    ASSERT(include_begin < include_enter);
+    ASSERT(include_enter < include_leave);
+    ASSERT(include_leave < include_end);
+
+    size_t subdir_enter = (size_t)-1;
+    size_t subdir_leave = (size_t)-1;
+    for (size_t i = subdir_begin + 1; i < subdir_end; i++) {
+        if (stream->items[i].h.kind == EVENT_DIRECTORY_ENTER) {
+            subdir_enter = i;
+            break;
+        }
+    }
+    for (size_t i = subdir_enter + 1; i < subdir_end; i++) {
+        if (stream->items[i].h.kind == EVENT_DIRECTORY_LEAVE) {
+            subdir_leave = i;
+            break;
+        }
+    }
+    ASSERT(subdir_enter != (size_t)-1);
+    ASSERT(subdir_leave != (size_t)-1);
+    ASSERT(subdir_begin < subdir_enter);
+    ASSERT(subdir_enter < subdir_leave);
+    ASSERT(subdir_leave < subdir_end);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_COMPILE_OPTIONS")), nob_sv_from_cstr("-Wall")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_COMPILE_DEFINITIONS")), nob_sv_from_cstr("IR_DEF")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_LINK_OPTIONS")),
+                     nob_sv_from_cstr("-Wl,--as-needed")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_GLOBAL_PROP_OUT")),
+                     nob_sv_from_cstr("ir_global_a;ir_global_b")));
+
+    String_View include_dirs = eval_var_get(ctx, nob_sv_from_cstr("IR_INCLUDE_DIRECTORIES"));
+    ASSERT(semicolon_list_count(include_dirs) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(include_dirs, 0), nob_sv_from_cstr("ir_inc_a")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(include_dirs, 1), nob_sv_from_cstr("ir_inc_b")));
+
+    String_View link_dirs = eval_var_get(ctx, nob_sv_from_cstr("IR_LINK_DIRECTORIES"));
+    ASSERT(semicolon_list_count(link_dirs) == 1);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(link_dirs, 0), nob_sv_from_cstr("ir_lib")));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3704,6 +3873,117 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
     ASSERT(macro_inner_begin < macro_inner_diag);
     ASSERT(macro_inner_diag < macro_inner_end);
     ASSERT(macro_inner_end < macro_end);
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_event_ir_command_trace_sequences_success_paths) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "function(trace_fn_ok)\n"
+        "  set(FN_LOCAL 1)\n"
+        "endfunction()\n"
+        "macro(trace_macro_ok)\n"
+        "  set(MAC_VISIBLE 1)\n"
+        "endmacro()\n"
+        "set(TOP_OK 1)\n"
+        "trace_fn_ok()\n"
+        "trace_macro_ok()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    size_t top_begin = evaluator_find_command_begin_index(stream,
+                                                          nob_sv_from_cstr("set"),
+                                                          7,
+                                                          EVENT_COMMAND_DISPATCH_BUILTIN);
+    size_t top_end = evaluator_find_command_end_index(stream,
+                                                      nob_sv_from_cstr("set"),
+                                                      7,
+                                                      EVENT_COMMAND_DISPATCH_BUILTIN,
+                                                      EVENT_COMMAND_STATUS_SUCCESS);
+    size_t fn_begin = evaluator_find_command_begin_index(stream,
+                                                         nob_sv_from_cstr("trace_fn_ok"),
+                                                         8,
+                                                         EVENT_COMMAND_DISPATCH_FUNCTION);
+    size_t fn_inner_begin = evaluator_find_command_begin_index(stream,
+                                                               nob_sv_from_cstr("set"),
+                                                               2,
+                                                               EVENT_COMMAND_DISPATCH_BUILTIN);
+    size_t fn_inner_end = evaluator_find_command_end_index(stream,
+                                                           nob_sv_from_cstr("set"),
+                                                           2,
+                                                           EVENT_COMMAND_DISPATCH_BUILTIN,
+                                                           EVENT_COMMAND_STATUS_SUCCESS);
+    size_t fn_end = evaluator_find_command_end_index(stream,
+                                                     nob_sv_from_cstr("trace_fn_ok"),
+                                                     8,
+                                                     EVENT_COMMAND_DISPATCH_FUNCTION,
+                                                     EVENT_COMMAND_STATUS_SUCCESS);
+    size_t macro_begin = evaluator_find_command_begin_index(stream,
+                                                            nob_sv_from_cstr("trace_macro_ok"),
+                                                            9,
+                                                            EVENT_COMMAND_DISPATCH_MACRO);
+    size_t macro_inner_begin = evaluator_find_command_begin_index(stream,
+                                                                  nob_sv_from_cstr("set"),
+                                                                  5,
+                                                                  EVENT_COMMAND_DISPATCH_BUILTIN);
+    size_t macro_inner_end = evaluator_find_command_end_index(stream,
+                                                              nob_sv_from_cstr("set"),
+                                                              5,
+                                                              EVENT_COMMAND_DISPATCH_BUILTIN,
+                                                              EVENT_COMMAND_STATUS_SUCCESS);
+    size_t macro_end = evaluator_find_command_end_index(stream,
+                                                        nob_sv_from_cstr("trace_macro_ok"),
+                                                        9,
+                                                        EVENT_COMMAND_DISPATCH_MACRO,
+                                                        EVENT_COMMAND_STATUS_SUCCESS);
+
+    ASSERT(top_begin != (size_t)-1);
+    ASSERT(top_end != (size_t)-1);
+    ASSERT(top_begin < top_end);
+
+    ASSERT(fn_begin != (size_t)-1);
+    ASSERT(fn_inner_begin != (size_t)-1);
+    ASSERT(fn_inner_end != (size_t)-1);
+    ASSERT(fn_end != (size_t)-1);
+    ASSERT(fn_begin < fn_inner_begin);
+    ASSERT(fn_inner_begin < fn_inner_end);
+    ASSERT(fn_inner_end < fn_end);
+
+    ASSERT(macro_begin != (size_t)-1);
+    ASSERT(macro_inner_begin != (size_t)-1);
+    ASSERT(macro_inner_end != (size_t)-1);
+    ASSERT(macro_end != (size_t)-1);
+    ASSERT(macro_begin < macro_inner_begin);
+    ASSERT(macro_inner_begin < macro_inner_end);
+    ASSERT(macro_inner_end < macro_end);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TOP_OK")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("MAC_VISIBLE")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("FN_LOCAL")).count == 0);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -4856,7 +5136,9 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
     Ast_Root root = parse_cmake(
         temp_arena,
         "add_definitions(-DKEEP=1 -DREMOVE_ME=1 -Wall)\n"
-        "remove_definitions(-DREMOVE_ME=1 -Wall /DUNKNOWN=1)\n");
+        "remove_definitions(-DREMOVE_ME=1 -Wall /DUNKNOWN=1)\n"
+        "get_property(DIR_DEFS DIRECTORY PROPERTY COMPILE_DEFINITIONS)\n"
+        "get_property(DIR_OPTS DIRECTORY PROPERTY COMPILE_OPTIONS)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
@@ -4867,6 +5149,24 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
                      nob_sv_from_cstr("KEEP=1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_GLOBAL_COMPILE_OPTIONS")),
                      nob_sv_from_cstr("-Wall")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIR_DEFS")), nob_sv_from_cstr("KEEP=1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIR_OPTS")), nob_sv_from_cstr("-Wall")));
+
+    bool saw_remove_defs_event = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_DIRECTORY_PROPERTY_MUTATE) continue;
+        if (ev->h.origin.line != 2) continue;
+        if (!nob_sv_eq(ev->as.directory_property_mutate.property_name,
+                       nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
+            continue;
+        }
+        saw_remove_defs_event =
+            ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_SET &&
+            ev->as.directory_property_mutate.item_count == 1 &&
+            nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("KEEP=1"));
+    }
+    ASSERT(saw_remove_defs_event);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -8809,6 +9109,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_event_ir_metadata_and_stream_contract(passed, failed);
     test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed);
     test_evaluator_event_ir_command_trace_sequences_unknown_and_error_paths(passed, failed);
+    test_evaluator_event_ir_command_trace_sequences_success_paths(passed, failed);
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
     test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);

@@ -136,6 +136,7 @@ Ordering guarantees:
 - stable stream order equals execution order
 - nested evaluations append into the same stream
 - `event_stream_push(...)` rejects kinds that do not have canonical metadata
+- the March 6, 2026 G0.4 baseline keeps manual stream contract tests for metadata resolution, deep-copy ownership, and canonical stream ordering/version defaults
 
 ## 6. Ownership and Copy Rules
 
@@ -192,6 +193,26 @@ Current modifier flags:
 - `SYSTEM`
 
 These events are the canonical way for future consumers to observe directory/global build semantics.
+
+Current directory/global state coverage includes:
+- `add_compile_options`
+- `add_compile_definitions`
+- `add_definitions`
+- `remove_definitions`
+- `add_link_options`
+- `include_directories`
+- `link_directories`
+- `set_property(DIRECTORY ...)`
+- `set_property(GLOBAL ...)`
+- `set_directory_properties(...)`
+
+For the directory commands above, the evaluator now keeps property queries and semantic events aligned. `remove_definitions()` publishes the resulting `COMPILE_DEFINITIONS` state through `EVENT_DIRECTORY_PROPERTY_MUTATE(op=SET)` because the contract does not model a dedicated remove op.
+
+The March 6, 2026 G0.4 baseline also locks:
+- success and non-OOM error command framing for builtin/function/macro dispatch
+- unknown-command framing as `BEGIN -> DIAG -> END`
+- include and `add_subdirectory` ordering as `BEGIN -> DIRECTORY_ENTER -> DIRECTORY_LEAVE -> END`
+- core directory/global semantic visibility through both events and property queries
 
 ## 9. Consumer Guidance
 

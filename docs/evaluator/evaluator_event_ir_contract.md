@@ -111,6 +111,7 @@ Sequencing contract:
 - `EVENT_COMMAND_BEGIN` opens the dispatched-command frame
 - diagnostics and semantic side-effect events produced by that dispatch occur before the matching `EVENT_COMMAND_END`
 - `EVENT_COMMAND_END` closes the frame even on non-OOM error/unsupported paths when the allow-stopped emission path can still run
+- the March 6, 2026 baseline also locks the success path for builtin/function/macro dispatch, so both success and non-OOM failure paths stay framed by matching begin/end events
 
 ## 7. Directory and Build-Semantic Guarantees
 
@@ -129,11 +130,20 @@ Directory/global build semantics are also first-class:
 This contract now covers evaluator output for directory-style commands such as:
 - `add_compile_options`
 - `add_compile_definitions`
+- `add_definitions`
+- `remove_definitions`
 - `add_link_options`
 - `include_directories`
 - `link_directories`
 
 It also covers `set_property(DIRECTORY ...)` and `set_property(GLOBAL ...)` through the same semantic event family.
+The same directory mutators now keep `get_property(DIRECTORY PROPERTY ...)` and `get_directory_property(...)` aligned with the emitted semantic events; synthetic `NOBIFY_GLOBAL_*` variables remain evaluator-private compatibility state.
+
+Current G0.4 baseline coverage also locks:
+- metadata resolution for canonical kinds used by the evaluator baseline
+- deep-copy ownership at `event_stream_push(...)` for manual stream producers
+- include and `add_subdirectory` ordering as `BEGIN -> DIRECTORY_ENTER -> DIRECTORY_LEAVE -> END`
+- directory/global property query visibility for the emitted semantic state
 
 ## 8. Role-Oriented Emission
 

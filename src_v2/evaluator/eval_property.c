@@ -8,6 +8,7 @@
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
+static const char *k_global_link_opts_var = "NOBIFY_GLOBAL_LINK_OPTIONS";
 
 static String_View merge_property_value_temp(Evaluator_Context *ctx,
                                              String_View current,
@@ -270,6 +271,11 @@ bool eval_property_write(Evaluator_Context *ctx,
             String_View next = merge_property_value_temp(ctx, cur, value, op);
             if (eval_should_stop(ctx)) return false;
             if (!eval_var_set_current(ctx, nob_sv_from_cstr(k_global_defs_var), next)) return false;
+        } else if (eval_sv_eq_ci_lit(prop_upper, "LINK_OPTIONS")) {
+            String_View cur = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_link_opts_var));
+            String_View next = merge_property_value_temp(ctx, cur, value, op);
+            if (eval_should_stop(ctx)) return false;
+            if (!eval_var_set_current(ctx, nob_sv_from_cstr(k_global_link_opts_var), next)) return false;
         }
     }
 

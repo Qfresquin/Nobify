@@ -134,22 +134,104 @@ static bool split_definition_flag(String_View item, String_View *out_definition)
     return true;
 }
 
-static bool emit_directory_property_items(Evaluator_Context *ctx,
-                                          Event_Origin origin,
-                                          const char *property_name,
-                                          Event_Property_Mutate_Op op,
-                                          uint32_t modifier_flags,
-                                          const SV_List *items) {
-    if (!ctx || !items) return false;
+static String_View join_directory_property_items_temp(Evaluator_Context *ctx,
+                                                      const SV_List *items,
+                                                      Event_Property_Mutate_Op op) {
+    if (!ctx || !items) return nob_sv_from_cstr("");
     size_t count = arena_arr_len(*items);
-    if (count == 0) return true;
+    if (count == 0) return nob_sv_from_cstr("");
+    if (op == EVENT_PROPERTY_MUTATE_APPEND_STRING) return svu_join_no_sep_temp(ctx, *items, count);
+    return eval_sv_join_semi_temp(ctx, *items, count);
+}
+
+static String_View directory_property_store_key_temp(Evaluator_Context *ctx, String_View property_name) {
+    static const char prefix[] = "NOBIFY_PROPERTY_DIRECTORY::";
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View current_dir = eval_current_source_dir_for_paths(ctx);
+    size_t total = (sizeof(prefix) - 1) + current_dir.count + 2 + property_name.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix, sizeof(prefix) - 1);
+    off += sizeof(prefix) - 1;
+    memcpy(buf + off, current_dir.data, current_dir.count);
+    off += current_dir.count;
+    buf[off++] = ':';
+    buf[off++] = ':';
+    memcpy(buf + off, property_name.data, property_name.count);
+    off += property_name.count;
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static String_View merge_directory_property_value_temp(Evaluator_Context *ctx,
+                                                       String_View current,
+                                                       const SV_List *items,
+                                                       Event_Property_Mutate_Op op) {
+    String_View incoming = join_directory_property_items_temp(ctx, items, op);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (op == EVENT_PROPERTY_MUTATE_SET) return incoming;
+    if (incoming.count == 0) return current;
+    if (current.count == 0) return incoming;
+
+    bool incoming_first = (op == EVENT_PROPERTY_MUTATE_PREPEND_LIST);
+    bool with_semicolon =
+        (op == EVENT_PROPERTY_MUTATE_APPEND_LIST || op == EVENT_PROPERTY_MUTATE_PREPEND_LIST);
+    size_t total = current.count + incoming.count + (with_semicolon ? 1 : 0);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    if (incoming_first) {
+        memcpy(buf + off, incoming.data, incoming.count);
+        off += incoming.count;
+        if (with_semicolon) buf[off++] = ';';
+        memcpy(buf + off, current.data, current.count);
+        off += current.count;
+    } else {
+        memcpy(buf + off, current.data, current.count);
+        off += current.count;
+        if (with_semicolon) buf[off++] = ';';
+        memcpy(buf + off, incoming.data, incoming.count);
+        off += incoming.count;
+    }
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static bool sync_directory_property_mutation(Evaluator_Context *ctx,
+                                             Event_Origin origin,
+                                             const char *property_name,
+                                             Event_Property_Mutate_Op op,
+                                             uint32_t modifier_flags,
+                                             const SV_List *items) {
+    if (!ctx) return false;
+
+    size_t item_count = items ? arena_arr_len(*items) : 0;
+    if (op != EVENT_PROPERTY_MUTATE_SET && item_count == 0) return true;
+
+    String_View property_sv = nob_sv_from_cstr(property_name);
+    String_View store_key = directory_property_store_key_temp(ctx, property_sv);
+    if (eval_should_stop(ctx)) return false;
+
+    bool current_defined = eval_var_defined_visible(ctx, store_key);
+    String_View current = current_defined ? eval_var_get_visible(ctx, store_key) : nob_sv_from_cstr("");
+    String_View merged = merge_directory_property_value_temp(ctx, current, items, op);
+    if (eval_should_stop(ctx)) return false;
+
+    if (!current_defined && op == EVENT_PROPERTY_MUTATE_SET && merged.count == 0) return true;
+    if (current_defined && nob_sv_eq(current, merged)) return true;
+
+    if (!eval_var_set_current(ctx, store_key, merged)) return false;
     return eval_emit_directory_property_mutate(ctx,
                                                origin,
-                                               nob_sv_from_cstr(property_name),
+                                               property_sv,
                                                op,
                                                modifier_flags,
-                                               *items,
-                                               count);
+                                               items ? *items : NULL,
+                                               item_count);
 }
 
 static size_t gfc_last_separator_index(String_View path) {
@@ -443,17 +525,19 @@ Eval_Result eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *
         if (!svu_list_push_temp(ctx, &unique, expanded[i])) return eval_result_from_ctx(ctx);
     }
 
+    SV_List added_items = {0};
     for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_opts_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
+        if (!svu_list_push_temp(ctx, &added_items, unique[i])) return eval_result_from_ctx(ctx);
     }
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "COMPILE_OPTIONS",
-                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       EVENT_PROPERTY_MODIFIER_NONE,
-                                       &unique)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "COMPILE_OPTIONS",
+                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          EVENT_PROPERTY_MODIFIER_NONE,
+                                          &added_items)) {
         return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
@@ -472,18 +556,20 @@ Eval_Result eval_handle_add_compile_definitions(Evaluator_Context *ctx, const No
         if (!svu_list_push_temp(ctx, &unique, item)) return eval_result_from_ctx(ctx);
     }
 
+    SV_List added_items = {0};
     for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
+        if (!svu_list_push_temp(ctx, &added_items, unique[i])) return eval_result_from_ctx(ctx);
         if (!emit_compile_definition_to_current_file_targets(ctx, o, unique[i])) return eval_result_fatal();
     }
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "COMPILE_DEFINITIONS",
-                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       EVENT_PROPERTY_MODIFIER_NONE,
-                                       &unique)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "COMPILE_DEFINITIONS",
+                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          EVENT_PROPERTY_MODIFIER_NONE,
+                                          &added_items)) {
         return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
@@ -519,20 +605,20 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
         if (!emit_compile_option_to_current_file_targets(ctx, o, item)) return eval_result_fatal();
     }
 
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "COMPILE_DEFINITIONS",
-                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       EVENT_PROPERTY_MODIFIER_NONE,
-                                       &emitted_defs)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "COMPILE_DEFINITIONS",
+                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          EVENT_PROPERTY_MODIFIER_NONE,
+                                          &emitted_defs)) {
         return eval_result_fatal();
     }
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "COMPILE_OPTIONS",
-                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       EVENT_PROPERTY_MODIFIER_NONE,
-                                       &emitted_opts)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "COMPILE_OPTIONS",
+                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          EVENT_PROPERTY_MODIFIER_NONE,
+                                          &emitted_opts)) {
         return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
@@ -541,15 +627,36 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
 Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
+    Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
+    bool removed_any = false;
     for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View definition = nob_sv_from_cstr("");
         if (!split_definition_flag(a[i], &definition)) continue;
         if (definition.count == 0) continue;
-        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, NULL)) {
+        bool removed = false;
+        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &removed)) {
             return eval_result_from_ctx(ctx);
+        }
+        removed_any = removed_any || removed;
+    }
+
+    if (removed_any) {
+        String_View current_defs = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_defs_var));
+        SV_List remaining = {0};
+        if (current_defs.count > 0 &&
+            !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current_defs, &remaining)) {
+            return eval_result_fatal();
+        }
+        if (!sync_directory_property_mutation(ctx,
+                                              o,
+                                              "COMPILE_DEFINITIONS",
+                                              EVENT_PROPERTY_MUTATE_SET,
+                                              EVENT_PROPERTY_MODIFIER_NONE,
+                                              &remaining)) {
+            return eval_result_fatal();
         }
     }
 
@@ -599,18 +706,19 @@ Eval_Result eval_handle_add_link_options(Evaluator_Context *ctx, const Node *nod
         if (!svu_list_push_temp(ctx, &unique, expanded[i])) return eval_result_from_ctx(ctx);
     }
 
+    SV_List added_items = {0};
     for (size_t i = 0; i < arena_arr_len(unique); i++) {
         bool added = false;
         if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_link_opts_var), unique[i], &added)) return eval_result_fatal();
         if (!added) continue;
-        (void)o;
+        if (!svu_list_push_temp(ctx, &added_items, unique[i])) return eval_result_from_ctx(ctx);
     }
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "LINK_OPTIONS",
-                                       EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       EVENT_PROPERTY_MODIFIER_NONE,
-                                       &unique)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "LINK_OPTIONS",
+                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          EVENT_PROPERTY_MODIFIER_NONE,
+                                          &added_items)) {
         return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
@@ -682,14 +790,14 @@ Eval_Result eval_handle_include_directories(Evaluator_Context *ctx, const Node *
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         if (!svu_list_push_temp(ctx, &resolved_items, resolved)) return eval_result_from_ctx(ctx);
     }
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "INCLUDE_DIRECTORIES",
-                                       is_before ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
-                                                 : EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       (is_before ? EVENT_PROPERTY_MODIFIER_BEFORE : EVENT_PROPERTY_MODIFIER_NONE) |
-                                           (is_system ? EVENT_PROPERTY_MODIFIER_SYSTEM : EVENT_PROPERTY_MODIFIER_NONE),
-                                       &resolved_items)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "INCLUDE_DIRECTORIES",
+                                          is_before ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                                    : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          (is_before ? EVENT_PROPERTY_MODIFIER_BEFORE : EVENT_PROPERTY_MODIFIER_NONE) |
+                                              (is_system ? EVENT_PROPERTY_MODIFIER_SYSTEM : EVENT_PROPERTY_MODIFIER_NONE),
+                                          &resolved_items)) {
         return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);
@@ -718,13 +826,13 @@ Eval_Result eval_handle_link_directories(Evaluator_Context *ctx, const Node *nod
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         if (!svu_list_push_temp(ctx, &resolved_items, resolved)) return eval_result_from_ctx(ctx);
     }
-    if (!emit_directory_property_items(ctx,
-                                       o,
-                                       "LINK_DIRECTORIES",
-                                       is_before ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
-                                                 : EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                       is_before ? EVENT_PROPERTY_MODIFIER_BEFORE : EVENT_PROPERTY_MODIFIER_NONE,
-                                       &resolved_items)) {
+    if (!sync_directory_property_mutation(ctx,
+                                          o,
+                                          "LINK_DIRECTORIES",
+                                          is_before ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                                    : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                          is_before ? EVENT_PROPERTY_MODIFIER_BEFORE : EVENT_PROPERTY_MODIFIER_NONE,
+                                          &resolved_items)) {
         return eval_result_fatal();
     }
     return eval_result_from_ctx(ctx);

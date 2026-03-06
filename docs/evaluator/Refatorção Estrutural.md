@@ -167,10 +167,12 @@ Recommended stabilization scope:
 3. **G0.3 Finish first-class directory/global semantics**
    - Emit canonical directory/global property mutation events for build-relevant directory state.
    - Do not rely on synthetic `NOBIFY_GLOBAL_*` variables as the only externally consumable reflection of directory/global semantics.
+   - Status: completed in the workspace on March 6, 2026 by synchronizing directory mutators into the canonical property store, emitting canonical `DIRECTORY_PROPERTY_MUTATE` / `GLOBAL_PROPERTY_MUTATE` events for queryable state, and covering `remove_definitions()` with a resulting-state `SET` event.
 
 4. **G0.4 Lock the contract with tests**
    - Keep contract tests for metadata resolution, stream sequencing, deep-copy ownership, and the core directory/global semantic events.
    - Add only the minimum extra coverage needed to make future semantic work safe; do not expand into a parallel semantic-promotion campaign.
+   - Status: completed in the workspace on March 6, 2026 by locking the Event IR baseline around metadata/deep-copy ownership, success and error command framing, include/add_subdirectory ordering, and the core directory/global semantic events and queries.
 
 G0 exit criteria:
 
