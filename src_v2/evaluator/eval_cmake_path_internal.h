@@ -3,10 +3,6 @@
 
 #include "evaluator_internal.h"
 
-#include <stddef.h>
-
-size_t path_last_separator_index(String_View path);
-ptrdiff_t cmk_path_dot_index(String_View name, bool last_only);
 String_View cmk_path_root_path_temp(Evaluator_Context *ctx, String_View path);
 String_View cmk_path_filename_sv(String_View path);
 String_View cmk_path_extension_from_name_sv(String_View name, bool last_only);
@@ -26,6 +22,13 @@ String_View cmk_path_component_get_temp(Evaluator_Context *ctx,
                                         String_View component,
                                         bool last_only,
                                         bool *out_ok);
+String_View cmk_path_remove_filename_temp(Evaluator_Context *ctx, String_View value);
+String_View cmk_path_replace_filename_temp(Evaluator_Context *ctx, String_View value, String_View input);
+String_View cmk_path_transform_extension_temp(Evaluator_Context *ctx,
+                                              String_View value,
+                                              bool last_only,
+                                              bool replace_mode,
+                                              String_View replacement);
 bool cmk_path_is_component_supports_last_only(String_View component);
 String_View cmk_path_compare_canonical_temp(Evaluator_Context *ctx, String_View in);
 

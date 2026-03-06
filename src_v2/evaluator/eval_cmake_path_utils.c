@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <string.h>
 
-size_t path_last_separator_index(String_View path) {
+static size_t path_last_separator_index(String_View path) {
     for (size_t i = path.count; i > 0; i--) {
         if (svu_is_path_sep(path.data[i - 1])) return i - 1;
     }
@@ -76,7 +76,7 @@ String_View cmk_path_filename_sv(String_View path) {
     return nob_sv_from_parts(path.data + sep + 1, path.count - sep - 1);
 }
 
-ptrdiff_t cmk_path_dot_index(String_View name, bool last_only) {
+static ptrdiff_t cmk_path_dot_index(String_View name, bool last_only) {
     ptrdiff_t dot = -1;
     if (name.count == 0) return -1;
 
@@ -310,6 +310,57 @@ String_View cmk_path_component_get_temp(Evaluator_Context *ctx,
 
     if (ok) *ok = false;
     return nob_sv_from_cstr("");
+}
+
+String_View cmk_path_remove_filename_temp(Evaluator_Context *ctx, String_View value) {
+    (void)ctx;
+    size_t sep = path_last_separator_index(value);
+    if (sep == SIZE_MAX) return nob_sv_from_cstr("");
+    if (sep == 0) return nob_sv_from_cstr("/");
+    return nob_sv_from_parts(value.data, sep + 1);
+}
+
+String_View cmk_path_replace_filename_temp(Evaluator_Context *ctx, String_View value, String_View input) {
+    if (!ctx) return input;
+    size_t sep = path_last_separator_index(value);
+    if (sep == SIZE_MAX) return input;
+
+    String_View parent_with_sep = nob_sv_from_parts(value.data, sep + 1);
+    String_View parts[2] = {parent_with_sep, input};
+    return svu_join_no_sep_temp(ctx, parts, 2);
+}
+
+String_View cmk_path_transform_extension_temp(Evaluator_Context *ctx,
+                                              String_View value,
+                                              bool last_only,
+                                              bool replace_mode,
+                                              String_View replacement) {
+    if (!ctx) return value;
+
+    size_t sep = path_last_separator_index(value);
+    String_View head = (sep == SIZE_MAX) ? nob_sv_from_cstr("") : nob_sv_from_parts(value.data, sep + 1);
+    String_View name = (sep == SIZE_MAX) ? value : nob_sv_from_parts(value.data + sep + 1, value.count - sep - 1);
+
+    ptrdiff_t dot = cmk_path_dot_index(name, last_only);
+    String_View stem = (dot < 0) ? name : nob_sv_from_parts(name.data, (size_t)dot);
+
+    String_View out_name = stem;
+    if (replace_mode) {
+        if (replacement.count > 0 && replacement.data[0] != '.') {
+            char *buf = (char*)arena_alloc(eval_temp_arena(ctx), replacement.count + 2);
+            EVAL_OOM_RETURN_IF_NULL(ctx, buf, value);
+            buf[0] = '.';
+            memcpy(buf + 1, replacement.data, replacement.count);
+            buf[replacement.count + 1] = '\0';
+            replacement = nob_sv_from_cstr(buf);
+        }
+        String_View parts[2] = {stem, replacement};
+        out_name = svu_join_no_sep_temp(ctx, parts, 2);
+    }
+
+    if (head.count == 0) return out_name;
+    String_View parts[2] = {head, out_name};
+    return svu_join_no_sep_temp(ctx, parts, 2);
 }
 
 bool cmk_path_is_component_supports_last_only(String_View component) {

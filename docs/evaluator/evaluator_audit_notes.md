@@ -52,7 +52,7 @@ Historical archive note:
 Snapshot date (workspace): March 6, 2026.
 
 Verification baseline:
-- `./build/nob_v2_test test-evaluator` passes with `passed=104 failed=0` on the March 6, 2026 workspace snapshot.
+- `./build/nob_v2_test test-evaluator` passes with `passed=105 failed=0` on the March 6, 2026 workspace snapshot.
 - local `build/nob_test` is not a source of truth for this audit because `/build` is ignored and stale binaries can predate the post-refactor unit split even when `src_v2/build/nob_test.c` is already current.
 
 Current quantitative baseline:
@@ -60,11 +60,11 @@ Current quantitative baseline:
 - Capability labels: `67 FULL` / `52 PARTIAL` / `0 MISSING`
 - Fallback labels: `116 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
 - Largest implementation files by size:
-  - `eval_target.c` (`1440` lines)
-  - `eval_file_extra.c` (`1295` lines)
-  - `eval_utils.c` (`1242` lines)
-  - `eval_vars.c` (`1222` lines)
-  - `eval_list.c` (`1169` lines)
+  - `eval_package.c` (`1078` lines)
+  - `eval_file_generate_lock_archive.c` (`984` lines)
+  - `eval_project.c` (`942` lines)
+  - `eval_file_transfer.c` (`919` lines)
+  - `eval_file_fsops.c` (`911` lines)
 - `evaluator.c` after Phase E1 execution-service extraction: `987` lines
 - `eval_file.c` after Phase D1 dispatcher split: `57` lines
 - `eval_file_{path,glob,rw,copy}.c`: `409` / `422` / `612` / `637` lines
@@ -91,6 +91,7 @@ Current strengths worth preserving:
 - Phase D4 split `eval_package` into `find_package()` core flow and shared `find_*` item resolution while preserving the public API.
 - Phase D5 split `eval_flow` into shared helpers plus dedicated block, `cmake_language()`, and process-execution modules while preserving the public API.
 - Phase D6 split `eval_try_compile` into shared helpers plus parse/exec/`try_run` modules while preserving the public API.
+- Phase F completed the bulk structural campaign by decomposing the post-D hotspot tier, normalizing the new internal boundaries, and returning the evaluator to a green baseline without reopening dispatcher or context-ownership decisions.
 - The current evaluator suite gives a stable behavioral post-refactor baseline when run through `build/nob_v2_test`.
 
 ## 5. Prioritized Findings
@@ -98,7 +99,6 @@ Current strengths worth preserving:
 | ID | Severity | Category | Finding (short) |
 |---|---|---|---|
 | F-10 | Low | Verification workflow | A stale local `build/nob_test` binary can report false refactor regressions even though the current runner source and `build/nob_v2_test` are aligned. |
-| F-06 | Low | Maintainability | Large evaluator translation units concentrate many concerns and raise refactor risk. |
 | F-07 | Low | Coverage debt | `PARTIAL` footprint remains high (`43.7%`), concentrated in `ctest_*` and legacy wrappers. |
 
 ## 6. Detailed Findings
@@ -107,7 +107,7 @@ Current strengths worth preserving:
 
 Evidence:
 - In the March 6, 2026 workspace, `./build/nob_test test-evaluator` can fail at link time against missing symbols from the extracted evaluator units.
-- The current source of `src_v2/build/nob_test.c` already includes the split units, and `./build/nob_v2_test test-evaluator` passes `102/102`.
+- The current source of `src_v2/build/nob_test.c` already includes the split units, and `./build/nob_v2_test test-evaluator` passes `105/105`.
 - `/build` is ignored, so a locally cached runner binary can lag behind source without showing up as a tracked diff.
 
 Risk:
@@ -115,18 +115,6 @@ Risk:
 
 Recommendation:
 - Treat `build/nob_v2_test` or a freshly rebuilt runner as the audit baseline and document the stale-artefact risk explicitly in evaluator verification notes.
-
-### F-06: File-size concentration
-
-Evidence:
-- Phase D completed the planned decomposition of `eval_target`, `eval_package`, `eval_flow`, and `eval_try_compile`.
-- The remaining size hotspots now cluster in the `1.1k-1.4k` range (`eval_target.c`, `eval_file_extra.c`, `eval_utils.c`, `eval_vars.c`, `eval_list.c`, `eval_cmake_path.c`) instead of the old `1.5k-2.2k` tier.
-
-Risk:
-- Review complexity and regression probability increase, especially for cross-cutting edits.
-
-Recommendation:
-- Treat Phase D as complete and shift the next decomposition wave toward the remaining post-D hotspot tier, starting with `eval_target` residual core, then `eval_file_extra`, `eval_utils`, `eval_vars`, and `eval_list`.
 
 ### F-07: Coverage debt concentration
 
@@ -149,7 +137,6 @@ Priority tiers for next engineering/doc pass:
 
 2. P1
 - Document or remove ambiguity around stale local runner binaries vs current runner source (`build/nob_test` vs `build/nob_v2_test`) in evaluator verification workflow (F-10).
-- Plan the post-Phase-D hotspot tier with the same stable-internal-interface rule used for Phases D1-D6 (F-06).
 
 ## 8. Closed / Documented
 
@@ -206,6 +193,16 @@ Current state:
 
 Disposition:
 - closed as implemented-and-documented for the current baseline.
+
+### F-06: File-size concentration
+
+Current state:
+- Phase F completed the planned post-Phase-D hotspot decomposition and follow-up cleanup.
+- The largest remaining evaluator translation unit is now `eval_package.c` at `1078` lines, with the rest of the top tier below `1k`.
+- The temporary low-level helper leaks introduced during the bulk move were normalized before closing the campaign.
+
+Disposition:
+- closed as structurally resolved for the March 6, 2026 baseline; further work should focus on semantic promotion, not more file-splitting for its own sake.
 
 ### F-08: `find_*(... ENV ...)` malformed validation path
 

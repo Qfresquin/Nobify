@@ -180,12 +180,7 @@ static bool handle_remove_filename(Evaluator_Context *ctx, const Node *node, Cma
     }
 
     String_View value = eval_var_get_visible(ctx, path_var);
-    size_t sep = path_last_separator_index(value);
-    String_View out = nob_sv_from_cstr("");
-    if (sep != SIZE_MAX) {
-        if (sep == 0) out = nob_sv_from_cstr("/");
-        else out = nob_sv_from_parts(value.data, sep + 1);
-    }
+    String_View out = cmk_path_remove_filename_temp(ctx, value);
 
     (void)cmk_path_set_result(ctx, path_var, out_var, out);
     return true;
@@ -231,13 +226,7 @@ static bool handle_replace_filename(Evaluator_Context *ctx, const Node *node, Cm
     }
 
     String_View value = eval_var_get_visible(ctx, path_var);
-    size_t sep = path_last_separator_index(value);
-    String_View out = input;
-    if (sep != SIZE_MAX) {
-        String_View parent_with_sep = nob_sv_from_parts(value.data, sep + 1);
-        String_View parts[2] = {parent_with_sep, input};
-        out = svu_join_no_sep_temp(ctx, parts, 2);
-    }
+    String_View out = cmk_path_replace_filename_temp(ctx, value, input);
 
     (void)cmk_path_set_result(ctx, path_var, out_var, out);
     return true;
@@ -304,32 +293,7 @@ static bool handle_extension_common(Evaluator_Context *ctx,
     }
 
     String_View value = eval_var_get_visible(ctx, path_var);
-    size_t sep = path_last_separator_index(value);
-    String_View head = (sep == SIZE_MAX) ? nob_sv_from_cstr("") : nob_sv_from_parts(value.data, sep + 1);
-    String_View name = (sep == SIZE_MAX) ? value : nob_sv_from_parts(value.data + sep + 1, value.count - sep - 1);
-
-    ssize_t dot = cmk_path_dot_index(name, last_only);
-    String_View stem = (dot < 0) ? name : nob_sv_from_parts(name.data, (size_t)dot);
-
-    String_View out_name = stem;
-    if (replace_mode) {
-        if (replacement.count > 0 && replacement.data[0] != '.') {
-            char *buf = (char*)arena_alloc(eval_temp_arena(ctx), replacement.count + 2);
-            EVAL_OOM_RETURN_IF_NULL(ctx, buf, true);
-            buf[0] = '.';
-            memcpy(buf + 1, replacement.data, replacement.count);
-            buf[replacement.count + 1] = '\0';
-            replacement = nob_sv_from_cstr(buf);
-        }
-        String_View parts[2] = {stem, replacement};
-        out_name = svu_join_no_sep_temp(ctx, parts, 2);
-    }
-
-    String_View out = out_name;
-    if (head.count > 0) {
-        String_View parts[2] = {head, out_name};
-        out = svu_join_no_sep_temp(ctx, parts, 2);
-    }
+    String_View out = cmk_path_transform_extension_temp(ctx, value, last_only, replace_mode, replacement);
 
     (void)cmk_path_set_result(ctx, path_var, out_var, out);
     return true;
