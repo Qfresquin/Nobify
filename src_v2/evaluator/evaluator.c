@@ -97,6 +97,14 @@ Eval_Result eval_emit_diag(Evaluator_Context *ctx,
                                         hint);
 }
 
+static Diag_Severity eval_diag_to_global_severity(Event_Diag_Severity sev) {
+    return sev == EV_DIAG_ERROR ? DIAG_SEV_ERROR : DIAG_SEV_WARNING;
+}
+
+static Event_Diag_Severity eval_diag_from_global_severity(Diag_Severity sev) {
+    return sev == DIAG_SEV_ERROR ? EV_DIAG_ERROR : EV_DIAG_WARNING;
+}
+
 Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
                                          Event_Diag_Severity sev,
                                          Eval_Diag_Code code,
@@ -108,10 +116,11 @@ Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
 
     Eval_Error_Class cls = eval_diag_error_class(code);
+    Event_Diag_Severity compat_sev = eval_compat_effective_severity(ctx, sev);
+    Diag_Severity logger_input_sev = eval_diag_to_global_severity(compat_sev);
+    Event_Diag_Severity effective_sev = eval_diag_from_global_severity(diag_effective_severity(logger_input_sev));
 
-    Event_Diag_Severity effective_sev = eval_compat_effective_severity(ctx, sev);
-
-    diag_log(effective_sev == EV_DIAG_ERROR ? DIAG_SEV_ERROR : DIAG_SEV_WARNING,
+    diag_log(logger_input_sev,
              "evaluator",
              ctx->current_file ? ctx->current_file : "<input>",
              origin.line,
@@ -136,7 +145,7 @@ Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
         (void)ctx_oom(ctx);
         return eval_result_fatal();
     }
-    eval_report_record_diag(ctx, effective_sev, code);
+    eval_report_record_diag(ctx, compat_sev, effective_sev, code);
     (void)eval_compat_decide_on_diag(ctx, effective_sev);
     if (eval_should_stop(ctx)) return eval_result_fatal();
     if (effective_sev == EV_DIAG_ERROR) return eval_result_soft_error();
@@ -882,6 +891,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY), nob_sv_from_cstr("WARN"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_WHILE_MAX_ITERATIONS), nob_sv_from_cstr("10000"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
 

@@ -47,14 +47,16 @@ Current quantitative baseline:
 - Capability labels: `67 FULL` / `52 PARTIAL` / `0 MISSING`
 - Fallback labels: `116 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
 - Largest implementation files by size:
-  - `eval_string.c` (`2513` lines)
   - `eval_target.c` (`2239` lines)
   - `eval_package.c` (`1823` lines)
   - `eval_flow.c` (`1766` lines)
   - `eval_try_compile.c` (`1500` lines)
+  - `eval_file_extra.c` (`1295` lines)
 - `evaluator.c` after Phase E1 execution-service extraction: `977` lines
 - `eval_file.c` after Phase D1 dispatcher split: `57` lines
 - `eval_file_{path,glob,rw,copy}.c`: `409` / `422` / `612` / `637` lines
+- `eval_string.c` after Phase D2 dispatcher split: `58` lines
+- `eval_string_{text,regex,json,misc}.c`: `545` / `185` / `874` / `541` lines
 
 ## 4. Positive Findings
 
@@ -67,67 +69,27 @@ Current strengths worth preserving:
 - Compatibility refresh timing is centralized at command-cycle entry and covered by evaluator tests.
 - Phase E1 reduced `evaluator.c` by extracting execution traversal, user-command lifecycle, and nested file execution without changing public API or golden output.
 - Phase D1 reduced `eval_file.c` to a thin dispatcher/orchestrator and moved path/glob/rw/copy families into explicit internal modules without changing public API or golden output.
+- Phase D2 reduced `eval_string.c` to a thin dispatcher and moved text/regex/json/misc families into explicit internal modules without changing public API or golden output.
 
 ## 5. Prioritized Findings
 
 | ID | Severity | Category | Finding (short) |
 |---|---|---|---|
-| F-01 | Medium | Behavioral divergence | `while()` has hard iteration cap (`10000`) that can change valid script outcomes. |
-| F-02 | Medium | Contract coherence | Capability metadata (`implemented_level`/`fallback`) is not enforced by dispatch runtime. |
-| F-03 | Medium | Observability | Evaluator severity and process-global diagnostics severity can diverge under strict modes. |
 | F-06 | Low | Maintainability | Large evaluator translation units concentrate many concerns and raise refactor risk. |
 | F-07 | Low | Coverage debt | `PARTIAL` footprint remains high (`43.7%`), concentrated in `ctest_*` and legacy wrappers. |
 
 ## 6. Detailed Findings
 
-### F-01: `while()` hard cap
-
-Evidence:
-- `src_v2/evaluator/eval_exec_core.c` (`eval_while`) sets `const size_t kMaxIter = 10000` and emits `"Iteration limit exceeded"` when exhausted.
-
-Risk:
-- Long but valid loops can terminate with evaluator error even when original CMake flow would continue.
-
-Recommendation:
-- Keep guard, but make it configurable (`env` or evaluator variable) and document default explicitly in canonical spec.
-
-### F-02: Capability metadata is informational only
-
-Evidence:
-- Capability lookup returns static metadata from `eval_command_caps.c`.
-- Dispatch path in `eval_dispatcher.c` routes directly to handler by name and does not branch on capability/fallback metadata.
-
-Risk:
-- Tooling can over-interpret capability fields as runtime policy.
-- Metadata/runtime drift can persist unnoticed.
-
-Recommendation:
-- Choose one explicit contract:
-  - keep metadata informational-only and state this in all related docs/tests, or
-  - add runtime checks/hook points that consume fallback metadata for known commands.
-
-### F-03: Severity split between evaluator and global diagnostics
-
-Evidence:
-- `eval_emit_diag(...)` computes evaluator-effective severity and emits both `EVENT_DIAG` and `diag_log(...)`.
-- Shared diagnostics strict mode can escalate warnings independently from evaluator report/event severity.
-
-Risk:
-- CI gates based on global diagnostics counters can disagree with evaluator run report.
-
-Recommendation:
-- Define one authority for severity escalation (evaluator vs global diagnostics) and codify a single gating recommendation.
-
 ### F-06: File-size concentration
 
 Evidence:
-- Multiple core `.c` files still exceed ~1500 lines (`eval_string.c`, `eval_target.c`, `eval_package.c`, `eval_flow.c`, `eval_try_compile.c`), even after the execution-service split reduced `evaluator.c` to `977` lines and Phase D1 reduced `eval_file.c` to `57` lines.
+- Multiple core `.c` files still exceed ~1500 lines (`eval_target.c`, `eval_package.c`, `eval_flow.c`, `eval_try_compile.c`), even after the execution-service split reduced `evaluator.c` to `977` lines, Phase D1 reduced `eval_file.c` to `57` lines, and Phase D2 reduced `eval_string.c` to `58` lines.
 
 Risk:
 - Review complexity and regression probability increase, especially for cross-cutting edits.
 
 Recommendation:
-- Continue refactoring by domain boundaries, with `eval_target` and `eval_string` now the clearest remaining hotspots.
+- Continue refactoring by domain boundaries, with `eval_target` now the clearest remaining hotspot, followed by `eval_package`, `eval_flow`, and `eval_try_compile`.
 
 ### F-07: Coverage debt concentration
 
@@ -146,17 +108,44 @@ Recommendation:
 Priority tiers for next engineering/doc pass:
 
 1. P0
-- Clarify severity authority and CI gating rule (F-03).
-- Decide and document capability-metadata contract (F-02).
-
-2. P1
-- Add configurable `while()` guard limit and document default semantics (F-01).
-
-3. P2
 - Start decomposition of largest evaluator files with stable internal interfaces (F-06).
 - Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
 
-## 8. Closed / Documented in B+C
+## 8. Closed / Documented
+
+### F-01: `while()` guard configurability
+
+Current state:
+- `eval_while(...)` now reads `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` once at `while()` entry,
+- default is `10000`,
+- invalid or non-positive values emit a warning and fall back to `10000`,
+- mutations inside a running loop do not affect that active loop and only apply to the next `while()` node,
+- evaluator tests cover low-limit failure, invalid-value fallback, and snapshot-at-loop-entry semantics.
+
+Disposition:
+- closed as implemented-and-documented for the current baseline.
+
+### F-02: Capability metadata contract
+
+Current state:
+- capability lookup remains native-command introspection only,
+- dispatcher and unknown-command fallback do not branch on capability metadata,
+- `if(COMMAND ...)` continues to be broader than capability lookup because it also sees user-defined `function()` / `macro()` commands,
+- evaluator tests now cover that user-command/runtime visibility split explicitly.
+
+Disposition:
+- closed as implemented-and-documented for the current baseline.
+
+### F-03: Global diagnostics severity authority
+
+Current state:
+- evaluator compatibility still performs the first severity-shaping stage,
+- shared diagnostics strict mode now provides the final severity authority through `diag_effective_severity(...)`,
+- `EVENT_DIAG.severity`, `Eval_Run_Report`, error-budget checks, stop behavior, and final `Eval_Result` now all consume that final severity,
+- evaluator tests cover a warning path escalated by global strict mode into fatal budget stop.
+
+Disposition:
+- closed as implemented-and-documented for the current baseline.
 
 ### F-04: Compatibility refresh timing
 
@@ -182,15 +171,13 @@ Disposition:
 
 - Re-run registry stats and fallback distribution from `eval_command_registry.h`.
 - Confirm any new `PARTIAL -> FULL` promotions are reflected in both coverage matrix and capability docs.
-- Re-check strict-mode severity behavior with one controlled warning scenario.
-- Re-check `while()` behavior and guard configurability if implemented.
 - Recompute top evaluator file-size hotspots after any refactor wave.
 
 ## 10. Open Questions
 
 - Should `CI_STRICT` remain behaviorally equivalent to `STRICT`, or gain CI-specific stop/report semantics?
 - Should unknown-command and known-command fallback policy converge to one unified policy mechanism?
-- Which metric is canonical for build gating: evaluator run report, global diagnostics counters, or both?
+- Should the shared diagnostics module eventually expose richer metadata than warning/error counts for evaluator-specific CI dashboards?
 
 ## 11. Relationship to Other Docs
 
@@ -201,7 +188,7 @@ Canonical contract; this file is analytical only.
 Quantitative command-coverage snapshot used by this audit.
 
 - `evaluator_command_capabilities.md`
-Capability API/data contract referenced by finding F-02.
+Capability API/data contract referenced by the closed capability-contract note.
 
 - `evaluator_compatibility_model.md`
-Profile/policy behavior referenced by finding F-03 and the closed compatibility-timing note.
+Profile/policy behavior referenced by the closed severity-authority note and the closed compatibility-timing note.

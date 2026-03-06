@@ -35,6 +35,12 @@ Primary implementation files:
 - `src_v2/evaluator/eval_compat.c`
 - `src_v2/evaluator/eval_report.c`
 - `src_v2/evaluator/eval_diag_classify.c`
+- `src_v2/evaluator/eval_string.c`
+- `src_v2/evaluator/eval_string_internal.h`
+- `src_v2/evaluator/eval_string_text.c`
+- `src_v2/evaluator/eval_string_regex.c`
+- `src_v2/evaluator/eval_string_json.c`
+- `src_v2/evaluator/eval_string_misc.c`
 - `src_v2/evaluator/eval_flow.c`
 - `src_v2/evaluator/eval_file.c`
 - `src_v2/evaluator/eval_file_internal.h`
@@ -185,13 +191,16 @@ Public API stability rule:
 Evaluator diagnostics are emitted through `eval_emit_diag(...)`, which currently:
 - classifies evaluator metadata (`code`, `error_class`),
 - applies evaluator compatibility severity shaping,
+- applies process-global diagnostics strict shaping as the final severity step,
 - writes one external shared-log line through `diag_log(...)`,
 - appends one `EVENT_DIAG`,
 - updates `Eval_Run_Report`,
 - applies compatibility stop/continue decision logic.
 
 Important boundary:
-- evaluator report/event severity and process-global diagnostics counters can diverge when global diagnostics strict mode is enabled independently.
+- process-global diagnostics strict mode is the final severity authority for evaluator diagnostics.
+- `EVENT_DIAG.severity`, `Eval_Run_Report`, error-budget checks, stop behavior, and final `Eval_Result` all follow that final global-effective severity.
+- `Eval_Run_Report.warning_count` mirrors original warning inputs while `error_count` mirrors final effective errors, matching the shared diagnostics module.
 
 ## 10. Event IR Output Contract (Top-Level)
 
@@ -219,9 +228,11 @@ Current propagation pattern:
 ## 12. Current Known Divergences / Limits
 
 Current intentionally visible limits:
-- `while()` execution has a hard iteration guard.
+- `while()` execution is guarded by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`, defaulting to `10000`.
+- the `while()` guard is read once at `while` node entry; mutations inside the loop affect only the next `while()` node.
+- invalid `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` values emit a warning and fall back to `10000`.
 - native dispatcher lookup is case-insensitive and index-backed through the runtime registry.
-- capability lookup shares that same native registry lookup path for introspection.
+- capability lookup shares that same native registry lookup path for native-command introspection only.
 - unknown-command fallback is generic and does not dynamically apply capability metadata.
 - nested evaluation remains shared-context; child-context isolation is out of scope in the current roadmap.
 

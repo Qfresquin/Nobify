@@ -215,9 +215,13 @@ Current behavior:
   - execute the body
   - react to flow flags similarly to `foreach`
 
-Hard guard:
-- iteration count is capped at `10000`
-- exceeding that limit emits an evaluator error (`Iteration limit exceeded`) and returns at least `EVAL_RESULT_SOFT_ERROR` (or `EVAL_RESULT_FATAL` if stop-state is triggered)
+Iteration guard:
+- iteration count is capped by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`
+- default is `10000`
+- the value is read once at `while()` entry
+- invalid or non-positive values emit a warning and fall back to `10000`
+- writes performed inside the active loop affect only the next `while()` node
+- exceeding the active limit emits an evaluator error (`Iteration limit exceeded`) and returns at least `EVAL_RESULT_SOFT_ERROR` (or `EVAL_RESULT_FATAL` if stop-state is triggered)
 
 This is an intentional evaluator safety divergence from unconstrained host execution.
 
@@ -430,7 +434,7 @@ This makes execution cooperative:
 
 Current limits visible in the execution model:
 
-- `while()` is bounded by a hard iteration guard.
+- `while()` remains bounded by a configurable iteration guard rather than unconstrained host execution.
 - `function()` and `macro()` definitions are stored eagerly rather than lazily reparsed on invocation.
 - `block()` is modeled through command dispatch rather than a dedicated parser node kind.
 - External-file execution reuses the same evaluator context rather than spawning isolated child contexts.

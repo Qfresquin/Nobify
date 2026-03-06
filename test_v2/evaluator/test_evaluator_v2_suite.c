@@ -1176,6 +1176,57 @@ TEST(evaluator_native_command_registry_runtime_extension) {
     TEST_PASS();
 }
 
+TEST(evaluator_command_capability_remains_native_only_introspection) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "function(user_capability_probe)\n"
+        "  add_executable(user_capability_target main.c)\n"
+        "endfunction()\n"
+        "if(COMMAND user_capability_probe)\n"
+        "  set(USER_CAPABILITY_VISIBLE 1)\n"
+        "endif()\n"
+        "user_capability_probe()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("USER_CAPABILITY_VISIBLE")), nob_sv_from_cstr("1")));
+
+    Command_Capability user_cap = {0};
+    ASSERT(!evaluator_get_command_capability(ctx, nob_sv_from_cstr("user_capability_probe"), &user_cap));
+    ASSERT(user_cap.implemented_level == EVAL_CMD_IMPL_MISSING);
+
+    bool saw_target = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_DECLARE) continue;
+        if (!nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("user_capability_target"))) continue;
+        saw_target = true;
+        break;
+    }
+    ASSERT(saw_target);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_native_command_registry_case_insensitive_index_lookup) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1318,6 +1369,78 @@ TEST(evaluator_compat_refresh_snapshot_applies_next_command_cycle) {
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_global_diag_strict_controls_event_report_and_runtime_gating) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_NOBIFY_COMPAT_PROFILE PERMISSIVE)\n"
+        "set(CMAKE_NOBIFY_ERROR_BUDGET 1)\n"
+        "set(CMAKE_NOBIFY_UNSUPPORTED_POLICY WARN)\n"
+        "unknown_global_strict_budget_cmd()\n"
+        "add_executable(global_strict_after main.c)\n");
+
+    diag_set_strict(true);
+    diag_reset();
+
+    bool ok = true;
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ok = ok && eval_result_is_fatal(run_res);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    if (!report) {
+        ok = false;
+    } else {
+        ok = ok && report->overall_status == EVAL_RUN_FATAL;
+        ok = ok && report->warning_count == 1;
+        ok = ok && report->error_count == 1;
+    }
+    ok = ok && diag_warning_count() == 1;
+    ok = ok && diag_error_count() == 1;
+
+    Event_Diag_Severity severity = EV_DIAG_WARNING;
+    ok = ok && evaluator_find_last_diag_for_command(stream,
+                                                    nob_sv_from_cstr("unknown_global_strict_budget_cmd"),
+                                                    &severity);
+    ok = ok && severity == EV_DIAG_ERROR;
+
+    bool saw_after_target = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_DECLARE) continue;
+        if (!nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("global_strict_after"))) continue;
+        saw_after_target = true;
+        break;
+    }
+    ok = ok && !saw_after_target;
+
+    diag_set_strict(false);
+    diag_reset();
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+
+    ASSERT(ok);
     TEST_PASS();
 }
 
@@ -1687,6 +1810,123 @@ TEST(evaluator_flow_commands_reject_extra_arguments) {
         usage_hint_hits++;
     }
     ASSERT(usage_hint_hits == 3);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_while_iteration_limit_snapshot_applies_per_loop_entry) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_NOBIFY_WHILE_MAX_ITERATIONS 2)\n"
+        "set(I 0)\n"
+        "while(${I} LESS 3)\n"
+        "  if(${I} EQUAL 0)\n"
+        "    set(CMAKE_NOBIFY_WHILE_MAX_ITERATIONS 10)\n"
+        "  endif()\n"
+        "  math(EXPR I \"${I} + 1\")\n"
+        "endwhile()\n"
+        "set(J 0)\n"
+        "while(${J} LESS 3)\n"
+        "  math(EXPR J \"${J} + 1\")\n"
+        "endwhile()\n");
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("I")), nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("J")), nob_sv_from_cstr("3")));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 1);
+
+    size_t limit_diag_count = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Iteration limit exceeded"))) continue;
+        limit_diag_count++;
+    }
+    ASSERT(limit_diag_count == 1);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_while_iteration_limit_invalid_value_warns_and_falls_back) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_NOBIFY_WHILE_MAX_ITERATIONS nope)\n"
+        "set(I 0)\n"
+        "while(${I} LESS 2)\n"
+        "  math(EXPR I \"${I} + 1\")\n"
+        "endwhile()\n");
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_ok(run_res));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("I")), nob_sv_from_cstr("2")));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 1);
+    ASSERT(report->error_count == 0);
+
+    bool saw_invalid_limit = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_WARNING) continue;
+        if (!nob_sv_eq(ev->as.diag.cause,
+                       nob_sv_from_cstr("CMAKE_NOBIFY_WHILE_MAX_ITERATIONS must be a positive integer"))) {
+            continue;
+        }
+        saw_invalid_limit = true;
+        break;
+    }
+    ASSERT(saw_invalid_limit);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -6730,6 +6970,213 @@ TEST(evaluator_string_hash_repeat_and_json_full_surface) {
     TEST_PASS();
 }
 
+TEST(evaluator_string_text_regex_and_misc_dispatch_events) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    evaluator_set_source_date_epoch_value("946684800");
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(SBUF \"Hi\")\n"
+        "string(APPEND SBUF \"-There\")\n"
+        "string(JOIN \":\" S_JOIN alpha beta gamma)\n"
+        "set(V \"qq\")\n"
+        "string(CONFIGURE \"@V@-${V}\" S_CFG @ONLY)\n"
+        "string(REPLACE \"na\" \"X\" S_REPL \"banana\")\n"
+        "string(TOLOWER \"MiX\" S_LOW)\n"
+        "string(SUBSTRING \"abcdef\" 2 3 S_SUB)\n"
+        "string(REGEX MATCH \"a[0-9]+\" S_RX_MATCH \"xxa12yy\")\n"
+        "string(REGEX REPLACE \"a([0-9]+)\" \"B\\1\" S_RX_REPL \"xa12ya34\")\n"
+        "string(REGEX MATCHALL \"[a-z][0-9]\" S_RX_ALL \"a1b2c3\")\n"
+        "string(RANDOM LENGTH 6 ALPHABET abc RANDOM_SEED 7 S_RAND)\n"
+        "string(TIMESTAMP S_TS \"%Y\" UTC)\n"
+        "string(UUID S_UUID3 NAMESPACE \"6ba7b810-9dad-11d1-80b4-00c04fd430c8\" NAME \"demo\" TYPE MD5)\n"
+        "string(UUID S_UUID5 NAMESPACE \"6ba7b810-9dad-11d1-80b4-00c04fd430c8\" NAME \"demo\" TYPE SHA1)\n"
+        "string(SHA256 S_SHA \"abc\")\n"
+        "add_executable(string_split_probe main.c)\n"
+        "target_compile_definitions(string_split_probe PRIVATE "
+        "\"SBUF=${SBUF}\" \"S_JOIN=${S_JOIN}\" \"S_CFG=${S_CFG}\" \"S_REPL=${S_REPL}\" "
+        "\"S_LOW=${S_LOW}\" \"S_SUB=${S_SUB}\" \"S_RX_MATCH=${S_RX_MATCH}\" "
+        "\"S_RX_REPL=${S_RX_REPL}\" \"S_RX_ALL=${S_RX_ALL}\" \"S_RAND=${S_RAND}\" "
+        "\"S_TS=${S_TS}\" \"S_UUID3=${S_UUID3}\" \"S_UUID5=${S_UUID5}\" \"S_SHA=${S_SHA}\")\n");
+    Eval_Result run_res = evaluator_run(ctx, root);
+    evaluator_set_source_date_epoch_value(NULL);
+
+    ASSERT(!eval_result_is_fatal(run_res));
+    ASSERT(run_res.kind == EVAL_RESULT_OK);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_append = false;
+    bool saw_join = false;
+    bool saw_configure = false;
+    bool saw_replace = false;
+    bool saw_lower = false;
+    bool saw_substring = false;
+    bool saw_regex_match = false;
+    bool saw_regex_replace = false;
+    bool saw_regex_all = false;
+    bool saw_random = false;
+    bool saw_timestamp = false;
+    bool saw_uuid3 = false;
+    bool saw_uuid5 = false;
+    bool saw_hash = false;
+
+    bool saw_configure_event = false;
+    bool saw_replace_event = false;
+    bool saw_regex_match_event = false;
+    bool saw_regex_replace_event = false;
+    bool saw_hash_event = false;
+    bool saw_timestamp_event = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("string_split_probe"))) {
+            String_View it = ev->as.target_compile_definitions.item;
+            if (nob_sv_eq(it, nob_sv_from_cstr("SBUF=Hi-There"))) saw_append = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_JOIN=alpha:beta:gamma"))) saw_join = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_CFG=qq-qq"))) saw_configure = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_REPL=baXX"))) saw_replace = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_LOW=mix"))) saw_lower = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_SUB=cde"))) saw_substring = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_RX_MATCH=a12"))) saw_regex_match = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_RX_REPL=xB12yB34"))) saw_regex_replace = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_RX_ALL=a1;b2;c3"))) saw_regex_all = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_RAND=bcaacb"))) saw_random = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_TS=2000"))) saw_timestamp = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_UUID3=302a4211-9878-3ad9-b7bf-c706364668a5"))) saw_uuid3 = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_UUID5=6bc1814c-5705-5b6e-af99-104b91962282"))) saw_uuid5 = true;
+            if (nob_sv_eq(it, nob_sv_from_cstr("S_SHA=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"))) saw_hash = true;
+        }
+
+        if (ev->h.kind == EVENT_STRING_CONFIGURE &&
+            nob_sv_eq(ev->as.string_configure.out_var, nob_sv_from_cstr("S_CFG"))) {
+            saw_configure_event = true;
+        }
+        if (ev->h.kind == EVENT_STRING_REPLACE &&
+            nob_sv_eq(ev->as.string_replace.out_var, nob_sv_from_cstr("S_REPL"))) {
+            saw_replace_event = true;
+        }
+        if (ev->h.kind == EVENT_STRING_REGEX &&
+            nob_sv_eq(ev->as.string_regex.mode, nob_sv_from_cstr("MATCH")) &&
+            nob_sv_eq(ev->as.string_regex.out_var, nob_sv_from_cstr("S_RX_MATCH"))) {
+            saw_regex_match_event = true;
+        }
+        if (ev->h.kind == EVENT_STRING_REGEX &&
+            nob_sv_eq(ev->as.string_regex.mode, nob_sv_from_cstr("REPLACE")) &&
+            nob_sv_eq(ev->as.string_regex.out_var, nob_sv_from_cstr("S_RX_REPL"))) {
+            saw_regex_replace_event = true;
+        }
+        if (ev->h.kind == EVENT_STRING_HASH &&
+            nob_sv_eq(ev->as.string_hash.algorithm, nob_sv_from_cstr("SHA256")) &&
+            nob_sv_eq(ev->as.string_hash.out_var, nob_sv_from_cstr("S_SHA"))) {
+            saw_hash_event = true;
+        }
+        if (ev->h.kind == EVENT_STRING_TIMESTAMP &&
+            nob_sv_eq(ev->as.string_timestamp.out_var, nob_sv_from_cstr("S_TS"))) {
+            saw_timestamp_event = true;
+        }
+    }
+
+    ASSERT(saw_append);
+    ASSERT(saw_join);
+    ASSERT(saw_configure);
+    ASSERT(saw_replace);
+    ASSERT(saw_lower);
+    ASSERT(saw_substring);
+    ASSERT(saw_regex_match);
+    ASSERT(saw_regex_replace);
+    ASSERT(saw_regex_all);
+    ASSERT(saw_random);
+    ASSERT(saw_timestamp);
+    ASSERT(saw_uuid3);
+    ASSERT(saw_uuid5);
+    ASSERT(saw_hash);
+
+    ASSERT(saw_configure_event);
+    ASSERT(saw_replace_event);
+    ASSERT(saw_regex_match_event);
+    ASSERT(saw_regex_replace_event);
+    ASSERT(saw_hash_event);
+    ASSERT(saw_timestamp_event);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_string_regex_parse_error_keeps_diag_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "string(REGEX MATCH \"[\" BAD_RX \"abc\")\n");
+    Eval_Result run_res = evaluator_run(ctx, root);
+
+    ASSERT(!eval_result_is_fatal(run_res));
+    ASSERT(run_res.kind == EVAL_RESULT_SOFT_ERROR);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->input_error_count == 1);
+
+    bool saw_parse_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (!nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Invalid regex pattern"))) continue;
+        ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
+        ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_PARSE_ERROR")));
+        ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
+        ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("[")));
+        saw_parse_diag = true;
+    }
+    ASSERT(saw_parse_diag);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -7430,14 +7877,18 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
 
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+    test_evaluator_command_capability_remains_native_only_introspection(passed, failed);
     test_evaluator_native_command_registry_runtime_extension(passed, failed);
     test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed);
     test_evaluator_compat_refresh_snapshot_applies_next_command_cycle(passed, failed);
+    test_evaluator_global_diag_strict_controls_event_report_and_runtime_gating(passed, failed);
     test_evaluator_unsupported_policy_snapshot_applies_next_command_cycle(passed, failed);
     test_evaluator_run_result_kind_tri_state_contract(passed, failed);
     test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed);
     test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed);
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
+    test_evaluator_while_iteration_limit_snapshot_applies_per_loop_entry(passed, failed);
+    test_evaluator_while_iteration_limit_invalid_value_warns_and_falls_back(passed, failed);
     test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed);
     test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
     test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed);
@@ -7512,6 +7963,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
     test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
+    test_evaluator_string_text_regex_and_misc_dispatch_events(passed, failed);
+    test_evaluator_string_regex_parse_error_keeps_diag_surface(passed, failed);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
     test_evaluator_file_dispatcher_routes_glob_rw_and_copy_families(passed, failed);
     test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed);

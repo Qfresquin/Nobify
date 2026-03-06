@@ -33,6 +33,13 @@ const char *diag_safe_str(const char *s) {
     return (s && s[0] != '\0') ? s : "-";
 }
 
+Diag_Severity diag_effective_severity(Diag_Severity sev) {
+    if (g_diag.strict_mode && sev == DIAG_SEV_WARNING) {
+        return DIAG_SEV_ERROR;
+    }
+    return sev;
+}
+
 void diag_reset(void) {
     g_diag.warning_count = 0;
     g_diag.error_count = 0;
@@ -173,10 +180,7 @@ void diag_log(
     const char *cause,
     const char *hint
 ) {
-    Diag_Severity effective = sev;
-    if (g_diag.strict_mode && sev == DIAG_SEV_WARNING) {
-        effective = DIAG_SEV_ERROR;
-    }
+    Diag_Severity effective = diag_effective_severity(sev);
 
     if (sev == DIAG_SEV_WARNING) g_diag.warning_count++;
     if (effective == DIAG_SEV_ERROR) g_diag.error_count++;

@@ -4,6 +4,7 @@
 #include "eval_expr.h"
 #include "eval_flow.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,49 @@ static bool exec_core_parse_long(String_View sv, long *out) {
 static bool exec_core_sv_list_push(Arena *arena, SV_List *list, String_View sv) {
     if (!arena || !list) return false;
     return arena_arr_push(arena, *list, sv);
+}
+
+static bool exec_core_parse_positive_size(String_View sv, size_t *out) {
+    if (!out || sv.count == 0) return false;
+    char buf[64];
+    if (sv.count >= sizeof(buf)) return false;
+    memcpy(buf, sv.data, sv.count);
+    buf[sv.count] = '\0';
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long v = strtoull(buf, &end, 10);
+    if (errno != 0 || !end || *end != '\0' || v == 0 || v > (unsigned long long)((size_t)-1)) return false;
+    *out = (size_t)v;
+    return true;
+}
+
+static Eval_Result eval_while_iteration_limit(Evaluator_Context *ctx,
+                                              const Node *node,
+                                              size_t *out_limit) {
+    const size_t default_limit = 10000;
+    if (!out_limit) return eval_result_fatal();
+    *out_limit = default_limit;
+    if (!ctx) return eval_result_ok();
+
+    String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_WHILE_MAX_ITERATIONS));
+    if (raw.count == 0) return eval_result_ok();
+
+    size_t parsed = 0;
+    if (exec_core_parse_positive_size(raw, &parsed)) {
+        *out_limit = parsed;
+        return eval_result_ok();
+    }
+
+    Cmake_Event_Origin origin = node ? eval_origin_from_node(ctx, node) : (Cmake_Event_Origin){0};
+    return eval_emit_diag_with_severity(ctx,
+                                        EV_DIAG_WARNING,
+                                        EVAL_DIAG_INVALID_VALUE,
+                                        nob_sv_from_cstr("while"),
+                                        nob_sv_from_cstr("while"),
+                                        origin,
+                                        nob_sv_from_cstr("CMAKE_NOBIFY_WHILE_MAX_ITERATIONS must be a positive integer"),
+                                        nob_sv_from_cstr("Unset it or set it to a decimal value greater than 0"));
 }
 
 static Eval_Result eval_if(Evaluator_Context *ctx, const Node *node);
@@ -224,13 +268,14 @@ static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node) {
 }
 
 static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node) {
-    const size_t kMaxIter = 10000;
+    size_t max_iter = 10000;
+    Eval_Result aggregate = eval_while_iteration_limit(ctx, node, &max_iter);
+    if (eval_result_is_fatal(aggregate) || eval_should_stop(ctx)) return eval_result_fatal();
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     size_t iter_count = 0;
-    Eval_Result aggregate = eval_result_ok();
     if (!eval_emit_flow_loop_begin(ctx, origin, nob_sv_from_cstr("while"))) return eval_result_fatal();
     ctx->loop_depth++;
-    for (size_t iter = 0; iter < kMaxIter; iter++) {
+    for (size_t iter = 0; iter < max_iter; iter++) {
         bool cond = eval_condition(ctx, &node->as.while_stmt.condition);
         if (ctx->oom) {
             ctx->loop_depth--;

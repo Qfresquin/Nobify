@@ -26,6 +26,7 @@ extern "C" {
 #define EVAL_VAR_NOBIFY_ERROR_BUDGET "CMAKE_NOBIFY_ERROR_BUDGET"
 #define EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY "CMAKE_NOBIFY_UNSUPPORTED_POLICY"
 #define EVAL_VAR_NOBIFY_FILE_GLOB_STRICT "CMAKE_NOBIFY_FILE_GLOB_STRICT"
+#define EVAL_VAR_NOBIFY_WHILE_MAX_ITERATIONS "CMAKE_NOBIFY_WHILE_MAX_ITERATIONS"
 #define EVAL_VAR_NOBIFY_EXPAND_MAX_RECURSION "CMAKE_NOBIFY_EXPAND_MAX_RECURSION"
 
 #define EVAL_POLICY_CMP0017 "CMP0017"
@@ -1504,7 +1505,8 @@ bool eval_diag_counts_as_unsupported(Eval_Diag_Code code);
 String_View eval_error_class_to_sv(Eval_Error_Class cls);
 void eval_report_reset(Evaluator_Context *ctx);
 void eval_report_record_diag(Evaluator_Context *ctx,
-                             Event_Diag_Severity sev,
+                             Event_Diag_Severity input_sev,
+                             Event_Diag_Severity effective_sev,
                              Eval_Diag_Code code);
 void eval_report_finalize(Evaluator_Context *ctx);
 bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);

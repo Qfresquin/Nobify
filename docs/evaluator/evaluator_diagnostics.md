@@ -90,12 +90,13 @@ Each successful evaluator diagnostic emission follows this flow:
 3. read registry metadata for `code`,
 4. derive base severity from either registry default or explicit override,
 5. apply evaluator compatibility shaping,
-6. send one shared log line through `diag_log(...)`,
-7. build and append one `EVENT_DIAG`,
-8. update `Eval_Run_Report`,
-9. run compatibility stop/continue decision logic.
+6. apply process-global diagnostics strict shaping through `diag_effective_severity(...)`,
+7. send one shared log line through `diag_log(...)`,
+8. build and append one `EVENT_DIAG`,
+9. update `Eval_Run_Report`,
+10. run compatibility stop/continue decision logic.
 
-Evaluator severity shaping still happens before the shared logger sees the diagnostic.
+Evaluator compatibility shaping still happens before the shared logger sees the diagnostic. The shared diagnostics layer then provides the final severity authority used by logging, events, report counters, and runtime gating.
 
 ## 6. Severity Model
 
@@ -105,14 +106,14 @@ Severity sources:
 - default path: registry default severity for the selected code,
 - override path: explicit runtime severity supplied by the caller.
 
-Then evaluator compatibility may still reshape that severity before the event/report/log are recorded.
+Then evaluator compatibility may reshape that severity before the shared diagnostics layer applies its final strict-mode escalation.
 
 This means:
 - `EVENT_DIAG.severity`,
 - `Eval_Run_Report.warning_count/error_count`,
 - compatibility stop decisions
 
-all use the evaluator-effective severity after compatibility shaping.
+all use the final global-effective severity after compatibility shaping.
 
 ## 7. `EVENT_DIAG` Contract
 
@@ -137,11 +138,12 @@ All payload strings are copied into `event_arena`.
 `eval_report_record_diag(...)` now counts from code metadata, not from comparisons against generic code buckets.
 
 Current rules:
-- `warning_count` / `error_count` are driven by evaluator-effective severity,
+- `warning_count` mirrors the original severity submitted to the shared diagnostics layer,
+- `error_count` mirrors the final effective severity after global strict escalation,
 - class counters come from the registry `Eval_Error_Class`,
 - `unsupported_count` increments only for codes whose registry entry marks them as unsupported/engine-limitation aggregates.
 
-This keeps `Eval_Run_Report` stable even when different commands share the same coarse class.
+This keeps `Eval_Run_Report` aligned with the shared diagnostics module while preserving single-increment class/unsupported counters.
 
 ## 9. Representative Code Paths
 
@@ -180,7 +182,7 @@ Unknown-command fallback remains policy-shaped:
 
 Current non-goals / limitations:
 - the shared external log still uses top-level component `"evaluator"` even when `EVENT_DIAG.component` is more specific,
-- evaluator and global logger severities can still diverge if the global logger runs with its own strict policy,
+- `warning_count` can increment even when `EVENT_DIAG.severity == ERROR` because strict escalation mirrors shared diagnostics counting semantics,
 - registry codes are stable within evaluator scope, but they are not intended to replace the higher-level error-class taxonomy.
 
 ## 12. Related Docs

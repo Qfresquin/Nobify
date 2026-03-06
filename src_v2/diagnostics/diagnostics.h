@@ -10,6 +10,7 @@ typedef enum {
 
 int diag_to_nob_level(Diag_Severity sev);
 const char *diag_safe_str(const char *s);
+Diag_Severity diag_effective_severity(Diag_Severity sev);
 
 void diag_reset(void);
 void diag_set_strict(bool strict_mode);

@@ -11,13 +11,14 @@ void eval_report_reset(Evaluator_Context *ctx) {
 }
 
 void eval_report_record_diag(Evaluator_Context *ctx,
-                             Cmake_Diag_Severity sev,
+                             Event_Diag_Severity input_sev,
+                             Event_Diag_Severity effective_sev,
                              Eval_Diag_Code code) {
     if (!ctx) return;
     Eval_Error_Class cls = eval_diag_error_class(code);
 
-    if (sev == EV_DIAG_WARNING) ctx->run_report.warning_count++;
-    else ctx->run_report.error_count++;
+    if (input_sev == EV_DIAG_WARNING) ctx->run_report.warning_count++;
+    if (effective_sev == EV_DIAG_ERROR) ctx->run_report.error_count++;
 
     if (cls == EVAL_ERR_CLASS_INPUT_ERROR) ctx->run_report.input_error_count++;
     else if (cls == EVAL_ERR_CLASS_ENGINE_LIMITATION) ctx->run_report.engine_limitation_count++;

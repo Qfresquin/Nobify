@@ -154,6 +154,11 @@ Examples:
 
 Capability metadata is therefore introspection/reporting data, not an execution policy engine.
 
+This is the canonical contract:
+- `evaluator_get_command_capability(...)` is native-command introspection only,
+- `if(COMMAND ...)` is a broader runtime predicate that also sees user-defined `function()` / `macro()` commands,
+- unknown-command fallback continues to follow `CMAKE_NOBIFY_UNSUPPORTED_POLICY`, not capability metadata.
+
 ## 10. Native vs User-Defined Command Visibility
 
 Capability lookup currently covers native commands from context registry (built-ins + externally registered natives).
@@ -184,7 +189,7 @@ Current limitations:
 - capability lookup does not include user-defined commands,
 - no dynamic capability downgrade/upgrade by policy/profile at runtime,
 - no machine-readable reason field for why a command is `PARTIAL`,
-- fallback metadata is not currently enforced by dispatcher as policy logic,
+- fallback metadata is intentionally not enforced by dispatcher as policy logic,
 - no dedicated API to enumerate full registry with stable ordering/versioning guarantees,
 - no parallel capability table exists; metadata is intentionally derived from the same native registry dispatcher uses.
 

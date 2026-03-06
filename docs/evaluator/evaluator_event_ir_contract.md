@@ -232,7 +232,7 @@ Current exception:
 ### 10.2 Diagnostic Event Semantics
 
 Each successful `eval_emit_diag(...)` push produces one `EVENT_DIAG` carrying:
-- effective severity (after evaluator compat shaping),
+- effective severity after evaluator compatibility shaping and the final shared-diagnostics strict step,
 - classified code/error_class,
 - component/command/cause/hint payload.
 

@@ -123,10 +123,15 @@ Practical consequence:
 - strict and ci_strict promote warnings to errors.
 
 This effective severity drives:
+- the evaluator-side input severity passed to the shared diagnostics layer.
+
+Then the shared diagnostics layer applies its own final strict-mode escalation through `diag_effective_severity(...)`.
+
+That final severity drives:
 - `EVENT_DIAG` severity,
 - run-report warning/error counters,
 - diagnostic stop decision in `eval_compat_decide_on_diag(...)`,
-- severity passed to shared `diag_log(...)`.
+- severity rendered by `diag_log(...)`.
 
 ### 6.2 `STRICT` vs `CI_STRICT`
 
@@ -250,8 +255,8 @@ Compatibility decisions affect diagnostics at multiple levels:
 - unsupported policy in dispatcher fallback.
 
 Shared logger interaction:
-- evaluator-level compatibility decides effective event/report severity first,
-- process-global diagnostics strict mode can still independently escalate external log severity/counters.
+- evaluator-level compatibility still performs the first shaping stage,
+- process-global diagnostics strict mode is the final severity authority consumed by evaluator event/report/gating paths as well as the external log line.
 
 ## 13. Current Divergences and Limits
 
@@ -301,9 +306,10 @@ Fallback semantics:
 ## 17. Strictness Escalation Ownership
 
 Ownership split is explicit:
-- evaluator compatibility layer owns evaluator-local strictness interpretation (effective severity shaping and evaluator stop/continue decisions),
-- shared diagnostics layer owns process-global logging/visibility escalation.
+- evaluator compatibility layer owns the first-stage shaping (`profile`, `unsupported_policy`, `continue_on_error`, `error_budget`),
+- shared diagnostics layer owns the last-stage strict escalation rule,
+- evaluator runtime then consumes that final severity for `EVENT_DIAG`, `Eval_Run_Report`, budget checks, stop decisions, and final result classification.
 
 Boundary rule:
-- shared/global logging strictness must not retroactively rewrite evaluator-local run-state outcomes,
-- evaluator run result and run report are derived from evaluator-local compatibility decisions; shared logger escalation is an external observability concern.
+- shared/global strictness is no longer an external-only observability concern,
+- evaluator-local run-state outcomes are intentionally aligned to the final severity returned by the shared diagnostics layer.

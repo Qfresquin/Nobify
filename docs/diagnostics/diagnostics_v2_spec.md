@@ -50,6 +50,7 @@ Consequences:
 ### 3.2 Severity Mapping
 
 - `int diag_to_nob_level(Diag_Severity sev)`
+- `Diag_Severity diag_effective_severity(Diag_Severity sev)`
 
 Current mapping:
 - `DIAG_SEV_ERROR` => `NOB_ERROR`
@@ -85,6 +86,7 @@ It does not reset:
 
 - `void diag_set_strict(bool strict_mode)`
 - `bool diag_is_strict(void)`
+- `Diag_Severity diag_effective_severity(Diag_Severity sev)`
 
 Strict mode changes only the effective severity used for logging and error counting:
 - a warning logged in strict mode is emitted as an error-level diagnostic
@@ -124,6 +126,8 @@ The function computes:
 
 - `effective = sev`
 - if strict mode is enabled and `sev == DIAG_SEV_WARNING`, then `effective = DIAG_SEV_ERROR`
+
+`diag_effective_severity(...)` exposes that exact rule as a reusable helper, and `diag_log(...)` applies the same helper internally.
 
 This `effective` severity controls:
 - the output log level passed to `nob_log(...)`
