@@ -8,6 +8,20 @@ static bool try_run_clear_run_outputs(Evaluator_Context *ctx, const Try_Run_Requ
     return true;
 }
 
+static bool try_run_set_cross_compile_skip_outputs(Evaluator_Context *ctx,
+                                                   const Try_Run_Request *req,
+                                                   String_View message) {
+    if (!ctx || !req) return false;
+    if (req->run_result_var.count > 0 &&
+        !eval_var_set_current(ctx, req->run_result_var, nob_sv_from_cstr("FAILED_TO_RUN"))) {
+        return false;
+    }
+    if (req->run_output_var.count > 0 && !eval_var_set_current(ctx, req->run_output_var, message)) return false;
+    if (req->run_stdout_var.count > 0 && !eval_var_set_current(ctx, req->run_stdout_var, nob_sv_from_cstr(""))) return false;
+    if (req->run_stderr_var.count > 0 && !eval_var_set_current(ctx, req->run_stderr_var, nob_sv_from_cstr(""))) return false;
+    return true;
+}
+
 Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
@@ -20,7 +34,10 @@ Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
     }
 
     Try_Compile_Execution_Result exec_res = {0};
-    if (!try_compile_execute_source_request(ctx, &req.compile_req, &exec_res)) {
+    bool compile_ok = req.compile_req.signature == TRY_COMPILE_SIGNATURE_PROJECT
+        ? try_compile_execute_project_request(ctx, node, &req.compile_req, &exec_res)
+        : try_compile_execute_source_request(ctx, &req.compile_req, &exec_res);
+    if (!compile_ok) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -43,9 +60,11 @@ Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
 
     String_View cross_compiling = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
     if (cross_compiling.count > 0 && !try_compile_is_false(cross_compiling)) {
-        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_NOT_IMPLEMENTED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"), nob_sv_from_cstr("This batch only supports native execution"));
-        if (!try_run_clear_run_outputs(ctx, &req)) return eval_result_fatal();
-        if (req.run_result_var.count > 0 && !eval_var_set_current(ctx, req.run_result_var, nob_sv_from_cstr(""))) return eval_result_fatal();
+        if (!try_run_set_cross_compile_skip_outputs(ctx,
+                                                    &req,
+                                                    nob_sv_from_cstr("try_run skipped due to CMAKE_CROSSCOMPILING"))) {
+            return eval_result_fatal();
+        }
         return eval_result_from_ctx(ctx);
     }
 

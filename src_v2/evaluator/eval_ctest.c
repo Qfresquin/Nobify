@@ -16,7 +16,13 @@
 #endif
 
 typedef struct {
+    String_View key;
+    String_View value;
+} Ctest_Parsed_Field;
+
+typedef struct {
     SV_List positionals;
+    Ctest_Parsed_Field *fields;
 } Ctest_Parse_Result;
 
 typedef struct {
@@ -29,6 +35,9 @@ typedef struct {
     size_t min_positionals;
     size_t max_positionals;
 } Ctest_Parse_Spec;
+
+static String_View ctest_current_binary_dir(Evaluator_Context *ctx);
+static String_View ctest_binary_root(Evaluator_Context *ctx);
 
 static bool ctest_emit_diag(Evaluator_Context *ctx,
                             const Node *node,
@@ -56,6 +65,23 @@ static bool ctest_set_field(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, nob_sv_from_cstr(buf), value);
 }
 
+static bool ctest_record_parsed_field(Arena *arena, Ctest_Parse_Result *out_res, String_View key, String_View value) {
+    if (!arena || !out_res || key.count == 0) return false;
+    Ctest_Parsed_Field field = {
+        .key = key,
+        .value = value,
+    };
+    return arena_arr_push(arena, out_res->fields, field);
+}
+
+static String_View ctest_parsed_field_value(const Ctest_Parse_Result *parsed, const char *field_name) {
+    if (!parsed || !field_name) return nob_sv_from_cstr("");
+    for (size_t i = 0; i < arena_arr_len(parsed->fields); i++) {
+        if (eval_sv_eq_ci_lit(parsed->fields[i].key, field_name)) return parsed->fields[i].value;
+    }
+    return nob_sv_from_cstr("");
+}
+
 static bool ctest_keyword_in_list(String_View tok, const char *const *items, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (eval_sv_eq_ci_lit(tok, items[i])) return true;
@@ -81,6 +107,88 @@ static bool ctest_publish_var_keyword(Evaluator_Context *ctx, String_View key, S
     return true;
 }
 
+static bool ctest_set_session_field(Evaluator_Context *ctx, const char *field_name, String_View value) {
+    if (!ctx || !field_name) return false;
+    size_t total = sizeof("NOBIFY_CTEST_SESSION::") - 1 + strlen(field_name);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    int n = snprintf(buf, total + 1, "NOBIFY_CTEST_SESSION::%s", field_name);
+    if (n < 0) return ctx_oom(ctx);
+    return eval_var_set_current(ctx, nob_sv_from_cstr(buf), value);
+}
+
+static String_View ctest_get_session_field(Evaluator_Context *ctx, const char *field_name) {
+    if (!ctx || !field_name) return nob_sv_from_cstr("");
+    size_t total = sizeof("NOBIFY_CTEST_SESSION::") - 1 + strlen(field_name);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    int n = snprintf(buf, total + 1, "NOBIFY_CTEST_SESSION::%s", field_name);
+    if (n < 0) {
+        (void)ctx_oom(ctx);
+        return nob_sv_from_cstr("");
+    }
+    return eval_var_get_visible(ctx, nob_sv_from_cstr(buf));
+}
+
+static String_View ctest_source_root(Evaluator_Context *ctx) {
+    String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"));
+    return v.count > 0 ? v : eval_current_source_dir(ctx);
+}
+
+static String_View ctest_resolve_source_dir(Evaluator_Context *ctx, String_View raw) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (raw.count == 0) return nob_sv_from_cstr("");
+    String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw, eval_current_source_dir_for_paths(ctx), false);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    return eval_sv_path_normalize_temp(ctx, resolved);
+}
+
+static String_View ctest_resolve_binary_dir(Evaluator_Context *ctx, String_View raw) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (raw.count == 0) return nob_sv_from_cstr("");
+    String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw, ctest_current_binary_dir(ctx), false);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    return eval_sv_path_normalize_temp(ctx, resolved);
+}
+
+static bool ctest_publish_common_dirs(Evaluator_Context *ctx, String_View source_dir, String_View binary_dir) {
+    if (!ctx) return false;
+    if (source_dir.count > 0 && !eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_SOURCE_DIRECTORY"), source_dir)) return false;
+    if (binary_dir.count > 0 && !eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_BINARY_DIRECTORY"), binary_dir)) return false;
+    return true;
+}
+
+static bool ctest_apply_resolved_context(Evaluator_Context *ctx,
+                                         String_View command_name,
+                                         const Ctest_Parse_Result *parsed,
+                                         bool needs_source,
+                                         bool needs_build) {
+    if (!ctx || !parsed) return false;
+
+    String_View resolved_source = nob_sv_from_cstr("");
+    String_View resolved_build = nob_sv_from_cstr("");
+
+    if (needs_source) {
+        String_View source = ctest_parsed_field_value(parsed, "SOURCE");
+        if (source.count == 0) source = ctest_get_session_field(ctx, "SOURCE");
+        if (source.count == 0) source = ctest_source_root(ctx);
+        resolved_source = ctest_resolve_source_dir(ctx, source);
+        if (eval_should_stop(ctx)) return false;
+        if (!ctest_set_field(ctx, command_name, "RESOLVED_SOURCE", resolved_source)) return false;
+    }
+
+    if (needs_build) {
+        String_View build = ctest_parsed_field_value(parsed, "BUILD");
+        if (build.count == 0) build = ctest_get_session_field(ctx, "BUILD");
+        if (build.count == 0) build = ctest_binary_root(ctx);
+        resolved_build = ctest_resolve_binary_dir(ctx, build);
+        if (eval_should_stop(ctx)) return false;
+        if (!ctest_set_field(ctx, command_name, "RESOLVED_BUILD", resolved_build)) return false;
+    }
+
+    return ctest_publish_common_dirs(ctx, resolved_source, resolved_build);
+}
+
 static bool ctest_parse_generic(Evaluator_Context *ctx,
                                 const Node *node,
                                 String_View command_name,
@@ -94,6 +202,7 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
         String_View tok = (*args)[i];
 
         if (ctest_keyword_in_list(tok, spec->flag_keywords, spec->flag_count)) {
+            if (!ctest_record_parsed_field(eval_temp_arena(ctx), out_res, tok, nob_sv_from_cstr("1"))) return false;
             if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), nob_sv_from_cstr("1"))) return false;
             continue;
         }
@@ -108,6 +217,7 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
                 return false;
             }
             String_View value = (*args)[++i];
+            if (!ctest_record_parsed_field(eval_temp_arena(ctx), out_res, tok, value)) return false;
             if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), value)) return false;
             if (!ctest_publish_var_keyword(ctx, tok, value)) return false;
             continue;
@@ -128,7 +238,9 @@ static bool ctest_parse_generic(Evaluator_Context *ctx,
                                       tok);
                 return false;
             }
-            if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), eval_sv_join_semi_temp(ctx, items, arena_arr_len(items)))) {
+            String_View joined = eval_sv_join_semi_temp(ctx, items, arena_arr_len(items));
+            if (!ctest_record_parsed_field(eval_temp_arena(ctx), out_res, tok, joined)) return false;
+            if (!ctest_set_field(ctx, command_name, nob_temp_sv_to_cstr(tok), joined)) {
                 return false;
             }
             i = j - 1;
@@ -226,6 +338,23 @@ static bool ctest_handle_metadata_only(Evaluator_Context *ctx,
     return eval_ctest_publish_metadata(ctx, command_name, &args, nob_sv_from_cstr("MODELED"));
 }
 
+static bool ctest_handle_metadata_with_context(Evaluator_Context *ctx,
+                                               const Node *node,
+                                               String_View command_name,
+                                               const Ctest_Parse_Spec *spec,
+                                               bool needs_source,
+                                               bool needs_build) {
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+
+    Ctest_Parse_Result parsed = {0};
+    if (!ctest_parse_generic(ctx, node, command_name, &args, spec, &parsed)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!ctest_apply_resolved_context(ctx, command_name, &parsed, needs_source, needs_build)) {
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+    return eval_ctest_publish_metadata(ctx, command_name, &args, nob_sv_from_cstr("MODELED"));
+}
+
 Eval_Result eval_handle_ctest_build(Evaluator_Context *ctx, const Node *node) {
     static const char *const single[] = {
         "BUILD", "CONFIGURATION", "PARALLEL_LEVEL", "FLAGS", "PROJECT_NAME", "TARGET",
@@ -233,7 +362,7 @@ Eval_Result eval_handle_ctest_build(Evaluator_Context *ctx, const Node *node) {
     };
     static const char *const flags[] = {"APPEND", "QUIET"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_build"), &spec));
+    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_build"), &spec, false, true));
 }
 
 Eval_Result eval_handle_ctest_configure(Evaluator_Context *ctx, const Node *node) {
@@ -242,7 +371,7 @@ Eval_Result eval_handle_ctest_configure(Evaluator_Context *ctx, const Node *node
     };
     static const char *const flags[] = {"QUIET"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_configure"), &spec));
+    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_configure"), &spec, true, true));
 }
 
 Eval_Result eval_handle_ctest_coverage(Evaluator_Context *ctx, const Node *node) {
@@ -252,7 +381,7 @@ Eval_Result eval_handle_ctest_coverage(Evaluator_Context *ctx, const Node *node)
     static const char *const multi[] = {"LABELS"};
     static const char *const flags[] = {"QUIET"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), multi, sizeof(multi)/sizeof(multi[0]), flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_coverage"), &spec));
+    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_coverage"), &spec, false, true));
 }
 
 Eval_Result eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, const Node *node) {
@@ -316,7 +445,7 @@ Eval_Result eval_handle_ctest_memcheck(Evaluator_Context *ctx, const Node *node)
     };
     static const char *const flags[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_memcheck"), &spec));
+    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_memcheck"), &spec, false, true));
 }
 
 Eval_Result eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const Node *node) {
@@ -492,7 +621,38 @@ Eval_Result eval_handle_ctest_start(Evaluator_Context *ctx, const Node *node) {
     static const char *const single[] = {"TRACK"};
     static const char *const flags[] = {"APPEND"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 1, 3};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_start"), &spec));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Ctest_Parse_Result parsed = {0};
+    if (!ctest_parse_generic(ctx, node, nob_sv_from_cstr("ctest_start"), &args, &spec, &parsed)) {
+        return eval_result_from_ctx(ctx);
+    }
+
+    String_View model = parsed.positionals[0];
+    String_View source = arena_arr_len(parsed.positionals) >= 2 ? parsed.positionals[1] : ctest_source_root(ctx);
+    String_View build = arena_arr_len(parsed.positionals) >= 3 ? parsed.positionals[2] : ctest_binary_root(ctx);
+    String_View track = ctest_parsed_field_value(&parsed, "TRACK");
+
+    String_View resolved_source = ctest_resolve_source_dir(ctx, source);
+    String_View resolved_build = ctest_resolve_binary_dir(ctx, build);
+    if (eval_should_stop(ctx)) return eval_result_fatal();
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "MODEL", model)) return eval_result_fatal();
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_SOURCE", resolved_source)) return eval_result_fatal();
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_BUILD", resolved_build)) return eval_result_fatal();
+
+    if (!ctest_set_session_field(ctx, "MODEL", model)) return eval_result_fatal();
+    if (!ctest_set_session_field(ctx, "SOURCE", resolved_source)) return eval_result_fatal();
+    if (!ctest_set_session_field(ctx, "BUILD", resolved_build)) return eval_result_fatal();
+    if (!ctest_set_session_field(ctx, "TRACK", track)) return eval_result_fatal();
+
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_MODEL"), model)) return eval_result_fatal();
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_TRACK"), track)) return eval_result_fatal();
+    if (!ctest_publish_common_dirs(ctx, resolved_source, resolved_build)) return eval_result_fatal();
+
+    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_start"), &args, nob_sv_from_cstr("MODELED")));
 }
 
 Eval_Result eval_handle_ctest_submit(Evaluator_Context *ctx, const Node *node) {
@@ -510,14 +670,14 @@ Eval_Result eval_handle_ctest_test(Evaluator_Context *ctx, const Node *node) {
     };
     static const char *const flags[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_test"), &spec));
+    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_test"), &spec, false, true));
 }
 
 Eval_Result eval_handle_ctest_update(Evaluator_Context *ctx, const Node *node) {
     static const char *const single[] = {"SOURCE", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"};
     static const char *const flags[] = {"QUIET"};
     Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_only(ctx, node, nob_sv_from_cstr("ctest_update"), &spec));
+    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_update"), &spec, true, false));
 }
 
 Eval_Result eval_handle_ctest_upload(Evaluator_Context *ctx, const Node *node) {

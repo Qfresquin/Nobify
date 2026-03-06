@@ -198,16 +198,19 @@ Recommended promotion order:
    - `get_property` and related wrappers.
    - Directory/source/target/test property query consistency.
    - Property inheritance and definition edge cases that become easier after Phase F2.
+   - Current batch in the workspace on March 6, 2026: property query state is now backed by a persistent evaluator-internal store instead of transient variable scopes, and inherited `TARGET` plus `SOURCE TARGET_DIRECTORY` queries resolve against the target declaration directory rather than the caller's current directory.
 
 2. **G2 Advanced target and execution cluster**
    - `target_compile_features`,
    - `target_precompile_headers`,
    - `target_sources`,
    - `try_run` advanced signatures and workflows.
+   - Status: completed in the workspace on March 6, 2026 by persisting the advanced `target_*` trio into the canonical target property store, adding `target_sources(FILE_SET ...)` support for the `TYPE HEADERS` subset with queryable `HEADER_SET*` / `HEADER_DIRS*` properties, executing `try_run(PROJECT ...)` through the shared `try_compile(PROJECT ...)` path, and downgrading `CMAKE_CROSSCOMPILING` handling from a hard semantic error to a deterministic compile-only skip (`FAILED_TO_RUN` plus run-output message).
 
 3. **G3 `ctest_*` cluster**
    - Treat the `ctest_*` family as one coordinated promotion effort instead of isolated commands.
    - Share metadata/runtime helpers where possible so the cluster does not keep re-encoding the same workflow logic.
+   - Current batch in the workspace on March 6, 2026: introduced shared CTest session state for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` now seeds that session, and `ctest_configure` / `ctest_build` / `ctest_test` / `ctest_coverage` / `ctest_memcheck` / `ctest_update` resolve omitted source/build context from it while publishing their resolved directories for downstream inspection.
 
 4. **G4 Modern runtime/meta gaps**
    - `cmake_language` advanced surface,

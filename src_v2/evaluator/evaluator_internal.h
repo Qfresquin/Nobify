@@ -87,6 +87,13 @@ typedef User_Command *User_Command_List;
 
 typedef struct {
     String_View name;
+    String_View declared_dir;
+} Eval_Target_Record;
+
+typedef Eval_Target_Record *Eval_Target_Record_List;
+
+typedef struct {
+    String_View name;
     Eval_Native_Command_Handler handler;
     Eval_Command_Impl_Level implemented_level;
     Eval_Command_Fallback fallback_behavior;
@@ -277,11 +284,12 @@ typedef struct {
     Arena *native_commands_arena;
     Arena *known_targets_arena;
     Arena *user_commands_arena;
-    SV_List known_targets;
+    Eval_Target_Record_List known_targets;
     SV_List alias_targets;
     Eval_Native_Command_List native_commands;
     // Case-insensitive lookup index: normalized command name -> native_commands index.
     Eval_Native_Command_Index_Entry *native_command_index;
+    Eval_Var_Entry *property_store;
     User_Command_List user_commands;
     SV_List active_find_packages;
     SV_List watched_variables;
@@ -1700,6 +1708,7 @@ static inline String_View eval_current_list_file(Evaluator_Context *ctx) {
 // ---- targets ----
 bool eval_target_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_register(Evaluator_Context *ctx, String_View name);
+bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_View *out_dir);
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
@@ -1735,6 +1744,11 @@ bool eval_property_query_cmake(Evaluator_Context *ctx,
                                Event_Origin origin,
                                String_View out_var,
                                String_View property_name);
+bool eval_property_store_set_key(Evaluator_Context *ctx, String_View store_key, String_View value);
+bool eval_property_store_get_key(Evaluator_Context *ctx,
+                                 String_View store_key,
+                                 String_View *out_value,
+                                 bool *out_set);
 
 // ---- native commands ----
 Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name);

@@ -376,14 +376,7 @@ static bool try_run_parse_option(Evaluator_Context *ctx,
         case TRY_RUN_OPT_ARGS:
             return try_compile_sv_list_append_all(ctx, &state->req->run_args, values);
         case TRY_RUN_OPT_PROJECT:
-            return EVAL_DIAG_BOOL_SEV(ctx,
-                                      EV_DIAG_ERROR,
-                                      EVAL_DIAG_INVALID_STATE,
-                                      nob_sv_from_cstr("dispatcher"),
-                                      state->node->as.cmd.name,
-                                      state->origin,
-                                      nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"),
-                                      nob_sv_from_cstr("Use source-file forms only"));
+            return eval_sv_arr_push_temp(ctx, state->compile_args, nob_sv_from_cstr("PROJECT"));
         default:
             return false;
     }
@@ -519,12 +512,10 @@ bool try_run_parse_request(Evaluator_Context *ctx,
         .run_result_var = (*args)[0],
     };
 
-    if (eval_sv_eq_ci_lit((*args)[2], "PROJECT")) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"), nob_sv_from_cstr("Use source-file forms only"));
-    }
-
-    if (try_compile_is_keyword((*args)[2]) ||
-        eval_opt_token_is_keyword((*args)[2], k_try_run_specs, NOB_ARRAY_LEN(k_try_run_specs))) {
+    bool project_signature = eval_sv_eq_ci_lit((*args)[2], "PROJECT");
+    if (!project_signature &&
+        (try_compile_is_keyword((*args)[2]) ||
+         eval_opt_token_is_keyword((*args)[2], k_try_run_specs, NOB_ARRAY_LEN(k_try_run_specs)))) {
         return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires an explicit binary directory"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
     }
 
@@ -549,5 +540,5 @@ bool try_run_parse_request(Evaluator_Context *ctx,
         return false;
     }
 
-    return try_compile_parse_source_request_core(ctx, node, &compile_args, &out_req->compile_req);
+    return try_compile_parse_request(ctx, node, &compile_args, &out_req->compile_req);
 }

@@ -4977,6 +4977,61 @@ TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists
     TEST_PASS();
 }
 
+TEST(evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(MAKE_DIRECTORY g1_prop_subdir)\n"
+        "file(WRITE g1_prop_subdir/CMakeLists.txt [=[\n"
+        "add_library(g1_sub_tgt STATIC local.c)\n"
+        "set_property(DIRECTORY PROPERTY G1_INHERITED_TARGET_PROP sub_target_dir)\n"
+        "set_property(DIRECTORY PROPERTY G1_INHERITED_SOURCE_PROP sub_source_dir)\n"
+        "set_source_files_properties(local.c TARGET_DIRECTORY g1_sub_tgt PROPERTIES G1_LOCAL_SOURCE_PROP scoped_local)\n"
+        "]=])\n"
+        "define_property(TARGET PROPERTY G1_INHERITED_TARGET_PROP INHERITED)\n"
+        "define_property(SOURCE PROPERTY G1_INHERITED_SOURCE_PROP INHERITED)\n"
+        "set_property(DIRECTORY PROPERTY G1_INHERITED_TARGET_PROP root_target_dir)\n"
+        "set_property(DIRECTORY PROPERTY G1_INHERITED_SOURCE_PROP root_source_dir)\n"
+        "add_subdirectory(g1_prop_subdir)\n"
+        "get_target_property(G1_TGT_PROP g1_sub_tgt G1_INHERITED_TARGET_PROP)\n"
+        "get_property(G1_SRC_INH SOURCE local.c TARGET_DIRECTORY g1_sub_tgt PROPERTY G1_INHERITED_SOURCE_PROP)\n"
+        "get_property(G1_SRC_LOCAL SOURCE local.c TARGET_DIRECTORY g1_sub_tgt PROPERTY G1_LOCAL_SOURCE_PROP)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("G1_TGT_PROP")),
+                     nob_sv_from_cstr("sub_target_dir")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("G1_SRC_INH")),
+                     nob_sv_from_cstr("sub_source_dir")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("G1_SRC_LOCAL")),
+                     nob_sv_from_cstr("scoped_local")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5343,6 +5398,19 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
         "#include <stdio.h>\n"
         "int main(void){putchar(65);fputc(66, stderr);return 0;}\n";
     ASSERT(nob_write_entire_file("probe_ok_try_run.c", ok_source, strlen(ok_source)));
+    ASSERT(nob_mkdir_if_not_exists("tc_try_run_project"));
+    ASSERT(nob_write_entire_file("tc_try_run_project/CMakeLists.txt",
+                                 "cmake_minimum_required(VERSION 3.20)\n"
+                                 "project(TryRunProject C)\n"
+                                 "add_executable(tc_try_run_project_probe main.c)\n",
+                                 strlen("cmake_minimum_required(VERSION 3.20)\n"
+                                        "project(TryRunProject C)\n"
+                                        "add_executable(tc_try_run_project_probe main.c)\n")));
+    ASSERT(nob_write_entire_file("tc_try_run_project/main.c",
+                                 "#include <stdio.h>\n"
+                                 "int main(void){putchar(80);fputc(81, stderr);return 0;}\n",
+                                 strlen("#include <stdio.h>\n"
+                                        "int main(void){putchar(80);fputc(81, stderr);return 0;}\n")));
 
     Ast_Root root = parse_cmake(
         temp_arena,
@@ -5365,12 +5433,20 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
         "  SOURCE_FROM_CONTENT probe_xc.c \"int main(void){return 0;}\"\n"
         "  NO_CACHE\n"
         "  RUN_OUTPUT_VARIABLE RUN_XC_ALL)\n"
-        "try_run(RUN_PROJECT COMPILE_PROJECT PROJECT Demo SOURCE_DIR missing_dir)\n");
+        "set(CMAKE_CROSSCOMPILING OFF)\n"
+        "try_run(RUN_PROJECT COMPILE_PROJECT PROJECT Demo\n"
+        "  SOURCE_DIR tc_try_run_project\n"
+        "  BINARY_DIR tc_try_run_project_build\n"
+        "  TARGET tc_try_run_project_probe\n"
+        "  COMPILE_OUTPUT_VARIABLE COMPILE_PROJECT_LOG\n"
+        "  RUN_OUTPUT_VARIABLE RUN_PROJECT_ALL\n"
+        "  RUN_OUTPUT_STDOUT_VARIABLE RUN_PROJECT_STDOUT\n"
+        "  RUN_OUTPUT_STDERR_VARIABLE RUN_PROJECT_STDERR)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 2);
+    ASSERT(report->error_count == 0);
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_OK")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_OK")), nob_sv_from_cstr("0")));
@@ -5386,25 +5462,16 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
     ASSERT(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_FAIL_LOG")).count > 0);
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_XC")), nob_sv_from_cstr("TRUE")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC")), nob_sv_from_cstr("")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC_ALL")), nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC")),
+                     nob_sv_from_cstr("FAILED_TO_RUN")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC_ALL")),
+                     nob_sv_from_cstr("try_run skipped due to CMAKE_CROSSCOMPILING")));
 
-    bool saw_cross_diag = false;
-    bool saw_project_diag = false;
-    for (size_t i = 0; i < stream->count; i++) {
-        const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
-        if (nob_sv_eq(ev->as.diag.cause,
-                      nob_sv_from_cstr("try_run() cross-compiling answer-file workflow is not implemented yet"))) {
-            saw_cross_diag = true;
-        }
-        if (nob_sv_eq(ev->as.diag.cause,
-                      nob_sv_from_cstr("try_run() does not support the PROJECT signature in this batch"))) {
-            saw_project_diag = true;
-        }
-    }
-    ASSERT(saw_cross_diag);
-    ASSERT(saw_project_diag);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_PROJECT")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_STDOUT")), nob_sv_from_cstr("P")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_STDERR")), nob_sv_from_cstr("Q")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_ALL")), nob_sv_from_cstr("PQ")));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -5667,6 +5734,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_mkdir_if_not_exists("ctest_bin"));
     ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe"));
     ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe/sub"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_src"));
     ASSERT(nob_mkdir_if_not_exists("ctest_custom"));
     ASSERT(nob_write_entire_file("ctest_bin/wipe/sub/junk.txt", "junk\n", strlen("junk\n")));
     ASSERT(nob_write_entire_file("ctest_custom/CTestCustom.cmake",
@@ -5691,13 +5759,13 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         temp_arena,
         "set(CMAKE_BINARY_DIR ctest_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR ctest_bin)\n"
-        "ctest_start(Experimental TRACK Nightly APPEND)\n"
-        "ctest_configure(BUILD ctest_bin SOURCE . RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
-        "ctest_build(BUILD ctest_bin TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
-        "ctest_test(BUILD ctest_bin RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE PARALLEL_LEVEL 2 SCHEDULE_RANDOM)\n"
-        "ctest_coverage(BUILD ctest_bin LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE)\n"
-        "ctest_memcheck(BUILD ctest_bin RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS SCHEDULE_RANDOM)\n"
-        "ctest_update(SOURCE . RETURN_VALUE UPD_RV CAPTURE_CMAKE_ERROR UPD_CE QUIET)\n"
+        "ctest_start(Experimental ctest_src ctest_bin TRACK Nightly APPEND)\n"
+        "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
+        "ctest_build(TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
+        "ctest_test(RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE PARALLEL_LEVEL 2 SCHEDULE_RANDOM)\n"
+        "ctest_coverage(LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE)\n"
+        "ctest_memcheck(RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS SCHEDULE_RANDOM)\n"
+        "ctest_update(RETURN_VALUE UPD_RV CAPTURE_CMAKE_ERROR UPD_CE QUIET)\n"
         "ctest_submit(PARTS Start Build Test RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n"
         "ctest_upload(FILES a.txt b.txt CAPTURE_CMAKE_ERROR UPLOAD_CE)\n"
         "ctest_empty_binary_directory(wipe)\n"
@@ -5714,6 +5782,12 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
                      nob_sv_from_cstr("ctest_sleep")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TRACK")),
                      nob_sv_from_cstr("Nightly")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::MODEL")),
+                     nob_sv_from_cstr("Experimental")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_MODEL")),
+                     nob_sv_from_cstr("Experimental")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_TRACK")),
+                     nob_sv_from_cstr("Nightly")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::PARTS")),
                      nob_sv_from_cstr("Start;Build;Test")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_empty_binary_directory::STATUS")),
@@ -5726,6 +5800,24 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SCRIPT_RV")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_CUSTOM_LOADED")), nob_sv_from_cstr("yes")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_SCRIPT_LOADED")), nob_sv_from_cstr("1")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::SOURCE")),
+                          nob_sv_from_cstr("ctest_src")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::BUILD")),
+                          nob_sv_from_cstr("ctest_bin")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("CTEST_SOURCE_DIRECTORY")),
+                          nob_sv_from_cstr("ctest_src")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("CTEST_BINARY_DIRECTORY")),
+                          nob_sv_from_cstr("ctest_bin")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::RESOLVED_SOURCE")),
+                          nob_sv_from_cstr("ctest_src")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::RESOLVED_BUILD")),
+                          nob_sv_from_cstr("ctest_bin")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::RESOLVED_BUILD")),
+                          nob_sv_from_cstr("ctest_bin")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::RESOLVED_BUILD")),
+                          nob_sv_from_cstr("ctest_bin")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::RESOLVED_SOURCE")),
+                          nob_sv_from_cstr("ctest_src")));
     ASSERT(!nob_file_exists("ctest_bin/wipe/sub/junk.txt"));
     ASSERT(nob_file_exists("ctest_bin/wipe"));
 
@@ -5942,11 +6034,26 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
         "add_library(alias_real ALIAS real)\n"
         "add_executable(app app.c)\n"
         "target_sources(real PRIVATE priv.c PUBLIC pub.h INTERFACE iface.h)\n"
+        "target_sources(real PUBLIC FILE_SET HEADERS BASE_DIRS include FILES include/public.hpp include/detail.hpp)\n"
+        "target_sources(real INTERFACE FILE_SET api TYPE HEADERS BASE_DIRS api FILES api/iface.hpp)\n"
         "target_compile_features(real PRIVATE cxx_std_20 PUBLIC cxx_std_17 INTERFACE c_std_11)\n"
         "target_precompile_headers(real PRIVATE pch.h PUBLIC pch_pub.h INTERFACE <vector>)\n"
         "target_precompile_headers(app REUSE_FROM real)\n"
+        "get_target_property(REAL_SOURCES real SOURCES)\n"
+        "get_target_property(REAL_IFACE_SOURCES real INTERFACE_SOURCES)\n"
+        "get_target_property(REAL_HEADER_SETS real HEADER_SETS)\n"
+        "get_target_property(REAL_INTERFACE_HEADER_SETS real INTERFACE_HEADER_SETS)\n"
+        "get_target_property(REAL_HEADER_SET real HEADER_SET)\n"
+        "get_target_property(REAL_HEADER_DIRS real HEADER_DIRS)\n"
+        "get_target_property(REAL_HEADER_SET_API real HEADER_SET_API)\n"
+        "get_target_property(REAL_HEADER_DIRS_API real HEADER_DIRS_API)\n"
+        "get_target_property(REAL_COMPILE_FEATURES real COMPILE_FEATURES)\n"
+        "get_target_property(REAL_IFACE_COMPILE_FEATURES real INTERFACE_COMPILE_FEATURES)\n"
+        "get_target_property(REAL_PCH real PRECOMPILE_HEADERS)\n"
+        "get_target_property(REAL_IFACE_PCH real INTERFACE_PRECOMPILE_HEADERS)\n"
+        "get_target_property(APP_REUSE app PRECOMPILE_HEADERS_REUSE_FROM)\n"
         "target_sources(real bad.c another.c)\n"
-        "target_sources(real FILE_SET HEADERS FILES bad.h)\n"
+        "target_sources(real PUBLIC FILE_SET modules TYPE CXX_MODULES FILES bad.h)\n"
         "target_compile_features(alias_real PRIVATE bad_feature)\n"
         "target_precompile_headers(missing_pch PRIVATE missing.h)\n"
         "target_sources(missing_src PRIVATE bad.c)\n");
@@ -5959,6 +6066,8 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
     bool saw_priv_source = false;
     bool saw_pub_source = false;
     bool saw_iface_prop = false;
+    bool saw_header_set_prop = false;
+    bool saw_interface_header_sets_prop = false;
     bool saw_compile_feature_local = false;
     bool saw_compile_feature_iface = false;
     bool saw_pch_local = false;
@@ -5983,6 +6092,14 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_SOURCES")) &&
                 sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("iface.h"))) {
                 saw_iface_prop = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("HEADER_SET")) &&
+                sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("include/public.hpp"))) {
+                saw_header_set_prop = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_HEADER_SETS")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("api"))) {
+                saw_interface_header_sets_prop = true;
             }
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("COMPILE_FEATURES")) &&
                 nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("cxx_std_20"))) {
@@ -6015,7 +6132,7 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
                           nob_sv_from_cstr("target command requires PUBLIC, PRIVATE or INTERFACE before items"))) {
                 saw_visibility_error = true;
             } else if (nob_sv_eq(ev->as.diag.cause,
-                                 nob_sv_from_cstr("target_sources(FILE_SET ...) is not implemented yet"))) {
+                                 nob_sv_from_cstr("target_sources(FILE_SET ...) currently supports only TYPE HEADERS"))) {
                 saw_file_set_error = true;
             } else if (nob_sv_eq(ev->as.diag.cause,
                                  nob_sv_from_cstr("target_compile_features() cannot be used on ALIAS targets"))) {
@@ -6033,6 +6150,8 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
     ASSERT(saw_priv_source);
     ASSERT(saw_pub_source);
     ASSERT(saw_iface_prop);
+    ASSERT(saw_header_set_prop);
+    ASSERT(saw_interface_header_sets_prop);
     ASSERT(saw_compile_feature_local);
     ASSERT(saw_compile_feature_iface);
     ASSERT(saw_pch_local);
@@ -6044,6 +6163,50 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
     ASSERT(saw_alias_error);
     ASSERT(saw_missing_pch_error);
     ASSERT(saw_missing_src_error);
+
+    String_View real_sources = eval_var_get(ctx, nob_sv_from_cstr("REAL_SOURCES"));
+    ASSERT(semicolon_list_count(real_sources) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_sources, 0), nob_sv_from_cstr("priv.c")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_sources, 1), nob_sv_from_cstr("pub.h")));
+
+    String_View real_iface_sources = eval_var_get(ctx, nob_sv_from_cstr("REAL_IFACE_SOURCES"));
+    ASSERT(semicolon_list_count(real_iface_sources) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_iface_sources, 0), nob_sv_from_cstr("pub.h")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_iface_sources, 1), nob_sv_from_cstr("iface.h")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REAL_HEADER_SETS")),
+                     nob_sv_from_cstr("HEADERS")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REAL_INTERFACE_HEADER_SETS")),
+                     nob_sv_from_cstr("HEADERS;api")));
+
+    String_View real_header_set = eval_var_get(ctx, nob_sv_from_cstr("REAL_HEADER_SET"));
+    ASSERT(semicolon_list_count(real_header_set) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_header_set, 0), nob_sv_from_cstr("include/public.hpp")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_header_set, 1), nob_sv_from_cstr("include/detail.hpp")));
+
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("REAL_HEADER_DIRS")),
+                          nob_sv_from_cstr("include")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("REAL_HEADER_SET_API")),
+                          nob_sv_from_cstr("api/iface.hpp")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("REAL_HEADER_DIRS_API")),
+                          nob_sv_from_cstr("api")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REAL_COMPILE_FEATURES")),
+                     nob_sv_from_cstr("cxx_std_20;cxx_std_17")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REAL_IFACE_COMPILE_FEATURES")),
+                     nob_sv_from_cstr("cxx_std_17;c_std_11")));
+
+    String_View real_pch = eval_var_get(ctx, nob_sv_from_cstr("REAL_PCH"));
+    ASSERT(semicolon_list_count(real_pch) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_pch, 0), nob_sv_from_cstr("pch.h")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_pch, 1), nob_sv_from_cstr("pch_pub.h")));
+
+    String_View real_iface_pch = eval_var_get(ctx, nob_sv_from_cstr("REAL_IFACE_PCH"));
+    ASSERT(semicolon_list_count(real_iface_pch) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_iface_pch, 0), nob_sv_from_cstr("pch_pub.h")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(real_iface_pch, 1), nob_sv_from_cstr("vector")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("APP_REUSE")), nob_sv_from_cstr("real")));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -9127,6 +9290,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed);
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists(passed, failed);
+    test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
     test_evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode(passed, failed);
     test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);

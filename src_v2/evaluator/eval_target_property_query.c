@@ -4,9 +4,7 @@ static bool target_get_declared_dir_temp(Evaluator_Context *ctx,
                                          String_View target_name,
                                          String_View *out_dir) {
     if (!ctx || !out_dir) return false;
-    (void)target_name;
-    *out_dir = eval_current_source_dir_for_paths(ctx);
-    return true;
+    return eval_target_declared_dir(ctx, target_name, out_dir);
 }
 
 Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {

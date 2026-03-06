@@ -97,13 +97,13 @@ EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 tar
 === CASE try_compile_project_signature_success_and_failure ===
 DIAG errors=0 warnings=0
 EVENTS count=7
-EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=6 col=1 key='TC_PROJ_OK' value='0'
+EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=6 col=1 key='TC_PROJ_OK' value='1'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=1 name='tc_proj' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=1 target='tc_proj' path='main.c'
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_OK=0' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_OK=1' vis=PRIVATE
 EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FLAG=' vis=PRIVATE
 EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL=0' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL_MSG=try_compile(PROJECT) is temporarily disabled while the semantic Event IR replaces the legacy build model pipeline' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL_MSG=try_compile(PROJECT) source directory is missing CMakeLists.txt: ./tc_proj_fail\n' vis=PRIVATE
 === END CASE ===
 
 === CASE golden_ctest_meta ===

@@ -249,9 +249,10 @@ Current intentionally visible limits:
 - `while()` execution is guarded by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`, defaulting to `10000`.
 - the `while()` guard is read once at `while` node entry; mutations inside the loop affect only the next `while()` node.
 - invalid `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` values emit a warning and fall back to `10000`.
-- `try_run()` currently supports the source-file/native-execution subset built on the `try_compile(SOURCE ...)` path.
-- `try_run(PROJECT ...)` is rejected in the current batch.
-- the `try_run()` cross-compiling answer-file workflow is not implemented yet; current support is native execution only.
+- the `ctest_*` family now shares a lightweight session model for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`, but most commands still publish evaluator-side metadata rather than driving a full external CTest dashboard workflow.
+- `target_sources(FILE_SET ...)` currently supports the `TYPE HEADERS` subset; other file-set types such as `CXX_MODULES` remain unsupported.
+- `try_run()` supports both the source-file/native-execution subset and the `PROJECT` signature through the shared `try_compile(...)` execution path.
+- when `CMAKE_CROSSCOMPILING` is true, `try_run()` still performs the compile phase but resolves the run phase to `FAILED_TO_RUN` with the message `try_run skipped due to CMAKE_CROSSCOMPILING`; answer-file/emulator workflows remain unimplemented.
 - native dispatcher lookup is case-insensitive and index-backed through the runtime registry.
 - capability lookup shares that same native registry lookup path for native-command introspection only.
 - unknown-command fallback is generic and does not dynamically apply capability metadata.

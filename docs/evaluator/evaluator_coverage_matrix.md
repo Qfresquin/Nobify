@@ -168,16 +168,20 @@ write_file
 Current high-level interpretation:
 - core modern command surface has broad `FULL` coverage,
 - residual risk is concentrated in `ctest_*`, legacy wrappers, and query/introspection paths,
-- `try_run` remains correctly tagged `PARTIAL`: native source-file execution works, but `PROJECT` signature support and the cross-compiling answer-file workflow are still unimplemented,
+- `try_run` remains correctly tagged `PARTIAL`: native source-file and `PROJECT` signatures now execute, but the cross-compiling answer-file workflow still resolves to a deterministic compile-only skip instead of full target execution,
 - fallback metadata remains overwhelmingly `NOOP_WARN`, so runtime strictness is mostly shaped by command handlers and compat policy rather than fallback enum diversity.
 
 ## 10. Priority Promotion Candidates
 
 Highest-leverage candidates to reduce `PARTIAL` footprint:
 1. `ctest_*` cluster (largest group, 13 commands).
+   Progress note for the March 6, 2026 workspace batch: the family now shares a lightweight CTest session model (`MODEL`, `TRACK`, `SOURCE`, `BUILD`) seeded by `ctest_start(...)`, and the configure/build/test/coverage/memcheck/update commands resolve omitted source/build context from that session instead of behaving like isolated metadata stubs. Remaining partial coverage is still concentrated in real dashboard/tool execution, `submit`/`upload`, and `run_script(NEW_PROCESS)`.
 2. `target_compile_features` / `target_precompile_headers` / `target_sources`.
-3. `try_run` (`PROJECT` signature + cross-compiling answer-file workflow).
+   Progress note for the March 6, 2026 workspace batch: these advanced target commands now feed the persistent target property store as well as the Event IR, so `get_target_property(...)` can observe `SOURCES`, `INTERFACE_SOURCES`, compile-feature properties, precompile-header properties, and the `TYPE HEADERS` `FILE_SET` surface (`HEADER_SET*` / `HEADER_DIRS*`). Residual partial coverage is now concentrated in other file-set types such as `CXX_MODULES`.
+3. `try_run` cross-compiling answer-file workflow.
+   Progress note for the March 6, 2026 workspace batch: `try_run(PROJECT ...)` now executes through the shared `try_compile(PROJECT ...)` machinery. The remaining partial behavior is the non-native answer-file/emulator path, which currently returns a deterministic compile-only skip.
 4. `get_property` and related query wrappers.
+   Progress note for the March 6, 2026 workspace batch: the evaluator now keeps property query state in a persistent internal store across scope pops, and inherited `TARGET` plus `SOURCE TARGET_DIRECTORY` queries follow the target declaration directory instead of the caller-local directory.
 5. `cmake_language` advanced surface.
 
 ## 11. Relationship to Other Docs

@@ -107,9 +107,7 @@ static bool emit_property_write_semantic_event(Evaluator_Context *ctx,
 
 static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View target_name, String_View *out_dir) {
     if (!ctx || !out_dir) return false;
-    (void)target_name;
-    *out_dir = eval_current_source_dir_for_paths(ctx);
-    return true;
+    return eval_target_declared_dir(ctx, target_name, out_dir);
 }
 
 static bool property_append_unique_temp(Evaluator_Context *ctx, SV_List *list, String_View value) {
@@ -152,6 +150,47 @@ static String_View eval_property_store_key_temp(Evaluator_Context *ctx,
     off += prop_upper.count;
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
+}
+
+static Eval_Var_Entry *property_store_entry(Evaluator_Context *ctx, String_View store_key) {
+    if (!ctx || store_key.count == 0) return NULL;
+    return stbds_shgetp_null(ctx->command_state.property_store, nob_temp_sv_to_cstr(store_key));
+}
+
+bool eval_property_store_set_key(Evaluator_Context *ctx, String_View store_key, String_View value) {
+    if (!ctx || store_key.count == 0) return false;
+
+    String_View stable_value = sv_copy_to_event_arena(ctx, value);
+    if (eval_should_stop(ctx)) return false;
+
+    Eval_Var_Entry *entry = property_store_entry(ctx, store_key);
+    if (entry) {
+        entry->value = stable_value;
+        return true;
+    }
+
+    char *stable_key = arena_strndup(ctx->event_arena, store_key.data, store_key.count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, stable_key, false);
+
+    Eval_Var_Entry *table = ctx->command_state.property_store;
+    stbds_shput(table, stable_key, stable_value);
+    ctx->command_state.property_store = table;
+    return true;
+}
+
+bool eval_property_store_get_key(Evaluator_Context *ctx,
+                                 String_View store_key,
+                                 String_View *out_value,
+                                 bool *out_set) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (out_set) *out_set = false;
+    if (!ctx || store_key.count == 0) return false;
+
+    Eval_Var_Entry *entry = property_store_entry(ctx, store_key);
+    if (!entry) return true;
+    if (out_value) *out_value = entry->value;
+    if (out_set) *out_set = true;
+    return true;
 }
 
 static const Eval_Property_Definition *eval_property_definition_find_impl(Evaluator_Context *ctx,
@@ -249,7 +288,8 @@ bool eval_property_write(Evaluator_Context *ctx,
     String_View store_key = eval_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
     if (eval_should_stop(ctx)) return false;
 
-    String_View current = eval_var_get_visible(ctx, store_key);
+    String_View current = nob_sv_from_cstr("");
+    if (!eval_property_store_get_key(ctx, store_key, &current, NULL)) return false;
     String_View merged = merge_property_value_temp(ctx, current, value, op);
     if (eval_should_stop(ctx)) return false;
 
@@ -257,6 +297,7 @@ bool eval_property_write(Evaluator_Context *ctx,
         return false;
     }
 
+    if (!eval_property_store_set_key(ctx, store_key, merged)) return false;
     if (!eval_var_set_current(ctx, store_key, merged)) return false;
     if (emit_var_event && !eval_emit_var_set_current(ctx, origin, store_key, merged)) return false;
 
@@ -297,9 +338,11 @@ static String_View target_property_from_store_temp(Evaluator_Context *ctx,
     String_View store_key =
         eval_property_store_key_temp(ctx, nob_sv_from_cstr("TARGET"), target_name, prop_upper);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    if (!eval_var_defined_visible(ctx, store_key)) return nob_sv_from_cstr("");
-    if (out_set) *out_set = true;
-    return eval_var_get_visible(ctx, store_key);
+    String_View value = nob_sv_from_cstr("");
+    bool have = false;
+    if (!eval_property_store_get_key(ctx, store_key, &value, &have)) return nob_sv_from_cstr("");
+    if (out_set) *out_set = have;
+    return have ? value : nob_sv_from_cstr("");
 }
 
 static bool property_parent_directory_temp(Evaluator_Context *ctx,
@@ -362,9 +405,11 @@ static String_View property_value_from_store_temp(Evaluator_Context *ctx,
 
     String_View store_key = eval_property_store_key_temp(ctx, scope_upper, object_id, prop_upper);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    if (!eval_var_defined_visible(ctx, store_key)) return nob_sv_from_cstr("");
-    if (out_set) *out_set = true;
-    return eval_var_get_visible(ctx, store_key);
+    String_View value = nob_sv_from_cstr("");
+    bool have = false;
+    if (!eval_property_store_get_key(ctx, store_key, &value, &have)) return nob_sv_from_cstr("");
+    if (out_set) *out_set = have;
+    return have ? value : nob_sv_from_cstr("");
 }
 
 static String_View property_value_from_directory_chain_temp(Evaluator_Context *ctx,

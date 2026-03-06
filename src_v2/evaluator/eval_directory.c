@@ -216,14 +216,16 @@ static bool sync_directory_property_mutation(Evaluator_Context *ctx,
     String_View store_key = directory_property_store_key_temp(ctx, property_sv);
     if (eval_should_stop(ctx)) return false;
 
-    bool current_defined = eval_var_defined_visible(ctx, store_key);
-    String_View current = current_defined ? eval_var_get_visible(ctx, store_key) : nob_sv_from_cstr("");
+    bool current_defined = false;
+    String_View current = nob_sv_from_cstr("");
+    if (!eval_property_store_get_key(ctx, store_key, &current, &current_defined)) return false;
     String_View merged = merge_directory_property_value_temp(ctx, current, items, op);
     if (eval_should_stop(ctx)) return false;
 
     if (!current_defined && op == EVENT_PROPERTY_MUTATE_SET && merged.count == 0) return true;
     if (current_defined && nob_sv_eq(current, merged)) return true;
 
+    if (!eval_property_store_set_key(ctx, store_key, merged)) return false;
     if (!eval_var_set_current(ctx, store_key, merged)) return false;
     return eval_emit_directory_property_mutate(ctx,
                                                origin,
@@ -392,7 +394,7 @@ static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *c
                                                             String_View item) {
     if (!ctx || item.count == 0) return false;
     for (size_t i = 0; i < arena_arr_len(ctx->command_state.known_targets); i++) {
-        String_View target_name = ctx->command_state.known_targets[i];
+        String_View target_name = ctx->command_state.known_targets[i].name;
         if (target_name.count == 0) continue;
         if (eval_target_alias_known(ctx, target_name)) continue;
         if (!eval_emit_target_compile_definitions(ctx,
@@ -411,7 +413,7 @@ static bool emit_compile_option_to_current_file_targets(Evaluator_Context *ctx,
                                                         String_View item) {
     if (!ctx || item.count == 0) return false;
     for (size_t i = 0; i < arena_arr_len(ctx->command_state.known_targets); i++) {
-        String_View target_name = ctx->command_state.known_targets[i];
+        String_View target_name = ctx->command_state.known_targets[i].name;
         if (target_name.count == 0) continue;
         if (eval_target_alias_known(ctx, target_name)) continue;
         if (!eval_emit_target_compile_options(ctx,

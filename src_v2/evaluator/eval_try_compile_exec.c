@@ -266,6 +266,195 @@ static bool try_compile_materialize_output_path(Evaluator_Context *ctx,
     return true;
 }
 
+static bool try_compile_append_cmake_cache_arg(Evaluator_Context *ctx,
+                                               Nob_Cmd *cmd,
+                                               const char *key,
+                                               String_View value) {
+    if (!ctx || !cmd || !key || key[0] == '\0' || value.count == 0) return false;
+    String_View prefix = nob_sv_from_cstr(nob_temp_sprintf("-D%s=", key));
+    String_View arg = try_compile_concat_prefix_temp(ctx, prefix.data, value);
+    char *arg_c = eval_sv_to_cstr_temp(ctx, arg);
+    EVAL_OOM_RETURN_IF_NULL(ctx, arg_c, false);
+    nob_cmd_append(cmd, arg_c);
+    return true;
+}
+
+static bool try_compile_path_contains_internal_build_dir(const char *path) {
+    if (!path) return false;
+    return strstr(path, "/CMakeFiles/") != NULL ||
+           strstr(path, "\\CMakeFiles\\") != NULL ||
+           strstr(path, "/CMakeScratch/") != NULL ||
+           strstr(path, "\\CMakeScratch\\") != NULL;
+}
+
+static bool try_compile_basename_matches_named_artifact(const char *base, const char *target_name) {
+    if (!base || !target_name) return false;
+    size_t base_len = strlen(base);
+    size_t target_len = strlen(target_name);
+
+    if (base_len == target_len && memcmp(base, target_name, target_len) == 0) return true;
+    if (base_len == target_len + 4 &&
+        memcmp(base, target_name, target_len) == 0 &&
+        strcmp(base + target_len, ".exe") == 0) {
+        return true;
+    }
+    if (base_len == target_len + 4 &&
+        memcmp(base, target_name, target_len) == 0 &&
+        strcmp(base + target_len, ".dll") == 0) {
+        return true;
+    }
+    if (base_len == target_len + 4 &&
+        memcmp(base, target_name, target_len) == 0 &&
+        strcmp(base + target_len, ".lib") == 0) {
+        return true;
+    }
+    if (base_len == target_len + 6 &&
+        memcmp(base, "lib", 3) == 0 &&
+        memcmp(base + 3, target_name, target_len) == 0 &&
+        strcmp(base + 3 + target_len, ".a") == 0) {
+        return true;
+    }
+    if (base_len == target_len + 7 &&
+        memcmp(base, "lib", 3) == 0 &&
+        memcmp(base + 3, target_name, target_len) == 0 &&
+        strcmp(base + 3 + target_len, ".so") == 0) {
+        return true;
+    }
+    if (base_len == target_len + 10 &&
+        memcmp(base, "lib", 3) == 0 &&
+        memcmp(base + 3, target_name, target_len) == 0 &&
+        strcmp(base + 3 + target_len, ".dylib") == 0) {
+        return true;
+    }
+    return false;
+}
+
+typedef struct {
+    const char *target_name;
+    const char *best_path;
+    size_t best_len;
+} Try_Compile_Project_Artifact_Search;
+
+typedef struct {
+    Evaluator_Context *ctx;
+    const char *binary_dir_c;
+    Try_Compile_Source_List *sources;
+} Try_Compile_Project_Source_Search;
+
+static bool try_compile_project_artifact_visit(Nob_Walk_Entry entry) {
+    Try_Compile_Project_Artifact_Search *search = (Try_Compile_Project_Artifact_Search *)entry.data;
+    if (!search || !entry.path) return false;
+    if (entry.type != NOB_FILE_REGULAR) return true;
+    if (try_compile_path_contains_internal_build_dir(entry.path)) return true;
+
+    const char *base = strrchr(entry.path, '/');
+    const char *alt = strrchr(entry.path, '\\');
+    if (!base || (alt && alt > base)) base = alt;
+    base = base ? base + 1 : entry.path;
+
+    if (!try_compile_basename_matches_named_artifact(base, search->target_name)) return true;
+
+    size_t path_len = strlen(entry.path);
+    if (!search->best_path || path_len < search->best_len) {
+        search->best_path = entry.path;
+        search->best_len = path_len;
+    }
+    return true;
+}
+
+static String_View try_compile_project_find_named_artifact(Evaluator_Context *ctx,
+                                                           String_View binary_dir,
+                                                           String_View target_name) {
+    if (!ctx || binary_dir.count == 0 || target_name.count == 0) return nob_sv_from_cstr("");
+    char *binary_dir_c = eval_sv_to_cstr_temp(ctx, binary_dir);
+    char *target_name_c = eval_sv_to_cstr_temp(ctx, target_name);
+    EVAL_OOM_RETURN_IF_NULL(ctx, binary_dir_c, nob_sv_from_cstr(""));
+    EVAL_OOM_RETURN_IF_NULL(ctx, target_name_c, nob_sv_from_cstr(""));
+
+    Try_Compile_Project_Artifact_Search search = {
+        .target_name = target_name_c,
+        .best_path = NULL,
+        .best_len = 0,
+    };
+    if (!nob_walk_dir(binary_dir_c, try_compile_project_artifact_visit, .data = &search)) {
+        return nob_sv_from_cstr("");
+    }
+    if (!search.best_path) return nob_sv_from_cstr("");
+    return sv_copy_to_arena(eval_temp_arena(ctx), nob_sv_from_cstr(search.best_path));
+}
+
+static bool try_compile_path_has_dir_prefix(const char *path, const char *prefix) {
+    if (!path || !prefix) return false;
+    size_t prefix_len = strlen(prefix);
+    if (prefix_len == 0) return false;
+    if (strncmp(path, prefix, prefix_len) != 0) return false;
+    return path[prefix_len] == '\0' || path[prefix_len] == '/' || path[prefix_len] == '\\';
+}
+
+static bool try_compile_project_source_visit(Nob_Walk_Entry entry) {
+    Try_Compile_Project_Source_Search *search = (Try_Compile_Project_Source_Search *)entry.data;
+    if (!search || !search->ctx || !search->sources || !entry.path) return false;
+
+    if (search->binary_dir_c && try_compile_path_has_dir_prefix(entry.path, search->binary_dir_c)) {
+        *entry.action = NOB_WALK_SKIP;
+        return true;
+    }
+    if (try_compile_path_contains_internal_build_dir(entry.path)) {
+        *entry.action = NOB_WALK_SKIP;
+        return true;
+    }
+    if (entry.type != NOB_FILE_REGULAR) return true;
+
+    String_View path = sv_copy_to_arena(eval_temp_arena(search->ctx), nob_sv_from_cstr(entry.path));
+    if (eval_should_stop(search->ctx)) return false;
+
+    Try_Compile_Language lang = try_compile_detect_language(path);
+    if (lang == TRY_COMPILE_LANG_AUTO || lang == TRY_COMPILE_LANG_HEADERS) return true;
+    return try_compile_source_push(search->ctx,
+                                   search->sources,
+                                   (Try_Compile_Source_Item){
+                                       .path = path,
+                                       .language = lang,
+                                   });
+}
+
+static bool try_compile_execute_project_request_fallback(Evaluator_Context *ctx,
+                                                         const Try_Compile_Request *req,
+                                                         Try_Compile_Execution_Result *out_res) {
+    if (!ctx || !req || !out_res) return false;
+
+    Try_Compile_Source_List sources = {0};
+    char *source_dir_c = eval_sv_to_cstr_temp(ctx, req->source_dir);
+    char *binary_dir_c = eval_sv_to_cstr_temp(ctx, req->binary_dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, source_dir_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, binary_dir_c, false);
+
+    Try_Compile_Project_Source_Search search = {
+        .ctx = ctx,
+        .binary_dir_c = binary_dir_c,
+        .sources = &sources,
+    };
+    if (!nob_walk_dir(source_dir_c, try_compile_project_source_visit, .data = &search)) {
+        return false;
+    }
+
+    if (sources.count == 0) {
+        Nob_String_Builder log = {0};
+        nob_sb_append_cstr(&log, "try_compile(PROJECT) found no compilable source files under: ");
+        nob_sb_append_buf(&log, req->source_dir.data, req->source_dir.count);
+        nob_sb_append(&log, '\n');
+        out_res->ok = false;
+        out_res->output = try_compile_finish_log(ctx, &log);
+        out_res->artifact_path = nob_sv_from_cstr("");
+        return true;
+    }
+
+    Try_Compile_Request source_req = *req;
+    source_req.signature = TRY_COMPILE_SIGNATURE_SOURCE;
+    source_req.source_items = sources;
+    return try_compile_execute_source_request(ctx, &source_req, out_res);
+}
+
 bool try_compile_execute_source_request(Evaluator_Context *ctx,
                                         const Try_Compile_Request *req,
                                         Try_Compile_Execution_Result *out_res) {
@@ -493,10 +682,98 @@ bool try_compile_execute_project_request(Evaluator_Context *ctx,
                                          const Try_Compile_Request *req,
                                          Try_Compile_Execution_Result *out_res) {
     if (!ctx || !req || !out_res) return false;
-    (void)node;
     *out_res = (Try_Compile_Execution_Result){0};
-    out_res->ok = false;
-    out_res->output = nob_sv_from_cstr("try_compile(PROJECT) is temporarily disabled while the semantic Event IR replaces the legacy build model pipeline");
+    (void)node;
+
+    Nob_String_Builder log = {0};
+    String_View cmake_lists = eval_sv_path_join(eval_temp_arena(ctx),
+                                                req->source_dir,
+                                                nob_sv_from_cstr("CMakeLists.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!try_compile_file_exists_sv(ctx, cmake_lists)) {
+        nob_sb_append_cstr(&log, "try_compile(PROJECT) source directory is missing CMakeLists.txt: ");
+        nob_sb_append_buf(&log, req->source_dir.data, req->source_dir.count);
+        nob_sb_append(&log, '\n');
+        out_res->output = try_compile_finish_log(ctx, &log);
+        out_res->ok = false;
+        return true;
+    }
+
+    char *bindir_c = eval_sv_to_cstr_temp(ctx, req->binary_dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, bindir_c, false);
+    (void)try_compile_mkdir_p_local(ctx, bindir_c);
+
+    String_View cmake_cmd = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    if (cmake_cmd.count == 0 || eval_sv_eq_ci_lit(cmake_cmd, "cmake")) {
+        return try_compile_execute_project_request_fallback(ctx, req, out_res);
+    }
+    char *cmake_cmd_c = eval_sv_to_cstr_temp(ctx, cmake_cmd);
+    char *source_dir_c = eval_sv_to_cstr_temp(ctx, req->source_dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, cmake_cmd_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, source_dir_c, false);
+
+    Nob_Cmd configure_cmd = {0};
+    nob_cmd_append(&configure_cmd, cmake_cmd_c, "-S", source_dir_c, "-B", bindir_c);
+
+    String_View c_compiler = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"));
+    if (c_compiler.count > 0 &&
+        !try_compile_append_cmake_cache_arg(ctx, &configure_cmd, "CMAKE_C_COMPILER", c_compiler)) {
+        nob_cmd_free(configure_cmd);
+        nob_sb_free(log);
+        return false;
+    }
+
+    String_View cxx_compiler = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"));
+    if (cxx_compiler.count > 0 &&
+        !try_compile_append_cmake_cache_arg(ctx, &configure_cmd, "CMAKE_CXX_COMPILER", cxx_compiler)) {
+        nob_cmd_free(configure_cmd);
+        nob_sb_free(log);
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(req->cmake_flags); i++) {
+        char *flag_c = eval_sv_to_cstr_temp(ctx, req->cmake_flags[i]);
+        EVAL_OOM_RETURN_IF_NULL(ctx, flag_c, false);
+        nob_cmd_append(&configure_cmd, flag_c);
+    }
+
+    bool configure_ok = false;
+    if (!try_compile_run_command_captured(ctx, &configure_cmd, req->binary_dir, &log, &configure_ok)) {
+        nob_sb_free(log);
+        return false;
+    }
+    if (!configure_ok) {
+        out_res->ok = false;
+        out_res->output = try_compile_finish_log(ctx, &log);
+        return true;
+    }
+
+    Nob_Cmd build_cmd = {0};
+    nob_cmd_append(&build_cmd, cmake_cmd_c, "--build", bindir_c);
+    if (req->target_name.count > 0) {
+        char *target_c = eval_sv_to_cstr_temp(ctx, req->target_name);
+        EVAL_OOM_RETURN_IF_NULL(ctx, target_c, false);
+        nob_cmd_append(&build_cmd, "--target", target_c);
+    }
+
+    bool build_ok = false;
+    if (!try_compile_run_command_captured(ctx, &build_cmd, req->binary_dir, &log, &build_ok)) {
+        nob_sb_free(log);
+        return false;
+    }
+
+    out_res->ok = build_ok;
+    out_res->output = try_compile_finish_log(ctx, &log);
+    if (!build_ok) {
+        out_res->artifact_path = nob_sv_from_cstr("");
+        return true;
+    }
+
+    if (req->target_name.count > 0) {
+        out_res->artifact_path = try_compile_project_find_named_artifact(ctx,
+                                                                         req->binary_dir,
+                                                                         req->target_name);
+    }
     return true;
 }
 

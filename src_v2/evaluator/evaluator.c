@@ -381,7 +381,7 @@ bool eval_target_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
     Eval_Command_State *commands = eval_command_slice(ctx);
     for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
-        if (eval_sv_key_eq(commands->known_targets[i], name)) return true;
+        if (eval_sv_key_eq(commands->known_targets[i].name, name)) return true;
     }
     return false;
 }
@@ -389,9 +389,29 @@ bool eval_target_known(Evaluator_Context *ctx, String_View name) {
 bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
     Eval_Command_State *commands = eval_command_slice(ctx);
-    name = sv_copy_to_event_arena(ctx, name);
-    if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->known_targets, name);
+    Eval_Target_Record record = {0};
+    record.name = sv_copy_to_arena(commands->known_targets_arena, name);
+    if (name.count > 0 && record.name.count == 0) return ctx_oom(ctx);
+
+    String_View declared_dir = eval_current_source_dir_for_paths(ctx);
+    record.declared_dir = sv_copy_to_arena(commands->known_targets_arena, declared_dir);
+    if (declared_dir.count > 0 && record.declared_dir.count == 0) return ctx_oom(ctx);
+
+    return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->known_targets, record);
+}
+
+bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_View *out_dir) {
+    if (!out_dir) return false;
+    *out_dir = nob_sv_from_cstr("");
+    if (!ctx) return false;
+
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
+        if (!eval_sv_key_eq(commands->known_targets[i].name, name)) continue;
+        *out_dir = commands->known_targets[i].declared_dir;
+        return true;
+    }
+    return true;
 }
 
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
@@ -888,6 +908,10 @@ void evaluator_destroy(Evaluator_Context *ctx) {
     if (ctx->command_state.native_command_index) {
         stbds_shfree(ctx->command_state.native_command_index);
         ctx->command_state.native_command_index = NULL;
+    }
+    if (ctx->command_state.property_store) {
+        stbds_shfree(ctx->command_state.property_store);
+        ctx->command_state.property_store = NULL;
     }
     if (ctx->scope_state.cache_entries) {
         stbds_shfree(ctx->scope_state.cache_entries);
