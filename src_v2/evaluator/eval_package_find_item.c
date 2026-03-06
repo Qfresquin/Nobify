@@ -64,7 +64,6 @@ typedef struct {
     Find_Item_Options *out_opt;
     Cmake_Event_Origin origin;
     bool keyword_seen;
-    SV_List args;
 } Find_Item_Option_Parse_State;
 
 static bool find_item_keyword_eq(String_View value, const char *lit) {
@@ -130,22 +129,19 @@ static bool find_item_list_append_env(Evaluator_Context *ctx, SV_List *list, Str
     return true;
 }
 
-static bool find_item_collect_multi(Evaluator_Context *ctx,
-                                    const Node *node,
-                                    const SV_List *args,
-                                    size_t *io_index,
-                                    SV_List *out_values) {
-    if (!ctx || !node || !args || !io_index || !out_values) return false;
-    while (*io_index < arena_arr_len(*args)) {
-        String_View value = (*args)[*io_index];
-        if (find_item_is_keyword(value)) break;
+static bool find_item_append_section_values(Evaluator_Context *ctx,
+                                            const Node *node,
+                                            Cmake_Event_Origin origin,
+                                            SV_List values,
+                                            SV_List *out_values) {
+    if (!ctx || !node || !out_values) return false;
+    for (size_t i = 0; i < arena_arr_len(values); i++) {
+        String_View value = values[i];
         if (find_item_keyword_eq(value, "ENV")) {
-            (*io_index)++;
-            if (*io_index >= arena_arr_len(*args) || find_item_is_keyword((*args)[*io_index])) {
-                Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+            if (i + 1 >= arena_arr_len(values)) {
                 (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                                      node,
-                                                     o,
+                                                     origin,
                                                      EV_DIAG_ERROR,
                                                      EVAL_DIAG_MISSING_REQUIRED,
                                                      "dispatcher",
@@ -153,12 +149,11 @@ static bool find_item_collect_multi(Evaluator_Context *ctx,
                                                      nob_sv_from_cstr("Usage: find_<cmd>(... <section> ENV <env-var> ...)"));
                 return false;
             }
-            if (!find_item_list_append_env(ctx, out_values, (*args)[*io_index])) return false;
-            (*io_index)++;
+            if (!find_item_list_append_env(ctx, out_values, values[i + 1])) return false;
+            i++;
             continue;
         }
         if (!find_item_list_append(ctx, out_values, value)) return false;
-        (*io_index)++;
     }
     return true;
 }
@@ -249,31 +244,20 @@ static bool find_item_parse_option(Evaluator_Context *ctx,
                                    int id,
                                    SV_List values,
                                    size_t token_index) {
+    (void)token_index;
     Find_Item_Option_Parse_State *state = (Find_Item_Option_Parse_State *)userdata;
     if (!state || !state->out_opt || !state->node) return false;
     state->keyword_seen = true;
 
     switch (id) {
-        case FIND_ITEM_OPT_NAMES: {
-            size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->names)) return false;
-            return true;
-        }
-        case FIND_ITEM_OPT_HINTS: {
-            size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->hints)) return false;
-            return true;
-        }
-        case FIND_ITEM_OPT_PATHS: {
-            size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->paths)) return false;
-            return true;
-        }
-        case FIND_ITEM_OPT_PATH_SUFFIXES: {
-            size_t i = token_index + 1;
-            if (!find_item_collect_multi(ctx, state->node, &state->args, &i, &state->out_opt->path_suffixes)) return false;
-            return true;
-        }
+        case FIND_ITEM_OPT_NAMES:
+            return find_item_append_section_values(ctx, state->node, state->origin, values, &state->out_opt->names);
+        case FIND_ITEM_OPT_HINTS:
+            return find_item_append_section_values(ctx, state->node, state->origin, values, &state->out_opt->hints);
+        case FIND_ITEM_OPT_PATHS:
+            return find_item_append_section_values(ctx, state->node, state->origin, values, &state->out_opt->paths);
+        case FIND_ITEM_OPT_PATH_SUFFIXES:
+            return find_item_append_section_values(ctx, state->node, state->origin, values, &state->out_opt->path_suffixes);
         case FIND_ITEM_OPT_DOC:
             return true;
         case FIND_ITEM_OPT_NO_CACHE:
@@ -316,32 +300,10 @@ static bool find_item_parse_option(Evaluator_Context *ctx,
             state->out_opt->names_per_dir = true;
             return true;
         case FIND_ITEM_OPT_REGISTRY_VIEW:
-            if (arena_arr_len(values) == 0 || find_item_is_keyword(values[0])) {
-                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
-                                                      state->node,
-                                                      state->origin,
-                                                      EV_DIAG_ERROR,
-                                                      EVAL_DIAG_MISSING_REQUIRED,
-                                                      "dispatcher",
-                                                      nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"),
-                                                      nob_sv_from_cstr("Usage: find_*(<out-var> ... REGISTRY_VIEW <view> ...)"));
-                return false;
-            }
             state->out_opt->has_registry_view = true;
             state->out_opt->registry_view = values[0];
             return true;
         case FIND_ITEM_OPT_VALIDATOR:
-            if (arena_arr_len(values) == 0 || find_item_is_keyword(values[0])) {
-                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
-                                                      state->node,
-                                                      state->origin,
-                                                      EV_DIAG_ERROR,
-                                                      EVAL_DIAG_MISSING_REQUIRED,
-                                                      "dispatcher",
-                                                      nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"),
-                                                      nob_sv_from_cstr("Usage: find_*(<out-var> ... VALIDATOR <function> ...)"));
-                return false;
-            }
             state->out_opt->has_validator = true;
             state->out_opt->validator = values[0];
             return true;
@@ -364,26 +326,26 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
     }
 
     static const Eval_Opt_Spec k_find_item_specs[] = {
-        {FIND_ITEM_OPT_NAMES, "NAMES", EVAL_OPT_MULTI},
-        {FIND_ITEM_OPT_HINTS, "HINTS", EVAL_OPT_MULTI},
-        {FIND_ITEM_OPT_PATHS, "PATHS", EVAL_OPT_MULTI},
-        {FIND_ITEM_OPT_PATH_SUFFIXES, "PATH_SUFFIXES", EVAL_OPT_MULTI},
-        {FIND_ITEM_OPT_DOC, "DOC", EVAL_OPT_OPTIONAL_SINGLE},
-        {FIND_ITEM_OPT_NO_CACHE, "NO_CACHE", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_REQUIRED, "REQUIRED", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_DEFAULT_PATH, "NO_DEFAULT_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_PACKAGE_ROOT_PATH, "NO_PACKAGE_ROOT_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_CMAKE_PATH, "NO_CMAKE_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_CMAKE_ENVIRONMENT_PATH, "NO_CMAKE_ENVIRONMENT_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_SYSTEM_ENVIRONMENT_PATH, "NO_SYSTEM_ENVIRONMENT_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_CMAKE_SYSTEM_PATH, "NO_CMAKE_SYSTEM_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_CMAKE_INSTALL_PREFIX, "NO_CMAKE_INSTALL_PREFIX", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NO_CMAKE_FIND_ROOT_PATH, "NO_CMAKE_FIND_ROOT_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_ONLY_CMAKE_FIND_ROOT_PATH, "ONLY_CMAKE_FIND_ROOT_PATH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_CMAKE_FIND_ROOT_PATH_BOTH, "CMAKE_FIND_ROOT_PATH_BOTH", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_NAMES_PER_DIR, "NAMES_PER_DIR", EVAL_OPT_FLAG},
-        {FIND_ITEM_OPT_REGISTRY_VIEW, "REGISTRY_VIEW", EVAL_OPT_OPTIONAL_SINGLE},
-        {FIND_ITEM_OPT_VALIDATOR, "VALIDATOR", EVAL_OPT_OPTIONAL_SINGLE},
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NAMES, "NAMES", EVAL_OPT_MULTI),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_HINTS, "HINTS", EVAL_OPT_MULTI),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_PATHS, "PATHS", EVAL_OPT_MULTI),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_PATH_SUFFIXES, "PATH_SUFFIXES", EVAL_OPT_MULTI),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_DOC, "DOC", EVAL_OPT_OPTIONAL_SINGLE),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_CACHE, "NO_CACHE", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_REQUIRED, "REQUIRED", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_DEFAULT_PATH, "NO_DEFAULT_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_PACKAGE_ROOT_PATH, "NO_PACKAGE_ROOT_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_CMAKE_PATH, "NO_CMAKE_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_CMAKE_ENVIRONMENT_PATH, "NO_CMAKE_ENVIRONMENT_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_SYSTEM_ENVIRONMENT_PATH, "NO_SYSTEM_ENVIRONMENT_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_CMAKE_SYSTEM_PATH, "NO_CMAKE_SYSTEM_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_CMAKE_INSTALL_PREFIX, "NO_CMAKE_INSTALL_PREFIX", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NO_CMAKE_FIND_ROOT_PATH, "NO_CMAKE_FIND_ROOT_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_ONLY_CMAKE_FIND_ROOT_PATH, "ONLY_CMAKE_FIND_ROOT_PATH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_CMAKE_FIND_ROOT_PATH_BOTH, "CMAKE_FIND_ROOT_PATH_BOTH", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC(FIND_ITEM_OPT_NAMES_PER_DIR, "NAMES_PER_DIR", EVAL_OPT_FLAG),
+        EVAL_OPT_SPEC_REQ(FIND_ITEM_OPT_REGISTRY_VIEW, "REGISTRY_VIEW", EVAL_OPT_SINGLE, 1, true, "find_*(REGISTRY_VIEW) requires a value", "Usage: find_*(<out-var> ... REGISTRY_VIEW <view> ...)"),
+        EVAL_OPT_SPEC_REQ(FIND_ITEM_OPT_VALIDATOR, "VALIDATOR", EVAL_OPT_SINGLE, 1, true, "find_*(VALIDATOR) requires a function name", "Usage: find_*(<out-var> ... VALIDATOR <function> ...)"),
     };
 
     Find_Item_Option_Parse_State state = {
@@ -391,7 +353,6 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
         .out_opt = out_opt,
         .origin = o,
         .keyword_seen = false,
-        .args = args,
     };
     Eval_Opt_Parse_Config cfg = {
         .origin = o,

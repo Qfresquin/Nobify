@@ -154,9 +154,9 @@ Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
         cmd_i++;
         size_t cmd_start = cmd_i;
         const Eval_Opt_Spec add_test_specs[] = {
-            {ADD_TEST_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE},
-            {ADD_TEST_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG},
-            {ADD_TEST_OPT_CONFIGURATIONS, "CONFIGURATIONS", EVAL_OPT_MULTI},
+            EVAL_OPT_SPEC(ADD_TEST_OPT_WORKING_DIRECTORY, "WORKING_DIRECTORY", EVAL_OPT_SINGLE),
+            EVAL_OPT_SPEC(ADD_TEST_OPT_COMMAND_EXPAND_LISTS, "COMMAND_EXPAND_LISTS", EVAL_OPT_FLAG),
+            EVAL_OPT_SPEC(ADD_TEST_OPT_CONFIGURATIONS, "CONFIGURATIONS", EVAL_OPT_MULTI),
         };
         size_t cmd_end = cmd_i;
         while (cmd_end < arena_arr_len(a) &&

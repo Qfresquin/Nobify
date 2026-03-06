@@ -2,6 +2,7 @@
 
 #include "evaluator_internal.h"
 #include "eval_expr.h"
+#include "eval_opt_parser.h"
 #include "arena_dyn.h"
 
 #include <stdio.h>
@@ -711,6 +712,66 @@ static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
                                         out);
 }
 
+typedef enum {
+    SEPARATE_ARGUMENTS_MODE_UNIX = 0,
+    SEPARATE_ARGUMENTS_MODE_WINDOWS,
+    SEPARATE_ARGUMENTS_MODE_NATIVE,
+} Separate_Arguments_Mode_Opt_Id;
+
+typedef struct {
+    const Node *node;
+    Cmake_Event_Origin origin;
+    bool *windows_mode;
+    String_View *input;
+} Separate_Arguments_Mode_Parse_State;
+
+static const Eval_Opt_Spec k_separate_arguments_mode_specs[] = {
+    EVAL_OPT_SPEC_REQ(SEPARATE_ARGUMENTS_MODE_UNIX, "UNIX_COMMAND", EVAL_OPT_TAIL, 1, false, "separate_arguments() mode form requires an input command line", "Add the command string after the parsing mode"),
+    EVAL_OPT_SPEC_REQ(SEPARATE_ARGUMENTS_MODE_WINDOWS, "WINDOWS_COMMAND", EVAL_OPT_TAIL, 1, false, "separate_arguments() mode form requires an input command line", "Add the command string after the parsing mode"),
+    EVAL_OPT_SPEC_REQ(SEPARATE_ARGUMENTS_MODE_NATIVE, "NATIVE_COMMAND", EVAL_OPT_TAIL, 1, false, "separate_arguments() mode form requires an input command line", "Add the command string after the parsing mode"),
+};
+
+static bool separate_arguments_parse_mode_option(Evaluator_Context *ctx,
+                                                 void *userdata,
+                                                 int id,
+                                                 SV_List values,
+                                                 size_t token_index) {
+    (void)token_index;
+    Separate_Arguments_Mode_Parse_State *state = (Separate_Arguments_Mode_Parse_State *)userdata;
+    if (!state || !state->node || !state->windows_mode || !state->input) return false;
+
+    if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "PROGRAM")) {
+        return EVAL_DIAG_BOOL_SEV(ctx,
+                                  EV_DIAG_ERROR,
+                                  EVAL_DIAG_NOT_IMPLEMENTED,
+                                  nob_sv_from_cstr("separate_arguments"),
+                                  state->node->as.cmd.name,
+                                  state->origin,
+                                  nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"),
+                                  nob_sv_from_cstr("Supported in this batch: UNIX_COMMAND, WINDOWS_COMMAND, NATIVE_COMMAND, and one-argument list form"));
+    }
+
+    switch ((Separate_Arguments_Mode_Opt_Id)id) {
+        case SEPARATE_ARGUMENTS_MODE_UNIX:
+            *state->windows_mode = false;
+            break;
+        case SEPARATE_ARGUMENTS_MODE_WINDOWS:
+            *state->windows_mode = true;
+            break;
+        case SEPARATE_ARGUMENTS_MODE_NATIVE:
+#if defined(_WIN32)
+            *state->windows_mode = true;
+#else
+            *state->windows_mode = false;
+#endif
+            break;
+        default:
+            return false;
+    }
+
+    return join_sv_with_spaces_temp(ctx, values, arena_arr_len(values), state->input);
+}
+
 Eval_Result eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -1001,44 +1062,39 @@ Eval_Result eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *n
 #else
         false;
 #endif
-    bool explicit_mode = false;
-    size_t input_index = 1;
-
-    if (arena_arr_len(a) > 1) {
-        if (eval_sv_eq_ci_lit(a[1], "UNIX_COMMAND")) {
-            windows_mode = false;
-            explicit_mode = true;
-            input_index = 2;
-        } else if (eval_sv_eq_ci_lit(a[1], "WINDOWS_COMMAND")) {
-            windows_mode = true;
-            explicit_mode = true;
-            input_index = 2;
-        } else if (eval_sv_eq_ci_lit(a[1], "NATIVE_COMMAND")) {
-#if defined(_WIN32)
-            windows_mode = true;
-#else
-            windows_mode = false;
-#endif
-            explicit_mode = true;
-            input_index = 2;
-        }
-    }
-
-    if (explicit_mode && input_index >= arena_arr_len(a)) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "separate_arguments", nob_sv_from_cstr("separate_arguments() mode form requires an input command line"), nob_sv_from_cstr("Add the command string after the parsing mode"));
-        return eval_result_from_ctx(ctx);
-    }
-
-    if (explicit_mode && input_index < arena_arr_len(a) && eval_sv_eq_ci_lit(a[input_index], "PROGRAM")) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_IMPLEMENTED, "separate_arguments", nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"), nob_sv_from_cstr("Supported in this batch: UNIX_COMMAND, WINDOWS_COMMAND, NATIVE_COMMAND, and one-argument list form"));
-        return eval_result_from_ctx(ctx);
-    }
 
     String_View input = nob_sv_from_cstr("");
     if (arena_arr_len(a) == 1) {
         input = eval_var_get_visible(ctx, out_var);
+    } else if (eval_opt_token_is_keyword(a[1],
+                                         k_separate_arguments_mode_specs,
+                                         NOB_ARRAY_LEN(k_separate_arguments_mode_specs))) {
+        Separate_Arguments_Mode_Parse_State state = {
+            .node = node,
+            .origin = o,
+            .windows_mode = &windows_mode,
+            .input = &input,
+        };
+        Eval_Opt_Parse_Config cfg = {
+            .origin = o,
+            .component = nob_sv_from_cstr("separate_arguments"),
+            .command = node->as.cmd.name,
+            .unknown_as_positional = false,
+            .warn_unknown = false,
+        };
+        if (!eval_opt_parse_walk(ctx,
+                                 a,
+                                 1,
+                                 k_separate_arguments_mode_specs,
+                                 NOB_ARRAY_LEN(k_separate_arguments_mode_specs),
+                                 cfg,
+                                 separate_arguments_parse_mode_option,
+                                 NULL,
+                                 &state)) {
+            return eval_result_from_ctx(ctx);
+        }
     } else {
-        if (!join_sv_with_spaces_temp(ctx, &a[input_index], arena_arr_len(a) - input_index, &input)) {
+        if (!join_sv_with_spaces_temp(ctx, &a[1], arena_arr_len(a) - 1, &input)) {
             return eval_result_from_ctx(ctx);
         }
     }

@@ -8,13 +8,30 @@ typedef enum {
     EVAL_OPT_SINGLE,
     EVAL_OPT_OPTIONAL_SINGLE,
     EVAL_OPT_MULTI,
+    EVAL_OPT_TAIL,
 } Eval_Opt_Kind;
 
 typedef struct {
     int id;
     const char *name;
     Eval_Opt_Kind kind;
+    size_t min_values;
+    bool value_must_not_be_keyword;
+    bool reject_duplicates;
+    const char *missing_value_cause;
+    const char *missing_value_hint;
+    const char *duplicate_cause;
+    const char *duplicate_hint;
 } Eval_Opt_Spec;
+
+#define EVAL_OPT_SPEC(ID, NAME, KIND) \
+    {(ID), (NAME), (KIND), 0, false, false, NULL, NULL, NULL, NULL}
+
+#define EVAL_OPT_SPEC_REQ(ID, NAME, KIND, MIN_VALUES, VALUE_MUST_NOT_BE_KEYWORD, MISSING_CAUSE, MISSING_HINT) \
+    {(ID), (NAME), (KIND), (MIN_VALUES), (VALUE_MUST_NOT_BE_KEYWORD), false, (MISSING_CAUSE), (MISSING_HINT), NULL, NULL}
+
+#define EVAL_OPT_SPEC_FULL(ID, NAME, KIND, MIN_VALUES, VALUE_MUST_NOT_BE_KEYWORD, REJECT_DUPLICATES, MISSING_CAUSE, MISSING_HINT, DUPLICATE_CAUSE, DUPLICATE_HINT) \
+    {(ID), (NAME), (KIND), (MIN_VALUES), (VALUE_MUST_NOT_BE_KEYWORD), (REJECT_DUPLICATES), (MISSING_CAUSE), (MISSING_HINT), (DUPLICATE_CAUSE), (DUPLICATE_HINT)}
 
 typedef struct {
     Cmake_Event_Origin origin;
