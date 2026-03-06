@@ -249,7 +249,7 @@ Current intentionally visible limits:
 - `while()` execution is guarded by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`, defaulting to `10000`.
 - the `while()` guard is read once at `while` node entry; mutations inside the loop affect only the next `while()` node.
 - invalid `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` values emit a warning and fall back to `10000`.
-- the `ctest_*` family now shares a lightweight session model for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`, but most commands still publish evaluator-side metadata rather than driving a full external CTest dashboard workflow.
+- the `ctest_*` family now shares a lightweight session model for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` stages `Testing/TAG`, and `ctest_submit` / `ctest_upload` stage local manifests under `Testing/<tag>/`, but the family still stops short of driving a full external CTest dashboard workflow.
 - `target_sources(FILE_SET ...)` currently supports the `TYPE HEADERS` subset; other file-set types such as `CXX_MODULES` remain unsupported.
 - `try_run()` supports both the source-file/native-execution subset and the `PROJECT` signature through the shared `try_compile(...)` execution path.
 - when `CMAKE_CROSSCOMPILING` is true, `try_run()` still performs the compile phase but resolves the run phase to `FAILED_TO_RUN` with the message `try_run skipped due to CMAKE_CROSSCOMPILING`; answer-file/emulator workflows remain unimplemented.

@@ -5736,6 +5736,9 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe/sub"));
     ASSERT(nob_mkdir_if_not_exists("ctest_src"));
     ASSERT(nob_mkdir_if_not_exists("ctest_custom"));
+    ASSERT(nob_write_entire_file("ctest_bin/a.txt", "A\n", strlen("A\n")));
+    ASSERT(nob_write_entire_file("ctest_bin/b.txt", "B\n", strlen("B\n")));
+    ASSERT(nob_write_entire_file("ctest_bin/notes.txt", "NOTES\n", strlen("NOTES\n")));
     ASSERT(nob_write_entire_file("ctest_bin/wipe/sub/junk.txt", "junk\n", strlen("junk\n")));
     ASSERT(nob_write_entire_file("ctest_custom/CTestCustom.cmake",
                                  "set(CTEST_CUSTOM_LOADED yes)\n",
@@ -5759,14 +5762,14 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         temp_arena,
         "set(CMAKE_BINARY_DIR ctest_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR ctest_bin)\n"
-        "ctest_start(Experimental ctest_src ctest_bin TRACK Nightly APPEND)\n"
+        "ctest_start(Experimental ctest_src . TRACK Nightly APPEND)\n"
         "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
         "ctest_build(TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
         "ctest_test(RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE PARALLEL_LEVEL 2 SCHEDULE_RANDOM)\n"
         "ctest_coverage(LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE)\n"
         "ctest_memcheck(RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS SCHEDULE_RANDOM)\n"
         "ctest_update(RETURN_VALUE UPD_RV CAPTURE_CMAKE_ERROR UPD_CE QUIET)\n"
-        "ctest_submit(PARTS Start Build Test RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n"
+        "ctest_submit(PARTS Start Build Test FILES notes.txt RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n"
         "ctest_upload(FILES a.txt b.txt CAPTURE_CMAKE_ERROR UPLOAD_CE)\n"
         "ctest_empty_binary_directory(wipe)\n"
         "ctest_read_custom_files(ctest_custom)\n"
@@ -5788,6 +5791,8 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
                      nob_sv_from_cstr("Experimental")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_TRACK")),
                      nob_sv_from_cstr("Nightly")));
+    String_View ctest_tag = eval_var_get(ctx, nob_sv_from_cstr("CTEST_TAG"));
+    ASSERT(ctest_tag.count > 0);
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::PARTS")),
                      nob_sv_from_cstr("Start;Build;Test")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_empty_binary_directory::STATUS")),
@@ -5818,6 +5823,53 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
                           nob_sv_from_cstr("ctest_bin")));
     ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::RESOLVED_SOURCE")),
                           nob_sv_from_cstr("ctest_src")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::TAG")), ctest_tag));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG_FILE")),
+                          nob_sv_from_cstr("ctest_bin/Testing/TAG")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_bin/notes.txt")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_bin/a.txt")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_bin/b.txt")));
+
+    String_View tag_file = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG_FILE"));
+    char *tag_file_c = arena_strndup(temp_arena, tag_file.data, tag_file.count);
+    ASSERT(tag_file_c != NULL);
+    ASSERT(nob_file_exists(tag_file_c));
+
+    Nob_String_Builder tag_sb = {0};
+    ASSERT(nob_read_entire_file(tag_file_c, &tag_sb));
+    ASSERT(strstr(tag_sb.items, "Experimental") != NULL);
+    ASSERT(strstr(tag_sb.items, tag_file_c) == NULL);
+    ASSERT(memmem(tag_sb.items, tag_sb.count, ctest_tag.data, ctest_tag.count) != NULL);
+    nob_sb_free(tag_sb);
+
+    String_View submit_manifest = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::MANIFEST"));
+    char *submit_manifest_c = arena_strndup(temp_arena, submit_manifest.data, submit_manifest.count);
+    ASSERT(submit_manifest_c != NULL);
+    ASSERT(nob_file_exists(submit_manifest_c));
+
+    Nob_String_Builder submit_sb = {0};
+    ASSERT(nob_read_entire_file(submit_manifest_c, &submit_sb));
+    ASSERT(strstr(submit_sb.items, "COMMAND=ctest_submit") != NULL);
+    ASSERT(strstr(submit_sb.items, "PARTS=Start;Build;Test") != NULL);
+    ASSERT(strstr(submit_sb.items, "FILES=") != NULL);
+    ASSERT(strstr(submit_sb.items, "notes.txt") != NULL);
+    nob_sb_free(submit_sb);
+
+    String_View upload_manifest = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::MANIFEST"));
+    char *upload_manifest_c = arena_strndup(temp_arena, upload_manifest.data, upload_manifest.count);
+    ASSERT(upload_manifest_c != NULL);
+    ASSERT(nob_file_exists(upload_manifest_c));
+
+    Nob_String_Builder upload_sb = {0};
+    ASSERT(nob_read_entire_file(upload_manifest_c, &upload_sb));
+    ASSERT(strstr(upload_sb.items, "COMMAND=ctest_upload") != NULL);
+    ASSERT(strstr(upload_sb.items, "a.txt") != NULL);
+    ASSERT(strstr(upload_sb.items, "b.txt") != NULL);
+    nob_sb_free(upload_sb);
+
     ASSERT(!nob_file_exists("ctest_bin/wipe/sub/junk.txt"));
     ASSERT(nob_file_exists("ctest_bin/wipe"));
 

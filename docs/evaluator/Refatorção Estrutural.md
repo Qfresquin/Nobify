@@ -210,7 +210,7 @@ Recommended promotion order:
 3. **G3 `ctest_*` cluster**
    - Treat the `ctest_*` family as one coordinated promotion effort instead of isolated commands.
    - Share metadata/runtime helpers where possible so the cluster does not keep re-encoding the same workflow logic.
-   - Current batch in the workspace on March 6, 2026: introduced shared CTest session state for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` now seeds that session, and `ctest_configure` / `ctest_build` / `ctest_test` / `ctest_coverage` / `ctest_memcheck` / `ctest_update` resolve omitted source/build context from it while publishing their resolved directories for downstream inspection.
+   - Current batches in the workspace on March 6, 2026: introduced shared CTest session state for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` now seeds that session, stages `Testing/TAG`, and publishes `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. `ctest_configure` / `ctest_build` / `ctest_test` / `ctest_coverage` / `ctest_memcheck` / `ctest_update` resolve omitted source/build context from that session while publishing their resolved directories for downstream inspection, and `ctest_submit` / `ctest_upload` now reuse the same session tag to stage local manifest files under `Testing/<tag>/`.
 
 4. **G4 Modern runtime/meta gaps**
    - `cmake_language` advanced surface,
