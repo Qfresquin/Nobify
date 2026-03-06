@@ -36,6 +36,37 @@ typedef struct {
     Find_Root_Mode root_mode;
 } Find_Item_Options;
 
+typedef enum {
+    FIND_ITEM_OPT_NAMES = 0,
+    FIND_ITEM_OPT_HINTS,
+    FIND_ITEM_OPT_PATHS,
+    FIND_ITEM_OPT_PATH_SUFFIXES,
+    FIND_ITEM_OPT_DOC,
+    FIND_ITEM_OPT_NO_CACHE,
+    FIND_ITEM_OPT_REQUIRED,
+    FIND_ITEM_OPT_NO_DEFAULT_PATH,
+    FIND_ITEM_OPT_NO_PACKAGE_ROOT_PATH,
+    FIND_ITEM_OPT_NO_CMAKE_PATH,
+    FIND_ITEM_OPT_NO_CMAKE_ENVIRONMENT_PATH,
+    FIND_ITEM_OPT_NO_SYSTEM_ENVIRONMENT_PATH,
+    FIND_ITEM_OPT_NO_CMAKE_SYSTEM_PATH,
+    FIND_ITEM_OPT_NO_CMAKE_INSTALL_PREFIX,
+    FIND_ITEM_OPT_NO_CMAKE_FIND_ROOT_PATH,
+    FIND_ITEM_OPT_ONLY_CMAKE_FIND_ROOT_PATH,
+    FIND_ITEM_OPT_CMAKE_FIND_ROOT_PATH_BOTH,
+    FIND_ITEM_OPT_NAMES_PER_DIR,
+    FIND_ITEM_OPT_REGISTRY_VIEW,
+    FIND_ITEM_OPT_VALIDATOR,
+} Find_Item_Option_Id;
+
+typedef struct {
+    const Node *node;
+    Find_Item_Options *out_opt;
+    Cmake_Event_Origin origin;
+    bool keyword_seen;
+    SV_List args;
+} Find_Item_Option_Parse_State;
+
 static bool find_item_keyword_eq(String_View value, const char *lit) {
     return eval_sv_eq_ci_lit(value, lit);
 }
@@ -121,6 +152,193 @@ static bool find_item_collect_multi(Evaluator_Context *ctx,
     return true;
 }
 
+static bool find_item_validate_out_var(Evaluator_Context *ctx,
+                                       const Node *node,
+                                       const SV_List args,
+                                       Find_Item_Options *out_opt) {
+    if (!ctx || !node || !out_opt) return false;
+    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+
+    if (arena_arr_len(args) == 0) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                              node,
+                                              o,
+                                              EV_DIAG_ERROR,
+                                              EVAL_DIAG_MISSING_REQUIRED,
+                                              "dispatcher",
+                                              nob_sv_from_cstr("find_*() requires an output variable"),
+                                              nob_sv_from_cstr("Usage: find_<cmd>(<out-var> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
+        return false;
+    }
+
+    out_opt->out_var = args[0];
+    if (out_opt->out_var.count == 0 || find_item_is_keyword(out_opt->out_var)) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                              node,
+                                              o,
+                                              EV_DIAG_ERROR,
+                                              EVAL_DIAG_MISSING_REQUIRED,
+                                              "dispatcher",
+                                              nob_sv_from_cstr("find_*() requires an output variable"),
+                                              nob_sv_from_cstr("Usage: find_<cmd>(<out-var> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
+        return false;
+    }
+
+    SV_List raw_args = eval_resolve_args_literal(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (arena_arr_len(raw_args) == 0 || !nob_sv_eq(raw_args[0], out_opt->out_var)) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                              node,
+                                              o,
+                                              EV_DIAG_ERROR,
+                                              EVAL_DIAG_MISSING_REQUIRED,
+                                              "dispatcher",
+                                              nob_sv_from_cstr("find_*() requires output variable as a single token"),
+                                              nob_sv_from_cstr("Usage: find_<cmd>(<out-var> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
+        return false;
+    }
+
+    if (arena_arr_len(args) < 2) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                              node,
+                                              o,
+                                              EV_DIAG_ERROR,
+                                              EVAL_DIAG_MISSING_REQUIRED,
+                                              "dispatcher",
+                                              nob_sv_from_cstr("find_*() requires at least one search name"),
+                                              nob_sv_from_cstr("Usage: find_<cmd>(<out-var> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
+        return false;
+    }
+    return true;
+}
+
+static bool find_item_parse_positional(Evaluator_Context *ctx,
+                                       void *userdata,
+                                       String_View value,
+                                       size_t token_index) {
+    (void)token_index;
+    Find_Item_Option_Parse_State *state = (Find_Item_Option_Parse_State *)userdata;
+    if (!state || !state->out_opt || !state->node) return false;
+    if (state->keyword_seen) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                              state->node,
+                                              state->origin,
+                                              EV_DIAG_ERROR,
+                                              EVAL_DIAG_UNEXPECTED_ARGUMENT,
+                                              "dispatcher",
+                                              nob_sv_from_cstr("find_*() received unknown option"),
+                                              nob_sv_from_cstr("Usage: find_<cmd>(<out-var> NAMES ... [HINTS ...] [PATHS ...])"));
+        return false;
+    }
+    return find_item_list_append(ctx, &state->out_opt->names, value);
+}
+
+static bool find_item_parse_option(Evaluator_Context *ctx,
+                                   void *userdata,
+                                   int id,
+                                   SV_List values,
+                                   size_t token_index) {
+    Find_Item_Option_Parse_State *state = (Find_Item_Option_Parse_State *)userdata;
+    if (!state || !state->out_opt || !state->node) return false;
+    state->keyword_seen = true;
+
+    switch (id) {
+        case FIND_ITEM_OPT_NAMES: {
+            size_t i = token_index + 1;
+            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->names)) return false;
+            return true;
+        }
+        case FIND_ITEM_OPT_HINTS: {
+            size_t i = token_index + 1;
+            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->hints)) return false;
+            return true;
+        }
+        case FIND_ITEM_OPT_PATHS: {
+            size_t i = token_index + 1;
+            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->paths)) return false;
+            return true;
+        }
+        case FIND_ITEM_OPT_PATH_SUFFIXES: {
+            size_t i = token_index + 1;
+            if (!find_item_collect_multi(ctx, &state->args, &i, &state->out_opt->path_suffixes)) return false;
+            return true;
+        }
+        case FIND_ITEM_OPT_DOC:
+            return true;
+        case FIND_ITEM_OPT_NO_CACHE:
+            state->out_opt->no_cache = true;
+            return true;
+        case FIND_ITEM_OPT_REQUIRED:
+            state->out_opt->required = true;
+            return true;
+        case FIND_ITEM_OPT_NO_DEFAULT_PATH:
+            state->out_opt->no_default_path = true;
+            return true;
+        case FIND_ITEM_OPT_NO_PACKAGE_ROOT_PATH:
+            state->out_opt->no_package_root_path = true;
+            return true;
+        case FIND_ITEM_OPT_NO_CMAKE_PATH:
+            state->out_opt->no_cmake_path = true;
+            return true;
+        case FIND_ITEM_OPT_NO_CMAKE_ENVIRONMENT_PATH:
+            state->out_opt->no_cmake_environment_path = true;
+            return true;
+        case FIND_ITEM_OPT_NO_SYSTEM_ENVIRONMENT_PATH:
+            state->out_opt->no_system_environment_path = true;
+            return true;
+        case FIND_ITEM_OPT_NO_CMAKE_SYSTEM_PATH:
+            state->out_opt->no_cmake_system_path = true;
+            return true;
+        case FIND_ITEM_OPT_NO_CMAKE_INSTALL_PREFIX:
+            state->out_opt->no_cmake_install_prefix = true;
+            return true;
+        case FIND_ITEM_OPT_NO_CMAKE_FIND_ROOT_PATH:
+            state->out_opt->root_mode = FIND_ROOT_MODE_NONE;
+            return true;
+        case FIND_ITEM_OPT_ONLY_CMAKE_FIND_ROOT_PATH:
+            state->out_opt->root_mode = FIND_ROOT_MODE_ONLY;
+            return true;
+        case FIND_ITEM_OPT_CMAKE_FIND_ROOT_PATH_BOTH:
+            state->out_opt->root_mode = FIND_ROOT_MODE_BOTH;
+            return true;
+        case FIND_ITEM_OPT_NAMES_PER_DIR:
+            state->out_opt->names_per_dir = true;
+            return true;
+        case FIND_ITEM_OPT_REGISTRY_VIEW:
+            if (arena_arr_len(values) == 0 || find_item_is_keyword(values[0])) {
+                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                      state->node,
+                                                      state->origin,
+                                                      EV_DIAG_ERROR,
+                                                      EVAL_DIAG_MISSING_REQUIRED,
+                                                      "dispatcher",
+                                                      nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"),
+                                                      nob_sv_from_cstr("Usage: find_*(<out-var> ... REGISTRY_VIEW <view> ...)"));
+                return false;
+            }
+            state->out_opt->has_registry_view = true;
+            state->out_opt->registry_view = values[0];
+            return true;
+        case FIND_ITEM_OPT_VALIDATOR:
+            if (arena_arr_len(values) == 0 || find_item_is_keyword(values[0])) {
+                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                      state->node,
+                                                      state->origin,
+                                                      EV_DIAG_ERROR,
+                                                      EVAL_DIAG_MISSING_REQUIRED,
+                                                      "dispatcher",
+                                                      nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"),
+                                                      nob_sv_from_cstr("Usage: find_*(<out-var> ... VALIDATOR <function> ...)"));
+                return false;
+            }
+            state->out_opt->has_validator = true;
+            state->out_opt->validator = values[0];
+            return true;
+        default:
+            return false;
+    }
+}
+
 static bool find_item_parse_options(Evaluator_Context *ctx,
                                     const Node *node,
                                     SV_List args,
@@ -130,118 +348,68 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
     out_opt->root_mode = FIND_ROOT_MODE_BOTH;
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (arena_arr_len(args) < 2) {
-        (void)o;
-        (void)find_package_diag_error(ctx,
-                                      node,
-                                      nob_sv_from_cstr("find_*() requires an output variable and at least one name"),
-                                      nob_sv_from_cstr("Usage: find_*(<VAR> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
+    if (!find_item_validate_out_var(ctx, node, args, out_opt)) {
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
-    out_opt->out_var = args[0];
-    size_t i = 1;
-    while (i < arena_arr_len(args) && !find_item_is_keyword(args[i])) {
-        if (!find_item_list_append(ctx, &out_opt->names, args[i])) return false;
-        i++;
-    }
+    static const Eval_Opt_Spec k_find_item_specs[] = {
+        {FIND_ITEM_OPT_NAMES, "NAMES", EVAL_OPT_MULTI},
+        {FIND_ITEM_OPT_HINTS, "HINTS", EVAL_OPT_MULTI},
+        {FIND_ITEM_OPT_PATHS, "PATHS", EVAL_OPT_MULTI},
+        {FIND_ITEM_OPT_PATH_SUFFIXES, "PATH_SUFFIXES", EVAL_OPT_MULTI},
+        {FIND_ITEM_OPT_DOC, "DOC", EVAL_OPT_OPTIONAL_SINGLE},
+        {FIND_ITEM_OPT_NO_CACHE, "NO_CACHE", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_REQUIRED, "REQUIRED", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_DEFAULT_PATH, "NO_DEFAULT_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_PACKAGE_ROOT_PATH, "NO_PACKAGE_ROOT_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_CMAKE_PATH, "NO_CMAKE_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_CMAKE_ENVIRONMENT_PATH, "NO_CMAKE_ENVIRONMENT_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_SYSTEM_ENVIRONMENT_PATH, "NO_SYSTEM_ENVIRONMENT_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_CMAKE_SYSTEM_PATH, "NO_CMAKE_SYSTEM_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_CMAKE_INSTALL_PREFIX, "NO_CMAKE_INSTALL_PREFIX", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NO_CMAKE_FIND_ROOT_PATH, "NO_CMAKE_FIND_ROOT_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_ONLY_CMAKE_FIND_ROOT_PATH, "ONLY_CMAKE_FIND_ROOT_PATH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_CMAKE_FIND_ROOT_PATH_BOTH, "CMAKE_FIND_ROOT_PATH_BOTH", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_NAMES_PER_DIR, "NAMES_PER_DIR", EVAL_OPT_FLAG},
+        {FIND_ITEM_OPT_REGISTRY_VIEW, "REGISTRY_VIEW", EVAL_OPT_OPTIONAL_SINGLE},
+        {FIND_ITEM_OPT_VALIDATOR, "VALIDATOR", EVAL_OPT_OPTIONAL_SINGLE},
+    };
 
-    while (i < arena_arr_len(args)) {
-        String_View key = args[i++];
-        if (find_item_keyword_eq(key, "NAMES")) {
-            if (!find_item_collect_multi(ctx, &args, &i, &out_opt->names)) return false;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "HINTS")) {
-            if (!find_item_collect_multi(ctx, &args, &i, &out_opt->hints)) return false;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "PATHS")) {
-            if (!find_item_collect_multi(ctx, &args, &i, &out_opt->paths)) return false;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "PATH_SUFFIXES")) {
-            if (!find_item_collect_multi(ctx, &args, &i, &out_opt->path_suffixes)) return false;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "DOC")) {
-            if (i < arena_arr_len(args) && !find_item_is_keyword(args[i])) i++;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_CACHE")) {
-            out_opt->no_cache = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "REQUIRED")) {
-            out_opt->required = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_DEFAULT_PATH")) {
-            out_opt->no_default_path = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_PACKAGE_ROOT_PATH")) {
-            out_opt->no_package_root_path = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_CMAKE_PATH")) {
-            out_opt->no_cmake_path = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_CMAKE_ENVIRONMENT_PATH")) {
-            out_opt->no_cmake_environment_path = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_SYSTEM_ENVIRONMENT_PATH")) {
-            out_opt->no_system_environment_path = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_CMAKE_SYSTEM_PATH")) {
-            out_opt->no_cmake_system_path = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_CMAKE_INSTALL_PREFIX")) {
-            out_opt->no_cmake_install_prefix = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NO_CMAKE_FIND_ROOT_PATH")) {
-            out_opt->root_mode = FIND_ROOT_MODE_NONE;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "ONLY_CMAKE_FIND_ROOT_PATH")) {
-            out_opt->root_mode = FIND_ROOT_MODE_ONLY;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "CMAKE_FIND_ROOT_PATH_BOTH")) {
-            out_opt->root_mode = FIND_ROOT_MODE_BOTH;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "NAMES_PER_DIR")) {
-            out_opt->names_per_dir = true;
-            continue;
-        }
-        if (find_item_keyword_eq(key, "REGISTRY_VIEW")) {
-            if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
-                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"), nob_sv_from_cstr("Usage: find_*(... REGISTRY_VIEW <view>)"));
-                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
-            }
-            out_opt->has_registry_view = true;
-            out_opt->registry_view = args[i++];
-            continue;
-        }
-        if (find_item_keyword_eq(key, "VALIDATOR")) {
-            if (i >= arena_arr_len(args) || find_item_is_keyword(args[i])) {
-                (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"), nob_sv_from_cstr("Usage: find_*(... VALIDATOR <function>)"));
-                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
-            }
-            out_opt->has_validator = true;
-            out_opt->validator = args[i++];
-            continue;
-        }
+    Find_Item_Option_Parse_State state = {
+        .node = node,
+        .out_opt = out_opt,
+        .origin = o,
+        .keyword_seen = false,
+        .args = args,
+    };
+    Eval_Opt_Parse_Config cfg = {
+        .origin = o,
+        .component = nob_sv_from_cstr("dispatcher"),
+        .command = node->as.cmd.name,
+        .unknown_as_positional = true,
+        .warn_unknown = false,
+    };
+    if (!eval_opt_parse_walk(ctx,
+                             args,
+                             1,
+                             k_find_item_specs,
+                             NOB_ARRAY_LEN(k_find_item_specs),
+                             cfg,
+                             find_item_parse_option,
+                             find_item_parse_positional,
+                             &state)) {
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
     if (arena_arr_len(out_opt->names) == 0) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("find_*() requires at least one search name"), nob_sv_from_cstr("Provide a legacy name after <VAR> or use NAMES <name>..."));
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                              node,
+                                              o,
+                                              EV_DIAG_ERROR,
+                                              EVAL_DIAG_MISSING_REQUIRED,
+                                              "dispatcher",
+                                              nob_sv_from_cstr("find_*() requires at least one search name"),
+                                              nob_sv_from_cstr("Usage: find_<cmd>(<out-var> name1 [name2 ...] [NAMES ...] [HINTS ...] [PATHS ...])"));
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
     return true;

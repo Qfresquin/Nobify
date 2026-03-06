@@ -5897,6 +5897,164 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
     TEST_PASS();
 }
 
+TEST(evaluator_find_item_command_rejects_unknown_option) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("find_items"));
+    ASSERT(nob_mkdir_if_not_exists("find_items2"));
+    ASSERT(nob_write_entire_file("find_items2/marker.txt", "x", 1));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "find_file(FOO NAMES marker.txt NO_CACHE UNKNOWN_OPTION)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_unknown = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("find_file"))) continue;
+        if (!nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_UNEXPECTED_ARGUMENT"))) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_*() received unknown option"))) {
+            saw_unknown = true;
+        }
+    }
+    ASSERT(saw_unknown);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_find_item_command_rejects_missing_output_variable) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "find_file(NAMES marker.txt)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_missing = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("find_file"))) continue;
+        if (!nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_MISSING_REQUIRED"))) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_*() requires an output variable"))) {
+            saw_missing = true;
+        }
+    }
+    ASSERT(saw_missing);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_find_item_command_rejects_missing_registry_or_validator_values) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("find_items3"));
+    ASSERT(nob_write_entire_file("find_items3/marker.txt", "x", 1));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "find_file(REG_VIEW marker.txt REGISTRY_VIEW)\n"
+        "find_file(VAL_VIEW marker.txt VALIDATOR)\n"
+        "find_file(DOC_ONLY marker.txt DOC)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_registry = false;
+    bool saw_validator = false;
+    bool saw_doc_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("find_file"))) continue;
+        if (!nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_MISSING_REQUIRED"))) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_*(REGISTRY_VIEW) requires a value"))) {
+            saw_registry = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_*(VALIDATOR) requires a function name"))) {
+            saw_validator = true;
+        } else {
+            saw_doc_error = true;
+        }
+    }
+    ASSERT(saw_registry);
+    ASSERT(saw_validator);
+    ASSERT(!saw_doc_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_get_filename_component_covers_documented_modes) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -7949,6 +8107,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
+    test_evaluator_find_item_command_rejects_unknown_option(passed, failed);
+    test_evaluator_find_item_command_rejects_missing_output_variable(passed, failed);
+    test_evaluator_find_item_command_rejects_missing_registry_or_validator_values(passed, failed);
     test_evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies(passed, failed);
     test_evaluator_get_filename_component_covers_documented_modes(passed, failed);
     test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);

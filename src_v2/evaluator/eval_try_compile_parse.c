@@ -43,35 +43,6 @@ static bool try_compile_collect_until_keyword(Evaluator_Context *ctx,
     return true;
 }
 
-#if 0
-static bool try_compile_parse_cmake_flag_define_token(String_View def, String_View *out_key, String_View *out_value) {
-    if (out_key) *out_key = nob_sv_from_cstr("");
-    if (out_value) *out_value = nob_sv_from_cstr("");
-    if (!(def.count > 2 && def.data[0] == '-' && def.data[1] == 'D')) return false;
-
-    String_View kv = nob_sv_from_parts(def.data + 2, def.count - 2);
-    if (kv.count == 0) return false;
-
-    const char *eq = memchr(kv.data, '=', kv.count);
-    String_View raw_key = kv;
-    String_View value = nob_sv_from_cstr("1");
-    if (eq) {
-        size_t klen = (size_t)(eq - kv.data);
-        raw_key = nob_sv_from_parts(kv.data, klen);
-        value = nob_sv_from_parts(eq + 1, kv.count - klen - 1);
-    }
-
-    const char *colon = memchr(raw_key.data, ':', raw_key.count);
-    String_View key = raw_key;
-    if (colon) key = nob_sv_from_parts(raw_key.data, (size_t)(colon - raw_key.data));
-    if (key.count == 0) return false;
-
-    if (out_key) *out_key = key;
-    if (out_value) *out_value = value;
-    return true;
-}
-#endif
-
 static bool try_compile_parse_source_options(Evaluator_Context *ctx,
                                              const Node *node,
                                              const SV_List *args,
