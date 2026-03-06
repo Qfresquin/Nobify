@@ -1,6 +1,6 @@
 # Evaluator General Refactor Roadmap (Filtered + Revised)
 
-Status: decision-complete roadmap for evaluator architecture/documentation alignment.
+Status: decision-complete roadmap for evaluator architecture/documentation alignment, including the next bulk-first internal refactor campaign.
 
 ## 1. Decision Log
 
@@ -25,6 +25,19 @@ Status: decision-complete roadmap for evaluator architecture/documentation align
 
 - **#2 Build IR in evaluator** is out of scope for this roadmap.
 - **#6 Child context execution model** is out of scope for this roadmap.
+
+### 2.3 Temporary Breakage Policy for Bulk Waves
+
+- The next internal refactor campaign is explicitly allowed to enter temporarily broken intermediate states inside the working branch or local workspace while code is being moved.
+- This permission exists to reduce repeated stabilization cost during large internal extractions; it does not change the target contract for the evaluator.
+- Temporary breakage is acceptable only between planned checkpoints inside one active wave. It is not an acceptable final state for a completed wave.
+- Each wave must close by restoring a usable evaluator baseline:
+  - current evaluator targets compile again,
+  - `./build/nob_v2_test test-evaluator` passes on a fresh rebuild baseline,
+  - docs match the resulting boundaries closely enough to guide the next wave,
+  - temporary shims/adapters are either removed or left behind intentionally with tracked follow-up.
+- Public API stability still applies at wave end unless a separate RFC explicitly changes that contract.
+- If a bulk wave becomes too large to re-stabilize in one pass, split it by subsystem boundary rather than by arbitrary file-count or line-count slices.
 
 ## 3. Implementation Phases
 
@@ -65,9 +78,111 @@ Status: decision-complete roadmap for evaluator architecture/documentation align
 - Prefer testable service seams (scope, policy, flow, diagnostics, dispatcher, file/deferred) with stable interfaces.
 - Defer any full structural composition rewrite until post-stabilization and separate RFC.
 
+### Phase F — Bulk-First Internal Service Campaign
+
+- Goal: finish the bulk of the remaining internal structural movement quickly, even if that means tolerating temporary non-green states during the middle of the work.
+- Scope: remaining large translation units, cross-cutting internal storage conventions, process/runtime side-effect seams, and repetitive handwritten command parsers that still slow down changes.
+- Main rule: batch structural churn first, then do one stabilization pass per wave instead of repeatedly preserving perfect health after every micro-move.
+
+Recommended wave order:
+
+1. **F1 State Partition Around `Evaluator_Context`**
+   - Introduce explicit internal state groupings over the existing context-centric model.
+   - Candidate slices:
+     - scope/cache/bindings,
+     - runtime compatibility/report/stop state,
+     - native/user command registry,
+     - file locks/deferred generation/deferred directory queues.
+   - Keep one owning `Evaluator_Context`, but stop treating the full struct as the default mutation surface for every handler.
+
+2. **F2 Property Store and Property Query Service**
+   - Replace or encapsulate the current synthetic property-key convention so property reads/writes stop depending on ad hoc string-key composition spread across handlers.
+   - Move property-definition lookup, inheritance walking, non-target property writes, and property query modes behind one internal service boundary.
+   - Use this wave to simplify the remaining residual core in `eval_target`.
+
+3. **F3 Runtime Process and Environment Service**
+   - Consolidate subprocess execution, timeout handling, working-directory handling, stdout/stderr capture, and environment mutation/overlay under one internal runtime service.
+   - Remove open-coded process side-effect handling from `execute_process`, `try_compile`, `try_run`, and environment-oriented variable flows.
+   - The immediate objective is one place that owns process side effects; deeper semantic cleanup can happen later.
+
+4. **F4 Declarative Command Grammar Layer**
+   - Extend `eval_opt_parser` or add an adjacent grammar service so complex command parsers stop hand-walking token arrays whenever possible.
+   - First migration targets:
+     - `find_*`,
+     - `try_compile`,
+     - `try_run`,
+     - `cmake_parse_arguments`,
+     - `separate_arguments`,
+     - other option-heavy handlers that still encode grammar inline.
+   - Favor grammar/data-table driven parsing once the destination service is stable, even if adapters are needed during the migration.
+
+5. **F5 Residual Hotspot Decomposition**
+   - Split the remaining post-Phase-D hotspots by cohesive subdomain instead of continuing to accumulate unrelated helpers:
+     - `eval_target.c`,
+     - `eval_file_extra.c`,
+     - `eval_utils.c`,
+     - `eval_vars.c`,
+     - `eval_list.c`,
+     - `eval_cmake_path.c`.
+   - Accept temporary helper duplication during the move, then collapse duplicates at the end of the wave.
+
+6. **F6 Bulk Cleanup and Normalization**
+   - Remove temporary forwarding layers that only existed to keep the bulk move flowing.
+   - Normalize internal header ownership and helper placement.
+   - Re-run the full evaluator verification baseline and align docs before declaring the campaign structurally complete.
+
+Bulk-first execution rules for Phase F:
+
+- Prefer moving whole concern families in one pass over a sequence of micro-refactors that each require a full stabilization cycle.
+- Accept temporary duplication, compatibility adapters, or ugly intermediate wiring inside the wave if they shorten the time to the destination boundary.
+- Defer naming polish, helper deduplication, and low-signal cleanup until the destination boundary has stopped moving.
+- Avoid reopening already-settled roadmap decisions during the bulk campaign.
+- In particular, do not reintroduce build-IR coupling or child evaluator contexts as side quests.
+- Do not spend the bulk campaign on dispatcher rewrites unless a new blocker proves the current indexed dispatcher insufficient.
+
+### Phase G — Semantic Promotion After Structural Bulk
+
+- Once the bulk structural campaign returns to a stable green baseline, shift the main effort from moving code to increasing semantic completeness.
+- Promote `PARTIAL` coverage in clusters rather than command-by-command so each wave pays one stabilization cost for one semantic family.
+
+Recommended promotion order:
+
+1. **G1 Property, query, and introspection cluster**
+   - `get_property` and related wrappers.
+   - Directory/source/target/test property query consistency.
+   - Property inheritance and definition edge cases that become easier after Phase F2.
+
+2. **G2 Advanced target and execution cluster**
+   - `target_compile_features`,
+   - `target_precompile_headers`,
+   - `target_sources`,
+   - `try_run` advanced signatures and workflows.
+
+3. **G3 `ctest_*` cluster**
+   - Treat the `ctest_*` family as one coordinated promotion effort instead of isolated commands.
+   - Share metadata/runtime helpers where possible so the cluster does not keep re-encoding the same workflow logic.
+
+4. **G4 Modern runtime/meta gaps**
+   - `cmake_language` advanced surface,
+   - `cmake_file_api`,
+   - `cmake_host_system_information`,
+   - remaining modern runtime/meta integration gaps.
+
+5. **G5 Legacy compatibility wrappers**
+   - Tackle only after the modern/core surfaces above have stabilized.
+   - Prioritize wrappers that unblock real projects or reduce compatibility surprise; do not chase perfect historical parity by default.
+
+Phase G working rule:
+
+- Structural extraction should happen before large semantic-promotion pushes whenever both touch the same code path.
+- The objective is to avoid paying the same regression-fix tax twice: once during movement and again during semantic completion.
+
 ## 4. Acceptance Conditions for This Roadmap
 
 - The evaluator boundary remains context-centric and Event-IR oriented.
 - Rejected items (#2, #6) do not reappear as active roadmap commitments.
 - Partial items (#1, #3) are implemented only under stated constraints.
 - Compatibility, diagnostics, and dispatcher documents remain mutually consistent.
+- Temporary internal breakage is permitted only inside active bulk waves and only until the next stabilization checkpoint.
+- A bulk wave is not complete until the evaluator is functional again and the current verification baseline is green.
+- Structural bulk should reduce future stabilization cost; if a wave adds churn without improving future change velocity, it failed the roadmap intent.
