@@ -172,6 +172,21 @@ void find_package_push_prefix_variants(Evaluator_Context *ctx,
     find_package_push_prefix(items, io_count, cap, eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("share/cmake")));
 }
 
+static void find_package_push_prefix_list_variants(Evaluator_Context *ctx,
+                                                   String_View *items,
+                                                   size_t *io_count,
+                                                   size_t cap,
+                                                   String_View prefixes_csv) {
+    if (!ctx || !items || !io_count || prefixes_csv.count == 0) return;
+
+    SV_List prefixes = NULL;
+    if (!find_package_split_semicolon_temp(ctx, prefixes_csv, &prefixes)) return;
+    for (size_t i = 0; i < arena_arr_len(prefixes); i++) {
+        if (prefixes[i].count == 0) continue;
+        find_package_push_prefix_variants(ctx, items, io_count, cap, prefixes[i]);
+    }
+}
+
 static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
                                                   String_View *items,
                                                   size_t *io_count,
@@ -183,6 +198,38 @@ static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
     String_View root = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(raw));
     if (eval_should_stop(ctx)) return;
     find_package_push_prefix_variants(ctx, items, io_count, cap, root);
+}
+
+static void find_package_push_env_prefix_list_variants(Evaluator_Context *ctx,
+                                                       String_View *items,
+                                                       size_t *io_count,
+                                                       size_t cap,
+                                                       const char *env_name) {
+    if (!ctx || !items || !io_count || !env_name) return;
+    const char *raw = eval_getenv_temp(ctx, env_name);
+    if (!raw || raw[0] == '\0') return;
+
+    String_View sv = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(raw));
+    if (eval_should_stop(ctx) || sv.count == 0) return;
+
+#if defined(_WIN32)
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+
+    const char *p = sv.data;
+    const char *end = sv.data + sv.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != sep) q++;
+        String_View item = nob_sv_from_parts(p, (size_t)(q - p));
+        if (item.count > 0) {
+            find_package_push_prefix_variants(ctx, items, io_count, cap, item);
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
 }
 
 void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
@@ -375,7 +422,11 @@ static bool find_package_try_config(Evaluator_Context *ctx,
 
     String_View merged_prefixes[64] = {0};
     size_t merged_count = 0;
-    find_package_push_prefix(merged_prefixes, &merged_count, 64, extra_prefixes);
+    find_package_push_prefix_list_variants(ctx,
+                                           merged_prefixes,
+                                           &merged_count,
+                                           NOB_ARRAY_LEN(merged_prefixes),
+                                           extra_prefixes);
     if (!no_default_path) {
         find_package_push_package_root_prefixes(ctx,
                                                 pkg,
@@ -389,14 +440,18 @@ static bool find_package_try_config(Evaluator_Context *ctx,
 
         if (!no_cmake_path) {
             String_View prefixes = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH"));
-            find_package_push_prefix(merged_prefixes, &merged_count, NOB_ARRAY_LEN(merged_prefixes), prefixes);
+            find_package_push_prefix_list_variants(ctx,
+                                                   merged_prefixes,
+                                                   &merged_count,
+                                                   NOB_ARRAY_LEN(merged_prefixes),
+                                                   prefixes);
         }
         if (!no_cmake_environment_path) {
-            find_package_push_env_list(ctx,
-                                       merged_prefixes,
-                                       &merged_count,
-                                       NOB_ARRAY_LEN(merged_prefixes),
-                                       "CMAKE_PREFIX_PATH");
+            find_package_push_env_prefix_list_variants(ctx,
+                                                       merged_prefixes,
+                                                       &merged_count,
+                                                       NOB_ARRAY_LEN(merged_prefixes),
+                                                       "CMAKE_PREFIX_PATH");
         }
         if (!no_cmake_install_prefix) {
             String_View install_prefix = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_INSTALL_PREFIX"));
@@ -955,81 +1010,141 @@ static void find_package_seed_find_context_vars(Evaluator_Context *ctx, const Fi
     if (opt->registry_view_value.count > 0) (void)eval_var_set_current(ctx, key_registry_view, opt->registry_view_value);
 }
 
-static void find_package_publish_vars(Evaluator_Context *ctx,
-                                      const Find_Package_Options *opt,
-                                      bool *io_found,
-                                      String_View found_path) {
-    String_View found_key = svu_concat_suffix_temp(ctx, opt->pkg, "_FOUND");
+static void find_package_publish_path_vars(Evaluator_Context *ctx,
+                                           const Find_Package_Options *opt,
+                                           String_View found_path) {
+    if (!ctx || !opt || found_path.count == 0) return;
     String_View dir_key = svu_concat_suffix_temp(ctx, opt->pkg, "_DIR");
     String_View cfg_key = svu_concat_suffix_temp(ctx, opt->pkg, "_CONFIG");
+    String_View dir = svu_dirname(found_path);
+    (void)eval_var_set_current(ctx, dir_key, dir);
+    (void)eval_var_set_current(ctx, cfg_key, found_path);
+}
 
-    if (*io_found) {
-        String_View dir = svu_dirname(found_path);
-        (void)eval_var_set_current(ctx, dir_key, dir);
-        (void)eval_var_set_current(ctx, cfg_key, found_path);
+static bool find_package_execute_resolved_artifacts(Evaluator_Context *ctx,
+                                                    const Find_Package_Options *opt,
+                                                    bool *io_found,
+                                                    String_View found_path) {
+    if (!ctx || !opt || !io_found) return false;
+    if (!*io_found || found_path.count == 0) return true;
 
-        find_package_seed_find_context_vars(ctx, opt);
+    find_package_publish_path_vars(ctx, opt, found_path);
+    find_package_seed_find_context_vars(ctx, opt);
 
-        bool pushed_pkg = false;
-        String_View active_pkg = sv_copy_to_event_arena(ctx, opt->pkg);
-        if (!eval_should_stop(ctx)) {
-            pushed_pkg = arena_arr_push(ctx->event_arena, ctx->command_state.active_find_packages, active_pkg);
-            if (!pushed_pkg) ctx_oom(ctx);
-        }
+    bool pushed_pkg = false;
+    String_View active_pkg = sv_copy_to_event_arena(ctx, opt->pkg);
+    if (!eval_should_stop(ctx)) {
+        pushed_pkg = arena_arr_push(ctx->event_arena, ctx->command_state.active_find_packages, active_pkg);
+        if (!pushed_pkg) ctx_oom(ctx);
+    }
 
-        bool version_ok = true;
-        if (opt->requested_version.count > 0) {
-            String_View version_path = find_package_guess_version_path(ctx, found_path);
-            if (version_path.count > 0 && file_exists_sv(ctx, version_path)) {
-                (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION"), nob_sv_from_cstr(""));
-                (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"), nob_sv_from_cstr(""));
-                (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"), nob_sv_from_cstr(""));
-                Eval_Result version_exec_res = eval_execute_file(ctx, version_path, false, nob_sv_from_cstr(""));
-                if (eval_result_is_fatal(version_exec_res)) {
-                    version_ok = false;
+    bool version_ok = true;
+    if (opt->requested_version.count > 0) {
+        String_View version_path = find_package_guess_version_path(ctx, found_path);
+        if (version_path.count > 0 && file_exists_sv(ctx, version_path)) {
+            (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION"), nob_sv_from_cstr(""));
+            (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"), nob_sv_from_cstr(""));
+            (void)eval_var_set_current(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"), nob_sv_from_cstr(""));
+            Eval_Result version_exec_res = eval_execute_file(ctx, version_path, false, nob_sv_from_cstr(""));
+            if (eval_result_is_fatal(version_exec_res)) {
+                version_ok = false;
+            } else {
+                String_View exact = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"));
+                String_View compat = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"));
+                if (opt->exact_version && exact.count > 0) {
+                    version_ok = eval_truthy(ctx, exact);
+                } else if (!opt->exact_version && compat.count > 0) {
+                    version_ok = eval_truthy(ctx, compat);
                 } else {
-                    String_View exact = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION_EXACT"));
-                    String_View compat = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION_COMPATIBLE"));
-                    if (opt->exact_version && exact.count > 0) {
-                        version_ok = eval_truthy(ctx, exact);
-                    } else if (!opt->exact_version && compat.count > 0) {
-                        version_ok = eval_truthy(ctx, compat);
-                    } else {
-                        version_ok = find_package_requested_version_matches(opt, eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION")));
-                    }
+                    version_ok = find_package_requested_version_matches(opt, eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION")));
                 }
-            }
-        }
-
-        if (version_ok) {
-            Eval_Result package_exec_res = eval_execute_file(ctx, found_path, false, nob_sv_from_cstr(""));
-            if (eval_result_is_fatal(package_exec_res)) {
-                *io_found = false;
-            }
-        } else {
-            *io_found = false;
-        }
-
-        if (pushed_pkg && arena_arr_len(ctx->command_state.active_find_packages) > 0) {
-            arena_arr_set_len(ctx->command_state.active_find_packages, arena_arr_len(ctx->command_state.active_find_packages) - 1);
-        }
-
-        if (*io_found && opt->requested_version.count > 0) {
-            String_View pkg_ver_key = svu_concat_suffix_temp(ctx, opt->pkg, "_VERSION");
-            String_View actual = eval_var_get_visible(ctx, pkg_ver_key);
-            if (actual.count == 0) actual = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION"));
-            if (!find_package_requested_version_matches(opt, actual)) {
-                *io_found = false;
             }
         }
     }
 
+    if (version_ok) {
+        Eval_Result package_exec_res = eval_execute_file(ctx, found_path, false, nob_sv_from_cstr(""));
+        if (eval_result_is_fatal(package_exec_res)) {
+            *io_found = false;
+        }
+    } else {
+        *io_found = false;
+    }
+
+    if (pushed_pkg && arena_arr_len(ctx->command_state.active_find_packages) > 0) {
+        arena_arr_set_len(ctx->command_state.active_find_packages, arena_arr_len(ctx->command_state.active_find_packages) - 1);
+    }
+
+    if (*io_found && opt->requested_version.count > 0) {
+        String_View pkg_ver_key = svu_concat_suffix_temp(ctx, opt->pkg, "_VERSION");
+        String_View actual = eval_var_get_visible(ctx, pkg_ver_key);
+        if (actual.count == 0) actual = eval_var_get_visible(ctx, nob_sv_from_cstr("PACKAGE_VERSION"));
+        if (!find_package_requested_version_matches(opt, actual)) {
+            *io_found = false;
+        }
+    }
+
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
+static void find_package_finalize_found_var(Evaluator_Context *ctx,
+                                            const Find_Package_Options *opt,
+                                            bool *io_found) {
+    if (!ctx || !opt || !io_found) return;
+
+    String_View found_key = svu_concat_suffix_temp(ctx, opt->pkg, "_FOUND");
     if (*io_found) {
         if (eval_var_defined_visible(ctx, found_key)) {
             *io_found = eval_truthy(ctx, eval_var_get_visible(ctx, found_key));
         }
     }
     (void)eval_var_set_current(ctx, found_key, *io_found ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+}
+
+static bool find_package_invoke_dependency_provider(Evaluator_Context *ctx,
+                                                    const Node *node,
+                                                    const SV_List *resolved_args,
+                                                    bool *out_found,
+                                                    String_View *out_found_path) {
+    if (!ctx || !node || !resolved_args || !out_found || !out_found_path) return false;
+    *out_found = false;
+    *out_found_path = nob_sv_from_cstr("");
+
+    if (arena_arr_len(*resolved_args) == 0) return true;
+
+    String_View provider_command_name = ctx->command_state.dependency_provider.command_name;
+    if (provider_command_name.count == 0 || !ctx->command_state.dependency_provider.supports_find_package) return true;
+
+    String_View pkg = (*resolved_args)[0];
+    String_View found_key = svu_concat_suffix_temp(ctx, pkg, "_FOUND");
+    String_View config_key = svu_concat_suffix_temp(ctx, pkg, "_CONFIG");
+    String_View dir_key = svu_concat_suffix_temp(ctx, pkg, "_DIR");
+
+    SV_List provider_args = NULL;
+    if (!eval_sv_arr_push_temp(ctx, &provider_args, nob_sv_from_cstr("FIND_PACKAGE"))) return false;
+    for (size_t i = 0; i < arena_arr_len(*resolved_args); i++) {
+        if (!eval_sv_arr_push_temp(ctx, &provider_args, (*resolved_args)[i])) return false;
+    }
+
+    ctx->command_state.dependency_provider.active_find_package_depth++;
+    Eval_Result invoke_result = eval_result_ok();
+    if (!eval_user_cmd_invoke(ctx, provider_command_name, &provider_args, eval_origin_from_node(ctx, node))) {
+        invoke_result = eval_result_from_ctx(ctx);
+    } else {
+        invoke_result = eval_result_ok_if_running(ctx);
+    }
+    if (ctx->command_state.dependency_provider.active_find_package_depth > 0) {
+        ctx->command_state.dependency_provider.active_find_package_depth--;
+    }
+    if (eval_result_is_fatal(invoke_result)) return false;
+
+    if (eval_var_defined_visible(ctx, found_key) && eval_truthy(ctx, eval_var_get_visible(ctx, found_key))) {
+        *out_found = true;
+        *out_found_path = eval_var_get_visible(ctx, config_key);
+        if (out_found_path->count == 0) *out_found_path = eval_var_get_visible(ctx, dir_key);
+    }
+
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
 static void find_package_emit_result(Evaluator_Context *ctx,
@@ -1070,9 +1185,28 @@ Eval_Result eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     if (opt.exact_version && opt.requested_version.count == 0) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("find_package() EXACT specified without version"), nob_sv_from_cstr("EXACT is ignored when no version is requested"));
     }
+
+    if (opt.bypass_provider && ctx->command_state.dependency_provider.active_find_package_depth == 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "dispatcher", nob_sv_from_cstr("find_package(BYPASS_PROVIDER) may only be used from inside a dependency provider"), nob_sv_from_cstr("Remove BYPASS_PROVIDER or call it only from the registered provider command"));
+        return eval_result_from_ctx(ctx);
+    }
+
     String_View found_path = nob_sv_from_cstr("");
-    bool found = find_package_resolve(ctx, &opt, &found_path);
-    find_package_publish_vars(ctx, &opt, &found, found_path);
+    bool found = false;
+    if (!opt.bypass_provider &&
+        ctx->command_state.dependency_provider.command_name.count > 0 &&
+        ctx->command_state.dependency_provider.supports_find_package) {
+        if (!find_package_invoke_dependency_provider(ctx, node, &a, &found, &found_path)) {
+            return eval_result_from_ctx(ctx);
+        }
+    }
+    if (!found) {
+        found = find_package_resolve(ctx, &opt, &found_path);
+        if (!find_package_execute_resolved_artifacts(ctx, &opt, &found, found_path)) {
+            return eval_result_from_ctx(ctx);
+        }
+    }
+    find_package_finalize_found_var(ctx, &opt, &found);
     find_package_emit_result(ctx, node, o, &opt, found, found_path);
     return eval_result_from_ctx(ctx);
 }

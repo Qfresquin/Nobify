@@ -669,14 +669,18 @@ static bool parse_cmp(Expr *e) {
     if (eval_sv_eq_ci_lit(op, "STREQUAL")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        return sv_eq(lhs, expr_next(e));
+        String_View rhs = expr_next(e);
+        return sv_eq(sv_lookup_if_var(e->ctx, lhs), sv_lookup_if_var(e->ctx, rhs));
     }
 
     if (eval_sv_eq_ci_lit(op, "EQUAL")) {
         expr_next(e);
         if (!expr_has(e)) return false;
+        String_View rhs = expr_next(e);
+        lhs = sv_lookup_if_var(e->ctx, lhs);
+        rhs = sv_lookup_if_var(e->ctx, rhs);
         long a = 0, b = 0;
-        if (!sv_is_number(lhs, &a) || !sv_is_number(expr_next(e), &b)) return false;
+        if (!sv_is_number(lhs, &a) || !sv_is_number(rhs, &b)) return false;
         return a == b;
     }
 
@@ -688,8 +692,11 @@ static bool parse_cmp(Expr *e) {
         bool is_ge = eval_sv_eq_ci_lit(op, "GREATER_EQUAL");
         expr_next(e);
         if (!expr_has(e)) return false;
+        String_View rhs = expr_next(e);
+        lhs = sv_lookup_if_var(e->ctx, lhs);
+        rhs = sv_lookup_if_var(e->ctx, rhs);
         long a = 0, b = 0;
-        if (!sv_is_number(lhs, &a) || !sv_is_number(expr_next(e), &b)) return false;
+        if (!sv_is_number(lhs, &a) || !sv_is_number(rhs, &b)) return false;
         if (is_less) return a < b;
         if (is_greater) return a > b;
         if (is_le) return a <= b;
@@ -705,7 +712,8 @@ static bool parse_cmp(Expr *e) {
         bool is_ge = eval_sv_eq_ci_lit(op, "STRGREATER_EQUAL");
         expr_next(e);
         if (!expr_has(e)) return false;
-        int cmp = sv_lex_cmp(lhs, expr_next(e));
+        String_View rhs = expr_next(e);
+        int cmp = sv_lex_cmp(sv_lookup_if_var(e->ctx, lhs), sv_lookup_if_var(e->ctx, rhs));
         if (is_less) return cmp < 0;
         if (is_greater) return cmp > 0;
         if (is_le) return cmp <= 0;
@@ -723,7 +731,8 @@ static bool parse_cmp(Expr *e) {
         bool is_ge = eval_sv_eq_ci_lit(op, "VERSION_GREATER_EQUAL");
         expr_next(e);
         if (!expr_has(e)) return false;
-        int cmp = sv_version_cmp(lhs, expr_next(e));
+        String_View rhs = expr_next(e);
+        int cmp = sv_version_cmp(sv_lookup_if_var(e->ctx, lhs), sv_lookup_if_var(e->ctx, rhs));
         if (is_less) return cmp < 0;
         if (is_greater) return cmp > 0;
         if (is_eq) return cmp == 0;
@@ -737,6 +746,8 @@ static bool parse_cmp(Expr *e) {
         if (!expr_has(e)) return false;
 
         String_View rhs = expr_next(e);
+        rhs = sv_lookup_if_var(e->ctx, rhs);
+        lhs = sv_lookup_if_var(e->ctx, lhs);
         char *pat = eval_sv_to_cstr_temp(e->ctx, rhs);
         char *subj = eval_sv_to_cstr_temp(e->ctx, lhs);
         EVAL_OOM_RETURN_IF_NULL(e->ctx, pat, false);

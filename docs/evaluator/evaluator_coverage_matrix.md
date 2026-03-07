@@ -174,15 +174,16 @@ Current high-level interpretation:
 ## 10. Priority Promotion Candidates
 
 Highest-leverage candidates to reduce `PARTIAL` footprint:
-1. `ctest_*` cluster (largest group, 13 commands).
-   Progress note for the March 6, 2026 workspace batches: the family now shares a lightweight CTest session model (`MODEL`, `TRACK`, `SOURCE`, `BUILD`) seeded by `ctest_start(...)`; that start step also stages `Testing/TAG` plus session `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. The configure/build/test/coverage/memcheck/update commands resolve omitted source/build context from that session instead of behaving like isolated metadata stubs, and `ctest_submit` / `ctest_upload` now stage local manifest files under `Testing/<tag>/` with resolved file lists. Remaining partial coverage is concentrated in real dashboard/tool execution and `ctest_run_script(NEW_PROCESS)`.
+1. Residual external `ctest_*` execution surface.
+   Progress note for the March 6, 2026 workspace batches: the evaluator-side/local-orchestration slice of the family is now complete. The cluster shares a lightweight CTest session model (`MODEL`, `TRACK`, `SOURCE`, `BUILD`) seeded by `ctest_start(...)`; that start step also stages `Testing/TAG` plus session `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. The configure/build/test/coverage/memcheck/update commands resolve omitted source/build context from that session, `ctest_submit` / `ctest_upload` stage local manifest files under `Testing/<tag>/` with resolved file lists, and `ctest_run_script(NEW_PROCESS ...)` executes in an isolated evaluator-side child scope. The remaining `PARTIAL` footprint is the intentionally deferred external dashboard/tool-execution layer.
 2. `target_compile_features` / `target_precompile_headers` / `target_sources`.
    Progress note for the March 6, 2026 workspace batch: these advanced target commands now feed the persistent target property store as well as the Event IR, so `get_target_property(...)` can observe `SOURCES`, `INTERFACE_SOURCES`, compile-feature properties, precompile-header properties, and the `TYPE HEADERS` `FILE_SET` surface (`HEADER_SET*` / `HEADER_DIRS*`). Residual partial coverage is now concentrated in other file-set types such as `CXX_MODULES`.
 3. `try_run` cross-compiling answer-file workflow.
    Progress note for the March 6, 2026 workspace batch: `try_run(PROJECT ...)` now executes through the shared `try_compile(PROJECT ...)` machinery. The remaining partial behavior is the non-native answer-file/emulator path, which currently returns a deterministic compile-only skip.
 4. `get_property` and related query wrappers.
    Progress note for the March 6, 2026 workspace batch: the evaluator now keeps property query state in a persistent internal store across scope pops, and inherited `TARGET` plus `SOURCE TARGET_DIRECTORY` queries follow the target declaration directory instead of the caller-local directory.
-5. `cmake_language` advanced surface.
+5. G4 residual runtime/meta integrations.
+   Progress note for the March 6, 2026 workspace batch: `cmake_file_api(QUERY API_VERSION 1 ...)` now stages evaluator-side query/reply/index artifacts under `.cmake/api/v1` and publishes stable `NOBIFY_CMAKE_FILE_API::*` path variables, `cmake_host_system_information()` now covers the `FQDN` query key instead of treating it as unimplemented, and `cmake_language(SET_DEPENDENCY_PROVIDER ...)` now covers both the file-scope `FIND_PACKAGE` provider subset and the `FETCHCONTENT_MAKEAVAILABLE_SERIAL` subset. The new `FetchContent` batch keeps evaluator-side declaration/population state, supports local `SOURCE_DIR` / `BINARY_DIR` flows plus `FETCHCONTENT_SOURCE_DIR_<UPPER>` bypass, and honors same-dependency recursive fallback without re-entering the provider. Remaining partial behavior is concentrated in the rest of the advanced `cmake_language` surface and richer file-api/meta-runtime semantics beyond local staging.
 
 ## 11. Relationship to Other Docs
 

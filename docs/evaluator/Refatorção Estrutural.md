@@ -210,13 +210,15 @@ Recommended promotion order:
 3. **G3 `ctest_*` cluster**
    - Treat the `ctest_*` family as one coordinated promotion effort instead of isolated commands.
    - Share metadata/runtime helpers where possible so the cluster does not keep re-encoding the same workflow logic.
-   - Current batches in the workspace on March 6, 2026: introduced shared CTest session state for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` now seeds that session, stages `Testing/TAG`, and publishes `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. `ctest_configure` / `ctest_build` / `ctest_test` / `ctest_coverage` / `ctest_memcheck` / `ctest_update` resolve omitted source/build context from that session while publishing their resolved directories for downstream inspection, and `ctest_submit` / `ctest_upload` now reuse the same session tag to stage local manifest files under `Testing/<tag>/`.
+   - Status: completed in the workspace on March 6, 2026 for the evaluator-side/local-orchestration slice. The family now shares CTest session state for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` seeds that session, stages `Testing/TAG`, and publishes `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. `ctest_configure` / `ctest_build` / `ctest_test` / `ctest_coverage` / `ctest_memcheck` / `ctest_update` resolve omitted source/build context from that session while publishing their resolved directories for downstream inspection, `ctest_submit` / `ctest_upload` reuse the same session tag to stage local manifest files under `Testing/<tag>/`, and `ctest_run_script(NEW_PROCESS ...)` executes through an isolated evaluator-side child scope instead of failing outright.
+   - Deferred beyond G3: real external dashboard/tool execution, networked submit/upload behavior, and true OS-process runner semantics remain intentionally outside this roadmap slice.
 
 4. **G4 Modern runtime/meta gaps**
    - `cmake_language` advanced surface,
    - `cmake_file_api`,
    - `cmake_host_system_information`,
    - remaining modern runtime/meta integration gaps.
+   - Current batch in the workspace on March 6, 2026: `cmake_file_api(QUERY API_VERSION 1 ...)` now stages local query/reply artifacts under `.cmake/api/v1` and publishes stable helper paths for downstream inspection, `cmake_host_system_information(QUERY ... FQDN)` no longer falls through the generic not-implemented path, and `cmake_language(SET_DEPENDENCY_PROVIDER ...)` now models both the file-scope `FIND_PACKAGE` subset and the `FETCHCONTENT_MAKEAVAILABLE_SERIAL` provider subset. That provider work now includes evaluator-side `FetchContent` state for `Declare` / `GetProperties` / `MakeAvailable` / `SetPopulated`, same-dependency recursive bypass, and `FETCHCONTENT_SOURCE_DIR_<UPPER>` local-source bypass. Residual G4 work is now concentrated in the rest of the advanced `cmake_language` surface plus richer external semantics for file-api and related meta/runtime integrations.
 
 5. **G5 Legacy compatibility wrappers**
    - Tackle only after the modern/core surfaces above have stabilized.

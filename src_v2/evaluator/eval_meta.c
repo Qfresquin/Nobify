@@ -3,6 +3,7 @@
 #include "evaluator_internal.h"
 #include "sv_utils.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -380,16 +381,270 @@ static bool meta_file_api_kind_supported(String_View kind) {
            eval_sv_eq_ci_lit(kind, "TOOLCHAINS");
 }
 
+typedef struct {
+    String_View kind_upper;
+    String_View kind_json;
+    String_View versions;
+} Meta_File_Api_Request;
+
+typedef Meta_File_Api_Request *Meta_File_Api_Request_List;
+
+static String_View meta_file_api_kind_json_name(String_View kind) {
+    if (eval_sv_eq_ci_lit(kind, "CODEMODEL")) return nob_sv_from_cstr("codemodel");
+    if (eval_sv_eq_ci_lit(kind, "CACHE")) return nob_sv_from_cstr("cache");
+    if (eval_sv_eq_ci_lit(kind, "CMAKEFILES")) return nob_sv_from_cstr("cmakeFiles");
+    if (eval_sv_eq_ci_lit(kind, "TOOLCHAINS")) return nob_sv_from_cstr("toolchains");
+    return nob_sv_from_cstr("");
+}
+
+static String_View meta_file_api_root_dir(Evaluator_Context *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    return eval_sv_path_join(eval_temp_arena(ctx), meta_current_bin_dir(ctx), nob_sv_from_cstr(".cmake/api/v1"));
+}
+
+static String_View meta_file_api_query_dir(Evaluator_Context *ctx) {
+    String_View root = meta_file_api_root_dir(ctx);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("query/client-nobify"));
+}
+
+static String_View meta_file_api_reply_dir(Evaluator_Context *ctx) {
+    String_View root = meta_file_api_root_dir(ctx);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("reply"));
+}
+
+static bool meta_file_api_append_version_fields(Nob_String_Builder *sb, String_View version) {
+    static const char *const field_names[] = {"major", "minor", "patch", "tweak"};
+    if (!sb || version.count == 0) return false;
+
+    size_t field_index = 0;
+    size_t part_start = 0;
+    for (size_t i = 0; i <= version.count; i++) {
+        if (i < version.count && version.data[i] != '.') {
+            if (!isdigit((unsigned char)version.data[i])) return false;
+            continue;
+        }
+
+        if (i == part_start || field_index >= sizeof(field_names)/sizeof(field_names[0])) return false;
+        if (field_index > 0) nob_sb_append_cstr(sb, ", ");
+        nob_sb_append_cstr(sb, "\"");
+        nob_sb_append_cstr(sb, field_names[field_index]);
+        nob_sb_append_cstr(sb, "\": ");
+        nob_sb_append_buf(sb, version.data + part_start, i - part_start);
+        field_index++;
+        part_start = i + 1;
+    }
+
+    return field_index > 0;
+}
+
 static bool meta_file_api_is_version(String_View token) {
     if (token.count == 0) return false;
     bool saw_digit = false;
+    bool prev_dot = true;
     for (size_t i = 0; i < token.count; i++) {
         char c = token.data[i];
-        if (c == '.') continue;
+        if (c == '.') {
+            if (prev_dot) return false;
+            prev_dot = true;
+            continue;
+        }
         if (c < '0' || c > '9') return false;
+        prev_dot = false;
         saw_digit = true;
     }
-    return saw_digit;
+    return saw_digit && !prev_dot;
+}
+
+static bool meta_file_api_set_path_var(Evaluator_Context *ctx, const char *key, String_View value) {
+    if (!ctx || !key) return false;
+    return eval_var_set_current(ctx, nob_sv_from_cstr(key), value);
+}
+
+static String_View meta_file_api_reply_filename_temp(Evaluator_Context *ctx,
+                                                     String_View kind_json,
+                                                     String_View version) {
+    if (!ctx || kind_json.count == 0 || version.count == 0) return nob_sv_from_cstr("");
+    size_t total = kind_json.count + sizeof("-v") - 1 + version.count + sizeof(".json") - 1;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, kind_json.data, kind_json.count);
+    off += kind_json.count;
+    memcpy(buf + off, "-v", sizeof("-v") - 1);
+    off += sizeof("-v") - 1;
+    memcpy(buf + off, version.data, version.count);
+    off += version.count;
+    memcpy(buf + off, ".json", sizeof(".json") - 1);
+    off += sizeof(".json") - 1;
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static bool meta_file_api_write_query_file(Evaluator_Context *ctx,
+                                           String_View query_file,
+                                           const Meta_File_Api_Request_List *requests) {
+    if (!ctx || !requests) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "{\n  \"client\": \"nobify\",\n  \"requests\": [\n");
+    for (size_t i = 0; i < arena_arr_len(*requests); i++) {
+        Meta_File_Api_Request req = (*requests)[i];
+        SV_List versions = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req.versions, &versions)) {
+            nob_sb_free(sb);
+            return false;
+        }
+
+        if (i > 0) nob_sb_append_cstr(&sb, ",\n");
+        nob_sb_append_cstr(&sb, "    {\"kind\": \"");
+        nob_sb_append_buf(&sb, req.kind_json.data, req.kind_json.count);
+        nob_sb_append_cstr(&sb, "\", \"version\": [");
+        for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
+            if (vi > 0) nob_sb_append_cstr(&sb, ", ");
+            nob_sb_append_cstr(&sb, "{");
+            if (!meta_file_api_append_version_fields(&sb, versions[vi])) {
+                nob_sb_free(sb);
+                return false;
+            }
+            nob_sb_append_cstr(&sb, "}");
+        }
+        nob_sb_append_cstr(&sb, "]}");
+    }
+    nob_sb_append_cstr(&sb, "\n  ]\n}\n");
+
+    bool ok = eval_write_text_file(ctx, query_file, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), false);
+    nob_sb_free(sb);
+    return ok;
+}
+
+static bool meta_file_api_write_reply_file(Evaluator_Context *ctx,
+                                           String_View reply_dir,
+                                           String_View build_dir,
+                                           Meta_File_Api_Request req,
+                                           String_View version,
+                                           String_View *out_reply_file_name) {
+    if (!ctx || !out_reply_file_name) return false;
+    *out_reply_file_name = nob_sv_from_cstr("");
+
+    String_View reply_name = meta_file_api_reply_filename_temp(ctx, req.kind_json, version);
+    if (eval_should_stop(ctx)) return false;
+    String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, reply_name);
+    if (eval_should_stop(ctx)) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "{\n  \"kind\": \"");
+    nob_sb_append_buf(&sb, req.kind_json.data, req.kind_json.count);
+    nob_sb_append_cstr(&sb, "\",\n  \"version\": {");
+    if (!meta_file_api_append_version_fields(&sb, version)) {
+        nob_sb_free(sb);
+        return false;
+    }
+    nob_sb_append_cstr(&sb, "},\n  \"generator\": \"Nobify Evaluator\",\n  \"paths\": {\n    \"build\": \"");
+    nob_sb_append_buf(&sb, build_dir.data ? build_dir.data : "", build_dir.count);
+    nob_sb_append_cstr(&sb, "\"\n  }\n}\n");
+
+    bool ok = eval_write_text_file(ctx, reply_path, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), false);
+    nob_sb_free(sb);
+    if (!ok) return false;
+
+    *out_reply_file_name = reply_name;
+    return true;
+}
+
+static bool meta_file_api_write_index_file(Evaluator_Context *ctx,
+                                           String_View index_file,
+                                           String_View build_dir,
+                                           String_View query_file,
+                                           const Meta_File_Api_Request_List *requests) {
+    if (!ctx || !requests) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "{\n  \"cmake\": {\n    \"generator\": {\"name\": \"Nobify Evaluator\"},\n    \"paths\": {\n      \"build\": \"");
+    nob_sb_append_buf(&sb, build_dir.data ? build_dir.data : "", build_dir.count);
+    nob_sb_append_cstr(&sb, "\"\n    }\n  },\n  \"query\": {\n    \"path\": \"");
+    nob_sb_append_buf(&sb, query_file.data ? query_file.data : "", query_file.count);
+    nob_sb_append_cstr(&sb, "\"\n  },\n  \"objects\": [\n");
+
+    bool first_object = true;
+    String_View reply_dir = meta_file_api_reply_dir(ctx);
+    if (eval_should_stop(ctx)) {
+        nob_sb_free(sb);
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(*requests); i++) {
+        Meta_File_Api_Request req = (*requests)[i];
+        SV_List versions = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req.versions, &versions)) {
+            nob_sb_free(sb);
+            return false;
+        }
+
+        for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
+            String_View reply_name = nob_sv_from_cstr("");
+            if (!meta_file_api_write_reply_file(ctx, reply_dir, build_dir, req, versions[vi], &reply_name)) {
+                nob_sb_free(sb);
+                return false;
+            }
+
+            if (!first_object) nob_sb_append_cstr(&sb, ",\n");
+            first_object = false;
+            nob_sb_append_cstr(&sb, "    {\"kind\": \"");
+            nob_sb_append_buf(&sb, req.kind_json.data, req.kind_json.count);
+            nob_sb_append_cstr(&sb, "\", \"version\": {");
+            if (!meta_file_api_append_version_fields(&sb, versions[vi])) {
+                nob_sb_free(sb);
+                return false;
+            }
+            nob_sb_append_cstr(&sb, "}, \"jsonFile\": \"");
+            nob_sb_append_buf(&sb, reply_name.data, reply_name.count);
+            nob_sb_append_cstr(&sb, "\"}");
+
+            String_View reply_var_key = meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_REPLY::", req.kind_upper, "::FILE");
+            String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, reply_name);
+            if (eval_should_stop(ctx)) {
+                nob_sb_free(sb);
+                return false;
+            }
+            if (!eval_var_set_current(ctx, reply_var_key, reply_path)) {
+                nob_sb_free(sb);
+                return false;
+            }
+        }
+    }
+
+    nob_sb_append_cstr(&sb, "\n  ]\n}\n");
+    bool ok = eval_write_text_file(ctx, index_file, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), false);
+    nob_sb_free(sb);
+    return ok;
+}
+
+static bool meta_file_api_stage_query(Evaluator_Context *ctx, const Meta_File_Api_Request_List *requests) {
+    if (!ctx || !requests) return false;
+
+    String_View build_dir = meta_current_bin_dir(ctx);
+    String_View root_dir = meta_file_api_root_dir(ctx);
+    String_View query_dir = meta_file_api_query_dir(ctx);
+    String_View reply_dir = meta_file_api_reply_dir(ctx);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View query_file = eval_sv_path_join(eval_temp_arena(ctx), query_dir, nob_sv_from_cstr("query.json"));
+    String_View index_file = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, nob_sv_from_cstr("index-nobify-v1.json"));
+    if (eval_should_stop(ctx)) return false;
+
+    if (!meta_file_api_write_query_file(ctx, query_file, requests)) return false;
+    if (!meta_file_api_write_index_file(ctx, index_file, build_dir, query_file, requests)) return false;
+
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_FILE_API"), nob_sv_from_cstr("1"))) return false;
+    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::ROOT", root_dir)) return false;
+    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::QUERY_DIR", query_dir)) return false;
+    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::QUERY_FILE", query_file)) return false;
+    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::REPLY_DIR", reply_dir)) return false;
+    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::INDEX_FILE", index_file)) return false;
+    return true;
 }
 
 Eval_Result eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
@@ -433,6 +688,7 @@ Eval_Result eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node)
         return eval_result_from_ctx(ctx);
     }
 
+    Meta_File_Api_Request_List requests = NULL;
     size_t i = 3;
     while (i < arena_arr_len(a)) {
         String_View kind = a[i++];
@@ -470,10 +726,20 @@ Eval_Result eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node)
 
         String_View joined = eval_sv_join_semi_temp(ctx, versions, arena_arr_len(versions));
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_QUERY::", kind, ""), joined)) {
+        String_View kind_upper = eval_property_upper_name_temp(ctx, kind);
+        String_View kind_json = meta_file_api_kind_json_name(kind);
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+        if (!eval_var_set_current(ctx, meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_QUERY::", kind_upper, ""), joined)) {
             return eval_result_from_ctx(ctx);
         }
+        Meta_File_Api_Request req = {
+            .kind_upper = kind_upper,
+            .kind_json = kind_json,
+            .versions = joined,
+        };
+        if (!EVAL_ARR_PUSH(ctx, ctx->arena, requests, req)) return eval_result_fatal();
     }
 
+    if (!meta_file_api_stage_query(ctx, &requests)) return eval_result_fatal();
     return eval_result_from_ctx(ctx);
 }

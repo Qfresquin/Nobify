@@ -27,6 +27,11 @@ static bool include_enables_cpack_component_commands(String_View arg) {
            eval_sv_eq_ci_lit(arg, "CPack.cmake");
 }
 
+static bool include_enables_fetchcontent_commands(String_View arg) {
+    return eval_sv_eq_ci_lit(arg, "FetchContent") ||
+           eval_sv_eq_ci_lit(arg, "FetchContent.cmake");
+}
+
 static bool include_file_exists_sv(Evaluator_Context *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
@@ -381,6 +386,13 @@ Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
         }
         return eval_result_from_ctx(ctx);
     }
+    if (include_enables_fetchcontent_commands(file_or_module)) {
+        ctx->fetchcontent_module_loaded = true;
+        if (result_variable.count > 0) {
+            (void)eval_var_set_current(ctx, result_variable, file_or_module);
+        }
+        return eval_result_from_ctx(ctx);
+    }
 
     String_View file_path = nob_sv_from_cstr("");
     bool found = include_resolve_target(ctx, file_or_module, &file_path);
@@ -509,4 +521,3 @@ Eval_Result eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *nod
     }
     return eval_result_from_ctx(ctx);
 }
-

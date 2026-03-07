@@ -221,6 +221,20 @@ static bool host_info_query_value(Evaluator_Context *ctx,
         *out_value = hostname;
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
+    if (eval_sv_eq_ci_lit(key, "FQDN")) {
+#if defined(_WIN32)
+        char buf[256] = {0};
+        DWORD size = (DWORD)(sizeof(buf) - 1);
+        if (GetComputerNameExA(ComputerNameDnsFullyQualified, buf, &size) && size > 0) {
+            *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)size));
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        }
+#endif
+        String_View hostname = nob_sv_from_cstr("");
+        if (!eval_host_hostname_temp(ctx, &hostname)) return false;
+        *out_value = hostname;
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
     if (eval_sv_eq_ci_lit(key, "TOTAL_VIRTUAL_MEMORY") ||
         eval_sv_eq_ci_lit(key, "AVAILABLE_VIRTUAL_MEMORY") ||
         eval_sv_eq_ci_lit(key, "TOTAL_PHYSICAL_MEMORY") ||

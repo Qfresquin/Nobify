@@ -36,6 +36,27 @@ typedef struct {
     size_t max_positionals;
 } Ctest_Parse_Spec;
 
+typedef struct {
+    size_t message_check_count;
+    size_t user_commands_count;
+    size_t known_targets_count;
+    size_t alias_targets_count;
+    String_View dependency_provider_command_name;
+    bool dependency_provider_supports_find_package;
+    bool dependency_provider_supports_fetchcontent_makeavailable_serial;
+    size_t dependency_provider_active_find_package_depth;
+    size_t dependency_provider_active_fetchcontent_makeavailable_depth;
+    size_t active_find_packages_count;
+    size_t fetchcontent_declarations_count;
+    size_t fetchcontent_states_count;
+    size_t active_fetchcontent_makeavailable_count;
+    size_t watched_variables_count;
+    size_t watched_variable_commands_count;
+    bool cpack_component_module_loaded;
+    bool fetchcontent_module_loaded;
+    bool scope_pushed;
+} Ctest_New_Process_State;
+
 static String_View ctest_current_binary_dir(Evaluator_Context *ctx);
 static String_View ctest_binary_root(Evaluator_Context *ctx);
 static size_t s_ctest_session_tag_counter = 0;
@@ -355,6 +376,104 @@ static bool ctest_resolve_files(Evaluator_Context *ctx,
 
     *out_resolved = eval_sv_join_semi_temp(ctx, resolved_items, arena_arr_len(resolved_items));
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
+static bool ctest_resolve_scripts(Evaluator_Context *ctx,
+                                  const SV_List raw_scripts,
+                                  String_View base_dir,
+                                  String_View **out_resolved_scripts) {
+    if (!ctx || !out_resolved_scripts) return false;
+    *out_resolved_scripts = NULL;
+
+    for (size_t i = 0; i < arena_arr_len(raw_scripts); i++) {
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw_scripts[i], base_dir, false);
+        resolved = eval_sv_path_normalize_temp(ctx, resolved);
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_sv_arr_push_temp(ctx, out_resolved_scripts, resolved)) return false;
+    }
+    return true;
+}
+
+static bool ctest_new_process_begin(Evaluator_Context *ctx, Ctest_New_Process_State *state) {
+    if (!ctx || !state) return false;
+    memset(state, 0, sizeof(*state));
+
+    state->message_check_count = arena_arr_len(ctx->message_check_stack);
+    state->user_commands_count = arena_arr_len(ctx->command_state.user_commands);
+    state->known_targets_count = arena_arr_len(ctx->command_state.known_targets);
+    state->alias_targets_count = arena_arr_len(ctx->command_state.alias_targets);
+    state->dependency_provider_command_name = ctx->command_state.dependency_provider.command_name;
+    state->dependency_provider_supports_find_package = ctx->command_state.dependency_provider.supports_find_package;
+    state->dependency_provider_supports_fetchcontent_makeavailable_serial =
+        ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial;
+    state->dependency_provider_active_find_package_depth =
+        ctx->command_state.dependency_provider.active_find_package_depth;
+    state->dependency_provider_active_fetchcontent_makeavailable_depth =
+        ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth;
+    state->active_find_packages_count = arena_arr_len(ctx->command_state.active_find_packages);
+    state->fetchcontent_declarations_count = arena_arr_len(ctx->command_state.fetchcontent_declarations);
+    state->fetchcontent_states_count = arena_arr_len(ctx->command_state.fetchcontent_states);
+    state->active_fetchcontent_makeavailable_count =
+        arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable);
+    state->watched_variables_count = arena_arr_len(ctx->command_state.watched_variables);
+    state->watched_variable_commands_count = arena_arr_len(ctx->command_state.watched_variable_commands);
+    state->cpack_component_module_loaded = ctx->cpack_component_module_loaded;
+    state->fetchcontent_module_loaded = ctx->fetchcontent_module_loaded;
+
+    if (!eval_scope_push(ctx)) return false;
+    state->scope_pushed = true;
+    return true;
+}
+
+static void ctest_new_process_end(Evaluator_Context *ctx, const Ctest_New_Process_State *state) {
+    if (!ctx || !state) return;
+
+    if (state->scope_pushed) eval_scope_pop(ctx);
+    if (ctx->message_check_stack) {
+        arena_arr_set_len(ctx->message_check_stack, state->message_check_count);
+    }
+    if (ctx->command_state.user_commands) {
+        arena_arr_set_len(ctx->command_state.user_commands, state->user_commands_count);
+    }
+    if (ctx->command_state.known_targets) {
+        arena_arr_set_len(ctx->command_state.known_targets, state->known_targets_count);
+    }
+    if (ctx->command_state.alias_targets) {
+        arena_arr_set_len(ctx->command_state.alias_targets, state->alias_targets_count);
+    }
+    ctx->command_state.dependency_provider.command_name = state->dependency_provider_command_name;
+    ctx->command_state.dependency_provider.supports_find_package = state->dependency_provider_supports_find_package;
+    ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial =
+        state->dependency_provider_supports_fetchcontent_makeavailable_serial;
+    ctx->command_state.dependency_provider.active_find_package_depth =
+        state->dependency_provider_active_find_package_depth;
+    ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth =
+        state->dependency_provider_active_fetchcontent_makeavailable_depth;
+    if (ctx->command_state.active_find_packages) {
+        arena_arr_set_len(ctx->command_state.active_find_packages, state->active_find_packages_count);
+    }
+    if (ctx->command_state.fetchcontent_declarations) {
+        arena_arr_set_len(ctx->command_state.fetchcontent_declarations, state->fetchcontent_declarations_count);
+    }
+    if (ctx->command_state.fetchcontent_states) {
+        arena_arr_set_len(ctx->command_state.fetchcontent_states, state->fetchcontent_states_count);
+    }
+    if (ctx->command_state.active_fetchcontent_makeavailable) {
+        arena_arr_set_len(ctx->command_state.active_fetchcontent_makeavailable,
+                          state->active_fetchcontent_makeavailable_count);
+    }
+    if (ctx->command_state.watched_variables) {
+        arena_arr_set_len(ctx->command_state.watched_variables, state->watched_variables_count);
+    }
+    if (ctx->command_state.watched_variable_commands) {
+        arena_arr_set_len(ctx->command_state.watched_variable_commands, state->watched_variable_commands_count);
+    }
+    ctx->cpack_component_module_loaded = state->cpack_component_module_loaded;
+    ctx->fetchcontent_module_loaded = state->fetchcontent_module_loaded;
+    ctx->break_requested = false;
+    ctx->continue_requested = false;
+    eval_clear_return_state(ctx);
+    if (!ctx->oom) ctx->stop_requested = false;
 }
 
 static bool ctest_apply_resolved_context(Evaluator_Context *ctx,
@@ -721,15 +840,6 @@ Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *nod
         if (!svu_list_push_temp(ctx, &scripts, args[i])) return eval_result_fatal();
     }
 
-    if (new_process) {
-        (void)ctest_emit_diag(ctx,
-                              node,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("ctest_run_script(NEW_PROCESS ...) is not implemented in evaluator v2"),
-                              nob_sv_from_cstr("This batch supports only in-process script evaluation"));
-        return eval_result_from_ctx(ctx);
-    }
-
     if (arena_arr_len(scripts) == 0) {
         String_View current = eval_current_list_file(ctx);
         if (current.count == 0) {
@@ -744,11 +854,25 @@ Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *nod
     }
 
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
+    String_View *resolved_scripts = NULL;
+    if (!ctest_resolve_scripts(ctx, scripts, base_dir, &resolved_scripts)) return eval_result_fatal();
+
     const char *rv_text = "0";
-    for (size_t i = 0; i < arena_arr_len(scripts); i++) {
-        String_View script = eval_path_resolve_for_cmake_arg(ctx, scripts[i], base_dir, false);
-        Eval_Result exec_res = eval_execute_file(ctx, script, false, nob_sv_from_cstr(""));
-        if (eval_result_is_fatal(exec_res) || eval_result_is_soft_error(exec_res)) {
+    for (size_t i = 0; i < arena_arr_len(resolved_scripts); i++) {
+        size_t error_count_before = ctx->runtime_state.run_report.error_count;
+        Eval_Result exec_res = eval_result_fatal();
+        if (new_process) {
+            Ctest_New_Process_State child_state = {0};
+            if (!ctest_new_process_begin(ctx, &child_state)) return eval_result_fatal();
+            exec_res = eval_execute_file(ctx, resolved_scripts[i], false, nob_sv_from_cstr(""));
+            ctest_new_process_end(ctx, &child_state);
+            if (ctx->oom) return eval_result_fatal();
+        } else {
+            exec_res = eval_execute_file(ctx, resolved_scripts[i], false, nob_sv_from_cstr(""));
+        }
+        bool script_failed = eval_result_is_fatal(exec_res) ||
+                             ctx->runtime_state.run_report.error_count > error_count_before;
+        if (script_failed) {
             rv_text = "1";
             break;
         }
@@ -757,8 +881,20 @@ Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *nod
     if (return_var.count > 0 && !eval_var_set_current(ctx, return_var, nob_sv_from_cstr(rv_text))) return eval_result_fatal();
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_run_script"),
+                         "EXECUTION_MODE",
+                         new_process ? nob_sv_from_cstr("NEW_PROCESS") : nob_sv_from_cstr("IN_PROCESS"))) {
+        return eval_result_fatal();
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_run_script"),
                          "SCRIPTS",
                          eval_sv_join_semi_temp(ctx, scripts, arena_arr_len(scripts)))) {
+        return eval_result_fatal();
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_run_script"),
+                         "RESOLVED_SCRIPTS",
+                         eval_sv_join_semi_temp(ctx, resolved_scripts, arena_arr_len(resolved_scripts)))) {
         return eval_result_fatal();
     }
     return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_run_script"), &args, nob_sv_from_cstr("MODELED")));

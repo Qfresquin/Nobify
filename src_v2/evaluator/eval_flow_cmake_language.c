@@ -207,6 +207,147 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
+static bool flow_cmake_language_is_file_scope(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    return ctx->function_eval_depth == 0 &&
+           arena_arr_len(ctx->scope_state.block_frames) == 0 &&
+           arena_arr_len(ctx->scope_state.macro_frames) == 0;
+}
+
+static bool flow_cmake_language_provider_command_exists(Evaluator_Context *ctx, String_View command_name) {
+    if (!ctx || command_name.count == 0) return false;
+    return eval_user_cmd_find(ctx, command_name) != NULL;
+}
+
+static bool flow_cmake_language_set_dependency_provider(Evaluator_Context *ctx,
+                                                        const Node *node,
+                                                        const SV_List *args) {
+    if (!ctx || !node || !args) return false;
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!flow_cmake_language_is_file_scope(ctx)) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_INVALID_CONTEXT,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) must be called at file scope"),
+                                 nob_sv_from_cstr("Do not call it from inside function(), macro(), or block() scopes"));
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    if (arena_arr_len(*args) < 2) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_MISSING_REQUIRED,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires a command or an empty string"),
+                                 nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER <command> SUPPORTED_METHODS FIND_PACKAGE) or cmake_language(SET_DEPENDENCY_PROVIDER \"\")"));
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    String_View command_name = (*args)[1];
+    if (command_name.count == 0) {
+        if (arena_arr_len(*args) != 2) {
+            (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                     EV_DIAG_ERROR,
+                                     EVAL_DIAG_UNEXPECTED_ARGUMENT,
+                                     nob_sv_from_cstr("flow"),
+                                     node->as.cmd.name,
+                                     origin,
+                                     nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER \"\") does not accept SUPPORTED_METHODS"),
+                                     nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER \"\")"));
+            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        }
+        ctx->command_state.dependency_provider.command_name = nob_sv_from_cstr("");
+        ctx->command_state.dependency_provider.supports_find_package = false;
+        ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial = false;
+        ctx->command_state.dependency_provider.active_find_package_depth = 0;
+        ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    if (!flow_is_valid_command_name(command_name)) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_INVALID_VALUE,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires a valid command name"),
+                                 command_name);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+    if (!flow_cmake_language_provider_command_exists(ctx, command_name)) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_NOT_FOUND,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires an existing function() or macro()"),
+                                 command_name);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+    if (arena_arr_len(*args) < 4 || !eval_sv_eq_ci_lit((*args)[2], "SUPPORTED_METHODS")) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_MISSING_REQUIRED,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires SUPPORTED_METHODS"),
+                                 nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER <command> SUPPORTED_METHODS FIND_PACKAGE)"));
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    bool supports_find_package = false;
+    bool supports_fetchcontent = false;
+    for (size_t i = 3; i < arena_arr_len(*args); i++) {
+        String_View method = (*args)[i];
+        if (eval_sv_eq_ci_lit(method, "FIND_PACKAGE")) {
+            supports_find_package = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(method, "FETCHCONTENT_MAKEAVAILABLE_SERIAL")) {
+            supports_fetchcontent = true;
+            continue;
+        }
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_INVALID_VALUE,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) received an unknown method"),
+                                 method);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    if (!supports_find_package && !supports_fetchcontent) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_MISSING_REQUIRED,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires at least one supported method"),
+                                 nob_sv_from_cstr("Supported here: FIND_PACKAGE, FETCHCONTENT_MAKEAVAILABLE_SERIAL"));
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    ctx->command_state.dependency_provider.command_name = sv_copy_to_event_arena(ctx, command_name);
+    if (eval_should_stop(ctx)) return false;
+    ctx->command_state.dependency_provider.supports_find_package = supports_find_package;
+    ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial = supports_fetchcontent;
+    ctx->command_state.dependency_provider.active_find_package_depth = 0;
+    ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
 static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
                                          Eval_Deferred_Dir_Frame *frame,
                                          String_View out_var) {
@@ -398,7 +539,7 @@ Eval_Result eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node)
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
 
     if (arena_arr_len(args) == 0) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "flow", nob_sv_from_cstr("cmake_language() requires a subcommand"), nob_sv_from_cstr("Supported here: CALL, EVAL CODE, DEFER, GET_MESSAGE_LOG_LEVEL"));
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "flow", nob_sv_from_cstr("cmake_language() requires a subcommand"), nob_sv_from_cstr("Supported here: CALL, EVAL CODE, DEFER, GET_MESSAGE_LOG_LEVEL, SET_DEPENDENCY_PROVIDER"));
         return eval_result_from_ctx(ctx);
     }
 
@@ -450,8 +591,7 @@ Eval_Result eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node)
     }
 
     if (eval_sv_eq_ci_lit(args[0], "SET_DEPENDENCY_PROVIDER")) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_IMPLEMENTED, "flow", nob_sv_from_cstr("cmake_language() subcommand not implemented yet"), args[0]);
-        return eval_result_from_ctx(ctx);
+        return eval_result_from_bool(flow_cmake_language_set_dependency_provider(ctx, node, &args));
     }
 
     (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "flow", nob_sv_from_cstr("Unsupported cmake_language() subcommand"), args[0]);

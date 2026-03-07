@@ -281,6 +281,24 @@ typedef struct {
 } Eval_Runtime_State;
 
 typedef struct {
+    String_View name;
+    String_View canonical_name;
+    SV_List args;
+} Eval_FetchContent_Declaration;
+
+typedef Eval_FetchContent_Declaration *Eval_FetchContent_Declaration_List;
+
+typedef struct {
+    String_View name;
+    String_View canonical_name;
+    bool populated;
+    String_View source_dir;
+    String_View binary_dir;
+} Eval_FetchContent_State;
+
+typedef Eval_FetchContent_State *Eval_FetchContent_State_List;
+
+typedef struct {
     Arena *native_commands_arena;
     Arena *known_targets_arena;
     Arena *user_commands_arena;
@@ -291,7 +309,17 @@ typedef struct {
     Eval_Native_Command_Index_Entry *native_command_index;
     Eval_Var_Entry *property_store;
     User_Command_List user_commands;
+    struct {
+        String_View command_name;
+        bool supports_find_package;
+        bool supports_fetchcontent_makeavailable_serial;
+        size_t active_find_package_depth;
+        size_t active_fetchcontent_makeavailable_depth;
+    } dependency_provider;
     SV_List active_find_packages;
+    Eval_FetchContent_Declaration_List fetchcontent_declarations;
+    Eval_FetchContent_State_List fetchcontent_states;
+    SV_List active_fetchcontent_makeavailable;
     SV_List watched_variables;
     SV_List watched_variable_commands;
 } Eval_Command_State;
@@ -328,6 +356,7 @@ struct Evaluator_Context {
     // Invariant: visible_policy_depth <= arena_arr_len(policy_levels)
     size_t visible_policy_depth;
     bool cpack_component_module_loaded;
+    bool fetchcontent_module_loaded;
     size_t file_eval_depth;
     size_t function_eval_depth;
 

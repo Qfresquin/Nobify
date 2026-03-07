@@ -114,6 +114,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/evaluator/eval_dispatcher.c",
         "src_v2/evaluator/eval_command_caps.c",
         "src_v2/evaluator/eval_expr.c",
+        "src_v2/evaluator/eval_fetchcontent.c",
         "src_v2/evaluator/eval_hash.c",
         "src_v2/evaluator/eval_file.c",
         "src_v2/evaluator/eval_file_path.c",

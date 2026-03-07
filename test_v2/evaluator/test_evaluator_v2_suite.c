@@ -2983,6 +2983,173 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     TEST_PASS();
 }
 
+TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("provider_root"));
+    ASSERT(nob_mkdir_if_not_exists("provider_root/lib"));
+    ASSERT(nob_mkdir_if_not_exists("provider_root/lib/cmake"));
+    ASSERT(nob_mkdir_if_not_exists("provider_root/lib/cmake/FallbackPkg"));
+    ASSERT(nob_mkdir_if_not_exists("provider_root/lib/cmake/ClearedPkg"));
+    ASSERT(nob_write_entire_file("provider_root/lib/cmake/FallbackPkg/FallbackPkgConfig.cmake",
+                                 "set(FallbackPkg_FOUND 1)\n"
+                                 "set(FallbackPkg_CONFIG_HIT 1)\n",
+                                 strlen("set(FallbackPkg_FOUND 1)\n"
+                                        "set(FallbackPkg_CONFIG_HIT 1)\n")));
+    ASSERT(nob_write_entire_file("provider_root/lib/cmake/ClearedPkg/ClearedPkgConfig.cmake",
+                                 "set(ClearedPkg_FOUND 1)\n"
+                                 "set(ClearedPkg_CONFIG_HIT 1)\n",
+                                 strlen("set(ClearedPkg_FOUND 1)\n"
+                                        "set(ClearedPkg_CONFIG_HIT 1)\n")));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "macro(dep_provider method)\n"
+        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+        "  if(method STREQUAL \"FIND_PACKAGE\")\n"
+        "    if(ARGV1 STREQUAL \"ProvidedPkg\")\n"
+        "      set(ProvidedPkg_FOUND 1)\n"
+        "      set(ProvidedPkg_CONFIG provider://ProvidedPkg)\n"
+        "      set(PROVIDED_BY_PROVIDER yes)\n"
+        "    else()\n"
+        "      find_package(${ARGN} BYPASS_PROVIDER)\n"
+        "    endif()\n"
+        "  endif()\n"
+        "endmacro()\n"
+        "set(CMAKE_PREFIX_PATH \"${CMAKE_CURRENT_BINARY_DIR}/provider_root\")\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FIND_PACKAGE)\n"
+        "find_package(ProvidedPkg QUIET)\n"
+        "find_package(FallbackPkg CONFIG QUIET)\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n"
+        "find_package(ClearedPkg CONFIG QUIET)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BY_PROVIDER")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ProvidedPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ProvidedPkg_CONFIG")), nob_sv_from_cstr("provider://ProvidedPkg")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("FallbackPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("FallbackPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ClearedPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ClearedPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
+                     nob_sv_from_cstr("FIND_PACKAGE:ProvidedPkg;FIND_PACKAGE:FallbackPkg")));
+    ASSERT(ctx->command_state.dependency_provider.command_name.count == 0);
+    ASSERT(!ctx->command_state.dependency_provider.supports_find_package);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("provided_dep_src"));
+    ASSERT(nob_mkdir_if_not_exists("fetchcontent_local"));
+    ASSERT(nob_mkdir_if_not_exists("fetchcontent_bypass"));
+    ASSERT(nob_write_entire_file("fetchcontent_local/CMakeLists.txt",
+                                 "add_library(local_from_fetch INTERFACE)\n",
+                                 strlen("add_library(local_from_fetch INTERFACE)\n")));
+    ASSERT(nob_write_entire_file("fetchcontent_bypass/CMakeLists.txt",
+                                 "add_library(bypass_from_fetch INTERFACE)\n",
+                                 strlen("add_library(bypass_from_fetch INTERFACE)\n")));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "macro(dep_provider method)\n"
+        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+        "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
+        "    if(ARGV1 STREQUAL \"ProvidedDep\")\n"
+        "      FetchContent_SetPopulated(${ARGV1}\n"
+        "        SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_src\"\n"
+        "        BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_build\")\n"
+        "    elseif(ARGV1 STREQUAL \"LocalDep\")\n"
+        "      FetchContent_MakeAvailable(${ARGV1})\n"
+        "    endif()\n"
+        "  endif()\n"
+        "endmacro()\n"
+        "include(FetchContent)\n"
+        "FetchContent_Declare(ProvidedDep)\n"
+        "FetchContent_Declare(LocalDep\n"
+        "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_local\"\n"
+        "  BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_local_build\")\n"
+        "FetchContent_Declare(BypassDep)\n"
+        "set(FETCHCONTENT_SOURCE_DIR_BYPASSDEP \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_bypass\")\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n"
+        "FetchContent_MakeAvailable(ProvidedDep LocalDep BypassDep)\n"
+        "FetchContent_GetProperties(ProvidedDep SOURCE_DIR PROVIDED_SRC BINARY_DIR PROVIDED_BIN POPULATED PROVIDED_POPULATED)\n"
+        "FetchContent_GetProperties(LocalDep SOURCE_DIR LOCAL_SRC BINARY_DIR LOCAL_BIN POPULATED LOCAL_POPULATED)\n"
+        "FetchContent_GetProperties(BypassDep SOURCE_DIR BYPASS_SRC BINARY_DIR BYPASS_BIN POPULATED BYPASS_POPULATED)\n"
+        "FetchContent_GetProperties(ProvidedDep)\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(ctx->fetchcontent_module_loaded);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
+                     nob_sv_from_cstr("FETCHCONTENT_MAKEAVAILABLE_SERIAL:ProvidedDep;FETCHCONTENT_MAKEAVAILABLE_SERIAL:LocalDep")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LOCAL_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BYPASS_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN")).count > 0);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_SOURCE_DIR")),
+                     eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC"))));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_BINARY_DIR")),
+                     eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN"))));
+    ASSERT(eval_target_known(ctx, nob_sv_from_cstr("local_from_fetch")));
+    ASSERT(eval_target_known(ctx, nob_sv_from_cstr("bypass_from_fetch")));
+    ASSERT(ctx->command_state.dependency_provider.command_name.count == 0);
+    ASSERT(!ctx->command_state.dependency_provider.supports_find_package);
+    ASSERT(!ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3023,6 +3190,74 @@ TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
     ASSERT(ctx->current_file != NULL);
     ASSERT(strcmp(ctx->current_file, "CMakeLists.txt") == 0);
     ASSERT(nob_sv_eq(eval_current_list_file(ctx), nob_sv_from_cstr("CMakeLists.txt")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "macro(dep_provider_bad method)\n"
+        "endmacro()\n"
+        "function(dep_provider_scope)\n"
+        "  cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS FIND_PACKAGE)\n"
+        "endfunction()\n"
+        "dep_provider_scope()\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER missing_provider SUPPORTED_METHODS FIND_PACKAGE)\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS BAD_METHOD)\n"
+        "find_package(OutsidePkg BYPASS_PROVIDER QUIET)\n");
+
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    bool saw_scope = false;
+    bool saw_missing = false;
+    bool saw_method = false;
+    bool saw_bypass = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) must be called at file scope"))) {
+            saw_scope = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires an existing function() or macro()"))) {
+            saw_missing = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) received an unknown method"))) {
+            saw_method = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_package(BYPASS_PROVIDER) may only be used from inside a dependency provider"))) {
+            saw_bypass = true;
+        }
+    }
+
+    ASSERT(saw_scope);
+    ASSERT(saw_missing);
+    ASSERT(saw_method);
+    ASSERT(saw_bypass);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -5264,7 +5499,7 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 1);
+    ASSERT(report->error_count == 0);
 
     String_View system_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
     String_View host_multi = eval_var_get(ctx, nob_sv_from_cstr("HOST_MULTI"));
@@ -5277,7 +5512,7 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
     ASSERT(host_multi.count > system_name.count);
     ASSERT(memcmp(host_multi.data, system_name.data, system_name.count) == 0);
     ASSERT(host_multi.data[system_name.count] == ';');
-    ASSERT(host_bad.count == system_name.count + 1);
+    ASSERT(host_bad.count > system_name.count + 1);
     ASSERT(memcmp(host_bad.data, system_name.data, system_name.count) == 0);
     ASSERT(host_bad.data[system_name.count] == ';');
 #if defined(_WIN32)
@@ -5285,22 +5520,6 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
 #else
     ASSERT(nob_sv_eq(site_cmd_out, nob_sv_from_cstr("mock-site")));
 #endif
-
-    bool saw_unsupported_query_diag = false;
-    for (size_t i = 0; i < stream->count; i++) {
-        const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind != EV_DIAGNOSTIC) continue;
-        if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
-        if (!nob_sv_eq(ev->as.diag.cause,
-                       nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"))) {
-            continue;
-        }
-        if (nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("FQDN"))) {
-            saw_unsupported_query_diag = true;
-            break;
-        }
-    }
-    ASSERT(saw_unsupported_query_diag);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -5617,7 +5836,7 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
         "aux_source_directory(asd_src ASD_OUT)\n"
         "create_test_sourcelist(TEST_SRCS generated_driver.c alpha_test.c beta_test.c EXTRA_INCLUDE extra.h FUNCTION setup_hook)\n"
         "include_external_msproject(ext_proj external.vcxproj TYPE type-guid GUID proj-guid PLATFORM Win32 meta_lib)\n"
-        "cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 CACHE 2.0)\n");
+        "cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 CACHE 2.0 CMAKEFILES 1 TOOLCHAINS 1)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
@@ -5660,14 +5879,42 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::API_VERSION")),
                      nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CMAKE_FILE_API")),
+                     nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::CODEMODEL")),
                      nob_sv_from_cstr("2")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::CACHE")),
                      nob_sv_from_cstr("2.0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::CMAKEFILES")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::TOOLCHAINS")),
+                     nob_sv_from_cstr("1")));
 
     String_View export_text = {0};
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, "meta-export.cmake", &export_text));
     ASSERT(sv_contains_sv(export_text, nob_sv_from_cstr("set(NOBIFY_EXPORT_TARGETS \"meta_lib\")")));
+
+    String_View file_api_query = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/query/client-nobify/query.json", &file_api_query));
+    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"codemodel\"")));
+    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"cache\"")));
+    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"cmakeFiles\"")));
+    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"toolchains\"")));
+
+    String_View file_api_index = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/reply/index-nobify-v1.json", &file_api_index));
+    ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("codemodel-v2.json")));
+    ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("cache-v2.0.json")));
+    ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("cmakeFiles-v1.json")));
+    ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("toolchains-v1.json")));
+
+    String_View codemodel_reply = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/reply/codemodel-v2.json", &codemodel_reply));
+    ASSERT(sv_contains_sv(codemodel_reply, nob_sv_from_cstr("\"kind\": \"codemodel\"")));
+
+    String_View cache_reply = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/reply/cache-v2.0.json", &cache_reply));
+    ASSERT(sv_contains_sv(cache_reply, nob_sv_from_cstr("\"kind\": \"cache\"")));
 
     bool saw_malformed_cache_warning = false;
     for (size_t i = 0; i < stream->count; i++) {
@@ -5746,6 +5993,15 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_write_entire_file("ctest_script.cmake",
                                  "set(CTEST_SCRIPT_LOADED 1)\n",
                                  strlen("set(CTEST_SCRIPT_LOADED 1)\n")));
+    ASSERT(nob_write_entire_file("ctest_script_child.cmake",
+                                 "set(CTEST_SCRIPT_CHILD_ONLY 1)\n"
+                                 "function(ctest_child_only_fn)\n"
+                                 "endfunction()\n"
+                                 "set(CTEST_TRACK ChildTrack)\n",
+                                 strlen("set(CTEST_SCRIPT_CHILD_ONLY 1)\n"
+                                        "function(ctest_child_only_fn)\n"
+                                        "endfunction()\n"
+                                        "set(CTEST_TRACK ChildTrack)\n")));
 
     Evaluator_Init init = {0};
     init.arena = temp_arena;
@@ -5774,6 +6030,17 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         "ctest_empty_binary_directory(wipe)\n"
         "ctest_read_custom_files(ctest_custom)\n"
         "ctest_run_script(ctest_script.cmake RETURN_VALUE SCRIPT_RV)\n"
+        "ctest_run_script(NEW_PROCESS ctest_script_child.cmake RETURN_VALUE SCRIPT_CHILD_RV)\n"
+        "if(DEFINED CTEST_SCRIPT_CHILD_ONLY)\n"
+        "  set(CHILD_VAR_LEAK 1)\n"
+        "else()\n"
+        "  set(CHILD_VAR_LEAK 0)\n"
+        "endif()\n"
+        "if(COMMAND ctest_child_only_fn)\n"
+        "  set(CHILD_FN_LEAK 1)\n"
+        "else()\n"
+        "  set(CHILD_FN_LEAK 0)\n"
+        "endif()\n"
         "ctest_sleep(0.25)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
@@ -5803,8 +6070,12 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BUILD_WARNS")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SCRIPT_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SCRIPT_CHILD_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CHILD_VAR_LEAK")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CHILD_FN_LEAK")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_CUSTOM_LOADED")), nob_sv_from_cstr("yes")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CTEST_SCRIPT_LOADED")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("CTEST_SCRIPT_CHILD_ONLY")).count == 0);
     ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::SOURCE")),
                           nob_sv_from_cstr("ctest_src")));
     ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::BUILD")),
@@ -5832,6 +6103,10 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
                           nob_sv_from_cstr("ctest_bin/a.txt")));
     ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::RESOLVED_FILES")),
                           nob_sv_from_cstr("ctest_bin/b.txt")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_run_script::EXECUTION_MODE")),
+                     nob_sv_from_cstr("NEW_PROCESS")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_run_script::RESOLVED_SCRIPTS")),
+                          nob_sv_from_cstr("ctest_script_child.cmake")));
 
     String_View tag_file = eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG_FILE"));
     char *tag_file_c = arena_strndup(temp_arena, tag_file.data, tag_file.count);
@@ -5908,14 +6183,16 @@ TEST(evaluator_ctest_family_rejects_invalid_and_unsupported_forms) {
         "set(CMAKE_BINARY_DIR safe_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR safe_bin)\n"
         "ctest_empty_binary_directory(../outside)\n"
-        "ctest_run_script(NEW_PROCESS ctest_script_bad.cmake)\n"
+        "ctest_run_script(NEW_PROCESS ctest_script_bad.cmake RETURN_VALUE SCRIPT_BAD_RV)\n"
         "ctest_sleep(1 2)\n"
         "ctest_build(BUILD)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 4);
+    ASSERT(report->error_count == 3);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SCRIPT_BAD_RV")), nob_sv_from_cstr("0")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("UNUSED")).count == 0);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -9317,6 +9594,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed);
     test_evaluator_execute_process_captures_output_and_models_3_28_fatal_mode(passed, failed);
     test_evaluator_cmake_language_core_subcommands_work(passed, failed);
+    test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed);
+    test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);
@@ -9328,6 +9607,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
     test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);
+    test_evaluator_cmake_language_dependency_provider_rejects_invalid_forms(passed, failed);
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);
     test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);

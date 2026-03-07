@@ -7,6 +7,7 @@
 #include "eval_custom.h"
 #include "eval_diag.h"
 #include "eval_directory.h"
+#include "eval_fetchcontent.h"
 #include "eval_file.h"
 #include "eval_flow.h"
 #include "eval_host.h"
