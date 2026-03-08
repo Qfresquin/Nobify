@@ -1,4 +1,9 @@
-# Build Model v2 Benchmark Notes
+# Historical: Build Model v2 Benchmark Notes
+
+> Historical note (March 8, 2026): this note now applies only to the legacy
+> path kept in `src_obsolete/build_model/`. It is retained as a migration
+> benchmark reference while the canonical implementation moves to
+> `src_v2/build_model/`.
 
 ## Goal
 Track hot-path cost for:

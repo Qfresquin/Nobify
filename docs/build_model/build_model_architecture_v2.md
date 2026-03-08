@@ -1,4 +1,10 @@
-# Build Model v2 Architecture Notes
+# Historical: Build Model v2 Architecture Notes
+
+> Historical note (March 8, 2026): this document is superseded by
+> `docs/build_model/README.md` and
+> `docs/build_model/build_model_architecture.md`.
+> It is retained only as migration context while the canonical implementation
+> moves to `src_v2/build_model/`.
 
 ## Scope
 This note documents practical coupling points of the v2 build model pipeline:

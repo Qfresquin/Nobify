@@ -1,4 +1,9 @@
-# Build Model Query v2 (Normative)
+# Historical: Build Model Query v2
+
+> Historical note (March 8, 2026): this document is superseded by
+> `docs/build_model/build_model_query.md`.
+> It is retained only as migration context while the canonical implementation
+> moves to `src_v2/build_model/`.
 
 ## 1. Overview
 
