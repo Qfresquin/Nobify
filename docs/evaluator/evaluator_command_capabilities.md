@@ -129,6 +129,11 @@ Current intended meanings:
 
 These are static metadata flags, not runtime proof of success for any specific invocation.
 
+Current evaluator policy for legacy compatibility wrappers:
+- a documented evaluator-side subset can still be tagged `FULL` when that reduced subset is the intended contract,
+- policy-gated commands such as `build_name()` and `exec_program()` therefore remain `FULL` in capability metadata even though valid execution still depends on `CMP0036` / `CMP0153`,
+- reduced-scope metadata wrappers can also be `FULL` when the evaluator intentionally models inspection/state-publication behavior rather than historical native side effects.
+
 ## 8. Interpretation of Fallback
 
 Current enum intent:

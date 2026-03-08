@@ -118,7 +118,7 @@ Current strengths worth preserving:
 |---|---|---|---|
 | F-11 | Medium | Sequencing risk | Semantic promotion should not start as the next large wave until the evaluator -> Event IR contract is stabilized through a bounded pre-G pass. |
 | F-10 | Low | Verification workflow | A stale local `build/nob_test` binary can report false refactor regressions even though the current runner source and `build/nob_v2_test` are aligned. |
-| F-07 | Low | Coverage debt | `PARTIAL` footprint remains high (`43.7%`), concentrated in `ctest_*` and legacy wrappers. |
+| F-07 | Low | Coverage debt | `PARTIAL` footprint is still material (`26.1%`), now concentrated in `ctest_*`, query/introspection, and advanced meta/runtime surfaces. |
 
 ## 6. Detailed Findings
 
@@ -152,8 +152,8 @@ Recommendation:
 ### F-07: Coverage debt concentration
 
 Evidence:
-- Coverage matrix snapshot: `52` of `119` built-ins remain `PARTIAL` (`43.7%`).
-- Concentration is mostly `ctest_*`, legacy compatibility commands, and query/introspection surfaces.
+- Coverage matrix snapshot: `31` of `119` built-ins remain `PARTIAL` (`26.1%`).
+- Concentration is mostly `ctest_*`, query/introspection surfaces, and the remaining advanced meta/runtime commands.
 
 Risk:
 - Behavioral confidence remains uneven despite broad command-name availability.

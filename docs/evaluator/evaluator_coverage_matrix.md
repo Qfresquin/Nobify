@@ -42,23 +42,23 @@ Important boundary:
 
 ## 4. Registry Coverage Snapshot
 
-Snapshot date (workspace): March 6, 2026.
+Snapshot date (workspace): March 8, 2026.
 
 ### 4.1 Built-in Command Counts
 
 | Metric | Value |
 |---|---:|
 | Registry built-ins | 119 |
-| `FULL` | 67 |
-| `PARTIAL` | 52 |
+| `FULL` | 88 |
+| `PARTIAL` | 31 |
 | `MISSING` (inside registry scope) | 0 |
 
 ### 4.2 Coverage Ratios
 
 | Level | Count | Ratio |
 |---|---:|---:|
-| `FULL` | 67 | 56.3% |
-| `PARTIAL` | 52 | 43.7% |
+| `FULL` | 88 | 73.9% |
+| `PARTIAL` | 31 | 26.1% |
 | `MISSING` | 0 | 0.0% |
 
 ## 5. Fallback Metadata Snapshot
@@ -99,18 +99,16 @@ Current status in code paths:
 | Domain | Partial Count | Notes |
 |---|---:|---|
 | `ctest_*` workflow | 13 | Largest cluster; mostly metadata/compat surfaces vs full native tool behavior. |
-| Legacy compatibility wrappers | 19 | Deprecated/compat commands intentionally narrower than modern CMake behavior. |
-| Property/query and introspection | 7 | Read/query paths still less complete than mutation/write paths. |
+| Legacy compatibility wrappers | 0 | G5 closed this cluster for the documented evaluator subset; no legacy wrappers remain in the `PARTIAL` set. |
+| Property/query and introspection | 6 | Read/query paths still less complete than mutation/write paths. |
 | Meta/runtime integrations | 3 | `cmake_file_api`, `cmake_host_system_information`, `include_external_msproject`. |
-| Modern but still incomplete semantics | 10 | Includes `cmake_language`, `target_*` advanced surfaces, `try_run`, `export`, `load_cache`, `variable_watch`, `separate_arguments`. |
+| Modern but still incomplete semantics | 9 | Includes `cmake_language`, `target_*` advanced surfaces, `try_run`, `export`, `load_cache`, `remove_definitions`, `separate_arguments`. |
 
 ## 8. Explicit `PARTIAL` Command List
 
-Current `PARTIAL` set (52 commands):
+Current `PARTIAL` set (31 commands):
 
 ```text
-build_command
-build_name
 cmake_file_api
 cmake_host_system_information
 cmake_language
@@ -127,10 +125,7 @@ ctest_submit
 ctest_test
 ctest_update
 ctest_upload
-exec_program
 export
-export_library_dependencies
-fltk_wrap_ui
 get_cmake_property
 get_directory_property
 get_property
@@ -138,36 +133,21 @@ get_source_file_property
 get_target_property
 get_test_property
 include_external_msproject
-install_files
-install_programs
-install_targets
 load_cache
-load_command
-output_required_files
-qt_wrap_cpp
-qt_wrap_ui
-remove
 remove_definitions
 separate_arguments
-source_group
-subdir_depends
-subdirs
 target_compile_features
 target_precompile_headers
 target_sources
 try_run
-use_mangled_mesa
-utility_source
-variable_requires
-variable_watch
-write_file
 ```
 
 ## 9. Coverage Interpretation Notes
 
 Current high-level interpretation:
 - core modern command surface has broad `FULL` coverage,
-- residual risk is concentrated in `ctest_*`, legacy wrappers, and query/introspection paths,
+- the March 8, 2026 G5 batch retired the legacy-wrapper `PARTIAL` cluster by treating the documented evaluator subset as complete,
+- residual risk is now concentrated in `ctest_*`, query/introspection paths, and the remaining advanced meta/runtime slices,
 - `try_run` remains correctly tagged `PARTIAL`: native source-file and `PROJECT` signatures now execute, but the cross-compiling answer-file workflow still resolves to a deterministic compile-only skip instead of full target execution,
 - fallback metadata remains overwhelmingly `NOOP_WARN`, so runtime strictness is mostly shaped by command handlers and compat policy rather than fallback enum diversity.
 

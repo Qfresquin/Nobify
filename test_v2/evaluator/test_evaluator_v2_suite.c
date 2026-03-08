@@ -1166,6 +1166,48 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     TEST_PASS();
 }
 
+TEST(evaluator_g5_legacy_wrapper_capabilities_promoted_to_full) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    const char *full_commands[] = {
+        "build_name",
+        "build_command",
+        "exec_program",
+        "install_targets",
+        "source_group",
+        "variable_watch",
+        "write_file",
+    };
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(full_commands); i++) {
+        Command_Capability cap = {0};
+        ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr(full_commands[i]), &cap));
+        ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
+        ASSERT(cap.fallback_behavior == EVAL_FALLBACK_NOOP_WARN);
+    }
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_native_command_registry_runtime_extension) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -9566,6 +9608,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
 
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+    test_evaluator_g5_legacy_wrapper_capabilities_promoted_to_full(passed, failed);
     test_evaluator_command_capability_remains_native_only_introspection(passed, failed);
     test_evaluator_native_command_registry_runtime_extension(passed, failed);
     test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed);

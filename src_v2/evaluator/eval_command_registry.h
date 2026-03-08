@@ -17,8 +17,8 @@
     X("add_test", eval_handle_add_test, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("block", eval_handle_block, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("break", eval_handle_break, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("build_command", eval_handle_build_command, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("build_name", eval_handle_build_name, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("build_command", eval_handle_build_command, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("build_name", eval_handle_build_name, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_host_system_information", eval_handle_cmake_host_system_information, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_file_api", eval_handle_cmake_file_api, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_parse_arguments", eval_handle_cmake_parse_arguments, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
@@ -49,9 +49,9 @@
     X("enable_language", eval_handle_enable_language, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("enable_testing", eval_handle_enable_testing, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("endblock", eval_handle_endblock, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("exec_program", eval_handle_exec_program, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("exec_program", eval_handle_exec_program, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("execute_process", eval_handle_execute_process, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("export_library_dependencies", eval_handle_export_library_dependencies, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("export_library_dependencies", eval_handle_export_library_dependencies, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("file", eval_handle_file, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE) \
     X("export", eval_handle_export, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_Declare", eval_handle_fetchcontent_declare, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
@@ -76,24 +76,24 @@
     X("include_directories", eval_handle_include_directories, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include_guard", eval_handle_include_guard, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("install", eval_handle_install, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("install_files", eval_handle_install_files, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("install_programs", eval_handle_install_programs, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("install_targets", eval_handle_install_targets, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("install_files", eval_handle_install_files, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("install_programs", eval_handle_install_programs, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("install_targets", eval_handle_install_targets, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("link_directories", eval_handle_link_directories, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("link_libraries", eval_handle_link_libraries, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("list", eval_handle_list, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("load_command", eval_handle_load_command, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("load_command", eval_handle_load_command, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("load_cache", eval_handle_load_cache, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("make_directory", eval_handle_make_directory, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("mark_as_advanced", eval_handle_mark_as_advanced, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("math", eval_handle_math, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("message", eval_handle_message, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("option", eval_handle_option, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("output_required_files", eval_handle_output_required_files, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("output_required_files", eval_handle_output_required_files, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("project", eval_handle_project, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("qt_wrap_cpp", eval_handle_qt_wrap_cpp, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("qt_wrap_ui", eval_handle_qt_wrap_ui, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("remove", eval_handle_remove, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("qt_wrap_cpp", eval_handle_qt_wrap_cpp, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("qt_wrap_ui", eval_handle_qt_wrap_ui, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("remove", eval_handle_remove, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("remove_definitions", eval_handle_remove_definitions, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("return", eval_handle_return, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("separate_arguments", eval_handle_separate_arguments, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
@@ -105,9 +105,9 @@
     X("set_tests_properties", eval_handle_set_tests_properties, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("site_name", eval_handle_site_name, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("string", eval_handle_string, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("source_group", eval_handle_source_group, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("subdir_depends", eval_handle_subdir_depends, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("subdirs", eval_handle_subdirs, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("source_group", eval_handle_source_group, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("subdir_depends", eval_handle_subdir_depends, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("subdirs", eval_handle_subdirs, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("aux_source_directory", eval_handle_aux_source_directory, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_compile_features", eval_handle_target_compile_features, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_compile_definitions", eval_handle_target_compile_definitions, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
@@ -121,11 +121,11 @@
     X("try_compile", eval_handle_try_compile, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("try_run", eval_handle_try_run, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("unset", eval_handle_unset, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("use_mangled_mesa", eval_handle_use_mangled_mesa, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("utility_source", eval_handle_utility_source, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("variable_requires", eval_handle_variable_requires, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("variable_watch", eval_handle_variable_watch, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("fltk_wrap_ui", eval_handle_fltk_wrap_ui, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("write_file", eval_handle_write_file, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN)
+    X("use_mangled_mesa", eval_handle_use_mangled_mesa, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("utility_source", eval_handle_utility_source, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("variable_requires", eval_handle_variable_requires, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("variable_watch", eval_handle_variable_watch, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("fltk_wrap_ui", eval_handle_fltk_wrap_ui, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("write_file", eval_handle_write_file, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN)
 
 #endif // EVAL_COMMAND_REGISTRY_H_
