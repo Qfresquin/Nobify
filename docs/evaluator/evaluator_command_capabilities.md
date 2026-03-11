@@ -11,7 +11,7 @@ This document covers:
 - relationship between capability metadata and runtime dispatch behavior,
 - current limitations and non-goals.
 
-It does not provide a command-by-command analytical coverage matrix. That belongs to `evaluator_coverage_matrix.md`.
+It does not provide a command-by-command analytical coverage matrix. That belongs to `evaluator_coverage_matrix.md`, which is now an audit against CMake 3.28 and may intentionally diverge from raw registry metadata when audited behavior is narrower or broader than the static tag.
 
 ## 2. Source of Truth
 

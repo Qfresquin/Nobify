@@ -1,180 +1,283 @@
-# Evaluator Coverage Matrix (Rewrite Draft)
+# Evaluator Coverage Matrix (CMake 3.28 Audit)
 
-Status: Analytical draft. This document tracks evaluator implementation coverage using the current command-capability registry and related runtime surfaces. It is not a canonical behavior contract.
+Status: Analytical audit. This document tracks evaluator parity against the CMake 3.28 command/language surface that matters to this repository and its audited corpus. It is intentionally broader than raw registry metadata.
 
 ## 1. Scope
 
-This matrix tracks:
-- built-in command coverage from the dispatcher registry,
-- implementation-level distribution (`FULL` vs `PARTIAL`),
-- fallback metadata distribution,
-- domain-level concentration of `PARTIAL` commands,
-- non-registry structural language coverage status.
+This audit measures evaluator responsibility only:
+- structural execution (`if`/`foreach`/`while`/`function`/`macro`),
+- argument resolution, variables, policies, flow, property/query state,
+- runtime/meta effects the evaluator already models,
+- semantic `Event_Stream` emission.
 
-It does not redefine evaluator guarantees. Canonical behavior remains in `evaluator_v2_spec.md` and subordinate semantic docs.
+It does not score gaps in `build_model`, freeze/query, codegen, or the `nob` backend.
 
-## 2. Source of Truth
+## 2. Audit Method
 
-Primary files for this matrix:
-- `src_v2/evaluator/eval_command_registry.h`
-- `src_v2/evaluator/eval_command_caps.c`
-- `src_v2/evaluator/evaluator.h`
-- `src_v2/evaluator/eval_dispatcher.c`
-- `src_v2/evaluator/evaluator.c` (structural nodes outside dispatcher)
+Baseline:
+- official comparison target is **CMake 3.28**, matching the evaluator baseline enforced by `cmake_minimum_required()` and `cmake_policy(VERSION ...)` in `src_v2/evaluator/eval_project.c`.
 
-Historical reference set (archived):
-- no evaluator coverage archive is currently kept in-tree; previous `docs/Evaluatorr/...` references were stale path leftovers.
+Primary sources of truth:
+- local code and docs: `src_v2/evaluator/eval_command_registry.h`, structural execution paths, and focused evaluator docs;
+- official docs:
+  - [cmake-commands(7)]()
+  - [cmake-language(7)]()
+  - command/module pages for every audited `PARTIAL` row.
 
-## 3. Method and Legend
+Universe audited in this snapshot:
+- 123 registry-backed native commands.
+- 12 structural language nodes outside the registry.
+- 0 additional `missing-official` commands in the current workspace after filtering.
 
-Snapshot method:
-- registry-driven counts from `EVAL_COMMAND_REGISTRY(X)`,
-- analytical grouping by command domain,
-- no external CMake scraping in this rewrite draft snapshot.
+Relevance buckets:
+- `first_party_runtime`: commands exercised by `test_v2/evaluator/**`, `test_v2/pipeline/**`, `provider_root/**`, and first-party runtime fixtures.
+- `external_corpus`: commands exercised by the vendored `curl-8.18.0/**` corpus.
+- `both`: appears in both buckets.
+- `none`: not exercised by the audited runtime corpus in this workspace.
 
-Legend:
-- `FULL`: command marked fully implemented in registry metadata.
-- `PARTIAL`: command exists but has reduced scope or known semantic gaps.
-- `MISSING`: command absent from built-in registry.
+Classification rules:
+- `FULL`: the evaluator covers the CMake 3.28 semantics that matter for the audited corpus at evaluator layer.
+- `PARTIAL`: implementation exists, but valid documented CMake 3.28 behavior still falls outside the supported evaluator subset.
+- `MISSING`: an official CMake 3.28 command relevant to the audited workspace has no evaluator handler or structural path.
 
-Important boundary:
-- these labels are static capability metadata and do not guarantee success for every invocation shape.
+Important distinction:
+- `Registry Tag` is the static metadata exported by the native-command registry.
+- `Audit Status` is this document's parity verdict against actual CMake 3.28 behavior for the audited corpus.
+- the two intentionally diverge when code/docs show a real evaluator gap despite a registry `FULL` tag.
 
-## 4. Registry Coverage Snapshot
+Excluded from `MISSING`:
+- user-defined functions/macros such as `fn_apply`, `ret_fn`, `mc_apply`, `curl_add_if`;
+- module-provided helpers/macros outside the command/language manual inventory, such as `check_symbol_exists`, `check_function_exists`, `check_type_size`, `find_dependency`, `cmake_push_check_state`, `ExternalProject_Add`, and `pkg_check_modules`.
 
-Snapshot date (workspace): March 8, 2026.
+## 3. Snapshot Summary
 
-### 4.1 Built-in Command Counts
+Snapshot date: March 11, 2026.
 
 | Metric | Value |
 |---|---:|
-| Registry built-ins | 119 |
-| `FULL` | 88 |
-| `PARTIAL` | 31 |
-| `MISSING` (inside registry scope) | 0 |
+| Registry built-ins | 123 |
+| Structural nodes outside registry | 12 |
+| Audited universe |  |
+| Audit `FULL` |  |
+| Audit `PARTIAL` |  |
+| Audit `MISSING` |  |
+| Relevant to `first_party_runtime` |  |
+| Relevant to `external_corpus` |  |
+| Relevant to `both` |  |
+| Native rows where `Audit Status != Registry Tag` |  |
 
-### 4.2 Coverage Ratios
-
-| Level | Count | Ratio |
-|---|---:|---:|
-| `FULL` | 88 | 73.9% |
-| `PARTIAL` | 31 | 26.1% |
-| `MISSING` | 0 | 0.0% |
-
-## 5. Fallback Metadata Snapshot
-
-Registry fallback distribution:
-
-| Fallback | Count | Ratio |
-|---|---:|---:|
-| `EVAL_FALLBACK_NOOP_WARN` | 116 | 97.5% |
-| `EVAL_FALLBACK_ERROR_CONTINUE` | 3 | 2.5% |
-| `EVAL_FALLBACK_ERROR_STOP` | 0 | 0.0% |
-
-Commands currently tagged `ERROR_CONTINUE`:
-- `cmake_language`
+Current native-tag divergences:
 - `cmake_path`
 - `file`
+- `get_filename_component`
+- `install`
+- `list`
+- `string`
 
-Current `ERROR_STOP` registry entries:
-- none
+## 4. Audit Matrix
 
-## 6. Structural Language Coverage (Outside Registry)
+| Command | Kind | Registry Tag | Audit Status | Repo Relevance | CMake 3.28 Expectation | Current Evaluator Behavior | Primary Evidence | Official Reference |
+|---|---|---|---|---|---|---|---|---|
+| `FetchContent_Declare` | native | PARTIAL | PARTIAL | external_corpus | Cover the documented FetchContent module workflow used to declare, populate and query dependencies. | Stores evaluator-side declaration state, but remote population semantics are still incomplete. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `FetchContent_MakeAvailable` | native | PARTIAL | PARTIAL | external_corpus | Cover the documented FetchContent module workflow used to declare, populate and query dependencies. | Supports local/provider-driven flows and recursive bypass, but not full remote population behavior. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `cmake_host_system_information` | native | PARTIAL | PARTIAL | external_corpus | Expose the documented host `QUERY` keys needed by CMake 3.28 scripts. | Only the `FQDN` query key is implemented; other documented keys still emit not-implemented diagnostics. | `src_v2/evaluator/eval_host.c` | [`cmake_host_system_information`](https://cmake.org/cmake/help/v3.28/command/cmake_host_system_information.html) |
+| `cmake_path` | native | FULL | PARTIAL | both | Cover the documented `cmake_path()` subcommand family used to compute script-visible path values. | Several documented `GET`/`CONVERT`/`COMPARE`/`HAS_*`/`IS_*` branches and subcommands still reject valid inputs. | `src_v2/evaluator/eval_cmake_path.c` | [`cmake_path`](https://cmake.org/cmake/help/v3.28/command/cmake_path.html) |
+| `export` | native | PARTIAL | PARTIAL | external_corpus | Cover the documented `export()` signatures that publish build/export metadata. | Supports reduced `TARGETS`/`EXPORT` file-writing paths; other signatures and module-related branches remain missing. | `src_v2/evaluator/eval_meta.c` | [`export`](https://cmake.org/cmake/help/v3.28/command/export.html) |
+| `file` | native | FULL | PARTIAL | both | Cover the documented `file()` subcommands that mutate evaluator-visible state or runtime effects. | Large `file()` surface exists, but unsupported subcommands and backend-limited branches still fall back to diagnostics. | `src_v2/evaluator/eval_file.c` + file submodules | [`file`](https://cmake.org/cmake/help/v3.28/command/file.html) |
+| `get_cmake_property` | native | PARTIAL | PARTIAL | external_corpus | Expose property/query results with the same observable semantics CMake scripts depend on. | Property introspection exists, but the observable property surface is still narrower than CMake 3.28. | `src_v2/evaluator/eval_target_property_query.c` | [`get_cmake_property`](https://cmake.org/cmake/help/v3.28/command/get_cmake_property.html) |
+| `get_directory_property` | native | PARTIAL | PARTIAL | external_corpus | Expose property/query results with the same observable semantics CMake scripts depend on. | Directory property queries work for the supported store, but not the full 3.28 query surface. | `src_v2/evaluator/eval_target_property_query.c` | [`get_directory_property`](https://cmake.org/cmake/help/v3.28/command/get_directory_property.html) |
+| `get_filename_component` | native | FULL | PARTIAL | external_corpus | Support the documented component/query modes exposed by `get_filename_component()`. | Common component modes work, but at least one documented component path still reports unsupported. | `src_v2/evaluator/eval_directory.c` | [`get_filename_component`](https://cmake.org/cmake/help/v3.28/command/get_filename_component.html) |
+| `get_property` | native | PARTIAL | PARTIAL | external_corpus | Expose property/query results with the same observable semantics CMake scripts depend on. | General property queries are implemented for a subset of scopes/modes; full parity is not there yet. | `src_v2/evaluator/eval_target_property_query.c` | [`get_property`](https://cmake.org/cmake/help/v3.28/command/get_property.html) |
+| `get_target_property` | native | PARTIAL | PARTIAL | external_corpus | Expose property/query results with the same observable semantics CMake scripts depend on. | Target-property queries are improved and declaration-directory aware, but still not fully complete. | `src_v2/evaluator/eval_target_property_query.c` | [`get_target_property`](https://cmake.org/cmake/help/v3.28/command/get_target_property.html) |
+| `install` | native | FULL | PARTIAL | both | Parse the documented install signatures and emit install-relevant evaluator semantics. | Common `install()` signatures emit events/rules, but unsupported rule types and corners still diagnose out. | `src_v2/evaluator/eval_install.c` | [`install`](https://cmake.org/cmake/help/v3.28/command/install.html) |
+| `list` | native | FULL | PARTIAL | both | Cover the documented `list()` mutation and query subcommands used in script control flow. | Core list behavior works, but `SORT`/`TRANSFORM` options remain narrower than the CMake 3.28 surface. | `src_v2/evaluator/eval_list.c` | [`list`](https://cmake.org/cmake/help/v3.28/command/list.html) |
+| `string` | native | FULL | PARTIAL | both | Cover the documented `string()` subcommand family used in script-visible computation. | Broad string support exists, but documented `FIND`/`COMPARE`/`CONFIGURE`/`RANDOM`/`TIMESTAMP`/`UUID` options still have gaps. | `src_v2/evaluator/eval_string.c` + string submodules | [`string`](https://cmake.org/cmake/help/v3.28/command/string.html) |
+| `add_compile_options` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_custom_command` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_custom_target` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_definitions` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_dependencies` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_executable` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_library` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_link_options` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_subdirectory` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `add_test` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `block` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `break` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `cmake_minimum_required` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `cmake_policy` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `configure_file` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `continue` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `cpack_add_component` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [CPackComponent](https://cmake.org/cmake/help/v3.28/module/CPackComponent.html) |
+| `cpack_add_component_group` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [CPackComponent](https://cmake.org/cmake/help/v3.28/module/CPackComponent.html) |
+| `cpack_add_install_type` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [CPackComponent](https://cmake.org/cmake/help/v3.28/module/CPackComponent.html) |
+| `else` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `elseif` | structural | n/a | FULL | external_corpus | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `enable_testing` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `endblock` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `endforeach` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `endfunction` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `endif` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `endmacro` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `endwhile` | structural | n/a | FULL | first_party_runtime | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `execute_process` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `find_file` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `find_library` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `find_package` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `find_path` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `find_program` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `foreach` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `function` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `if` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `include` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `include_directories` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `include_guard` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `link_directories` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `link_libraries` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `macro` | structural | n/a | FULL | both | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `mark_as_advanced` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `math` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `message` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `option` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `project` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `return` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `set` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `set_property` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `set_target_properties` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `source_group` | native | FULL | FULL | external_corpus | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_compile_definitions` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_compile_options` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_include_directories` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_link_directories` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_link_libraries` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_link_options` | native | FULL | FULL | first_party_runtime | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `try_compile` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `unset` | native | FULL | FULL | both | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `while` | structural | n/a | FULL | first_party_runtime | Execute structural control flow and definition semantics before semantic Event IR emission. | Handled outside the registry in structural evaluator execution; this audit found no project-relevant gap in the exercised surface. | `src_v2/evaluator/evaluator.c` + flow helpers | [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html) |
+| `FetchContent_GetProperties` | native | PARTIAL | PARTIAL | none | Cover the documented FetchContent module workflow used to declare, populate and query dependencies. | Returns evaluator-side declaration/population state, but only for the supported local subset. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `FetchContent_SetPopulated` | native | PARTIAL | PARTIAL | none | Cover the documented FetchContent module workflow used to declare, populate and query dependencies. | Supports provider/local fulfillment state, not the full native FetchContent population model. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `add_compile_definitions` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `aux_source_directory` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `build_command` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `build_name` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `cmake_file_api` | native | PARTIAL | PARTIAL | none | Model the documented `cmake_file_api()` query and reply workflow at evaluator layer. | Only `QUERY API_VERSION 1` local staging is modeled; richer reply/object semantics remain absent. | `src_v2/evaluator/eval_meta.c` | [`cmake_file_api`](https://cmake.org/cmake/help/v3.28/command/cmake_file_api.html) |
+| `cmake_language` | native | PARTIAL | PARTIAL | none | Support the documented `CALL`, `EVAL`, `DEFER`, provider and related subcommand surface. | Supports `CALL`, `EVAL CODE`, `DEFER`, `GET_MESSAGE_LOG_LEVEL` and a subset of dependency-provider behavior. | `src_v2/evaluator/eval_flow_cmake_language.c` | [`cmake_language`](https://cmake.org/cmake/help/v3.28/command/cmake_language.html) |
+| `cmake_parse_arguments` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `create_test_sourcelist` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `ctest_build` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Resolves session-local build context, but does not execute a full external dashboard build workflow. | `src_v2/evaluator/eval_ctest.c` | [`ctest_build`](https://cmake.org/cmake/help/v3.28/command/ctest_build.html) |
+| `ctest_configure` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Stages local configure metadata and session state, but not full external CTest configure orchestration. | `src_v2/evaluator/eval_ctest.c` | [`ctest_configure`](https://cmake.org/cmake/help/v3.28/command/ctest_configure.html) |
+| `ctest_coverage` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Tracks local session metadata only; no real external coverage tool orchestration is modeled. | `src_v2/evaluator/eval_ctest.c` | [`ctest_coverage`](https://cmake.org/cmake/help/v3.28/command/ctest_coverage.html) |
+| `ctest_empty_binary_directory` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Provides a reduced local cleanup path rather than full native CTest binary-dir management. | `src_v2/evaluator/eval_ctest.c` | [`ctest_empty_binary_directory`](https://cmake.org/cmake/help/v3.28/command/ctest_empty_binary_directory.html) |
+| `ctest_memcheck` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Session-local semantics exist, but no full external memcheck dashboard execution is modeled. | `src_v2/evaluator/eval_ctest.c` | [`ctest_memcheck`](https://cmake.org/cmake/help/v3.28/command/ctest_memcheck.html) |
+| `ctest_read_custom_files` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Only a reduced local interpretation is modeled; full custom-file dashboard semantics are absent. | `src_v2/evaluator/eval_ctest.c` | [`ctest_read_custom_files`](https://cmake.org/cmake/help/v3.28/command/ctest_read_custom_files.html) |
+| `ctest_run_script` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Supports local script execution and `NEW_PROCESS` via child scope, not full CTest process parity. | `src_v2/evaluator/eval_ctest.c` | [`ctest_run_script`](https://cmake.org/cmake/help/v3.28/command/ctest_run_script.html) |
+| `ctest_sleep` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Implements a reduced local helper, not full CTest script runtime parity. | `src_v2/evaluator/eval_ctest.c` | [`ctest_sleep`](https://cmake.org/cmake/help/v3.28/command/ctest_sleep.html) |
+| `ctest_start` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Seeds local session/tag state, but not the full external dashboard lifecycle. | `src_v2/evaluator/eval_ctest.c` | [`ctest_start`](https://cmake.org/cmake/help/v3.28/command/ctest_start.html) |
+| `ctest_submit` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Stages local manifest files under `Testing/<tag>/`; real CDash/network submission is absent. | `src_v2/evaluator/eval_ctest.c` | [`ctest_submit`](https://cmake.org/cmake/help/v3.28/command/ctest_submit.html) |
+| `ctest_test` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Uses local session state, but not the full external dashboard test runner behavior. | `src_v2/evaluator/eval_ctest.c` | [`ctest_test`](https://cmake.org/cmake/help/v3.28/command/ctest_test.html) |
+| `ctest_update` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Tracks local session/update metadata without full VCS/dashboard execution parity. | `src_v2/evaluator/eval_ctest.c` | [`ctest_update`](https://cmake.org/cmake/help/v3.28/command/ctest_update.html) |
+| `ctest_upload` | native | PARTIAL | PARTIAL | none | Match the documented CTest command semantics, including dashboard-side execution behavior. | Stages upload manifests locally; real dashboard upload behavior is absent. | `src_v2/evaluator/eval_ctest.c` | [`ctest_upload`](https://cmake.org/cmake/help/v3.28/command/ctest_upload.html) |
+| `define_property` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `enable_language` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `exec_program` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `export_library_dependencies` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `fltk_wrap_ui` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `get_source_file_property` | native | PARTIAL | PARTIAL | none | Expose property/query results with the same observable semantics CMake scripts depend on. | Reads the supported source-property state, but not the entire CMake 3.28 source-query behavior. | `src_v2/evaluator/eval_target_property_query.c` | [`get_source_file_property`](https://cmake.org/cmake/help/v3.28/command/get_source_file_property.html) |
+| `get_test_property` | native | PARTIAL | PARTIAL | none | Expose property/query results with the same observable semantics CMake scripts depend on. | Reads the supported test-property state in directory scope; broader parity is still missing. | `src_v2/evaluator/eval_target_property_query.c` | [`get_test_property`](https://cmake.org/cmake/help/v3.28/command/get_test_property.html) |
+| `include_external_msproject` | native | PARTIAL | PARTIAL | none | Model external MS project inclusion closely enough for evaluator-side control flow and metadata. | Captures metadata and target placeholders, not the full native Visual Studio integration behavior. | `src_v2/evaluator/eval_meta.c` | [`include_external_msproject`](https://cmake.org/cmake/help/v3.28/command/include_external_msproject.html) |
+| `include_regular_expression` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `install_files` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `install_programs` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `install_targets` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `load_cache` | native | PARTIAL | PARTIAL | none | Import cache entries with the documented modes and visibility rules of CMake 3.28. | Supports `READ_WITH_PREFIX` and selected import modes; unsupported argument shapes still diagnose out. | `src_v2/evaluator/eval_vars.c` | [`load_cache`](https://cmake.org/cmake/help/v3.28/command/load_cache.html) |
+| `load_command` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `make_directory` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `output_required_files` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `qt_wrap_cpp` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `qt_wrap_ui` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `remove` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `remove_definitions` | native | PARTIAL | PARTIAL | none | Remove directory-level compile definitions with legacy CMake-compatible normalization. | Removes exact `-D...` definitions from directory compile-definition state; broader legacy parity is narrower. | `src_v2/evaluator/eval_directory.c` | [`remove_definitions`](https://cmake.org/cmake/help/v3.28/command/remove_definitions.html) |
+| `separate_arguments` | native | PARTIAL | PARTIAL | none | Support all documented parsing modes, including `PROGRAM` handling. | Core parsing modes work, but `PROGRAM` mode is explicitly not implemented yet. | `src_v2/evaluator/eval_vars_parse.c` | [`separate_arguments`](https://cmake.org/cmake/help/v3.28/command/separate_arguments.html) |
+| `set_directory_properties` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `set_source_files_properties` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `set_tests_properties` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `site_name` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `subdir_depends` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `subdirs` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `target_compile_features` | native | PARTIAL | PARTIAL | none | Record compile-feature requirements with CMake-compatible feature semantics. | Stores compile-feature properties, but does not fully model CMake feature-resolution semantics. | `src_v2/evaluator/eval_target_usage.c` | [`target_compile_features`](https://cmake.org/cmake/help/v3.28/command/target_compile_features.html) |
+| `target_precompile_headers` | native | PARTIAL | PARTIAL | none | Model precompiled-header declarations and reuse semantics visible to scripts and later stages. | Stores PCH properties and `REUSE_FROM`, but not the full native realization semantics. | `src_v2/evaluator/eval_target_usage.c` | [`target_precompile_headers`](https://cmake.org/cmake/help/v3.28/command/target_precompile_headers.html) |
+| `target_sources` | native | PARTIAL | PARTIAL | none | Model regular sources and documented `FILE_SET` families visible to scripts and downstream build semantics. | Regular sources and `FILE_SET TYPE HEADERS` work; other file-set families remain unsupported. | `src_v2/evaluator/eval_target_usage.c` | [`target_sources`](https://cmake.org/cmake/help/v3.28/command/target_sources.html) |
+| `try_run` | native | PARTIAL | PARTIAL | none | Compile and execute test programs with native and cross-compiling behavior matching CMake 3.28. | Native source/project execution works, but cross-compiling falls back to deterministic compile-only skip. | `src_v2/evaluator/eval_try_run.c` | [`try_run`](https://cmake.org/cmake/help/v3.28/command/try_run.html) |
+| `use_mangled_mesa` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `utility_source` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `variable_requires` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `variable_watch` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
+| `write_file` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 
-The following are implemented outside dispatcher registry metadata and should be tracked separately:
-- `if`
-- `foreach`
-- `while`
-- `function`
-- `macro`
+No `missing-official` rows were found in the current workspace after filtering user-defined names and module-provided helper macros/functions out of the command/language inventory.
 
-Current status in code paths:
-- implemented in evaluator structural execution (`evaluator.c` + flow helpers),
-- not represented as rows in built-in command capability table.
+## 5. `PARTIAL` Detail Matrix
 
-## 7. `PARTIAL` Concentration by Domain
+Every row below corresponds to one `Audit Status = PARTIAL` command from the main table.
 
-`PARTIAL` commands are concentrated in specific domains, not evenly distributed.
+| Command | What CMake 3.28 Does | What Evaluator Already Does | What Is Still Missing | Why It Matters | Evaluator Work Needed | Code Evidence | Official Doc |
+|---|---|---|---|---|---|---|---|
+| `cmake_host_system_information` | Exposes a broad `QUERY` key surface for host/system introspection. | Supports the `FQDN` query key and returns script-visible result variables. | The remaining documented query keys still emit not-implemented diagnostics. | `external_corpus` | Implement the missing query-key handlers and normalize their result formatting in `eval_host.c`. | `src_v2/evaluator/eval_host.c` | [`cmake_host_system_information`](https://cmake.org/cmake/help/v3.28/command/cmake_host_system_information.html) |
+| `cmake_file_api` | Handles file-api query/reply workflows and object kinds documented for CMake 3.28. | Supports `QUERY API_VERSION 1` local staging under `.cmake/api/v1` and helper-path publication. | Full reply semantics, additional object kinds, and richer external file-api behavior remain absent. | `low` | Extend `eval_meta.c` to cover the remaining object-kind and reply-generation surface without leaving evaluator scope. | `src_v2/evaluator/eval_meta.c` | [`cmake_file_api`](https://cmake.org/cmake/help/v3.28/command/cmake_file_api.html) |
+| `cmake_language` | Supports the documented subcommand family, including advanced provider and deferred-call semantics. | Implements `CALL`, `EVAL CODE`, `DEFER`, `GET_MESSAGE_LOG_LEVEL`, and a subset of dependency-provider behavior. | Advanced subcommands and fuller provider parity beyond the documented evaluator subset remain missing. | `low` | Fill the remaining subcommand handlers and extend provider state transitions in `eval_flow_cmake_language.c`. | `src_v2/evaluator/eval_flow_cmake_language.c` | [`cmake_language`](https://cmake.org/cmake/help/v3.28/command/cmake_language.html) |
+| `ctest_build` | Runs the dashboard build step with native CTest orchestration semantics. | Resolves local session context and stages evaluator-side state. | External dashboard build orchestration is not modeled. | `low` | Add OS-process/dashboard execution integration for the build step while keeping local session state as the source of truth. | `src_v2/evaluator/eval_ctest.c` | [`ctest_build`](https://cmake.org/cmake/help/v3.28/command/ctest_build.html) |
+| `ctest_configure` | Runs the dashboard configure step with native CTest orchestration semantics. | Maintains local configure/session state and publishes resolved directories. | Full external CTest configure execution is missing. | `low` | Wire the configure step to real external orchestration semantics and preserve the current local state contract. | `src_v2/evaluator/eval_ctest.c` | [`ctest_configure`](https://cmake.org/cmake/help/v3.28/command/ctest_configure.html) |
+| `ctest_coverage` | Drives the dashboard coverage step and reports coverage results. | Keeps local session metadata only. | Coverage-tool execution and full dashboard behavior are absent. | `low` | Add real coverage-step execution/result shaping in `eval_ctest.c`. | `src_v2/evaluator/eval_ctest.c` | [`ctest_coverage`](https://cmake.org/cmake/help/v3.28/command/ctest_coverage.html) |
+| `ctest_empty_binary_directory` | Empties a binary tree with native CTest semantics. | Provides a reduced local cleanup path. | Full native binary-directory management parity is not implemented. | `low` | Expand cleanup semantics and error handling to match native CTest expectations. | `src_v2/evaluator/eval_ctest.c` | [`ctest_empty_binary_directory`](https://cmake.org/cmake/help/v3.28/command/ctest_empty_binary_directory.html) |
+| `ctest_memcheck` | Runs the dashboard memcheck step and reports results. | Tracks local session context only. | External memcheck execution/report semantics are absent. | `low` | Add the missing external runner/result path in `eval_ctest.c`. | `src_v2/evaluator/eval_ctest.c` | [`ctest_memcheck`](https://cmake.org/cmake/help/v3.28/command/ctest_memcheck.html) |
+| `ctest_read_custom_files` | Loads and applies custom CTest configuration files. | Implements a reduced local interpretation path. | Full custom-file semantics and dashboard-side effects remain incomplete. | `low` | Extend parsing/application of custom files to the documented 3.28 surface. | `src_v2/evaluator/eval_ctest.c` | [`ctest_read_custom_files`](https://cmake.org/cmake/help/v3.28/command/ctest_read_custom_files.html) |
+| `ctest_run_script` | Runs CTest scripts, including `NEW_PROCESS` semantics. | Supports local script execution and `NEW_PROCESS` through an isolated evaluator-side child scope. | Full process/runtime parity with native CTest script execution is missing. | `low` | Implement the remaining process-isolation and dashboard-side semantics in `eval_ctest.c`. | `src_v2/evaluator/eval_ctest.c` | [`ctest_run_script`](https://cmake.org/cmake/help/v3.28/command/ctest_run_script.html) |
+| `ctest_sleep` | Sleeps inside a CTest script with native runtime semantics. | Implements a reduced local helper. | Full script-runtime parity is still missing. | `low` | Align timing/result behavior with native CTest expectations. | `src_v2/evaluator/eval_ctest.c` | [`ctest_sleep`](https://cmake.org/cmake/help/v3.28/command/ctest_sleep.html) |
+| `ctest_start` | Seeds a dashboard session and tag state for later steps. | Seeds local session/tag state and related helper variables. | Full dashboard lifecycle parity remains absent. | `low` | Finish the session bootstrap semantics expected by downstream external steps. | `src_v2/evaluator/eval_ctest.c` | [`ctest_start`](https://cmake.org/cmake/help/v3.28/command/ctest_start.html) |
+| `ctest_submit` | Submits dashboard parts to a remote server/CDash. | Stages local manifest files under `Testing/<tag>/`. | Real network submission semantics are not implemented. | `low` | Add remote submit behavior and result shaping while preserving the local manifest contract. | `src_v2/evaluator/eval_ctest.c` | [`ctest_submit`](https://cmake.org/cmake/help/v3.28/command/ctest_submit.html) |
+| `ctest_test` | Runs the dashboard test step with native orchestration semantics. | Reuses local session context only. | Full external test-runner/dashboard behavior is missing. | `low` | Add real dashboard test execution/result capture. | `src_v2/evaluator/eval_ctest.c` | [`ctest_test`](https://cmake.org/cmake/help/v3.28/command/ctest_test.html) |
+| `ctest_update` | Runs the dashboard update/VCS step. | Tracks local session/update metadata. | Full VCS/dashboard execution parity is missing. | `low` | Implement the native update-step orchestration path. | `src_v2/evaluator/eval_ctest.c` | [`ctest_update`](https://cmake.org/cmake/help/v3.28/command/ctest_update.html) |
+| `ctest_upload` | Uploads files as part of a dashboard session. | Stages local upload manifests. | Real upload behavior and remote result handling are absent. | `low` | Implement the external upload path and response shaping. | `src_v2/evaluator/eval_ctest.c` | [`ctest_upload`](https://cmake.org/cmake/help/v3.28/command/ctest_upload.html) |
+| `export` | Supports several export signatures and related metadata publication features. | Supports reduced `TARGETS`/`EXPORT` file-writing paths and records the last export metadata locally. | Additional signatures and branches such as the remaining `export()` forms and module-related extras are still missing. | `project-relevant` | Expand signature parsing and remaining metadata-generation branches in `eval_meta.c`. | `src_v2/evaluator/eval_meta.c` | [`export`](https://cmake.org/cmake/help/v3.28/command/export.html) |
+| `FetchContent_Declare` | Records dependency metadata used by the FetchContent workflow. | Stores evaluator-side declaration state and local/provider-oriented metadata. | Full remote-population option handling is still incomplete. | `project-relevant` | Complete the declaration parser/normalization for the remaining FetchContent options. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `FetchContent_GetProperties` | Reports FetchContent population state and configured paths. | Returns evaluator-side declaration/population state for the supported local subset. | The remaining full module parity around richer population states is missing. | `project-relevant` | Extend state reporting to the remaining documented FetchContent shapes. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `FetchContent_MakeAvailable` | Ensures dependencies are populated and made available, including remote flows. | Supports local `SOURCE_DIR`/`BINARY_DIR`, provider fulfillment, recursive bypass, and evaluator-side population state. | Remote population workflows and full native module behavior are still missing. | `artifact-critical` | Implement the missing remote population path and remaining module semantics in `eval_fetchcontent.c`. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `FetchContent_SetPopulated` | Marks dependency population state within the FetchContent workflow. | Supports local/provider fulfillment state updates. | Full parity with the broader native population model is not complete yet. | `project-relevant` | Expand population-state bookkeeping to cover the remaining documented shapes. | `src_v2/evaluator/eval_fetchcontent.c` | [FetchContent](https://cmake.org/cmake/help/v3.28/module/FetchContent.html) |
+| `get_cmake_property` | Exposes global CMake property/query state to script control flow. | Reads from the current evaluator-side property store. | The exposed property surface is narrower than CMake 3.28. | `project-relevant` | Fill the missing property inventory/query branches in the query store and wrapper. | `src_v2/evaluator/eval_target_property_query.c` | [`get_cmake_property`](https://cmake.org/cmake/help/v3.28/command/get_cmake_property.html) |
+| `get_directory_property` | Exposes directory properties and definitions with native scoping semantics. | Supports persistent query state and directory-target-aware lookup for the implemented subset. | Remaining directory-property/query parity is still incomplete. | `project-relevant` | Extend directory query coverage and edge-scope handling in the query layer. | `src_v2/evaluator/eval_target_property_query.c` | [`get_directory_property`](https://cmake.org/cmake/help/v3.28/command/get_directory_property.html) |
+| `get_property` | Provides the generic property query API across scopes and query modes. | Handles a supported subset of scopes and query modes backed by the evaluator property store. | Full scope/mode parity and remaining documented query forms are still missing. | `project-relevant` | Complete scope/mode dispatch and the missing property storage/query surfaces. | `src_v2/evaluator/eval_target_property_query.c` | [`get_property`](https://cmake.org/cmake/help/v3.28/command/get_property.html) |
+| `get_source_file_property` | Reads source-file properties with native scoping behavior. | Reads the supported source-property state. | Remaining source-property query parity is missing. | `project-relevant` | Extend source-property storage/query coverage to the remaining documented behavior. | `src_v2/evaluator/eval_target_property_query.c` | [`get_source_file_property`](https://cmake.org/cmake/help/v3.28/command/get_source_file_property.html) |
+| `get_target_property` | Reads target properties visible to script control flow. | Supports the current target property store and declaration-directory-aware lookup. | The full target-property surface is still incomplete. | `project-relevant` | Finish property exposure for the remaining documented target properties and edge cases. | `src_v2/evaluator/eval_target_property_query.c` | [`get_target_property`](https://cmake.org/cmake/help/v3.28/command/get_target_property.html) |
+| `get_test_property` | Reads test properties visible to script control flow. | Reads the supported test-property state in directory scope. | Full parity for the broader test-property surface is not there yet. | `project-relevant` | Extend test-property storage/query behavior in the query wrapper layer. | `src_v2/evaluator/eval_target_property_query.c` | [`get_test_property`](https://cmake.org/cmake/help/v3.28/command/get_test_property.html) |
+| `include_external_msproject` | Integrates an external MS project into the build graph and generated metadata. | Parses the supported arguments, registers a target placeholder, and publishes evaluator-side metadata. | Full native Visual Studio/generator integration semantics are still missing. | `low` | Extend metadata and graph handling to cover the remaining documented integration behavior. | `src_v2/evaluator/eval_meta.c` | [`include_external_msproject`](https://cmake.org/cmake/help/v3.28/command/include_external_msproject.html) |
+| `load_cache` | Imports cache entries using the documented modes and visibility controls. | Supports `READ_WITH_PREFIX` plus selective import modes backed by direct cache parsing. | Remaining documented modes/argument shapes are still unsupported. | `low` | Finish the unsupported mode parser branches and align imported-entry behavior with CMake 3.28. | `src_v2/evaluator/eval_vars.c` | [`load_cache`](https://cmake.org/cmake/help/v3.28/command/load_cache.html) |
+| `remove_definitions` | Removes compile definitions with legacy-compatible normalization. | Removes exact `-D...` entries from directory compile-definition state and resynchronizes the directory property. | Broader legacy normalization and edge-case parity remain incomplete. | `low` | Extend removal normalization and compatibility behavior in `eval_directory.c`. | `src_v2/evaluator/eval_directory.c` | [`remove_definitions`](https://cmake.org/cmake/help/v3.28/command/remove_definitions.html) |
+| `separate_arguments` | Supports all documented parsing modes, including `PROGRAM`. | Core parsing modes are implemented. | `PROGRAM` mode is explicitly not implemented yet. | `low` | Implement the `PROGRAM` branch in `eval_vars_parse.c` and align result variables with CMake 3.28. | `src_v2/evaluator/eval_vars_parse.c` | [`separate_arguments`](https://cmake.org/cmake/help/v3.28/command/separate_arguments.html) |
+| `target_compile_features` | Records compile-feature requirements and their native semantics. | Stores `COMPILE_FEATURES` and `INTERFACE_COMPILE_FEATURES` in the evaluator property store. | Feature availability/standard-resolution semantics are not fully modeled. | `project-relevant` | Add compile-feature interpretation/validation beyond raw property storage. | `src_v2/evaluator/eval_target_usage.c` | [`target_compile_features`](https://cmake.org/cmake/help/v3.28/command/target_compile_features.html) |
+| `target_precompile_headers` | Records precompiled-header declarations and reuse semantics. | Stores `PRECOMPILE_HEADERS`, `INTERFACE_PRECOMPILE_HEADERS`, and `REUSE_FROM` dependencies. | Full realization semantics beyond property/dependency recording remain incomplete. | `project-relevant` | Extend evaluator-visible semantics for the remaining PCH behavior that scripts depend on. | `src_v2/evaluator/eval_target_usage.c` | [`target_precompile_headers`](https://cmake.org/cmake/help/v3.28/command/target_precompile_headers.html) |
+| `target_sources` | Records regular sources plus documented `FILE_SET` families. | Stores regular sources and supports `FILE_SET TYPE HEADERS`. | Other `FILE_SET` families, notably `CXX_MODULES`, remain unsupported. | `artifact-critical` | Extend `target_sources_parse_file_set(...)` and related storage to the remaining file-set families. | `src_v2/evaluator/eval_target_usage.c` | [`target_sources`](https://cmake.org/cmake/help/v3.28/command/target_sources.html) |
+| `try_run` | Compiles and runs test executables for native and cross-compiling workflows. | Supports native source/project execution and deterministic compile-only skip when `CMAKE_CROSSCOMPILING` is true. | Cross-compiling answer-file/emulator workflows are not implemented. | `project-relevant` | Add the missing cross-compiling answer-file/emulator branches in `eval_try_run.c`. | `src_v2/evaluator/eval_try_run.c` | [`try_run`](https://cmake.org/cmake/help/v3.28/command/try_run.html) |
+| `cmake_path` | Supports the full documented `cmake_path()` subcommand family. | Core path handling exists and is used by first-party/runtime fixtures. | Valid documented `GET`, `CONVERT`, `COMPARE`, `HAS_*`, `IS_*`, and additional subcommand branches still fail. | `artifact-critical` | Complete the missing subcommand/operator/component branches in `eval_cmake_path.c`. | `src_v2/evaluator/eval_cmake_path.c` | [`cmake_path`](https://cmake.org/cmake/help/v3.28/command/cmake_path.html) |
+| `file` | Supports the broad `file()` subcommand family used by scripts. | Implements a wide local backend across glob, rw, fsops, transfer, archive, generate and extra helpers. | Unsupported subcommands/options and backend-limited branches still prevent full 3.28 parity. | `artifact-critical` | Fill the missing subcommand surface and backend gaps in the `eval_file*.c` family. | `src_v2/evaluator/eval_file.c` and submodules | [`file`](https://cmake.org/cmake/help/v3.28/command/file.html) |
+| `get_filename_component` | Supports the documented component modes used by scripts. | Handles common modes such as directory/name/ext/name-we/path/absolute/realpath/program variants. | At least one documented component path is still marked unsupported. | `project-relevant` | Implement the remaining component/query branch in `eval_directory.c`. | `src_v2/evaluator/eval_directory.c` | [`get_filename_component`](https://cmake.org/cmake/help/v3.28/command/get_filename_component.html) |
+| `install` | Supports the documented install signatures and option semantics. | Handles common `FILES`, `PROGRAMS`, `DIRECTORY`, `TARGETS`, and related install-rule emission paths. | Unsupported rule types/signature corners still diagnose out instead of matching CMake 3.28. | `artifact-critical` | Extend `eval_install.c` to the remaining signatures/rule kinds and their option semantics. | `src_v2/evaluator/eval_install.c` | [`install`](https://cmake.org/cmake/help/v3.28/command/install.html) |
+| `list` | Supports the documented list query/mutation subcommands used by scripts. | Covers the core list surface used by first-party fixtures and the curl corpus. | Some valid `SORT` and `TRANSFORM` selectors/options remain unsupported. | `artifact-critical` | Fill the missing selector/option branches in `eval_list.c` and keep result semantics aligned with CMake 3.28. | `src_v2/evaluator/eval_list.c` | [`list`](https://cmake.org/cmake/help/v3.28/command/list.html) |
+| `string` | Supports the documented `string()` computation surface used by scripts. | Implements a broad set of text, regex, JSON, misc, timestamp, random and UUID helpers. | Valid documented options/modes for `FIND`, `COMPARE`, `CONFIGURE`, `RANDOM`, `TIMESTAMP`, and `UUID` still have gaps. | `artifact-critical` | Complete the missing option/mode branches in the `eval_string*.c` family. | `src_v2/evaluator/eval_string.c` and submodules | [`string`](https://cmake.org/cmake/help/v3.28/command/string.html) |
 
-| Domain | Partial Count | Notes |
-|---|---:|---|
-| `ctest_*` workflow | 13 | Largest cluster; mostly metadata/compat surfaces vs full native tool behavior. |
-| Legacy compatibility wrappers | 0 | G5 closed this cluster for the documented evaluator subset; no legacy wrappers remain in the `PARTIAL` set. |
-| Property/query and introspection | 6 | Read/query paths still less complete than mutation/write paths. |
-| Meta/runtime integrations | 3 | `cmake_file_api`, `cmake_host_system_information`, `include_external_msproject`. |
-| Modern but still incomplete semantics | 9 | Includes `cmake_language`, `target_*` advanced surfaces, `try_run`, `export`, `load_cache`, `remove_definitions`, `separate_arguments`. |
+## 6. Interpretation Notes
 
-## 8. Explicit `PARTIAL` Command List
+- This document is intentionally stricter than the static registry metadata.
+- A registry `FULL` tag can still audit as `PARTIAL` when the current code rejects a documented CMake 3.28 behavior that matters to the audited corpus.
+- The inverse did not occur in this snapshot: no registry `PARTIAL` rows were promoted to audit `FULL`.
+- `parser` / `lexer` goldens were used only as syntax signals and did not raise implementation priority by themselves.
 
-Current `PARTIAL` set (31 commands):
-
-```text
-cmake_file_api
-cmake_host_system_information
-cmake_language
-ctest_build
-ctest_configure
-ctest_coverage
-ctest_empty_binary_directory
-ctest_memcheck
-ctest_read_custom_files
-ctest_run_script
-ctest_sleep
-ctest_start
-ctest_submit
-ctest_test
-ctest_update
-ctest_upload
-export
-get_cmake_property
-get_directory_property
-get_property
-get_source_file_property
-get_target_property
-get_test_property
-include_external_msproject
-load_cache
-remove_definitions
-separate_arguments
-target_compile_features
-target_precompile_headers
-target_sources
-try_run
-```
-
-## 9. Coverage Interpretation Notes
-
-Current high-level interpretation:
-- core modern command surface has broad `FULL` coverage,
-- the March 8, 2026 G5 batch retired the legacy-wrapper `PARTIAL` cluster by treating the documented evaluator subset as complete,
-- residual risk is now concentrated in `ctest_*`, query/introspection paths, and the remaining advanced meta/runtime slices,
-- `try_run` remains correctly tagged `PARTIAL`: native source-file and `PROJECT` signatures now execute, but the cross-compiling answer-file workflow still resolves to a deterministic compile-only skip instead of full target execution,
-- fallback metadata remains overwhelmingly `NOOP_WARN`, so runtime strictness is mostly shaped by command handlers and compat policy rather than fallback enum diversity.
-
-## 10. Priority Promotion Candidates
-
-Highest-leverage candidates to reduce `PARTIAL` footprint:
-1. Residual external `ctest_*` execution surface.
-   Progress note for the March 6, 2026 workspace batches: the evaluator-side/local-orchestration slice of the family is now complete. The cluster shares a lightweight CTest session model (`MODEL`, `TRACK`, `SOURCE`, `BUILD`) seeded by `ctest_start(...)`; that start step also stages `Testing/TAG` plus session `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. The configure/build/test/coverage/memcheck/update commands resolve omitted source/build context from that session, `ctest_submit` / `ctest_upload` stage local manifest files under `Testing/<tag>/` with resolved file lists, and `ctest_run_script(NEW_PROCESS ...)` executes in an isolated evaluator-side child scope. The remaining `PARTIAL` footprint is the intentionally deferred external dashboard/tool-execution layer.
-2. `target_compile_features` / `target_precompile_headers` / `target_sources`.
-   Progress note for the March 6, 2026 workspace batch: these advanced target commands now feed the persistent target property store as well as the Event IR, so `get_target_property(...)` can observe `SOURCES`, `INTERFACE_SOURCES`, compile-feature properties, precompile-header properties, and the `TYPE HEADERS` `FILE_SET` surface (`HEADER_SET*` / `HEADER_DIRS*`). Residual partial coverage is now concentrated in other file-set types such as `CXX_MODULES`.
-3. `try_run` cross-compiling answer-file workflow.
-   Progress note for the March 6, 2026 workspace batch: `try_run(PROJECT ...)` now executes through the shared `try_compile(PROJECT ...)` machinery. The remaining partial behavior is the non-native answer-file/emulator path, which currently returns a deterministic compile-only skip.
-4. `get_property` and related query wrappers.
-   Progress note for the March 6, 2026 workspace batch: the evaluator now keeps property query state in a persistent internal store across scope pops, and inherited `TARGET` plus `SOURCE TARGET_DIRECTORY` queries follow the target declaration directory instead of the caller-local directory.
-5. G4 residual runtime/meta integrations.
-   Progress note for the March 6, 2026 workspace batch: `cmake_file_api(QUERY API_VERSION 1 ...)` now stages evaluator-side query/reply/index artifacts under `.cmake/api/v1` and publishes stable `NOBIFY_CMAKE_FILE_API::*` path variables, `cmake_host_system_information()` now covers the `FQDN` query key instead of treating it as unimplemented, and `cmake_language(SET_DEPENDENCY_PROVIDER ...)` now covers both the file-scope `FIND_PACKAGE` provider subset and the `FETCHCONTENT_MAKEAVAILABLE_SERIAL` subset. The new `FetchContent` batch keeps evaluator-side declaration/population state, supports local `SOURCE_DIR` / `BINARY_DIR` flows plus `FETCHCONTENT_SOURCE_DIR_<UPPER>` bypass, and honors same-dependency recursive fallback without re-entering the provider. Remaining partial behavior is concentrated in the rest of the advanced `cmake_language` surface and richer file-api/meta-runtime semantics beyond local staging.
-
-## 11. Relationship to Other Docs
+## 7. Relationship to Other Docs
 
 - `evaluator_v2_spec.md`
-Canonical contract and precedence.
+  Canonical top-level evaluator contract.
 
 - `evaluator_command_capabilities.md`
-API/data-model contract that provides the static capability labels used here.
-
-- `evaluator_dispatch.md`
-Runtime routing behavior that is separate from analytical coverage labeling.
+  Defines the registry metadata (`implemented_level`, `fallback_behavior`) that now feeds, but does not fully determine, this audit.
 
 - `evaluator_event_ir_contract.md`
-Event output coverage/invariants, complementary to command capability coverage.
+  Complements this command audit with output/event invariants.
