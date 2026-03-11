@@ -229,7 +229,7 @@ Phase G working rules:
 
 - Structural extraction should happen before large semantic-promotion pushes whenever both touch the same code path.
 - The objective is to avoid paying the same regression-fix tax twice: once during movement and again during semantic completion.
-- Do not start a large semantic-promotion wave while the Event IR contract for that same slice is still changing underneath it; finish the bounded G0 stabilization pass first.
+- Do not reopen the Event IR contract underneath a large semantic-promotion wave; G0 exists to keep that boundary frozen before Phase G work proceeds.
 
 ## 4. Acceptance Conditions for This Roadmap
 

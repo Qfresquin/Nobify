@@ -59,37 +59,38 @@ Historical archive note:
 
 ## 3. Snapshot Baseline
 
-Snapshot date (workspace): March 6, 2026.
+Snapshot date (workspace verification refresh): March 11, 2026.
 
 Verification baseline:
-- `./build/nob_v2_test test-evaluator` passes with `passed=107 failed=0` on the March 6, 2026 workspace snapshot.
+- `./build/nob_v2_test test-evaluator` passes with `passed=115 failed=0` on the March 11, 2026 workspace verification refresh.
+- the March 11, 2026 G0 hardening review found no uncovered Event-IR contract promise beyond the existing evaluator suite, so no evaluator code or schema change was required to close the pass.
 - local `build/nob_test` is not a source of truth for this audit because `/build` is ignored and stale binaries can predate the post-refactor unit split even when `src_v2/build/nob_test.c` is already current.
 
 Current quantitative baseline:
-- Built-in registry commands: `119`
-- Capability labels: `67 FULL` / `52 PARTIAL` / `0 MISSING`
-- Fallback labels: `116 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
+- Built-in registry commands: `123`
+- Capability labels: `88 FULL` / `35 PARTIAL` / `0 MISSING`
+- Fallback labels: `120 NOOP_WARN` / `3 ERROR_CONTINUE` / `0 ERROR_STOP`
 - Largest implementation files by size:
-  - `eval_package.c` (`1078` lines)
+  - `eval_package.c` (`1212` lines)
+  - `evaluator.c` (`989` lines)
   - `eval_file_generate_lock_archive.c` (`984` lines)
-  - `evaluator.c` (`960` lines)
   - `eval_project.c` (`942` lines)
   - `eval_file_transfer.c` (`919` lines)
-- `evaluator.c` after Phase E1 execution-service extraction and Phase F cleanup: `960` lines
+- `evaluator.c` after Phase E1 execution-service extraction and Phase F cleanup: `989` lines
 - `eval_file.c` after Phase D1 dispatcher split: `57` lines
 - `eval_file_{path,glob,rw,copy}.c`: `409` / `422` / `612` / `637` lines
 - `eval_string.c` after Phase D2 dispatcher split: `58` lines
 - `eval_string_{text,regex,json,misc}.c`: `545` / `185` / `874` / `507` lines
-- post-Phase-F5 target cluster `eval_target{,_usage,_property_query,_source_group}.c`: `695` / `523` / `359` / `227` lines
-- `eval_package` after Phase D4 split: `1078` / `874` lines (`core` / `find_item`)
-- `eval_flow` after Phase D5 split: `269` / `253` / `459` / `784` lines (`core` / `block` / `cmake_language` / `process`)
-- post-Phase-F4/F6 `eval_try_compile{,_parse,_exec}.c` + `eval_try_run.c`: `243` / `553` / `568` / `118` lines
+- post-Phase-F5 target cluster `eval_target{,_usage,_property_query,_source_group}.c`: `695` / `806` / `357` / `227` lines
+- `eval_package` after Phase D4 split: `1212` / `874` lines (`core` / `find_item`)
+- `eval_flow` after Phase D5 split: `269` / `253` / `599` / `784` lines (`core` / `block` / `cmake_language` / `process`)
+- post-Phase-F4/F6 `eval_try_compile{,_parse,_exec}.c` + `eval_try_run.c`: `243` / `544` / `845` / `137` lines
 - Phase F adjacent modules:
   - `eval_file_{extra,runtime_deps}.c`: `723` / `583` lines
   - `eval_vars{,_parse}.c`: `659` / `604` lines
   - `eval_list{,_helpers}.c`: `817` / `339` lines
   - `eval_cmake_path{,_utils}.c`: `721` / `390` lines
-  - `eval_utils{,_path}.c`: `609` / `307` lines
+  - `eval_utils{,_path}.c`: `618` / `307` lines
 
 ## 4. Positive Findings
 
@@ -109,39 +110,25 @@ Current strengths worth preserving:
 - Phase D6 split `eval_try_compile` into shared helpers plus parse/exec/`try_run` modules while preserving the public API.
 - Phase F5/F6 finished the remaining hotspot tier by moving target property queries, runtime dependency handling, variable parsers, list helpers, `cmake_path()` utilities, and command-line/path helpers into adjacent internal modules while preserving the evaluator baseline.
 - Phase F completed the bulk structural campaign by decomposing the post-D hotspot tier, normalizing the new internal boundaries, and returning the evaluator to a green baseline without reopening dispatcher or context-ownership decisions.
-- The Event IR redesign is now in place, which makes it possible to stabilize the evaluator -> Event IR contract before the next semantic-promotion wave instead of trying to promote semantics while the contract is still moving.
-- The current evaluator suite gives a stable behavioral post-refactor baseline when run through `build/nob_v2_test`.
+- The Event IR redesign and bounded G0 stabilization pass are now closed in the active workspace, so Phase G semantic work no longer needs to reopen the evaluator -> Event IR boundary.
+- Existing evaluator Event-IR contract tests lock taxonomy, deep-copy ownership, command framing, include/subdirectory ordering, and directory/global semantic visibility.
+- The current evaluator suite gives a stable behavioral post-refactor baseline when run through `build/nob_v2_test`, and the March 11, 2026 verification refresh still passes `115/115`.
 
 ## 5. Prioritized Findings
 
 | ID | Severity | Category | Finding (short) |
 |---|---|---|---|
-| F-11 | Medium | Sequencing risk | Semantic promotion should not start as the next large wave until the evaluator -> Event IR contract is stabilized through a bounded pre-G pass. |
 | F-10 | Low | Verification workflow | A stale local `build/nob_test` binary can report false refactor regressions even though the current runner source and `build/nob_v2_test` are aligned. |
-| F-07 | Low | Coverage debt | `PARTIAL` footprint is still material (`26.1%`), now concentrated in `ctest_*`, query/introspection, and advanced meta/runtime surfaces. |
+| F-07 | Low | Coverage debt | `PARTIAL` footprint is still material (`33.3%` of registry-backed native commands), now concentrated in `ctest_*`, query/introspection, and advanced meta/runtime surfaces. |
 
 ## 6. Detailed Findings
-
-### F-11: Semantic promotion sequencing now depends on a short Event IR stabilization pass
-
-Evidence:
-- Phase F completed the structural bulk move, and the evaluator/Event-IR boundary has already been redefined enough that semantic work would otherwise be layered on top of a moving contract.
-- The evaluator now emits first-class Event IR as its canonical output boundary, but the next wave still needs one bounded pass to freeze roles/families, command framing, and directory/global semantic events before broader semantic promotion starts.
-- The build model still does not exist in `src_v2`, so there is no downstream implementation pressure yet to justify an open-ended Event-IR expansion campaign.
-
-Risk:
-- Starting G1/G2/G4 while the Event IR contract for those same slices is still changing would force the team to pay the regression and doc-update tax twice: once for contract churn and again for semantic promotion.
-
-Recommendation:
-- Insert a bounded `G0` stabilization pass before the main semantic-promotion wave.
-- Treat G0 as a gate on contract stability, not as a mandate to complete every Event IR family before Phase G.
 
 ### F-10: Verification workflow drift can come from stale local runner binaries
 
 Evidence:
-- In the March 6, 2026 workspace, `./build/nob_test test-evaluator` can fail at link time against missing symbols from the extracted evaluator units.
-- The current source of `src_v2/build/nob_test.c` already includes the split units, and `./build/nob_v2_test test-evaluator` passes `107/107`.
-- `/build` is ignored, so a locally cached runner binary can lag behind source without showing up as a tracked diff.
+- On the March 11, 2026 verification refresh, `./build/nob_v2_test test-evaluator` passes with `passed=115 failed=0`.
+- `./build/nob_test test-evaluator` can still fail at link time when a locally cached runner predates the post-refactor evaluator unit split.
+- The current source of `src_v2/build/nob_test.c` already includes the split units, so `/build` can lag behind source without showing up as a tracked diff.
 
 Risk:
 - Engineers can misclassify a stale local artifact as a refactor regression in evaluator semantics or link topology.
@@ -152,26 +139,23 @@ Recommendation:
 ### F-07: Coverage debt concentration
 
 Evidence:
-- Coverage matrix snapshot: `31` of `119` built-ins remain `PARTIAL` (`26.1%`).
-- Concentration is mostly `ctest_*`, query/introspection surfaces, and the remaining advanced meta/runtime commands.
+- Coverage matrix snapshot: `41` of `123` registry-backed native commands still audit as `PARTIAL` (`33.3%`).
+- Concentration is mostly `ctest_*`, property/query/introspection surfaces, and the remaining advanced meta/runtime commands.
 
 Risk:
 - Behavioral confidence remains uneven despite broad command-name availability.
 
 Recommendation:
-- Keep promotion backlog focused on clusters (not one-off commands), starting with `ctest_*` + `target_* advanced` + `try_run`.
+- Keep Phase G promotion backlog focused on clusters (not one-off commands), starting with `ctest_*` + property/query/introspection + `target_* advanced` + `try_run`, without reopening the now-closed G0 boundary.
 
 ## 7. Remediation Backlog
 
 Priority tiers for next engineering/doc pass:
 
 1. P0
-- Run a short `G0` Event-IR stabilization pass before broad semantic promotion, then keep the promotion roadmap aligned with `evaluator_coverage_matrix.md` (F-11, F-07).
+- Keep the Phase G semantic-promotion roadmap aligned with `evaluator_coverage_matrix.md`, focusing on clustered `PARTIAL` surfaces without reopening the evaluator -> Event IR contract (F-07).
 
 2. P1
-- Keep coverage-promotion roadmap in sync with `evaluator_coverage_matrix.md` (F-07).
-
-3. P2
 - Document or remove ambiguity around stale local runner binaries vs current runner source (`build/nob_test` vs `build/nob_v2_test`) in evaluator verification workflow (F-10).
 
 ## 8. Closed / Documented
@@ -234,12 +218,29 @@ Disposition:
 
 Current state:
 - Phase F completed the planned post-Phase-D hotspot decomposition and follow-up cleanup.
-- The largest remaining evaluator translation unit is `eval_package.c` at `1078` lines; the next tier is `eval_file_generate_lock_archive.c` (`984`), `evaluator.c` (`960`), `eval_project.c` (`942`), and `eval_file_transfer.c` (`919`).
-- The former F5 hotspot families now live in adjacent modules such as `eval_target_property_query.c` (`359`), `eval_file_runtime_deps.c` (`583`), `eval_vars_parse.c` (`604`), `eval_list_helpers.c` (`339`), `eval_cmake_path_utils.c` (`390`), and `eval_utils_path.c` (`307`).
+- The largest remaining evaluator translation unit is `eval_package.c` at `1212` lines; the next tier is `evaluator.c` (`989`), `eval_file_generate_lock_archive.c` (`984`), `eval_project.c` (`942`), and `eval_file_transfer.c` (`919`).
+- The former F5 hotspot families now live in adjacent modules such as `eval_target_property_query.c` (`357`), `eval_file_runtime_deps.c` (`583`), `eval_vars_parse.c` (`604`), `eval_list_helpers.c` (`339`), `eval_cmake_path_utils.c` (`390`), and `eval_utils_path.c` (`307`).
 - The temporary low-level helper leaks introduced during the bulk move were normalized before closing the campaign.
 
 Disposition:
-- closed as structurally resolved for the March 6, 2026 baseline; further work should focus on semantic promotion, not more file-splitting for its own sake.
+- closed as structurally resolved for the March 11, 2026 baseline; further work should focus on semantic promotion, not more file-splitting for its own sake.
+
+### F-11: Event IR G0 stabilization closure
+
+Current state:
+- `docs/evaluator/Refatorção Estrutural.md` already marks G0.1-G0.4 as completed in the active roadmap.
+- `docs/evaluator/evaluator_event_ir_contract.md` and `docs/transpiler/event_ir_v2_spec.md` already describe the current Event IR contract as the locked G0.4 baseline.
+- the promised G0 coverage is exercised directly by the existing evaluator suite through:
+  - `evaluator_event_ir_taxonomy_is_frozen`
+  - `evaluator_event_ir_metadata_and_stream_contract`
+  - `evaluator_event_ir_directory_semantics_and_trace_surface`
+  - `evaluator_event_ir_command_trace_sequences_unknown_and_error_paths`
+  - `evaluator_event_ir_command_trace_sequences_success_paths`
+- the March 11, 2026 verification refresh confirmed `./build/nob_v2_test test-evaluator` still passes `115/115`, so the hardening pass found no missing coverage that required evaluator code or schema changes.
+
+Disposition:
+- closed in the March 11, 2026 verification/documentation pass.
+- Phase G work should treat the evaluator -> Event IR boundary as frozen unless a separate explicit contract change is proposed.
 
 ### F-08: `find_*(... ENV ...)` malformed validation path
 
@@ -262,23 +263,24 @@ Current state:
 Disposition:
 - closed in the March 6, 2026 evaluator fix pass.
 
-### F-11: Documentation drift after the refactor wave
+### F-12: Documentation drift after the refactor wave
 
 Current state:
-- this audit pass no longer claims that Phases D1-D6 preserved golden output across the full March 6, 2026 snapshot; the wording is now limited to public-API preservation,
-- the verification baseline is explicitly tied to `./build/nob_v2_test test-evaluator`,
-- the source-of-truth list and quantitative snapshot now include the post-Phase-F adjacent modules and their current March 6, 2026 file-size baseline,
+- this audit pass no longer claims that G0 is pending; the roadmap now starts from Phase G semantic promotion against a frozen Event IR boundary,
+- the verification baseline is explicitly tied to `./build/nob_v2_test test-evaluator` with `passed=115 failed=0` as of March 11, 2026,
+- the source-of-truth list and quantitative snapshot now include the current registry counts and current evaluator file-size baseline,
 - stale `docs/Evaluatorr/...` references were removed and replaced by an explicit note that no legacy evaluator audit archive is present in-tree.
 
 Disposition:
-- closed in the March 6, 2026 documentation pass.
+- closed in the March 11, 2026 documentation pass.
 
 ## 9. Verification Checklist for Next Audit Pass
 
-- Re-run `./build/nob_v2_test test-evaluator` and record both the pass/fail summary and any unexpected evaluator-side log noise.
+- Re-run `./build/nob_v2_test test-evaluator` and record both the pass/fail summary and any unexpected evaluator-side log noise; the current March 11, 2026 baseline is `passed=115 failed=0`.
 - Rebuild or ignore stale `build/nob_test` binaries before classifying workflow failures as evaluator regressions.
 - Re-run registry stats and fallback distribution from `eval_command_registry.h`.
 - Confirm any new `PARTIAL -> FULL` promotions are reflected in both coverage matrix and capability docs.
+- If an explicit Event IR contract change is proposed later, update `Refatorção Estrutural.md`, `evaluator_event_ir_contract.md`, and `event_ir_v2_spec.md` together instead of treating semantic-promotion work as an implicit G0 reopen.
 - Keep `try_run` limitations aligned between `evaluator_v2_spec.md`, `evaluator_coverage_matrix.md`, and this audit file.
 - Keep malformed `find_*(... ENV ...)` forms covered by regression tests as the option parser evolves.
 - Recompute top evaluator file-size hotspots after any refactor wave.

@@ -13,12 +13,16 @@ The migration is rewrite-first, not port-first:
 
 ## 2. Current State
 
-As of March 8, 2026:
+As of March 11, 2026:
 - canonical evaluator output is `Event_Stream`
 - canonical build-model documentation lives in this directory
-- operational pipeline tests still include legacy build-model headers
-- `src_obsolete/build_model/` remains the functional baseline for behavior and
-  regression comparison
+- canonical build-model implementation lives in `src_v2/build_model/`
+- the active v2 test/build path now compiles and runs pipeline coverage against
+  `src_v2/build_model/`
+- `src_obsolete/build_model/` remains archival reference only and is no longer
+  the functional baseline for normal builds or tests
+- remaining migration work is compatibility/archive cleanup, not pipeline
+  cutover
 
 ## 3. Migration Batches
 
@@ -94,6 +98,13 @@ Acceptance:
 
 ### Batch 6: Pipeline Cutover
 
+Status:
+- completed in the March 11, 2026 workspace
+- the active v2 runner in `src_v2/build/nob_test.c` builds pipeline coverage
+  with `append_v2_build_model_runtime_sources(...)`
+- the March 11, 2026 verification refresh keeps
+  `./build/nob_v2_test test-pipeline` green with `passed=3 failed=0`
+
 Deliverables:
 - move pipeline tests to the canonical API
 - remove direct build dependency on `src_obsolete/build_model/`
@@ -107,14 +118,15 @@ Acceptance:
 - During migration, legacy headers may forward to the new implementation.
 - New implementation work must happen only in `src_v2/build_model/`.
 - `src_obsolete/build_model/` may receive only migration-critical fixes until
-  cutover is complete.
+  final archival cleanup is complete.
 - The repository must never introduce a second-generation name like
   `build_model_v3`. The canonical implementation takes the plain `build_model`
   name in `src_v2`.
 
 ## 5. Regression Strategy
 
-The legacy build model is the regression oracle, not the target architecture.
+The archival legacy build model remains a regression oracle, not the active
+runtime path or target architecture.
 
 Required safeguards:
 - keep focused pipeline tests for builder/freeze/query behavior
@@ -128,4 +140,5 @@ The migration is complete when:
 - `src_v2/build_model/` provides builder, validate, freeze, and query
 - the active pipeline uses the canonical API
 - `src_obsolete/build_model/` is no longer required for normal builds or tests
+  and remains only as archival reference until final deletion
 - the documentation in this directory matches the implemented contract
