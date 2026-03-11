@@ -20,8 +20,8 @@ Baseline:
 Primary sources of truth:
 - local code and docs: `src_v2/evaluator/eval_command_registry.h`, structural execution paths, and focused evaluator docs;
 - official docs:
-  - [cmake-commands(7)]()
-  - [cmake-language(7)]()
+  - [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html)
+  - [cmake-language(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-language.7.html)
   - command/module pages for every audited `PARTIAL` row.
 
 Universe audited in this snapshot:
@@ -46,7 +46,7 @@ Important distinction:
 - the two intentionally diverge when code/docs show a real evaluator gap despite a registry `FULL` tag.
 
 Excluded from `MISSING`:
-- user-defined functions/macros such as `fn_apply`, `ret_fn`, `mc_apply`, `curl_add_if`;
+- non-built-in command names introduced by project or module code at runtime;
 - module-provided helpers/macros outside the command/language manual inventory, such as `check_symbol_exists`, `check_function_exists`, `check_type_size`, `find_dependency`, `cmake_push_check_state`, `ExternalProject_Add`, and `pkg_check_modules`.
 
 ## 3. Snapshot Summary
@@ -57,14 +57,14 @@ Snapshot date: March 11, 2026.
 |---|---:|
 | Registry built-ins | 123 |
 | Structural nodes outside registry | 12 |
-| Audited universe |  |
-| Audit `FULL` |  |
-| Audit `PARTIAL` |  |
-| Audit `MISSING` |  |
-| Relevant to `first_party_runtime` |  |
-| Relevant to `external_corpus` |  |
-| Relevant to `both` |  |
-| Native rows where `Audit Status != Registry Tag` |  |
+| Audited universe | 135 |
+| Audit `FULL` | 94 |
+| Audit `PARTIAL` | 41 |
+| Audit `MISSING` | 0 |
+| Relevant to `first_party_runtime` | 55 |
+| Relevant to `external_corpus` | 60 |
+| Relevant to `both` | 39 |
+| Native rows where `Audit Status != Registry Tag` | 6 |
 
 Current native-tag divergences:
 - `cmake_path`
@@ -214,7 +214,7 @@ Current native-tag divergences:
 | `variable_watch` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 | `write_file` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 
-No `missing-official` rows were found in the current workspace after filtering user-defined names and module-provided helper macros/functions out of the command/language inventory.
+No `missing-official` rows were found in the current workspace after restricting the audit to official built-ins/structural language entries and excluding module-provided helper macros/functions.
 
 ## 5. `PARTIAL` Detail Matrix
 

@@ -161,15 +161,15 @@ Capability metadata is therefore introspection/reporting data, not an execution 
 
 This is the canonical contract:
 - `evaluator_get_command_capability(...)` is native-command introspection only,
-- `if(COMMAND ...)` is a broader runtime predicate that also sees user-defined `function()` / `macro()` commands,
+- `if(COMMAND ...)` is a broader runtime predicate than capability lookup and may succeed for non-native names introduced during evaluation,
 - unknown-command fallback continues to follow `CMAKE_NOBIFY_UNSUPPORTED_POLICY`, not capability metadata.
 
-## 10. Native vs User-Defined Command Visibility
+## 10. Native vs Non-Native Command Visibility
 
 Capability lookup currently covers native commands from context registry (built-ins + externally registered natives).
 
 It does not reflect:
-- user-defined `function()`/`macro()` commands registered at runtime.
+- non-native command names introduced during evaluation.
 
 Practical consequence:
 - `evaluator_get_command_capability(ctx, "my_func")` returns missing unless `my_func` is native, even if runtime dispatch could call a user command with that name.
@@ -180,7 +180,7 @@ Practical consequence:
 - native known-command check (`eval_dispatcher_is_known_command(ctx, ...)`)
 - or runtime user-command lookup (`eval_user_cmd_find`).
 
-This predicate model is broader than capability API coverage because it includes user commands.
+This predicate model is broader than capability API coverage because it includes non-native runtime command names.
 
 ## 12. Performance Characteristics
 
@@ -191,7 +191,7 @@ Current lookup complexity:
 ## 13. Current Limits and Non-Goals
 
 Current limitations:
-- capability lookup does not include user-defined commands,
+- capability lookup does not include non-native runtime command names,
 - no dynamic capability downgrade/upgrade by policy/profile at runtime,
 - no machine-readable reason field for why a command is `PARTIAL`,
 - fallback metadata is intentionally not enforced by dispatcher as policy logic,
