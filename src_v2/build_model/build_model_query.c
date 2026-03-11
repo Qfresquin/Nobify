@@ -21,9 +21,38 @@ static const BM_Test_Record *bm_model_test(const Build_Model *model, BM_Test_Id 
     return &model->tests[id];
 }
 
+static const BM_Install_Rule_Record *bm_model_install_rule(const Build_Model *model, BM_Install_Rule_Id id) {
+    if (!model || id == BM_INSTALL_RULE_ID_INVALID || (size_t)id >= arena_arr_len(model->install_rules)) return NULL;
+    return &model->install_rules[id];
+}
+
 static const BM_Package_Record *bm_model_package(const Build_Model *model, BM_Package_Id id) {
     if (!model || id == BM_PACKAGE_ID_INVALID || (size_t)id >= arena_arr_len(model->packages)) return NULL;
     return &model->packages[id];
+}
+
+static const BM_CPack_Install_Type_Record *bm_model_cpack_install_type(const Build_Model *model,
+                                                                       BM_CPack_Install_Type_Id id) {
+    if (!model || id == BM_CPACK_INSTALL_TYPE_ID_INVALID || (size_t)id >= arena_arr_len(model->cpack_install_types)) {
+        return NULL;
+    }
+    return &model->cpack_install_types[id];
+}
+
+static const BM_CPack_Component_Group_Record *bm_model_cpack_component_group(const Build_Model *model,
+                                                                             BM_CPack_Component_Group_Id id) {
+    if (!model || id == BM_CPACK_COMPONENT_GROUP_ID_INVALID || (size_t)id >= arena_arr_len(model->cpack_component_groups)) {
+        return NULL;
+    }
+    return &model->cpack_component_groups[id];
+}
+
+static const BM_CPack_Component_Record *bm_model_cpack_component(const Build_Model *model,
+                                                                 BM_CPack_Component_Id id) {
+    if (!model || id == BM_CPACK_COMPONENT_ID_INVALID || (size_t)id >= arena_arr_len(model->cpack_components)) {
+        return NULL;
+    }
+    return &model->cpack_components[id];
 }
 
 static bool bm_collect_item_values(Arena *scratch,
@@ -47,9 +76,10 @@ static bool bm_collect_directory_chain(const Build_Model *model,
     BM_Directory_Id current = owner_directory_id;
 
     while (current != BM_DIRECTORY_ID_INVALID) {
+        const BM_Directory_Record *directory = bm_model_directory(model, current);
+        if (!directory) break;
         if (!arena_arr_push(scratch, chain, current)) return false;
-        if (!bm_model_directory(model, current)) break;
-        current = bm_model_directory(model, current)->parent_id;
+        current = directory->parent_id;
     }
 
     for (size_t i = arena_arr_len(chain); i > 0; --i) {
@@ -62,9 +92,11 @@ static bool bm_collect_directory_chain(const Build_Model *model,
                     return false;
                 }
                 break;
+
             case BM_EFFECTIVE_COMPILE_DEFINITIONS:
                 if (!bm_collect_item_values(scratch, out, directory->compile_definitions, false)) return false;
                 break;
+
             case BM_EFFECTIVE_LINK_LIBRARIES:
                 break;
         }
@@ -88,9 +120,11 @@ static bool bm_collect_dependency_interface(const Build_Model *model,
         case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
             if (!bm_collect_item_values(scratch, out, target->include_directories, true)) return false;
             break;
+
         case BM_EFFECTIVE_COMPILE_DEFINITIONS:
             if (!bm_collect_item_values(scratch, out, target->compile_definitions, true)) return false;
             break;
+
         case BM_EFFECTIVE_LINK_LIBRARIES:
             if (!bm_collect_item_values(scratch, out, target->link_libraries, true)) return false;
             break;
@@ -133,9 +167,11 @@ static bool bm_query_target_effective_common(const Build_Model *model,
         case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
             if (!bm_collect_item_values(scratch, &values, target->include_directories, false)) return false;
             break;
+
         case BM_EFFECTIVE_COMPILE_DEFINITIONS:
             if (!bm_collect_item_values(scratch, &values, target->compile_definitions, false)) return false;
             break;
+
         case BM_EFFECTIVE_LINK_LIBRARIES:
             if (!bm_collect_item_values(scratch, &values, target->link_libraries, false)) return false;
             break;
@@ -178,6 +214,7 @@ size_t bm_query_cpack_component_count(const Build_Model *model) { return model ?
 
 String_View bm_query_project_name(const Build_Model *model) { return model ? model->project.name : (String_View){0}; }
 String_View bm_query_project_version(const Build_Model *model) { return model ? model->project.version : (String_View){0}; }
+
 BM_String_Span bm_query_project_languages(const Build_Model *model) {
     BM_String_Span span = {0};
     if (!model) return span;
@@ -372,7 +409,9 @@ bool bm_query_target_effective_link_libraries(const Build_Model *model,
     return bm_query_target_effective_common(model, id, scratch, out, BM_EFFECTIVE_LINK_LIBRARIES);
 }
 
-bool bm_query_testing_enabled(const Build_Model *model) { return model ? model->testing_enabled : false; }
+bool bm_query_testing_enabled(const Build_Model *model) {
+    return model ? model->testing_enabled : false;
+}
 
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id) {
     const BM_Test_Record *test = bm_model_test(model, id);
@@ -384,9 +423,49 @@ String_View bm_query_test_command(const Build_Model *model, BM_Test_Id id) {
     return test ? test->command : (String_View){0};
 }
 
+BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->kind : BM_INSTALL_RULE_FILE;
+}
+
+BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->item : (String_View){0};
+}
+
+String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->destination : (String_View){0};
+}
+
+BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->resolved_target_id : BM_TARGET_ID_INVALID;
+}
+
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id) {
     const BM_Package_Record *package = bm_model_package(model, id);
     return package ? package->package_name : (String_View){0};
+}
+
+BM_Directory_Id bm_query_package_owner_directory(const Build_Model *model, BM_Package_Id id) {
+    const BM_Package_Record *package = bm_model_package(model, id);
+    return package ? package->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+String_View bm_query_package_mode(const Build_Model *model, BM_Package_Id id) {
+    const BM_Package_Record *package = bm_model_package(model, id);
+    return package ? package->mode : (String_View){0};
+}
+
+String_View bm_query_package_found_path(const Build_Model *model, BM_Package_Id id) {
+    const BM_Package_Record *package = bm_model_package(model, id);
+    return package ? package->found_path : (String_View){0};
 }
 
 bool bm_query_package_found(const Build_Model *model, BM_Package_Id id) {
@@ -394,17 +473,135 @@ bool bm_query_package_found(const Build_Model *model, BM_Package_Id id) {
     return package ? package->found : false;
 }
 
+bool bm_query_package_required(const Build_Model *model, BM_Package_Id id) {
+    const BM_Package_Record *package = bm_model_package(model, id);
+    return package ? package->required : false;
+}
+
+bool bm_query_package_quiet(const Build_Model *model, BM_Package_Id id) {
+    const BM_Package_Record *package = bm_model_package(model, id);
+    return package ? package->quiet : false;
+}
+
 String_View bm_query_cpack_install_type_name(const Build_Model *model, BM_CPack_Install_Type_Id id) {
-    if (!model || (size_t)id >= arena_arr_len(model->cpack_install_types)) return (String_View){0};
-    return model->cpack_install_types[id].name;
+    const BM_CPack_Install_Type_Record *record = bm_model_cpack_install_type(model, id);
+    return record ? record->name : (String_View){0};
+}
+
+String_View bm_query_cpack_install_type_display_name(const Build_Model *model, BM_CPack_Install_Type_Id id) {
+    const BM_CPack_Install_Type_Record *record = bm_model_cpack_install_type(model, id);
+    return record ? record->display_name : (String_View){0};
+}
+
+BM_Directory_Id bm_query_cpack_install_type_owner_directory(const Build_Model *model, BM_CPack_Install_Type_Id id) {
+    const BM_CPack_Install_Type_Record *record = bm_model_cpack_install_type(model, id);
+    return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
 }
 
 String_View bm_query_cpack_component_group_name(const Build_Model *model, BM_CPack_Component_Group_Id id) {
-    if (!model || (size_t)id >= arena_arr_len(model->cpack_component_groups)) return (String_View){0};
-    return model->cpack_component_groups[id].name;
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->name : (String_View){0};
+}
+
+String_View bm_query_cpack_component_group_display_name(const Build_Model *model, BM_CPack_Component_Group_Id id) {
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->display_name : (String_View){0};
+}
+
+String_View bm_query_cpack_component_group_description(const Build_Model *model, BM_CPack_Component_Group_Id id) {
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->description : (String_View){0};
+}
+
+BM_CPack_Component_Group_Id bm_query_cpack_component_group_parent(const Build_Model *model, BM_CPack_Component_Group_Id id) {
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->parent_group_id : BM_CPACK_COMPONENT_GROUP_ID_INVALID;
+}
+
+BM_Directory_Id bm_query_cpack_component_group_owner_directory(const Build_Model *model, BM_CPack_Component_Group_Id id) {
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+bool bm_query_cpack_component_group_expanded(const Build_Model *model, BM_CPack_Component_Group_Id id) {
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->expanded : false;
+}
+
+bool bm_query_cpack_component_group_bold_title(const Build_Model *model, BM_CPack_Component_Group_Id id) {
+    const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
+    return record ? record->bold_title : false;
 }
 
 String_View bm_query_cpack_component_name(const Build_Model *model, BM_CPack_Component_Id id) {
-    if (!model || (size_t)id >= arena_arr_len(model->cpack_components)) return (String_View){0};
-    return model->cpack_components[id].name;
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->name : (String_View){0};
+}
+
+String_View bm_query_cpack_component_display_name(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->display_name : (String_View){0};
+}
+
+String_View bm_query_cpack_component_description(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->description : (String_View){0};
+}
+
+BM_CPack_Component_Group_Id bm_query_cpack_component_group(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->group_id : BM_CPACK_COMPONENT_GROUP_ID_INVALID;
+}
+
+BM_CPack_Component_Id_Span bm_query_cpack_component_dependencies(const Build_Model *model, BM_CPack_Component_Id id) {
+    BM_CPack_Component_Id_Span span = {0};
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    if (!record) return span;
+    span.items = record->dependency_ids;
+    span.count = arena_arr_len(record->dependency_ids);
+    return span;
+}
+
+BM_CPack_Install_Type_Id_Span bm_query_cpack_component_install_types(const Build_Model *model, BM_CPack_Component_Id id) {
+    BM_CPack_Install_Type_Id_Span span = {0};
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    if (!record) return span;
+    span.items = record->install_type_ids;
+    span.count = arena_arr_len(record->install_type_ids);
+    return span;
+}
+
+String_View bm_query_cpack_component_archive_file(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->archive_file : (String_View){0};
+}
+
+String_View bm_query_cpack_component_plist(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->plist : (String_View){0};
+}
+
+bool bm_query_cpack_component_required(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->required : false;
+}
+
+bool bm_query_cpack_component_hidden(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->hidden : false;
+}
+
+bool bm_query_cpack_component_disabled(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->disabled : false;
+}
+
+bool bm_query_cpack_component_downloaded(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->downloaded : false;
+}
+
+BM_Directory_Id bm_query_cpack_component_owner_directory(const Build_Model *model, BM_CPack_Component_Id id) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
 }

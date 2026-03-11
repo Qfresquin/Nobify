@@ -1,19 +1,42 @@
 #include "build_model_internal.h"
 
-static void bm_diag_emit(Diag_Severity severity,
+static void bm_diag_sink_default_emit(void *userdata,
+                                      Diag_Severity severity,
+                                      const char *component,
+                                      String_View file_path,
+                                      uint32_t line,
+                                      uint32_t col,
+                                      const char *command,
+                                      const char *cause,
+                                      const char *hint) {
+    (void)userdata;
+    diag_log(severity,
+             component ? component : "build_model",
+             file_path.count > 0 ? nob_temp_sv_to_cstr(file_path) : "<build_model>",
+             line,
+             col,
+             command ? command : "",
+             cause ? cause : "",
+             hint ? hint : "");
+}
+
+static void bm_diag_emit(Diag_Sink *sink,
+                         Diag_Severity severity,
                          BM_Provenance provenance,
                          const char *component,
                          const char *command,
                          const char *cause,
                          const char *hint) {
-    diag_log(severity,
-             component ? component : "build_model",
-             provenance.file_path.count > 0 ? nob_temp_sv_to_cstr(provenance.file_path) : "<build_model>",
-             provenance.line,
-             provenance.col,
-             command ? command : "",
-             cause ? cause : "",
-             hint ? hint : "");
+    if (!sink || !sink->emit) return;
+    sink->emit(sink->userdata,
+               severity,
+               component ? component : "build_model",
+               provenance.file_path,
+               provenance.line,
+               provenance.col,
+               command ? command : "",
+               cause ? cause : "",
+               hint ? hint : "");
 }
 
 static BM_Provenance bm_empty_provenance(void) {
@@ -264,8 +287,7 @@ bool bm_diag_error(Diag_Sink *sink,
                    const char *command,
                    const char *cause,
                    const char *hint) {
-    (void)sink;
-    bm_diag_emit(DIAG_SEV_ERROR, provenance, component, command, cause, hint);
+    bm_diag_emit(sink, DIAG_SEV_ERROR, provenance, component, command, cause, hint);
     return false;
 }
 
@@ -275,8 +297,21 @@ void bm_diag_warn(Diag_Sink *sink,
                   const char *command,
                   const char *cause,
                   const char *hint) {
-    (void)sink;
-    bm_diag_emit(DIAG_SEV_WARNING, provenance, component, command, cause, hint);
+    bm_diag_emit(sink, DIAG_SEV_WARNING, provenance, component, command, cause, hint);
+}
+
+Diag_Sink *bm_diag_sink_create(Arena *arena, Diag_Sink_Emit_Fn emit, void *userdata) {
+    Diag_Sink *sink = NULL;
+    if (!arena || !emit) return NULL;
+    sink = arena_alloc_zero(arena, sizeof(*sink));
+    if (!sink) return NULL;
+    sink->emit = emit;
+    sink->userdata = userdata;
+    return sink;
+}
+
+Diag_Sink *bm_diag_sink_create_default(Arena *arena) {
+    return bm_diag_sink_create(arena, bm_diag_sink_default_emit, NULL);
 }
 
 bool bm_builder_error(BM_Builder *builder, const Event *ev, const char *cause, const char *hint) {

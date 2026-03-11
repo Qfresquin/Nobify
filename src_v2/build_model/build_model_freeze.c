@@ -1,5 +1,53 @@
 #include "build_model_internal.h"
 
+static bool bm_freeze_check_invariants(const Build_Model_Draft *draft, Diag_Sink *sink) {
+    if (draft->has_semantic_entities && draft->root_directory_id == BM_DIRECTORY_ID_INVALID) {
+        bm_diag_error(sink,
+                      (BM_Provenance){0},
+                      "build_model_freeze",
+                      "freeze",
+                      "draft is missing root directory",
+                      "run validation before freeze and fix root directory reconstruction");
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(draft->directories); ++i) {
+        if (draft->directories[i].id != (BM_Directory_Id)i) {
+            bm_diag_error(sink,
+                          draft->directories[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "directory ids are not contiguous",
+                          "freeze requires validated contiguous ids");
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(draft->targets); ++i) {
+        if (draft->targets[i].id != (BM_Target_Id)i) {
+            bm_diag_error(sink,
+                          draft->targets[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "target ids are not contiguous",
+                          "freeze requires validated contiguous ids");
+            return false;
+        }
+        if (draft->targets[i].owner_directory_id != BM_DIRECTORY_ID_INVALID &&
+            (size_t)draft->targets[i].owner_directory_id >= arena_arr_len(draft->directories)) {
+            bm_diag_error(sink,
+                          draft->targets[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "target owner_directory_id is invalid",
+                          "freeze requires validated entity ownership");
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool bm_clone_string_array(Arena *arena, String_View **dest, const String_View *src) {
     if (!dest) return false;
     *dest = NULL;
@@ -282,6 +330,7 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
                                    Diag_Sink *sink) {
     Build_Model *model = NULL;
     if (!draft || !out_arena) return NULL;
+    if (!bm_freeze_check_invariants(draft, sink)) return NULL;
 
     model = arena_alloc_zero(out_arena, sizeof(*model));
     if (!model) return NULL;

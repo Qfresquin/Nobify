@@ -209,6 +209,7 @@ int main(int argc, char **argv) {
     Arena *build_model_arena = arena_create(16 * 1024 * 1024);
     Arena *build_model_validate_arena = arena_create(8 * 1024 * 1024);
     Arena *build_model_freeze_arena = arena_create(16 * 1024 * 1024);
+    Diag_Sink *build_model_sink = NULL;
     if (!build_model_arena || !build_model_validate_arena || !build_model_freeze_arena) {
         nob_log(NOB_ERROR, "Failed to allocate build-model arenas");
         arena_destroy(build_model_freeze_arena);
@@ -220,7 +221,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    BM_Builder *builder = bm_builder_create(build_model_arena, NULL);
+    build_model_sink = bm_diag_sink_create_default(build_model_arena);
+    BM_Builder *builder = bm_builder_create(build_model_arena, build_model_sink);
     if (!builder) {
         nob_log(NOB_ERROR, "Failed to create build-model builder");
         arena_destroy(build_model_freeze_arena);
@@ -255,7 +257,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!bm_validate_draft(draft, build_model_validate_arena, NULL)) {
+    if (!bm_validate_draft(draft, build_model_validate_arena, build_model_sink)) {
         nob_log(NOB_ERROR, "Build-model validation failed");
         arena_destroy(build_model_freeze_arena);
         arena_destroy(build_model_validate_arena);
@@ -266,7 +268,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const Build_Model *model = bm_freeze_draft(draft, build_model_freeze_arena, NULL);
+    const Build_Model *model = bm_freeze_draft(draft, build_model_freeze_arena, build_model_sink);
     if (!model) {
         nob_log(NOB_ERROR, "Build-model freeze failed");
         arena_destroy(build_model_freeze_arena);

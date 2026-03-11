@@ -20,6 +20,72 @@ static bool bm_validate_owner_directory(const Build_Model_Draft *draft,
                          entity_kind);
 }
 
+static bool bm_validate_directory_chain(const Build_Model_Draft *draft,
+                                        const BM_Directory_Record *directory,
+                                        Diag_Sink *sink,
+                                        bool *had_error) {
+    BM_Directory_Id current = directory ? directory->parent_id : BM_DIRECTORY_ID_INVALID;
+    size_t steps = 0;
+
+    while (current != BM_DIRECTORY_ID_INVALID) {
+        if ((size_t)current >= arena_arr_len(draft->directories)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          directory ? directory->provenance : (BM_Provenance){0},
+                          "build_model_validate",
+                          "structural",
+                          "directory parent chain is invalid",
+                          "fix parent ids in directory records");
+            return false;
+        }
+
+        current = draft->directories[current].parent_id;
+        steps++;
+        if (steps > arena_arr_len(draft->directories)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          directory ? directory->provenance : (BM_Provenance){0},
+                          "build_model_validate",
+                          "structural",
+                          "directory parent chain contains a cycle",
+                          "ensure directory parent ids form a tree");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void bm_validate_contiguous_id(bool matches,
+                                      BM_Provenance provenance,
+                                      Diag_Sink *sink,
+                                      bool *had_error,
+                                      const char *cause,
+                                      const char *hint) {
+    if (matches) return;
+    *had_error = true;
+    bm_diag_error(sink, provenance, "build_model_validate", "structural", cause, hint);
+}
+
+static void bm_validate_duplicate_target_names(const Build_Model_Draft *draft, Diag_Sink *sink, bool *had_error) {
+    for (size_t i = 0; i < arena_arr_len(draft->targets); ++i) {
+        for (size_t j = i + 1; j < arena_arr_len(draft->targets); ++j) {
+            if (!nob_sv_eq(draft->targets[i].name, draft->targets[j].name)) continue;
+            *had_error = true;
+            bm_diag_error(sink,
+                          draft->targets[j].provenance,
+                          "build_model_validate",
+                          "structural",
+                          "duplicate target name remains in finalized draft",
+                          "target names must be unique before freeze");
+        }
+    }
+}
+
+static bool bm_target_has_local_build_flags(const BM_Target_Record *target) {
+    return target && (target->exclude_from_all || target->win32_executable || target->macosx_bundle);
+}
+
 static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sink *sink, bool *had_error) {
     if (draft->has_semantic_entities && draft->root_directory_id == BM_DIRECTORY_ID_INVALID) {
         *had_error = true;
@@ -33,10 +99,12 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->directories); ++i) {
         const BM_Directory_Record *directory = &draft->directories[i];
-        if (directory->id != (BM_Directory_Id)i) {
-            *had_error = true;
-            bm_diag_error(sink, directory->provenance, "build_model_validate", "structural", "directory id mismatch", "directory ids must be contiguous");
-        }
+        bm_validate_contiguous_id(directory->id == (BM_Directory_Id)i,
+                                  directory->provenance,
+                                  sink,
+                                  had_error,
+                                  "directory id mismatch",
+                                  "directory ids must be contiguous");
         if (directory->owner_directory_id != directory->id) {
             *had_error = true;
             bm_diag_error(sink, directory->provenance, "build_model_validate", "structural", "directory owner_directory_id must equal directory id", "fix directory ownership");
@@ -46,14 +114,17 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
             *had_error = true;
             bm_diag_error(sink, directory->provenance, "build_model_validate", "structural", "directory parent_id is invalid", "fix directory stack reconstruction");
         }
+        bm_validate_directory_chain(draft, directory, sink, had_error);
     }
 
     for (size_t i = 0; i < arena_arr_len(draft->targets); ++i) {
         const BM_Target_Record *target = &draft->targets[i];
-        if (target->id != (BM_Target_Id)i) {
-            *had_error = true;
-            bm_diag_error(sink, target->provenance, "build_model_validate", "structural", "target id mismatch", "target ids must be contiguous");
-        }
+        bm_validate_contiguous_id(target->id == (BM_Target_Id)i,
+                                  target->provenance,
+                                  sink,
+                                  had_error,
+                                  "target id mismatch",
+                                  "target ids must be contiguous");
         if (bm_string_view_is_empty(target->name)) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "structural", "target has empty name", "ensure EVENT_TARGET_DECLARE carries a target name");
@@ -64,9 +135,16 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
         }
         bm_validate_owner_directory(draft, target->owner_directory_id, target->provenance, "target", sink, had_error);
     }
+    bm_validate_duplicate_target_names(draft, sink, had_error);
 
     for (size_t i = 0; i < arena_arr_len(draft->tests); ++i) {
         const BM_Test_Record *test = &draft->tests[i];
+        bm_validate_contiguous_id(test->id == (BM_Test_Id)i,
+                                  test->provenance,
+                                  sink,
+                                  had_error,
+                                  "test id mismatch",
+                                  "test ids must be contiguous");
         if (bm_string_view_is_empty(test->name) || bm_string_view_is_empty(test->command)) {
             *had_error = true;
             bm_diag_error(sink, test->provenance, "build_model_validate", "structural", "test is missing required fields", "tests require name and command");
@@ -76,6 +154,12 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->install_rules); ++i) {
         const BM_Install_Rule_Record *rule = &draft->install_rules[i];
+        bm_validate_contiguous_id(rule->id == (BM_Install_Rule_Id)i,
+                                  rule->provenance,
+                                  sink,
+                                  had_error,
+                                  "install rule id mismatch",
+                                  "install rule ids must be contiguous");
         if (bm_string_view_is_empty(rule->item) || bm_string_view_is_empty(rule->destination)) {
             *had_error = true;
             bm_diag_error(sink, rule->provenance, "build_model_validate", "structural", "install rule is missing required fields", "install rules require item and destination");
@@ -85,6 +169,12 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->packages); ++i) {
         const BM_Package_Record *package = &draft->packages[i];
+        bm_validate_contiguous_id(package->id == (BM_Package_Id)i,
+                                  package->provenance,
+                                  sink,
+                                  had_error,
+                                  "package id mismatch",
+                                  "package ids must be contiguous");
         if (bm_string_view_is_empty(package->package_name)) {
             *had_error = true;
             bm_diag_error(sink, package->provenance, "build_model_validate", "structural", "package result is missing package name", "package results require package_name");
@@ -94,6 +184,12 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->cpack_install_types); ++i) {
         const BM_CPack_Install_Type_Record *record = &draft->cpack_install_types[i];
+        bm_validate_contiguous_id(record->id == (BM_CPack_Install_Type_Id)i,
+                                  record->provenance,
+                                  sink,
+                                  had_error,
+                                  "CPack install type id mismatch",
+                                  "CPack install type ids must be contiguous");
         if (bm_string_view_is_empty(record->name)) {
             *had_error = true;
             bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "CPack install type is missing name", "install types require a name");
@@ -103,6 +199,12 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->cpack_component_groups); ++i) {
         const BM_CPack_Component_Group_Record *record = &draft->cpack_component_groups[i];
+        bm_validate_contiguous_id(record->id == (BM_CPack_Component_Group_Id)i,
+                                  record->provenance,
+                                  sink,
+                                  had_error,
+                                  "CPack component group id mismatch",
+                                  "CPack component group ids must be contiguous");
         if (bm_string_view_is_empty(record->name)) {
             *had_error = true;
             bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "CPack component group is missing name", "component groups require a name");
@@ -112,6 +214,12 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->cpack_components); ++i) {
         const BM_CPack_Component_Record *record = &draft->cpack_components[i];
+        bm_validate_contiguous_id(record->id == (BM_CPack_Component_Id)i,
+                                  record->provenance,
+                                  sink,
+                                  had_error,
+                                  "CPack component id mismatch",
+                                  "CPack component ids must be contiguous");
         if (bm_string_view_is_empty(record->name)) {
             *had_error = true;
             bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "CPack component is missing name", "components require a name");
@@ -126,9 +234,11 @@ static bool bm_validate_resolution_pass(const Build_Model_Draft *draft, Diag_Sin
     for (size_t i = 0; i < arena_arr_len(draft->targets); ++i) {
         const BM_Target_Record *target = &draft->targets[i];
 
-        if (target->alias &&
-            !bm_string_view_is_empty(target->alias_of_name) &&
-            bm_draft_find_target_id(draft, target->alias_of_name) == BM_TARGET_ID_INVALID) {
+        if (target->alias && bm_string_view_is_empty(target->alias_of_name)) {
+            *had_error = true;
+            bm_diag_error(sink, target->provenance, "build_model_validate", "resolution", "alias target is missing alias_of", "alias targets must reference a declared target");
+        } else if (target->alias &&
+                   bm_draft_find_target_id(draft, target->alias_of_name) == BM_TARGET_ID_INVALID) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "resolution", "alias target references an unknown target", "declare the aliased target before the alias");
         }
@@ -222,7 +332,9 @@ static bool bm_validate_semantic_pass(const Build_Model_Draft *draft, Diag_Sink 
         if (target->alias &&
             (arena_arr_len(target->sources) > 0 ||
              arena_arr_len(target->explicit_dependency_names) > 0 ||
-             bm_target_has_typed_payload(target))) {
+             bm_target_has_typed_payload(target) ||
+             arena_arr_len(target->raw_properties) > 0 ||
+             bm_target_has_local_build_flags(target))) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "semantic", "alias target may not own sources, dependencies or build payload", "leave alias targets as lightweight references only");
         }
@@ -233,9 +345,10 @@ static bool bm_validate_semantic_pass(const Build_Model_Draft *draft, Diag_Sink 
              !bm_string_view_is_empty(target->suffix) ||
              !bm_string_view_is_empty(target->archive_output_directory) ||
              !bm_string_view_is_empty(target->library_output_directory) ||
-             !bm_string_view_is_empty(target->runtime_output_directory))) {
+             !bm_string_view_is_empty(target->runtime_output_directory) ||
+             bm_target_has_local_build_flags(target))) {
             *had_error = true;
-            bm_diag_error(sink, target->provenance, "build_model_validate", "semantic", "imported target may not declare local build output properties", "remove output properties from imported targets");
+            bm_diag_error(sink, target->provenance, "build_model_validate", "semantic", "imported target may not declare local build outputs or build-only flags", "remove local output properties and build-only flags from imported targets");
         }
 
         if (target->kind != BM_TARGET_INTERFACE_LIBRARY) {

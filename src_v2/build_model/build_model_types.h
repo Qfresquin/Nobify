@@ -7,14 +7,26 @@
 
 #include "arena.h"
 #include "nob.h"
+#include "diagnostics.h"
 #include "event_ir.h"
 
 typedef struct BM_Builder BM_Builder;
 typedef struct Build_Model_Draft Build_Model_Draft;
 typedef struct Build_Model Build_Model;
 
+typedef void (*Diag_Sink_Emit_Fn)(void *userdata,
+                                  Diag_Severity severity,
+                                  const char *component,
+                                  String_View file_path,
+                                  uint32_t line,
+                                  uint32_t col,
+                                  const char *command,
+                                  const char *cause,
+                                  const char *hint);
+
 typedef struct Diag_Sink {
-    int reserved;
+    Diag_Sink_Emit_Fn emit;
+    void *userdata;
 } Diag_Sink;
 
 typedef uint32_t BM_Directory_Id;
@@ -44,6 +56,16 @@ typedef struct {
     const BM_Target_Id *items;
     size_t count;
 } BM_Target_Id_Span;
+
+typedef struct {
+    const BM_CPack_Component_Id *items;
+    size_t count;
+} BM_CPack_Component_Id_Span;
+
+typedef struct {
+    const BM_CPack_Install_Type_Id *items;
+    size_t count;
+} BM_CPack_Install_Type_Id_Span;
 
 typedef struct {
     uint64_t event_seq;
@@ -93,5 +115,8 @@ typedef struct {
     const BM_String_Item_View *items;
     size_t count;
 } BM_String_Item_Span;
+
+Diag_Sink *bm_diag_sink_create(Arena *arena, Diag_Sink_Emit_Fn emit, void *userdata);
+Diag_Sink *bm_diag_sink_create_default(Arena *arena);
 
 #endif
