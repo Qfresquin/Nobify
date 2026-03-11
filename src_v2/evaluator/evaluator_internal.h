@@ -375,6 +375,7 @@ struct Evaluator_Context {
 bool eval_should_stop(Evaluator_Context *ctx);
 void eval_request_stop(Evaluator_Context *ctx);
 void eval_request_stop_on_error(Evaluator_Context *ctx);
+void eval_clear_stop_if_not_oom(Evaluator_Context *ctx);
 bool eval_continue_on_error(Evaluator_Context *ctx);
 void eval_refresh_runtime_compat(Evaluator_Context *ctx);
 bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);

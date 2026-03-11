@@ -13,22 +13,16 @@ typedef struct {
     String_View script;
 } Lexer_Case;
 
-typedef struct {
-    Lexer_Case *items;
-    size_t count;
-    size_t capacity;
-} Lexer_Case_List;
+typedef Lexer_Case *Lexer_Case_List;
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 static bool lex_script_local(Arena *arena, const char *script, Token_List *out) {
     if (!arena || !script || !out) return false;
-    *out = (Token_List){0};
+    *out = NULL;
 
     Lexer lx = lexer_init(nob_sv_from_cstr(script));
     for (;;) {
@@ -73,9 +67,7 @@ static String_View normalize_newlines_to_arena(Arena *arena, String_View in) {
 
 static bool lexer_case_list_append(Arena *arena, Lexer_Case_List *list, Lexer_Case value) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = value;
-    return true;
+    return arena_arr_push(arena, *list, value);
 }
 
 static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
@@ -93,7 +85,7 @@ static String_View sv_trim_cr(String_View sv) {
 
 static bool parse_case_pack_to_arena(Arena *arena, String_View content, Lexer_Case_List *out) {
     if (!arena || !out) return false;
-    *out = (Lexer_Case_List){0};
+    *out = NULL;
 
     Nob_String_Builder script_sb = {0};
     bool in_case = false;
@@ -156,15 +148,15 @@ static bool parse_case_pack_to_arena(Arena *arena, String_View content, Lexer_Ca
     nob_sb_free(script_sb);
     if (in_case) return false;
 
-    for (size_t i = 0; i < out->count; i++) {
-        for (size_t j = i + 1; j < out->count; j++) {
-            if (nob_sv_eq(out->items[i].name, out->items[j].name)) {
+    for (size_t i = 0; i < arena_arr_len(*out); i++) {
+        for (size_t j = i + 1; j < arena_arr_len(*out); j++) {
+            if (nob_sv_eq((*out)[i].name, (*out)[j].name)) {
                 return false;
             }
         }
     }
 
-    return out->count > 0;
+    return arena_arr_len(*out) > 0;
 }
 
 static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
@@ -189,12 +181,12 @@ static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
 }
 
 static bool render_lexer_case_snapshot_to_sb(Arena *arena, String_View script, Nob_String_Builder *sb) {
-    Token_List tokens = {0};
+    Token_List tokens = NULL;
     if (!lex_script_local(arena, script.data, &tokens)) return false;
 
-    nob_sb_append_cstr(sb, nob_temp_sprintf("TOKENS count=%zu\n", tokens.count));
-    for (size_t i = 0; i < tokens.count; i++) {
-        Token tok = tokens.items[i];
+    nob_sb_append_cstr(sb, nob_temp_sprintf("TOKENS count=%zu\n", arena_arr_len(tokens)));
+    for (size_t i = 0; i < arena_arr_len(tokens); i++) {
+        Token tok = tokens[i];
         nob_sb_append_cstr(
             sb,
             nob_temp_sprintf(
@@ -215,20 +207,20 @@ static bool render_lexer_casepack_snapshot_to_arena(Arena *arena, Lexer_Case_Lis
 
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "MODULE lexer\n");
-    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", cases.count));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", arena_arr_len(cases)));
 
-    for (size_t i = 0; i < cases.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(cases); i++) {
         nob_sb_append_cstr(&sb, "=== CASE ");
-        nob_sb_append_buf(&sb, cases.items[i].name.data, cases.items[i].name.count);
+        nob_sb_append_buf(&sb, cases[i].name.data, cases[i].name.count);
         nob_sb_append_cstr(&sb, " ===\n");
 
-        if (!render_lexer_case_snapshot_to_sb(arena, cases.items[i].script, &sb)) {
+        if (!render_lexer_case_snapshot_to_sb(arena, cases[i].script, &sb)) {
             nob_sb_free(sb);
             return false;
         }
 
         nob_sb_append_cstr(&sb, "=== END CASE ===\n");
-        if (i + 1 < cases.count) nob_sb_append_cstr(&sb, "\n");
+        if (i + 1 < arena_arr_len(cases)) nob_sb_append_cstr(&sb, "\n");
     }
 
     size_t len = sb.count;
@@ -261,8 +253,8 @@ static bool assert_lexer_golden_casepack(const char *input_path, const char *exp
         ok = false;
         goto done;
     }
-    if (cases.count != 42) {
-        nob_log(NOB_ERROR, "golden: unexpected lexer case count: got=%zu expected=42", cases.count);
+    if (arena_arr_len(cases) != 42) {
+        nob_log(NOB_ERROR, "golden: unexpected lexer case count: got=%zu expected=42", arena_arr_len(cases));
         ok = false;
         goto done;
     }

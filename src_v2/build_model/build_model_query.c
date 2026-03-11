@@ -55,6 +55,38 @@ static const BM_CPack_Component_Record *bm_model_cpack_component(const Build_Mod
     return &model->cpack_components[id];
 }
 
+static BM_String_Item_Span bm_item_span(const BM_String_Item_View *items) {
+    BM_String_Item_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
+static BM_String_Span bm_string_span(const String_View *items) {
+    BM_String_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
+static bool bm_sv_eq_ci_query(String_View lhs, String_View rhs) {
+    if (lhs.count != rhs.count) return false;
+    for (size_t i = 0; i < lhs.count; ++i) {
+        unsigned char a = (unsigned char)lhs.data[i];
+        unsigned char b = (unsigned char)rhs.data[i];
+        if (tolower(a) != tolower(b)) return false;
+    }
+    return true;
+}
+
+static const BM_Raw_Property_Record *bm_find_raw_property(const BM_Raw_Property_Record *records,
+                                                          String_View property_name) {
+    for (size_t i = 0; i < arena_arr_len(records); ++i) {
+        if (bm_sv_eq_ci_query(records[i].name, property_name)) return &records[i];
+    }
+    return NULL;
+}
+
 static bool bm_collect_item_values(Arena *scratch,
                                    String_View **out,
                                    const BM_String_Item_View *items,
@@ -242,6 +274,52 @@ String_View bm_query_directory_binary_dir(const Build_Model *model, BM_Directory
     return directory ? directory->binary_dir : (String_View){0};
 }
 
+BM_String_Item_Span bm_query_directory_include_directories_raw(const Build_Model *model, BM_Directory_Id id) {
+    const BM_Directory_Record *directory = bm_model_directory(model, id);
+    return directory ? bm_item_span(directory->include_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Build_Model *model, BM_Directory_Id id) {
+    const BM_Directory_Record *directory = bm_model_directory(model, id);
+    return directory ? bm_item_span(directory->system_include_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model, BM_Directory_Id id) {
+    const BM_Directory_Record *directory = bm_model_directory(model, id);
+    return directory ? bm_item_span(directory->link_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.include_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.system_include_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_link_directories_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.link_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_compile_definitions_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.compile_definitions) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_compile_options_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.compile_options) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_link_options_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.link_options) : (BM_String_Item_Span){0};
+}
+
+BM_String_Span bm_query_global_raw_property_items(const Build_Model *model, String_View property_name) {
+    const BM_Raw_Property_Record *record = NULL;
+    if (!model) return (BM_String_Span){0};
+    record = bm_find_raw_property(model->global_properties.raw_properties, property_name);
+    return record ? bm_string_span(record->items) : (BM_String_Span){0};
+}
+
 BM_Target_Id bm_query_target_by_name(const Build_Model *model, String_View name) {
     if (!model) return BM_TARGET_ID_INVALID;
     for (size_t i = 0; i < arena_arr_len(model->target_name_index); ++i) {
@@ -282,12 +360,8 @@ BM_Directory_Id bm_query_target_owner_directory(const Build_Model *model, BM_Tar
 }
 
 BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->sources;
-    span.count = arena_arr_len(target->sources);
-    return span;
+    return target ? bm_string_span(target->sources) : (BM_String_Span){0};
 }
 
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id) {
@@ -300,57 +374,33 @@ BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model
 }
 
 BM_String_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Item_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->link_libraries;
-    span.count = arena_arr_len(target->link_libraries);
-    return span;
+    return target ? bm_item_span(target->link_libraries) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_include_directories_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Item_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->include_directories;
-    span.count = arena_arr_len(target->include_directories);
-    return span;
+    return target ? bm_item_span(target->include_directories) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_compile_definitions_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Item_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->compile_definitions;
-    span.count = arena_arr_len(target->compile_definitions);
-    return span;
+    return target ? bm_item_span(target->compile_definitions) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_compile_options_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Item_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->compile_options;
-    span.count = arena_arr_len(target->compile_options);
-    return span;
+    return target ? bm_item_span(target->compile_options) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_link_options_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Item_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->link_options;
-    span.count = arena_arr_len(target->link_options);
-    return span;
+    return target ? bm_item_span(target->link_options) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_link_directories_raw(const Build_Model *model, BM_Target_Id id) {
-    BM_String_Item_Span span = {0};
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->link_directories;
-    span.count = arena_arr_len(target->link_directories);
-    return span;
+    return target ? bm_item_span(target->link_directories) : (BM_String_Item_Span){0};
 }
 
 String_View bm_query_target_output_name(const Build_Model *model, BM_Target_Id id) {

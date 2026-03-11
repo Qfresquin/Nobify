@@ -11,37 +11,33 @@
 #include "parser.h"
 #include "build_model_builder.h"
 #include "build_model_freeze.h"
-#include "build_model.h"
+#include "build_model_query.h"
 #include "build_model_validate.h"
 
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct {
     String_View name;
     String_View script;
 } Pipeline_Case;
 
-typedef struct {
-    Pipeline_Case *items;
-    size_t count;
-    size_t capacity;
-} Pipeline_Case_List;
+typedef Pipeline_Case *Pipeline_Case_List;
+
+static void pipeline_init_event(Event *ev, Event_Kind kind, size_t line);
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 static Ast_Root parse_cmake(Arena *arena, const char *script) {
     Lexer lx = lexer_init(nob_sv_from_cstr(script ? script : ""));
-    Token_List toks = {0};
+    Token_List toks = NULL;
     for (;;) {
         Token t = lexer_next(&lx);
         if (t.kind == TOKEN_END) break;
-        if (!token_list_append(arena, &toks, t)) return (Ast_Root){0};
+        if (!token_list_append(arena, &toks, t)) return NULL;
     }
     return parse_tokens(arena, toks);
 }
@@ -80,9 +76,7 @@ static String_View pipeline_normalize_newlines_to_arena(Arena *arena, String_Vie
 
 static bool pipeline_case_list_append(Arena *arena, Pipeline_Case_List *list, Pipeline_Case value) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = value;
-    return true;
+    return arena_arr_push(arena, *list, value);
 }
 
 static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
@@ -100,7 +94,7 @@ static String_View sv_trim_cr(String_View sv) {
 
 static bool parse_case_pack_to_arena(Arena *arena, String_View content, Pipeline_Case_List *out) {
     if (!arena || !out) return false;
-    *out = (Pipeline_Case_List){0};
+    *out = NULL;
 
     Nob_String_Builder script_sb = {0};
     bool in_case = false;
@@ -163,13 +157,13 @@ static bool parse_case_pack_to_arena(Arena *arena, String_View content, Pipeline
     nob_sb_free(script_sb);
     if (in_case) return false;
 
-    for (size_t i = 0; i < out->count; i++) {
-        for (size_t j = i + 1; j < out->count; j++) {
-            if (nob_sv_eq(out->items[i].name, out->items[j].name)) return false;
+    for (size_t i = 0; i < arena_arr_len(*out); i++) {
+        for (size_t j = i + 1; j < arena_arr_len(*out); j++) {
+            if (nob_sv_eq((*out)[i].name, (*out)[j].name)) return false;
         }
     }
 
-    return out->count > 0;
+    return arena_arr_len(*out) > 0;
 }
 
 static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
@@ -193,61 +187,135 @@ static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
     nob_sb_append_cstr(sb, "'");
 }
 
-static const char *target_type_name(Target_Type type) {
+static const char *pipeline_target_type_name(BM_Target_Kind type) {
     switch (type) {
-        case TARGET_EXECUTABLE: return "EXECUTABLE";
-        case TARGET_STATIC_LIB: return "STATIC_LIB";
-        case TARGET_SHARED_LIB: return "SHARED_LIB";
-        case TARGET_OBJECT_LIB: return "OBJECT_LIB";
-        case TARGET_INTERFACE_LIB: return "INTERFACE_LIB";
-        case TARGET_UTILITY: return "UTILITY";
-        case TARGET_IMPORTED: return "IMPORTED";
-        case TARGET_ALIAS: return "ALIAS";
+        case BM_TARGET_EXECUTABLE: return "EXECUTABLE";
+        case BM_TARGET_STATIC_LIBRARY: return "STATIC_LIB";
+        case BM_TARGET_SHARED_LIBRARY: return "SHARED_LIB";
+        case BM_TARGET_MODULE_LIBRARY: return "MODULE_LIB";
+        case BM_TARGET_INTERFACE_LIBRARY: return "INTERFACE_LIB";
+        case BM_TARGET_OBJECT_LIBRARY: return "OBJECT_LIB";
+        case BM_TARGET_UTILITY: return "UTILITY";
     }
     return "UNKNOWN";
 }
 
+static size_t pipeline_count_non_private_items(BM_String_Item_Span items) {
+    size_t count = 0;
+    for (size_t i = 0; i < items.count; ++i) {
+        if (items.items[i].visibility != BM_VISIBILITY_PRIVATE) count++;
+    }
+    return count;
+}
+
+static BM_Directory_Id pipeline_find_directory_id(const Build_Model *model,
+                                                  String_View source_dir,
+                                                  String_View binary_dir) {
+    size_t count = bm_query_directory_count(model);
+    for (size_t i = 0; i < count; ++i) {
+        BM_Directory_Id id = (BM_Directory_Id)i;
+        if (nob_sv_eq(bm_query_directory_source_dir(model, id), source_dir) &&
+            nob_sv_eq(bm_query_directory_binary_dir(model, id), binary_dir)) {
+            return id;
+        }
+    }
+    return BM_DIRECTORY_ID_INVALID;
+}
+
 static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *model) {
+    size_t target_count = bm_query_target_count(model);
+    size_t package_count = bm_query_package_count(model);
+    size_t test_count = bm_query_test_count(model);
+    size_t install_rule_count = bm_query_install_rule_count(model);
+    size_t cpack_group_count = bm_query_cpack_component_group_count(model);
+    size_t cpack_type_count = bm_query_cpack_install_type_count(model);
+    size_t cpack_component_count = bm_query_cpack_component_count(model);
+    BM_Directory_Id root_directory = bm_query_root_directory(model);
+    BM_String_Item_Span root_include_dirs = bm_query_directory_include_directories_raw(model, root_directory);
+    BM_String_Item_Span root_system_include_dirs = bm_query_directory_system_include_directories_raw(model, root_directory);
+    BM_String_Item_Span root_link_dirs = bm_query_directory_link_directories_raw(model, root_directory);
+    BM_String_Item_Span global_compile_defs = bm_query_global_compile_definitions_raw(model);
+    BM_String_Item_Span global_compile_opts = bm_query_global_compile_options_raw(model);
+    BM_String_Item_Span global_link_opts = bm_query_global_link_options_raw(model);
+    BM_String_Span global_link_libs = bm_query_global_raw_property_items(model, nob_sv_from_cstr("LINK_LIBRARIES"));
+
     nob_sb_append_cstr(sb, "MODEL project=");
-    snapshot_append_escaped_sv(sb, model->project_name);
+    snapshot_append_escaped_sv(sb, bm_query_project_name(model));
     nob_sb_append_cstr(sb, nob_temp_sprintf(
         " targets=%zu packages=%zu tests=%zu install_enabled=%d testing_enabled=%d cpack_groups=%zu cpack_types=%zu cpack_components=%zu\n",
-        model->target_count,
-        model->package_count,
-        model->test_count,
-        model->enable_install ? 1 : 0,
-        model->enable_testing ? 1 : 0,
-        model->cpack_component_group_count,
-        model->cpack_install_type_count,
-        model->cpack_component_count));
+        target_count,
+        package_count,
+        test_count,
+        install_rule_count > 0 ? 1 : 0,
+        bm_query_testing_enabled(model) ? 1 : 0,
+        cpack_group_count,
+        cpack_type_count,
+        cpack_component_count));
 
     nob_sb_append_cstr(sb, nob_temp_sprintf(
         "DIR include=%zu system_include=%zu link=%zu\n",
-        model->directories.include_dirs.count,
-        model->directories.system_include_dirs.count,
-        model->directories.link_dirs.count));
+        root_include_dirs.count,
+        root_system_include_dirs.count,
+        root_link_dirs.count));
 
     nob_sb_append_cstr(sb, nob_temp_sprintf(
         "GLOBAL compile_defs=%zu compile_opts=%zu link_opts=%zu link_libs=%zu\n",
-        model->global_definitions.count,
-        model->global_compile_options.count,
-        model->global_link_options.count,
-        model->global_link_libraries.count));
+        global_compile_defs.count,
+        global_compile_opts.count,
+        global_link_opts.count,
+        global_link_libs.count));
 
-    if (model->target_count > 0 && model->targets[0]) {
-        const Build_Target *t = model->targets[0];
+    if (target_count > 0) {
+        BM_Target_Id target_id = 0;
+        BM_String_Span sources = bm_query_target_sources_raw(model, target_id);
+        BM_Target_Id_Span deps = bm_query_target_dependencies_explicit(model, target_id);
+        BM_String_Item_Span link_libs = bm_query_target_link_libraries_raw(model, target_id);
+        BM_String_Item_Span link_opts = bm_query_target_link_options_raw(model, target_id);
+        BM_String_Item_Span link_dirs = bm_query_target_link_directories_raw(model, target_id);
+
         nob_sb_append_cstr(sb, "TARGET0 name=");
-        snapshot_append_escaped_sv(sb, t->name);
+        snapshot_append_escaped_sv(sb, bm_query_target_name(model, target_id));
         nob_sb_append_cstr(sb, nob_temp_sprintf(
             " type=%s sources=%zu deps=%zu link_libs=%zu interface_libs=%zu link_opts=%zu link_dirs=%zu\n",
-            target_type_name(t->type),
-            t->sources.count,
-            t->dependencies.count,
-            t->link_libraries.count,
-            t->interface_libs.count,
-            t->conditional_link_options.count,
-            t->conditional_link_directories.count));
+            pipeline_target_type_name(bm_query_target_kind(model, target_id)),
+            sources.count,
+            deps.count,
+            link_libs.count,
+            pipeline_count_non_private_items(link_libs),
+            link_opts.count,
+            link_dirs.count));
     }
+}
+
+static Event_Stream *pipeline_wrap_stream_with_root(Arena *arena,
+                                                    const Event_Stream *stream,
+                                                    const char *current_file,
+                                                    String_View source_dir,
+                                                    String_View binary_dir) {
+    Event_Stream *wrapped = NULL;
+    Event ev = {0};
+    if (!arena || !stream) return NULL;
+
+    wrapped = event_stream_create(arena);
+    if (!wrapped) return NULL;
+
+    pipeline_init_event(&ev, EVENT_DIRECTORY_ENTER, 0);
+    ev.h.origin.file_path = nob_sv_from_cstr(current_file ? current_file : "CMakeLists.txt");
+    ev.as.directory_enter.source_dir = source_dir;
+    ev.as.directory_enter.binary_dir = binary_dir;
+    if (!event_stream_push(wrapped, &ev)) return NULL;
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        if (!event_stream_push(wrapped, &stream->items[i])) return NULL;
+    }
+
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 0);
+    ev.h.origin.file_path = nob_sv_from_cstr(current_file ? current_file : "CMakeLists.txt");
+    ev.as.directory_leave.source_dir = source_dir;
+    ev.as.directory_leave.binary_dir = binary_dir;
+    if (!event_stream_push(wrapped, &ev)) return NULL;
+
+    return wrapped;
 }
 
 static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, Nob_String_Builder *out_sb) {
@@ -255,18 +323,23 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
 
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(8 * 1024 * 1024);
+    Arena *validate_arena = arena_create(2 * 1024 * 1024);
     Arena *model_arena = arena_create(8 * 1024 * 1024);
-    if (!temp_arena || !event_arena || !model_arena) {
+    if (!temp_arena || !event_arena || !validate_arena || !model_arena) {
         arena_destroy(temp_arena);
         arena_destroy(event_arena);
+        arena_destroy(validate_arena);
         arena_destroy(model_arena);
         return false;
     }
 
-    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    Event_Stream *stream = event_stream_create(event_arena);
+    Diag_Sink *sink = bm_diag_sink_create_default(temp_arena);
+    Event_Stream *build_stream = NULL;
     if (!stream) {
         arena_destroy(temp_arena);
         arena_destroy(event_arena);
+        arena_destroy(validate_arena);
         arena_destroy(model_arena);
         return false;
     }
@@ -283,6 +356,7 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
     if (!ctx) {
         arena_destroy(temp_arena);
         arena_destroy(event_arena);
+        arena_destroy(validate_arena);
         arena_destroy(model_arena);
         return false;
     }
@@ -291,14 +365,24 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
     bool eval_ok = !eval_result_is_fatal(eval_result);
     bool builder_ok = false;
     bool freeze_ok = false;
-
     const Build_Model *model = NULL;
+
     if (eval_ok) {
-        Build_Model_Builder *builder = builder_create(event_arena, NULL);
-        if (builder) {
-            builder_ok = builder_apply_stream(builder, stream);
+        build_stream = pipeline_wrap_stream_with_root(event_arena,
+                                                      stream,
+                                                      current_file,
+                                                      init.source_dir,
+                                                      init.binary_dir);
+        Build_Model_Builder *builder = builder_create(temp_arena, sink);
+        const Build_Model_Draft *draft = NULL;
+        if (builder && build_stream) {
+            builder_ok = builder_apply_stream(builder, build_stream);
             if (builder_ok) {
-                model = build_model_freeze(builder, model_arena);
+                draft = builder_finalize(builder);
+                builder_ok = (draft != NULL);
+            }
+            if (builder_ok && bm_validate_draft(draft, validate_arena, sink)) {
+                model = bm_freeze_draft(draft, model_arena, sink);
                 freeze_ok = (model != NULL);
             }
         }
@@ -316,6 +400,7 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
+    arena_destroy(validate_arena);
     arena_destroy(model_arena);
     return true;
 }
@@ -339,26 +424,26 @@ static bool render_pipeline_case_snapshot_to_sb(Arena *arena,
 }
 
 static bool render_pipeline_casepack_snapshot_to_arena(Arena *arena,
-                                                        Pipeline_Case_List cases,
-                                                        String_View *out) {
+                                                       Pipeline_Case_List cases,
+                                                       String_View *out) {
     if (!arena || !out) return false;
 
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "MODULE pipeline\n");
-    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", cases.count));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", arena_arr_len(cases)));
 
-    for (size_t i = 0; i < cases.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(cases); i++) {
         nob_sb_append_cstr(&sb, "=== CASE ");
-        nob_sb_append_buf(&sb, cases.items[i].name.data, cases.items[i].name.count);
+        nob_sb_append_buf(&sb, cases[i].name.data, cases[i].name.count);
         nob_sb_append_cstr(&sb, " ===\n");
 
-        if (!render_pipeline_case_snapshot_to_sb(arena, cases.items[i], &sb)) {
+        if (!render_pipeline_case_snapshot_to_sb(arena, cases[i], &sb)) {
             nob_sb_free(sb);
             return false;
         }
 
         nob_sb_append_cstr(&sb, "=== END CASE ===\n");
-        if (i + 1 < cases.count) nob_sb_append_cstr(&sb, "\n");
+        if (i + 1 < arena_arr_len(cases)) nob_sb_append_cstr(&sb, "\n");
     }
 
     size_t len = sb.count;
@@ -385,14 +470,14 @@ static bool assert_pipeline_golden_casepack(const char *input_path, const char *
         goto done;
     }
 
-    Pipeline_Case_List cases = {0};
+    Pipeline_Case_List cases = NULL;
     if (!parse_case_pack_to_arena(arena, input, &cases)) {
         nob_log(NOB_ERROR, "golden: invalid case-pack: %s", input_path);
         ok = false;
         goto done;
     }
-    if (cases.count != 7) {
-        nob_log(NOB_ERROR, "golden: unexpected pipeline case count: got=%zu expected=7", cases.count);
+    if (arena_arr_len(cases) != 7) {
+        nob_log(NOB_ERROR, "golden: unexpected pipeline case count: got=%zu expected=7", arena_arr_len(cases));
         ok = false;
         goto done;
     }
@@ -433,6 +518,29 @@ done:
     return ok;
 }
 
+static void pipeline_init_event(Event *ev, Event_Kind kind, size_t line) {
+    *ev = (Event){0};
+    ev->h.kind = kind;
+    ev->h.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
+    ev->h.origin.line = line;
+    ev->h.origin.col = 1;
+}
+
+static const Build_Model *pipeline_freeze_stream(Arena *arena,
+                                                 Event_Stream *stream,
+                                                 Diag_Sink *sink,
+                                                 Arena *validate_arena,
+                                                 Arena *model_arena) {
+    Build_Model_Builder *builder = builder_create(arena, sink);
+    const Build_Model_Draft *draft = NULL;
+    if (!builder) return NULL;
+    if (!builder_apply_stream(builder, stream)) return NULL;
+    draft = builder_finalize(builder);
+    if (!draft) return NULL;
+    if (!bm_validate_draft(draft, validate_arena, sink)) return NULL;
+    return bm_freeze_draft(draft, model_arena, sink);
+}
+
 static const char *PIPELINE_GOLDEN_DIR = "test_v2/pipeline/golden";
 
 TEST(pipeline_golden_all_cases) {
@@ -444,169 +552,124 @@ TEST(pipeline_golden_all_cases) {
 
 TEST(pipeline_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
     ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
 
-    Cmake_Event_Stream *stream = event_stream_create(arena);
+    Event_Stream *stream = event_stream_create(arena);
+    Diag_Sink *sink = bm_diag_sink_create_default(arena);
     ASSERT(stream != NULL);
 
-    Cmake_Event ev = {0};
-    ev.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
-    ev.origin.line = 1;
-    ev.origin.col = 1;
+    Event ev = {0};
+    pipeline_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_DIR_PUSH;
-    ev.as.dir_push.source_dir = nob_sv_from_cstr("sub");
-    ev.as.dir_push.binary_dir = nob_sv_from_cstr("sub-build");
-    ASSERT(event_stream_push(arena, stream, ev));
+    pipeline_init_event(&ev, EVENT_DIRECTORY_ENTER, 2);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr("sub");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr("sub-build");
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_DIRECTORY_INCLUDE_DIRECTORIES;
-    ev.as.directory_include_directories.path = nob_sv_from_cstr("sub/include");
-    ev.as.directory_include_directories.is_system = false;
-    ev.as.directory_include_directories.is_before = false;
-    ASSERT(event_stream_push(arena, stream, ev));
+    pipeline_init_event(&ev, EVENT_DIRECTORY_PROPERTY_MUTATE, 3);
+    ev.as.directory_property_mutate.property_name = nob_sv_from_cstr("INCLUDE_DIRECTORIES");
+    ev.as.directory_property_mutate.op = EVENT_PROPERTY_MUTATE_APPEND_LIST;
+    ev.as.directory_property_mutate.modifier_flags = EVENT_PROPERTY_MODIFIER_NONE;
+    String_View include_items[] = {nob_sv_from_cstr("sub/include")};
+    ev.as.directory_property_mutate.items = include_items;
+    ev.as.directory_property_mutate.item_count = NOB_ARRAY_LEN(include_items);
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_TARGET_DECLARE;
+    pipeline_init_event(&ev, EVENT_TARGET_DECLARE, 4);
     ev.as.target_declare.name = nob_sv_from_cstr("sub_lib");
-    ev.as.target_declare.type = EV_TARGET_LIBRARY_STATIC;
-    ASSERT(event_stream_push(arena, stream, ev));
+    ev.as.target_declare.target_type = EV_TARGET_LIBRARY_STATIC;
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_DIR_POP;
-    ASSERT(event_stream_push(arena, stream, ev));
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 5);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr("sub");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr("sub-build");
+    ASSERT(event_stream_push(stream, &ev));
 
-    Build_Model_Builder *builder = builder_create(arena, NULL);
-    ASSERT(builder != NULL);
-    ASSERT(builder_apply_stream(builder, stream));
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 6);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
 
-    Build_Model *model = builder_finish(builder);
+    const Build_Model *model = pipeline_freeze_stream(arena, stream, sink, validate_arena, model_arena);
     ASSERT(model != NULL);
-    ASSERT(model->directory_node_count >= 2);
+    ASSERT(bm_query_directory_count(model) == 2);
 
-    const Build_Directory_Node *sub_node = NULL;
-    for (size_t i = 0; i < model->directory_node_count; i++) {
-        const Build_Directory_Node *node = &model->directory_nodes[i];
-        if (nob_sv_eq(node->source_dir, nob_sv_from_cstr("sub")) &&
-            nob_sv_eq(node->binary_dir, nob_sv_from_cstr("sub-build"))) {
-            sub_node = node;
-            break;
-        }
-    }
-    ASSERT(sub_node != NULL);
-    ASSERT(sub_node->include_dirs.count == 1);
-    ASSERT(nob_sv_eq(sub_node->include_dirs.items[0], nob_sv_from_cstr("sub/include")));
+    BM_Directory_Id sub_dir = pipeline_find_directory_id(model,
+                                                         nob_sv_from_cstr("sub"),
+                                                         nob_sv_from_cstr("sub-build"));
+    ASSERT(sub_dir != BM_DIRECTORY_ID_INVALID);
 
-    Build_Target *target = build_model_find_target(model, nob_sv_from_cstr("sub_lib"));
-    ASSERT(target != NULL);
-    ASSERT(target->owner_directory_index == sub_node->index);
+    BM_String_Item_Span sub_includes = bm_query_directory_include_directories_raw(model, sub_dir);
+    ASSERT(sub_includes.count == 1);
+    ASSERT(nob_sv_eq(sub_includes.items[0].value, nob_sv_from_cstr("sub/include")));
+
+    BM_Target_Id target_id = bm_query_target_by_name(model, nob_sv_from_cstr("sub_lib"));
+    ASSERT(target_id != BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_target_owner_directory(model, target_id) == sub_dir);
+    ASSERT(bm_query_target_kind(model, target_id) == BM_TARGET_STATIC_LIBRARY);
 
     arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
     TEST_PASS();
 }
 
 TEST(pipeline_validate_does_not_infer_link_library_targets) {
-    Arena *arena = arena_create(1024 * 1024);
-    ASSERT(arena != NULL);
-
-    Build_Model *model = build_model_create(arena);
-    ASSERT(model != NULL);
-    Build_Target *app = build_model_add_target(model, nob_sv_from_cstr("app"), TARGET_EXECUTABLE);
-    ASSERT(app != NULL);
-
-    build_target_add_library(app, arena, nob_sv_from_cstr("MissingTargetLikeName"), VISIBILITY_PRIVATE);
-    ASSERT(app->dependencies.count == 0);
-    ASSERT(app->link_libraries.count == 1);
-    ASSERT(build_model_validate(model, NULL));
-
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
-TEST(pipeline_builder_custom_command_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
     ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
 
-    Cmake_Event_Stream *stream = event_stream_create(arena);
+    Event_Stream *stream = event_stream_create(arena);
+    Diag_Sink *sink = bm_diag_sink_create_default(arena);
     ASSERT(stream != NULL);
 
-    Cmake_Event ev = {0};
-    ev.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
-    ev.origin.line = 1;
-    ev.origin.col = 1;
+    Event ev = {0};
+    pipeline_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_TARGET_DECLARE;
-    ev.as.target_declare.name = nob_sv_from_cstr("gen");
-    ev.as.target_declare.type = EV_TARGET_LIBRARY_UNKNOWN;
-    ASSERT(event_stream_push(arena, stream, ev));
+    pipeline_init_event(&ev, EVENT_TARGET_DECLARE, 2);
+    ev.as.target_declare.name = nob_sv_from_cstr("app");
+    ev.as.target_declare.target_type = EV_TARGET_EXECUTABLE;
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_CUSTOM_COMMAND_TARGET;
-    ev.as.custom_command_target.target_name = nob_sv_from_cstr("gen");
-    ev.as.custom_command_target.pre_build = true;
-    String_View target_cmds[] = {nob_sv_from_cstr("echo gen")};
-    ev.as.custom_command_target.commands = target_cmds;
-    ev.as.custom_command_target.command_count = NOB_ARRAY_LEN(target_cmds);
-    ev.as.custom_command_target.working_dir = nob_sv_from_cstr("tools");
-    ev.as.custom_command_target.comment = nob_sv_from_cstr("gen step");
-    ev.as.custom_command_target.outputs = nob_sv_from_cstr("");
-    ev.as.custom_command_target.byproducts = nob_sv_from_cstr("out.txt");
-    ev.as.custom_command_target.depends = nob_sv_from_cstr("seed.txt");
-    ev.as.custom_command_target.main_dependency = nob_sv_from_cstr("");
-    ev.as.custom_command_target.depfile = nob_sv_from_cstr("");
-    ev.as.custom_command_target.append = false;
-    ev.as.custom_command_target.verbatim = true;
-    ev.as.custom_command_target.uses_terminal = false;
-    ev.as.custom_command_target.command_expand_lists = false;
-    ev.as.custom_command_target.depends_explicit_only = false;
-    ev.as.custom_command_target.codegen = false;
-    ASSERT(event_stream_push(arena, stream, ev));
+    pipeline_init_event(&ev, EVENT_TARGET_LINK_LIBRARIES, 3);
+    ev.as.target_link_libraries.target_name = nob_sv_from_cstr("app");
+    ev.as.target_link_libraries.visibility = EV_VISIBILITY_PRIVATE;
+    ev.as.target_link_libraries.item = nob_sv_from_cstr("MissingTargetLikeName");
+    ASSERT(event_stream_push(stream, &ev));
 
-    ev.kind = EV_CUSTOM_COMMAND_OUTPUT;
-    String_View output_cmds[] = {nob_sv_from_cstr("python gen.py"), nob_sv_from_cstr("echo done")};
-    ev.as.custom_command_output.commands = output_cmds;
-    ev.as.custom_command_output.command_count = NOB_ARRAY_LEN(output_cmds);
-    ev.as.custom_command_output.working_dir = nob_sv_from_cstr("scripts");
-    ev.as.custom_command_output.comment = nob_sv_from_cstr("codegen");
-    ev.as.custom_command_output.outputs = nob_sv_from_cstr("generated.c;generated.h");
-    ev.as.custom_command_output.byproducts = nob_sv_from_cstr("gen.log");
-    ev.as.custom_command_output.depends = nob_sv_from_cstr("schema.idl");
-    ev.as.custom_command_output.main_dependency = nob_sv_from_cstr("schema.idl");
-    ev.as.custom_command_output.depfile = nob_sv_from_cstr("gen.d");
-    ev.as.custom_command_output.append = false;
-    ev.as.custom_command_output.verbatim = true;
-    ev.as.custom_command_output.uses_terminal = false;
-    ev.as.custom_command_output.command_expand_lists = false;
-    ev.as.custom_command_output.depends_explicit_only = false;
-    ev.as.custom_command_output.codegen = true;
-    ASSERT(event_stream_push(arena, stream, ev));
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 4);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
 
-    Build_Model_Builder *builder = builder_create(arena, NULL);
-    ASSERT(builder != NULL);
-    ASSERT(builder_apply_stream(builder, stream));
-
-    Build_Model *model = builder_finish(builder);
+    const Build_Model *model = pipeline_freeze_stream(arena, stream, sink, validate_arena, model_arena);
     ASSERT(model != NULL);
 
-    Build_Target *target = build_model_find_target(model, nob_sv_from_cstr("gen"));
-    ASSERT(target != NULL);
-    ASSERT(target->type == TARGET_UTILITY);
+    BM_Target_Id app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
 
-    size_t pre_count = 0;
-    const Custom_Command *pre_cmds = build_target_get_custom_commands(target, true, &pre_count);
-    ASSERT(pre_cmds != NULL);
-    ASSERT(pre_count == 1);
-    ASSERT(pre_cmds[0].commands.count == 1);
-    ASSERT(nob_sv_eq(pre_cmds[0].commands.items[0], nob_sv_from_cstr("echo gen")));
-    ASSERT(pre_cmds[0].byproducts.count == 1);
-
-    size_t out_count = 0;
-    const Custom_Command *out_cmds = build_model_get_output_custom_commands(model, &out_count);
-    ASSERT(out_cmds != NULL);
-    ASSERT(out_count == 1);
-    ASSERT(out_cmds[0].commands.count == 2);
-    ASSERT(nob_sv_eq(out_cmds[0].commands.items[0], nob_sv_from_cstr("python gen.py")));
-    ASSERT(nob_sv_eq(out_cmds[0].commands.items[1], nob_sv_from_cstr("echo done")));
-    ASSERT(out_cmds[0].outputs.count == 2);
-    ASSERT(out_cmds[0].depends.count == 1);
+    BM_Target_Id_Span explicit_deps = bm_query_target_dependencies_explicit(model, app_id);
+    BM_String_Item_Span raw_link_libs = bm_query_target_link_libraries_raw(model, app_id);
+    ASSERT(explicit_deps.count == 0);
+    ASSERT(raw_link_libs.count == 1);
+    ASSERT(nob_sv_eq(raw_link_libs.items[0].value, nob_sv_from_cstr("MissingTargetLikeName")));
 
     arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
     TEST_PASS();
 }
 
@@ -633,7 +696,6 @@ void run_pipeline_v2_tests(int *passed, int *failed) {
     test_pipeline_golden_all_cases(passed, failed);
     test_pipeline_builder_directory_scope_events(passed, failed);
     test_pipeline_validate_does_not_infer_link_library_targets(passed, failed);
-    test_pipeline_builder_custom_command_events(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

@@ -473,7 +473,7 @@ static void ctest_new_process_end(Evaluator_Context *ctx, const Ctest_New_Proces
     ctx->break_requested = false;
     ctx->continue_requested = false;
     eval_clear_return_state(ctx);
-    if (!ctx->oom) ctx->stop_requested = false;
+    eval_clear_stop_if_not_oom(ctx);
 }
 
 static bool ctest_apply_resolved_context(Evaluator_Context *ctx,

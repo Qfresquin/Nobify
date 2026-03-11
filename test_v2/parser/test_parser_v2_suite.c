@@ -15,26 +15,20 @@ typedef struct {
     String_View script;
 } Parser_Case;
 
-typedef struct {
-    Parser_Case *items;
-    size_t count;
-    size_t capacity;
-} Parser_Case_List;
+typedef Parser_Case *Parser_Case_List;
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = token;
-    return true;
+    return arena_arr_push(arena, *list, token);
 }
 
 static Ast_Root parse_script_local(Arena *arena, const char *script) {
     Lexer lx = lexer_init(nob_sv_from_cstr(script));
-    Token_List toks = {0};
+    Token_List toks = NULL;
     for (;;) {
         Token t = lexer_next(&lx);
         if (t.kind == TOKEN_END) break;
-        if (!token_list_append(arena, &toks, t)) return (Ast_Root){0};
+        if (!token_list_append(arena, &toks, t)) return NULL;
     }
     return parse_tokens(arena, toks);
 }
@@ -68,9 +62,7 @@ static String_View normalize_newlines_to_arena(Arena *arena, String_View in) {
 
 static bool parser_case_list_append(Arena *arena, Parser_Case_List *list, Parser_Case value) {
     if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = value;
-    return true;
+    return arena_arr_push(arena, *list, value);
 }
 
 static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
@@ -88,7 +80,7 @@ static String_View sv_trim_cr(String_View sv) {
 
 static bool parse_case_pack_to_arena(Arena *arena, String_View content, Parser_Case_List *out) {
     if (!arena || !out) return false;
-    *out = (Parser_Case_List){0};
+    *out = NULL;
 
     Nob_String_Builder script_sb = {0};
     bool in_case = false;
@@ -151,15 +143,15 @@ static bool parse_case_pack_to_arena(Arena *arena, String_View content, Parser_C
     nob_sb_free(script_sb);
     if (in_case) return false;
 
-    for (size_t i = 0; i < out->count; i++) {
-        for (size_t j = i + 1; j < out->count; j++) {
-            if (nob_sv_eq(out->items[i].name, out->items[j].name)) {
+    for (size_t i = 0; i < arena_arr_len(*out); i++) {
+        for (size_t j = i + 1; j < arena_arr_len(*out); j++) {
+            if (nob_sv_eq((*out)[i].name, (*out)[j].name)) {
                 return false;
             }
         }
     }
 
-    return out->count > 0;
+    return arena_arr_len(*out) > 0;
 }
 
 static void snapshot_append_indent(Nob_String_Builder *sb, int indent) {
@@ -212,14 +204,14 @@ static void snapshot_append_args(Nob_String_Builder *sb, const char *label, cons
     snapshot_append_indent(sb, indent);
     nob_sb_append_cstr(sb, label);
     nob_sb_append_cstr(sb, " count=");
-    nob_sb_append_cstr(sb, nob_temp_sprintf("%zu\n", args ? args->count : 0));
+    nob_sb_append_cstr(sb, nob_temp_sprintf("%zu\n", args ? arena_arr_len(*args) : 0));
     if (!args) return;
 
-    for (size_t i = 0; i < args->count; i++) {
-        const Arg *arg = &args->items[i];
+    for (size_t i = 0; i < arena_arr_len(*args); i++) {
+        const Arg *arg = &(*args)[i];
         snapshot_append_indent(sb, indent + 1);
-        nob_sb_append_cstr(sb, nob_temp_sprintf("ARG[%zu] kind=%s tokens=%zu\n", i, arg_kind_name(arg->kind), arg->count));
-        for (size_t j = 0; j < arg->count; j++) {
+        nob_sb_append_cstr(sb, nob_temp_sprintf("ARG[%zu] kind=%s tokens=%zu\n", i, arg_kind_name(arg->kind), arena_arr_len(arg->items)));
+        for (size_t j = 0; j < arena_arr_len(arg->items); j++) {
             Token tok = arg->items[j];
             snapshot_append_indent(sb, indent + 2);
             nob_sb_append_cstr(sb, nob_temp_sprintf("TOK[%zu] kind=%s text=", j, token_kind_name(tok.kind)));
@@ -252,14 +244,14 @@ static void snapshot_append_node(Nob_String_Builder *sb, const Node *node, int i
             nob_sb_append_cstr(sb, "THEN\n");
             snapshot_append_node_list(sb, &node->as.if_stmt.then_block, indent + 2);
             snapshot_append_indent(sb, indent + 1);
-            nob_sb_append_cstr(sb, nob_temp_sprintf("ELSEIF_COUNT=%zu\n", node->as.if_stmt.elseif_clauses.count));
-            for (size_t i = 0; i < node->as.if_stmt.elseif_clauses.count; i++) {
+            nob_sb_append_cstr(sb, nob_temp_sprintf("ELSEIF_COUNT=%zu\n", arena_arr_len(node->as.if_stmt.elseif_clauses)));
+            for (size_t i = 0; i < arena_arr_len(node->as.if_stmt.elseif_clauses); i++) {
                 snapshot_append_indent(sb, indent + 1);
                 nob_sb_append_cstr(sb, nob_temp_sprintf("ELSEIF[%zu]\n", i));
-                snapshot_append_args(sb, "COND", &node->as.if_stmt.elseif_clauses.items[i].condition, indent + 2);
+                snapshot_append_args(sb, "COND", &node->as.if_stmt.elseif_clauses[i].condition, indent + 2);
                 snapshot_append_indent(sb, indent + 2);
                 nob_sb_append_cstr(sb, "BLOCK\n");
-                snapshot_append_node_list(sb, &node->as.if_stmt.elseif_clauses.items[i].block, indent + 3);
+                snapshot_append_node_list(sb, &node->as.if_stmt.elseif_clauses[i].block, indent + 3);
             }
             snapshot_append_indent(sb, indent + 1);
             nob_sb_append_cstr(sb, "ELSE\n");
@@ -296,8 +288,8 @@ static void snapshot_append_node(Nob_String_Builder *sb, const Node *node, int i
 
 static void snapshot_append_node_list(Nob_String_Builder *sb, const Node_List *list, int indent) {
     if (!list) return;
-    for (size_t i = 0; i < list->count; i++) {
-        snapshot_append_node(sb, &list->items[i], indent, i);
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        snapshot_append_node(sb, &(*list)[i], indent, i);
     }
 }
 
@@ -339,7 +331,7 @@ static bool render_parser_case_snapshot_to_sb(Arena *arena, Parser_Case parser_c
     Ast_Root ast = parse_script_local(arena, parser_case.script.data);
 
     nob_sb_append_cstr(sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
-    nob_sb_append_cstr(sb, nob_temp_sprintf("ROOT count=%zu\n", ast.count));
+    nob_sb_append_cstr(sb, nob_temp_sprintf("ROOT count=%zu\n", arena_arr_len(ast)));
     snapshot_append_node_list(sb, &ast, 0);
 
     if (has_case_env) clear_parser_case_env(parser_case.name);
@@ -351,20 +343,20 @@ static bool render_parser_casepack_snapshot_to_arena(Arena *arena, Parser_Case_L
 
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "MODULE parser\n");
-    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", cases.count));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("CASES %zu\n\n", arena_arr_len(cases)));
 
-    for (size_t i = 0; i < cases.count; i++) {
+    for (size_t i = 0; i < arena_arr_len(cases); i++) {
         nob_sb_append_cstr(&sb, "=== CASE ");
-        nob_sb_append_buf(&sb, cases.items[i].name.data, cases.items[i].name.count);
+        nob_sb_append_buf(&sb, cases[i].name.data, cases[i].name.count);
         nob_sb_append_cstr(&sb, " ===\n");
 
-        if (!render_parser_case_snapshot_to_sb(arena, cases.items[i], &sb)) {
+        if (!render_parser_case_snapshot_to_sb(arena, cases[i], &sb)) {
             nob_sb_free(sb);
             return false;
         }
 
         nob_sb_append_cstr(&sb, "=== END CASE ===\n");
-        if (i + 1 < cases.count) nob_sb_append_cstr(&sb, "\n");
+        if (i + 1 < arena_arr_len(cases)) nob_sb_append_cstr(&sb, "\n");
     }
 
     size_t len = sb.count;
@@ -397,8 +389,8 @@ static bool assert_parser_golden_casepack(const char *input_path, const char *ex
         ok = false;
         goto done;
     }
-    if (cases.count != 14) {
-        nob_log(NOB_ERROR, "golden: unexpected parser case count: got=%zu expected=14", cases.count);
+    if (arena_arr_len(cases) != 14) {
+        nob_log(NOB_ERROR, "golden: unexpected parser case count: got=%zu expected=14", arena_arr_len(cases));
         ok = false;
         goto done;
     }

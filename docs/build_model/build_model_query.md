@@ -37,6 +37,36 @@ BM_Package_Id bm_query_package_by_name(const Build_Model *model, String_View nam
 bool bm_target_id_is_valid(BM_Target_Id id);
 ```
 
+### Directory and Global Raw Accessors
+
+```c
+BM_Directory_Id bm_query_root_directory(const Build_Model *model);
+size_t bm_query_directory_count(const Build_Model *model);
+BM_Directory_Id bm_query_directory_parent(const Build_Model *model, BM_Directory_Id id);
+String_View bm_query_directory_source_dir(const Build_Model *model, BM_Directory_Id id);
+String_View bm_query_directory_binary_dir(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_include_directories_raw(const Build_Model *model,
+                                                               BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Build_Model *model,
+                                                                      BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model,
+                                                            BM_Directory_Id id);
+
+BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_link_directories_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_compile_definitions_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_compile_options_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_link_options_raw(const Build_Model *model);
+BM_String_Span bm_query_global_raw_property_items(const Build_Model *model,
+                                                  String_View property_name);
+```
+
+`bm_query_global_raw_property_items(...)` is the canonical escape hatch for
+global raw properties that are reconstructed but not yet promoted to dedicated
+named accessors. Codegen and tests may use it for keys such as
+`LINK_LIBRARIES`, while the model remains fully opaque.
+
 ### Target Raw Accessors
 
 ```c
@@ -93,6 +123,7 @@ bool bm_query_target_effective_link_libraries(const Build_Model *model,
 
 Release-1 must also include query helpers for:
 - directory metadata and parent traversal
+- raw promoted directory/global property access
 - tests
 - install rules
 - packages

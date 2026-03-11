@@ -71,6 +71,11 @@ void eval_request_stop_on_error(Evaluator_Context *ctx) {
     ctx->stop_requested = true;
 }
 
+void eval_clear_stop_if_not_oom(Evaluator_Context *ctx) {
+    if (!ctx || ctx->oom) return;
+    ctx->stop_requested = false;
+}
+
 bool eval_should_stop(Evaluator_Context *ctx) {
     if (!ctx) return true;
     return ctx->oom || ctx->stop_requested;

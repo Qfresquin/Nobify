@@ -26,10 +26,21 @@ BM_Directory_Id bm_query_root_directory(const Build_Model *model);
 BM_Directory_Id bm_query_directory_parent(const Build_Model *model, BM_Directory_Id id);
 String_View bm_query_directory_source_dir(const Build_Model *model, BM_Directory_Id id);
 String_View bm_query_directory_binary_dir(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_include_directories_raw(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model, BM_Directory_Id id);
 
 BM_Target_Id bm_query_target_by_name(const Build_Model *model, String_View name);
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name);
 BM_Package_Id bm_query_package_by_name(const Build_Model *model, String_View name);
+
+BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_link_directories_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_compile_definitions_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_compile_options_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_link_options_raw(const Build_Model *model);
+BM_String_Span bm_query_global_raw_property_items(const Build_Model *model, String_View property_name);
 
 String_View bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id);
