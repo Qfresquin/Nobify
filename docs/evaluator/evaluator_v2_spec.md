@@ -243,27 +243,26 @@ Current propagation pattern:
 - OOM (`ctx_oom`) marks both `oom` and `stop_requested`,
 - stop is cooperative across traversal, dispatch, diagnostics, and nested file execution.
 
-## 12. Current Known Divergences / Limits
+## 12. Known Divergences / Limits
 
-Current intentionally visible limits:
+Current contract-visible limits:
 - `while()` execution is guarded by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`, defaulting to `10000`.
 - the `while()` guard is read once at `while` node entry; mutations inside the loop affect only the next `while()` node.
 - invalid `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` values emit a warning and fall back to `10000`.
-- the `ctest_*` family now shares a lightweight session model for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` stages `Testing/TAG`, `ctest_submit` / `ctest_upload` stage local manifests under `Testing/<tag>/`, and `ctest_run_script(NEW_PROCESS ...)` executes under an isolated evaluator-side child scope. This closes the evaluator-side/local-orchestration slice of the cluster; what remains intentionally deferred is full external CTest dashboard workflow and real OS-process dashboard-runner behavior.
-- `cmake_file_api(QUERY API_VERSION 1 ...)` now stages evaluator-side query/reply/index artifacts under `.cmake/api/v1` and publishes `NOBIFY_CMAKE_FILE_API::*` helper paths, but it still stops short of full CMake-generated reply semantics or external tool-driven file-api workflows.
-- `cmake_host_system_information()` now supports `FQDN` in the documented evaluator subset; broader host-query coverage remains intentionally incomplete.
-- `cmake_language(SET_DEPENDENCY_PROVIDER ...)` now supports the file-scope `FIND_PACKAGE` provider subset for existing `function()` / `macro()` commands, and `find_package(BYPASS_PROVIDER)` is valid only while a provider is actively handling that package lookup.
-- provider-driven and non-provider `find_package(CONFIG ...)` lookups now treat `CMAKE_PREFIX_PATH` entries as prefixes, including canonical `lib/cmake`, `lib64/cmake`, and `share/cmake` descendants during config resolution.
-- `cmake_language(SET_DEPENDENCY_PROVIDER ...)` now also supports the `FETCHCONTENT_MAKEAVAILABLE_SERIAL` subset together with evaluator-side `FetchContent_Declare`, `FetchContent_GetProperties`, `FetchContent_MakeAvailable`, and `FetchContent_SetPopulated` handling after `include(FetchContent)`.
-- the current `FetchContent` subset is intentionally local-only: it supports explicit `SOURCE_DIR` / `BINARY_DIR`, provider fulfillment via `FetchContent_SetPopulated(...)`, `FETCHCONTENT_SOURCE_DIR_<UPPER>` bypass, and same-dependency recursive provider bypass, but it does not attempt remote population workflows.
-- the rest of the broader advanced `cmake_language` surface remains intentionally incomplete.
-- `target_sources(FILE_SET ...)` currently supports the `TYPE HEADERS` subset; other file-set types such as `CXX_MODULES` remain unsupported.
-- `try_run()` supports both the source-file/native-execution subset and the `PROJECT` signature through the shared `try_compile(...)` execution path.
-- when `CMAKE_CROSSCOMPILING` is true, `try_run()` still performs the compile phase but resolves the run phase to `FAILED_TO_RUN` with the message `try_run skipped due to CMAKE_CROSSCOMPILING`; answer-file/emulator workflows remain unimplemented.
+- `ctest_*` implements local-session behavior (`MODEL`, `TRACK`, `SOURCE`, `BUILD`) and file staging under `Testing/TAG`; external CTest dashboard workflow and OS-process dashboard runner behavior are not implemented.
+- `cmake_file_api(QUERY API_VERSION 1 ...)` emits evaluator-side query/reply/index artifacts under `.cmake/api/v1` and `NOBIFY_CMAKE_FILE_API::*` helper paths; full CMake-generated reply semantics and external tool-driven file-api workflows are not implemented.
+- `cmake_host_system_information()` supports `FQDN` in the documented evaluator subset; other host-query coverage is not implemented.
+- `cmake_language(SET_DEPENDENCY_PROVIDER ...)` supports the file-scope `FIND_PACKAGE` provider subset for existing `function()` / `macro()` commands; `find_package(BYPASS_PROVIDER)` is valid only while a provider is actively handling that package lookup.
+- `cmake_language(SET_DEPENDENCY_PROVIDER ...)` and `FetchContent` include evaluator-side support for `SET_DEPENDENCY_PROVIDER`, `FETCHCONTENT_MAKEAVAILABLE_SERIAL`, `FetchContent_Declare`, `FetchContent_GetProperties`, `FetchContent_MakeAvailable`, and `FetchContent_SetPopulated`.
+- `FetchContent` local workflow is supported for explicit `SOURCE_DIR` / `BINARY_DIR`, provider fulfillment via `FetchContent_SetPopulated(...)`, and provider-bypass via `FETCHCONTENT_SOURCE_DIR_<UPPER>`; remote population workflows are not implemented.
+- advanced `cmake_language` commands beyond the documented subset are not implemented.
+- `target_sources(FILE_SET ...)` supports only `TYPE HEADERS`; other file-set types such as `CXX_MODULES` remain unsupported.
+- `try_run()` supports source-file/native execution and `PROJECT` via shared `try_compile(...)` flow.
+- when `CMAKE_CROSSCOMPILING` is true, `try_run()` performs compile and marks run as `FAILED_TO_RUN` with message `try_run skipped due to CMAKE_CROSSCOMPILING`; answer-file and emulator workflows are not implemented.
 - native dispatcher lookup is case-insensitive and index-backed through the runtime registry.
 - capability lookup shares that same native registry lookup path for native-command introspection only.
 - unknown-command fallback is generic and does not dynamically apply capability metadata.
-- nested evaluation remains shared-context; child-context isolation is out of scope in the current roadmap.
+- nested evaluation remains shared-context; child-context isolation is not implemented in this roadmap.
 
 ## 13. Annex Map
 

@@ -4,9 +4,8 @@
 
 This document supersedes `build_model_architecture_v2.md`.
 
-It defines the canonical architecture for the next build-model implementation,
-even though the active code path in the repository still depends on
-`src_obsolete/build_model/` as of March 8, 2026.
+It defines the canonical architecture for the active build-model
+implementation under `src_v2/build_model/`.
 
 ## 2. System Boundary
 

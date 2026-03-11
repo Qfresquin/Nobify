@@ -1,0 +1,282 @@
+#ifndef BUILD_MODEL_INTERNAL_H_
+#define BUILD_MODEL_INTERNAL_H_
+
+#include <ctype.h>
+#include <string.h>
+
+#include "arena_dyn.h"
+#include "build_model_builder.h"
+#include "build_model_freeze.h"
+#include "build_model_query.h"
+#include "build_model_validate.h"
+#include "../diagnostics/diagnostics.h"
+
+typedef struct {
+    String_View name;
+    uint32_t id;
+} BM_Name_Index_Entry;
+
+typedef struct {
+    String_View name;
+    Event_Property_Mutate_Op op;
+    uint32_t flags;
+    String_View *items;
+    BM_Provenance provenance;
+} BM_Raw_Property_Record;
+
+typedef struct {
+    bool present;
+    String_View name;
+    String_View version;
+    String_View description;
+    String_View homepage_url;
+    String_View *languages;
+    BM_Provenance declaration_provenance;
+    String_View minimum_required_version;
+    bool minimum_required_fatal_if_too_old;
+    BM_Provenance minimum_required_provenance;
+} BM_Project_Record;
+
+typedef struct {
+    BM_String_Item_View *include_directories;
+    BM_String_Item_View *system_include_directories;
+    BM_String_Item_View *link_directories;
+    BM_String_Item_View *compile_definitions;
+    BM_String_Item_View *compile_options;
+    BM_String_Item_View *link_options;
+    BM_Raw_Property_Record *raw_properties;
+} BM_Global_Property_State;
+
+typedef struct {
+    BM_Directory_Id id;
+    BM_Directory_Id parent_id;
+    BM_Directory_Id owner_directory_id;
+    String_View source_dir;
+    String_View binary_dir;
+    BM_Provenance provenance;
+    BM_String_Item_View *include_directories;
+    BM_String_Item_View *system_include_directories;
+    BM_String_Item_View *link_directories;
+    BM_String_Item_View *compile_definitions;
+    BM_String_Item_View *compile_options;
+    BM_String_Item_View *link_options;
+    BM_Raw_Property_Record *raw_properties;
+} BM_Directory_Record;
+
+typedef struct {
+    BM_Target_Id id;
+    String_View name;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    BM_Target_Kind kind;
+    bool imported;
+    bool alias;
+    bool exclude_from_all;
+    bool win32_executable;
+    bool macosx_bundle;
+    String_View alias_of_name;
+    BM_Target_Id alias_of_id;
+    String_View *sources;
+    String_View *explicit_dependency_names;
+    BM_Target_Id *explicit_dependency_ids;
+    BM_String_Item_View *link_libraries;
+    BM_String_Item_View *link_options;
+    BM_String_Item_View *link_directories;
+    BM_String_Item_View *include_directories;
+    BM_String_Item_View *compile_definitions;
+    BM_String_Item_View *compile_options;
+    String_View output_name;
+    String_View prefix;
+    String_View suffix;
+    String_View archive_output_directory;
+    String_View library_output_directory;
+    String_View runtime_output_directory;
+    String_View folder;
+    BM_Raw_Property_Record *raw_properties;
+} BM_Target_Record;
+
+typedef struct {
+    BM_Test_Id id;
+    String_View name;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View command;
+    String_View working_dir;
+    bool command_expand_lists;
+} BM_Test_Record;
+
+typedef struct {
+    BM_Install_Rule_Id id;
+    BM_Install_Rule_Kind kind;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View item;
+    String_View destination;
+    BM_Target_Id resolved_target_id;
+} BM_Install_Rule_Record;
+
+typedef struct {
+    BM_Package_Id id;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View package_name;
+    String_View mode;
+    String_View found_path;
+    bool found;
+    bool required;
+    bool quiet;
+} BM_Package_Record;
+
+typedef struct {
+    BM_CPack_Install_Type_Id id;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View name;
+    String_View display_name;
+} BM_CPack_Install_Type_Record;
+
+typedef struct {
+    BM_CPack_Component_Group_Id id;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View name;
+    String_View display_name;
+    String_View description;
+    String_View parent_group_name;
+    BM_CPack_Component_Group_Id parent_group_id;
+    bool expanded;
+    bool bold_title;
+} BM_CPack_Component_Group_Record;
+
+typedef struct {
+    BM_CPack_Component_Id id;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View name;
+    String_View display_name;
+    String_View description;
+    String_View group_name;
+    BM_CPack_Component_Group_Id group_id;
+    String_View *dependency_names;
+    BM_CPack_Component_Id *dependency_ids;
+    String_View *install_type_names;
+    BM_CPack_Install_Type_Id *install_type_ids;
+    String_View archive_file;
+    String_View plist;
+    bool required;
+    bool hidden;
+    bool disabled;
+    bool downloaded;
+} BM_CPack_Component_Record;
+
+struct Build_Model_Draft {
+    Arena *arena;
+    Diag_Sink *sink;
+    bool has_semantic_entities;
+    bool testing_enabled;
+    BM_Project_Record project;
+    BM_Global_Property_State global_properties;
+    BM_Directory_Record *directories;
+    BM_Directory_Id root_directory_id;
+    BM_Target_Record *targets;
+    BM_Test_Record *tests;
+    BM_Install_Rule_Record *install_rules;
+    BM_Package_Record *packages;
+    BM_CPack_Install_Type_Record *cpack_install_types;
+    BM_CPack_Component_Group_Record *cpack_component_groups;
+    BM_CPack_Component_Record *cpack_components;
+    BM_Name_Index_Entry *target_name_index;
+    BM_Name_Index_Entry *test_name_index;
+    BM_Name_Index_Entry *package_name_index;
+};
+
+struct Build_Model {
+    Arena *arena;
+    bool testing_enabled;
+    BM_Project_Record project;
+    BM_Global_Property_State global_properties;
+    BM_Directory_Record *directories;
+    BM_Directory_Id root_directory_id;
+    BM_Target_Record *targets;
+    BM_Test_Record *tests;
+    BM_Install_Rule_Record *install_rules;
+    BM_Package_Record *packages;
+    BM_CPack_Install_Type_Record *cpack_install_types;
+    BM_CPack_Component_Group_Record *cpack_component_groups;
+    BM_CPack_Component_Record *cpack_components;
+    BM_Name_Index_Entry *target_name_index;
+    BM_Name_Index_Entry *test_name_index;
+    BM_Name_Index_Entry *package_name_index;
+};
+
+struct BM_Builder {
+    Arena *arena;
+    Diag_Sink *sink;
+    bool has_fatal_error;
+    Build_Model_Draft *draft;
+    BM_Directory_Id *directory_stack;
+};
+
+bool bm_copy_string(Arena *arena, String_View input, String_View *out);
+BM_Provenance bm_provenance_from_event(Arena *arena, const Event *ev);
+bool bm_split_cmake_list(Arena *arena, String_View raw, String_View **out_items);
+bool bm_add_name_index(Arena *arena, BM_Name_Index_Entry **index, String_View name, uint32_t id);
+bool bm_sv_eq_ci_lit(String_View sv, const char *lit);
+bool bm_sv_truthy(String_View sv);
+bool bm_string_view_is_empty(String_View sv);
+BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type);
+BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility);
+BM_Install_Rule_Kind bm_install_rule_kind_from_event(Cmake_Install_Rule_Type kind);
+BM_Directory_Id bm_builder_current_directory_id(const BM_Builder *builder);
+BM_Directory_Record *bm_draft_get_directory(Build_Model_Draft *draft, BM_Directory_Id id);
+const BM_Directory_Record *bm_draft_get_directory_const(const Build_Model_Draft *draft, BM_Directory_Id id);
+BM_Target_Record *bm_draft_find_target(Build_Model_Draft *draft, String_View name);
+const BM_Target_Record *bm_draft_find_target_const(const Build_Model_Draft *draft, String_View name);
+BM_Target_Id bm_draft_find_target_id(const Build_Model_Draft *draft, String_View name);
+BM_Test_Id bm_draft_find_test_id(const Build_Model_Draft *draft, String_View name);
+BM_Package_Id bm_draft_find_package_id(const Build_Model_Draft *draft, String_View name);
+BM_CPack_Install_Type_Id bm_draft_find_install_type_id(const Build_Model_Draft *draft, String_View name);
+BM_CPack_Component_Group_Id bm_draft_find_component_group_id(const Build_Model_Draft *draft, String_View name);
+BM_CPack_Component_Id bm_draft_find_component_id(const Build_Model_Draft *draft, String_View name);
+bool bm_builder_error(BM_Builder *builder, const Event *ev, const char *cause, const char *hint);
+void bm_builder_warn(BM_Builder *builder, const Event *ev, const char *cause, const char *hint);
+bool bm_diag_error(Diag_Sink *sink,
+                   BM_Provenance provenance,
+                   const char *component,
+                   const char *command,
+                   const char *cause,
+                   const char *hint);
+void bm_diag_warn(Diag_Sink *sink,
+                  BM_Provenance provenance,
+                  const char *component,
+                  const char *command,
+                  const char *cause,
+                  const char *hint);
+bool bm_append_string(Arena *arena, String_View **items, String_View item);
+bool bm_append_item(Arena *arena, BM_String_Item_View **items, BM_String_Item_View item);
+bool bm_apply_item_mutation(Arena *arena,
+                            BM_String_Item_View **dest,
+                            const BM_String_Item_View *items,
+                            size_t count,
+                            Event_Property_Mutate_Op op);
+bool bm_record_raw_property(Arena *arena,
+                            BM_Raw_Property_Record **records,
+                            String_View name,
+                            Event_Property_Mutate_Op op,
+                            uint32_t flags,
+                            const String_View *items,
+                            size_t item_count,
+                            BM_Provenance provenance);
+
+bool bm_builder_handle_directory_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_project_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_test_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev);
+bool bm_validate_explicit_cycles(const Build_Model_Draft *draft,
+                                 Arena *scratch,
+                                 Diag_Sink *sink,
+                                 bool *had_error);
+
+#endif

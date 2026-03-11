@@ -8,7 +8,8 @@ implementation.
 As of March 8, 2026:
 - the canonical upstream contract is `src_v2/transpiler/event_ir.h`
 - the canonical implementation target is `src_v2/build_model/`
-- the operational build-model code still lives in `src_obsolete/build_model/`
+- the operational build-model pipeline is now wired through `src_v2/build_model/`
+- `src_obsolete/build_model/` remains archival reference only
 - the `*_v2_spec.md` files in this directory are retained only as historical
   migration context
 

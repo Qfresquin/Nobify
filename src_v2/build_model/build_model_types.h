@@ -1,0 +1,97 @@
+#ifndef BUILD_MODEL_TYPES_H_
+#define BUILD_MODEL_TYPES_H_
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "arena.h"
+#include "nob.h"
+#include "event_ir.h"
+
+typedef struct BM_Builder BM_Builder;
+typedef struct Build_Model_Draft Build_Model_Draft;
+typedef struct Build_Model Build_Model;
+
+typedef struct Diag_Sink {
+    int reserved;
+} Diag_Sink;
+
+typedef uint32_t BM_Directory_Id;
+typedef uint32_t BM_Target_Id;
+typedef uint32_t BM_Test_Id;
+typedef uint32_t BM_Install_Rule_Id;
+typedef uint32_t BM_Package_Id;
+typedef uint32_t BM_CPack_Install_Type_Id;
+typedef uint32_t BM_CPack_Component_Group_Id;
+typedef uint32_t BM_CPack_Component_Id;
+
+#define BM_DIRECTORY_ID_INVALID ((BM_Directory_Id)UINT32_MAX)
+#define BM_TARGET_ID_INVALID ((BM_Target_Id)UINT32_MAX)
+#define BM_TEST_ID_INVALID ((BM_Test_Id)UINT32_MAX)
+#define BM_INSTALL_RULE_ID_INVALID ((BM_Install_Rule_Id)UINT32_MAX)
+#define BM_PACKAGE_ID_INVALID ((BM_Package_Id)UINT32_MAX)
+#define BM_CPACK_INSTALL_TYPE_ID_INVALID ((BM_CPack_Install_Type_Id)UINT32_MAX)
+#define BM_CPACK_COMPONENT_GROUP_ID_INVALID ((BM_CPack_Component_Group_Id)UINT32_MAX)
+#define BM_CPACK_COMPONENT_ID_INVALID ((BM_CPack_Component_Id)UINT32_MAX)
+
+typedef struct {
+    const String_View *items;
+    size_t count;
+} BM_String_Span;
+
+typedef struct {
+    const BM_Target_Id *items;
+    size_t count;
+} BM_Target_Id_Span;
+
+typedef struct {
+    uint64_t event_seq;
+    Event_Kind event_kind;
+    String_View file_path;
+    uint32_t line;
+    uint32_t col;
+} BM_Provenance;
+
+typedef enum {
+    BM_TARGET_EXECUTABLE = 0,
+    BM_TARGET_STATIC_LIBRARY,
+    BM_TARGET_SHARED_LIBRARY,
+    BM_TARGET_MODULE_LIBRARY,
+    BM_TARGET_INTERFACE_LIBRARY,
+    BM_TARGET_OBJECT_LIBRARY,
+    BM_TARGET_UTILITY,
+} BM_Target_Kind;
+
+typedef enum {
+    BM_VISIBILITY_PRIVATE = 0,
+    BM_VISIBILITY_PUBLIC,
+    BM_VISIBILITY_INTERFACE,
+} BM_Visibility;
+
+typedef enum {
+    BM_INSTALL_RULE_TARGET = 0,
+    BM_INSTALL_RULE_FILE,
+    BM_INSTALL_RULE_PROGRAM,
+    BM_INSTALL_RULE_DIRECTORY,
+} BM_Install_Rule_Kind;
+
+typedef enum {
+    BM_ITEM_FLAG_NONE = 0,
+    BM_ITEM_FLAG_BEFORE = 1u << 0,
+    BM_ITEM_FLAG_SYSTEM = 1u << 1,
+} BM_Item_Flags;
+
+typedef struct {
+    String_View value;
+    BM_Visibility visibility;
+    uint32_t flags;
+    BM_Provenance provenance;
+} BM_String_Item_View;
+
+typedef struct {
+    const BM_String_Item_View *items;
+    size_t count;
+} BM_String_Item_Span;
+
+#endif

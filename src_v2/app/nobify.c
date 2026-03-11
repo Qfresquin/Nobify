@@ -9,6 +9,10 @@
 #include "diagnostics.h"
 #include "evaluator.h"
 #include "event_ir.h"
+#include "build_model_builder.h"
+#include "build_model_validate.h"
+#include "build_model_freeze.h"
+#include "build_model_query.h"
 
 #include <string.h>
 
@@ -201,11 +205,89 @@ int main(int argc, char **argv) {
     } else {
         nob_log(NOB_INFO, "Finished without diagnostics");
     }
-    arena_destroy(event_arena);
-    arena_destroy(eval_arena);
-    arena_destroy(arena);
-    return 0;
 
+    Arena *build_model_arena = arena_create(16 * 1024 * 1024);
+    Arena *build_model_validate_arena = arena_create(8 * 1024 * 1024);
+    Arena *build_model_freeze_arena = arena_create(16 * 1024 * 1024);
+    if (!build_model_arena || !build_model_validate_arena || !build_model_freeze_arena) {
+        nob_log(NOB_ERROR, "Failed to allocate build-model arenas");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    BM_Builder *builder = bm_builder_create(build_model_arena, NULL);
+    if (!builder) {
+        nob_log(NOB_ERROR, "Failed to create build-model builder");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    if (!bm_builder_apply_stream(builder, stream)) {
+        nob_log(NOB_ERROR, "Build-model builder failed while consuming semantic events");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    const Build_Model_Draft *draft = bm_builder_finalize(builder);
+    if (!draft) {
+        nob_log(NOB_ERROR, "Build-model builder failed to finalize draft");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    if (!bm_validate_draft(draft, build_model_validate_arena, NULL)) {
+        nob_log(NOB_ERROR, "Build-model validation failed");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    const Build_Model *model = bm_freeze_draft(draft, build_model_freeze_arena, NULL);
+    if (!model) {
+        nob_log(NOB_ERROR, "Build-model freeze failed");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    nob_log(NOB_INFO,
+            "Build model ready: directories=%zu targets=%zu tests=%zu packages=%zu",
+            bm_query_directory_count(model),
+            bm_query_target_count(model),
+            bm_query_test_count(model),
+            bm_query_package_count(model));
+
+    arena_destroy(build_model_freeze_arena);
+    arena_destroy(build_model_validate_arena);
+    arena_destroy(build_model_arena);
     arena_destroy(event_arena);
     arena_destroy(eval_arena);
     arena_destroy(arena);
