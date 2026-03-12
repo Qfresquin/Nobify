@@ -73,6 +73,10 @@ named accessors. Codegen and tests may use it for keys such as
 String_View bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id);
 BM_Directory_Id bm_query_target_owner_directory(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_is_imported(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_is_alias(const Build_Model *model, BM_Target_Id id);
+BM_Target_Id bm_query_target_alias_of(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_exclude_from_all(const Build_Model *model, BM_Target_Id id);
 BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_Id id);
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model,
                                                         BM_Target_Id id);
@@ -103,6 +107,36 @@ keys:
 ### Effective Target Accessors
 
 ```c
+bool bm_query_target_effective_include_directories_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         Arena *scratch,
+                                                         BM_String_Item_Span *out);
+
+bool bm_query_target_effective_compile_definitions_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         Arena *scratch,
+                                                         BM_String_Item_Span *out);
+
+bool bm_query_target_effective_compile_options_items(const Build_Model *model,
+                                                     BM_Target_Id id,
+                                                     Arena *scratch,
+                                                     BM_String_Item_Span *out);
+
+bool bm_query_target_effective_link_libraries_items(const Build_Model *model,
+                                                    BM_Target_Id id,
+                                                    Arena *scratch,
+                                                    BM_String_Item_Span *out);
+
+bool bm_query_target_effective_link_options_items(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  Arena *scratch,
+                                                  BM_String_Item_Span *out);
+
+bool bm_query_target_effective_link_directories_items(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      Arena *scratch,
+                                                      BM_String_Item_Span *out);
+
 bool bm_query_target_effective_include_directories(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
@@ -113,11 +147,31 @@ bool bm_query_target_effective_compile_definitions(const Build_Model *model,
                                                    Arena *scratch,
                                                    BM_String_Span *out);
 
+bool bm_query_target_effective_compile_options(const Build_Model *model,
+                                               BM_Target_Id id,
+                                               Arena *scratch,
+                                               BM_String_Span *out);
+
 bool bm_query_target_effective_link_libraries(const Build_Model *model,
                                               BM_Target_Id id,
                                               Arena *scratch,
                                               BM_String_Span *out);
+
+bool bm_query_target_effective_link_options(const Build_Model *model,
+                                            BM_Target_Id id,
+                                            Arena *scratch,
+                                            BM_String_Span *out);
+
+bool bm_query_target_effective_link_directories(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                Arena *scratch,
+                                                BM_String_Span *out);
 ```
+
+The `*_items(...)` variants are the canonical codegen-facing API. They preserve
+`visibility`, `flags`, and `provenance` for each reconstructed item. The
+`BM_String_Span` variants remain compatibility wrappers that strip each item
+down to `value` only.
 
 ### Other Domains
 
@@ -143,7 +197,23 @@ Effective queries may compute:
 - generator-expression-aware value expansion when explicitly supported by the
   caller context
 
+For release-1 effective queries, usage propagation is resolved at query time:
+- global properties contribute first
+- then the full owner-directory chain contributes
+- then target-local properties contribute
+- then transitive usage is discovered from local target references found in
+  `target_link_libraries(...)`
+
+Alias targets may be resolved during that walk through Query helpers.
+`add_dependencies(...)` remains a build-order edge only; it must not be treated
+as compile/link usage inheritance.
+
+Effective link-library reconstruction also includes raw `LINK_LIBRARIES`
+properties from global and directory scopes when they exist in the model.
+
 Effective queries must never mutate the model.
+They also must not persist inferred edges back into `Build_Model`; all such
+projection remains query-time only.
 
 ## 5. Query Safety
 

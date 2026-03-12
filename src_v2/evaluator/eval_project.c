@@ -729,7 +729,18 @@ Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node)
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_executable(ALIAS ...) expects exactly alias name and real target"), nob_sv_from_cstr("Usage: add_executable(<name> ALIAS <target>)"));
             return eval_result_from_ctx(ctx);
         }
-        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2]);
+        if (!add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2])) {
+            return eval_result_from_ctx(ctx);
+        }
+        if (!eval_emit_target_declare(ctx,
+                                      o,
+                                      name,
+                                      EV_TARGET_EXECUTABLE,
+                                      false,
+                                      true,
+                                      a[2])) {
+            return eval_result_fatal();
+        }
         return eval_result_from_ctx(ctx);
     }
 
@@ -837,7 +848,18 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_library(ALIAS ...) expects exactly alias name and real target"), nob_sv_from_cstr("Usage: add_library(<name> ALIAS <target>)"));
             return eval_result_from_ctx(ctx);
         }
-        (void)add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2]);
+        if (!add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2])) {
+            return eval_result_from_ctx(ctx);
+        }
+        if (!eval_emit_target_declare(ctx,
+                                      o,
+                                      name,
+                                      EV_TARGET_LIBRARY_UNKNOWN,
+                                      false,
+                                      true,
+                                      a[2])) {
+            return eval_result_fatal();
+        }
         return eval_result_from_ctx(ctx);
     }
 

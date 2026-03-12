@@ -3,7 +3,10 @@
 typedef enum {
     BM_EFFECTIVE_INCLUDE_DIRECTORIES = 0,
     BM_EFFECTIVE_COMPILE_DEFINITIONS,
+    BM_EFFECTIVE_COMPILE_OPTIONS,
     BM_EFFECTIVE_LINK_LIBRARIES,
+    BM_EFFECTIVE_LINK_OPTIONS,
+    BM_EFFECTIVE_LINK_DIRECTORIES,
 } BM_Effective_Query_Kind;
 
 static const BM_Directory_Record *bm_model_directory(const Build_Model *model, BM_Directory_Id id) {
@@ -87,23 +90,89 @@ static const BM_Raw_Property_Record *bm_find_raw_property(const BM_Raw_Property_
     return NULL;
 }
 
-static bool bm_collect_item_values(Arena *scratch,
-                                   String_View **out,
-                                   const BM_String_Item_View *items,
-                                   bool public_only) {
+static BM_Target_Id bm_find_target_by_name_id(const Build_Model *model, String_View name) {
+    if (!model) return BM_TARGET_ID_INVALID;
+    for (size_t i = 0; i < arena_arr_len(model->target_name_index); ++i) {
+        if (nob_sv_eq(model->target_name_index[i].name, name)) return (BM_Target_Id)model->target_name_index[i].id;
+    }
+    return BM_TARGET_ID_INVALID;
+}
+
+static bool bm_push_item_copy(Arena *scratch,
+                              BM_String_Item_View **out,
+                              BM_String_Item_View item) {
+    if (!scratch || !out) return false;
+    return arena_arr_push(scratch, *out, item);
+}
+
+static bool bm_collect_items(Arena *scratch,
+                             BM_String_Item_View **out,
+                             const BM_String_Item_View *items,
+                             bool public_only) {
     if (!scratch || !out) return false;
     for (size_t i = 0; i < arena_arr_len(items); ++i) {
         if (public_only && items[i].visibility == BM_VISIBILITY_PRIVATE) continue;
-        if (!arena_arr_push(scratch, *out, items[i].value)) return false;
+        if (!bm_push_item_copy(scratch, out, items[i])) return false;
     }
     return true;
 }
 
-static bool bm_collect_directory_chain(const Build_Model *model,
-                                       BM_Directory_Id owner_directory_id,
-                                       Arena *scratch,
-                                       String_View **out,
-                                       BM_Effective_Query_Kind kind) {
+static bool bm_collect_raw_property_items(Arena *scratch,
+                                          BM_String_Item_View **out,
+                                          const BM_Raw_Property_Record *record) {
+    if (!scratch || !out || !record) return false;
+    for (size_t i = 0; i < arena_arr_len(record->items); ++i) {
+        if (!bm_push_item_copy(scratch, out, (BM_String_Item_View){
+                .value = record->items[i],
+                .visibility = BM_VISIBILITY_PRIVATE,
+                .flags = record->flags,
+                .provenance = record->provenance,
+            })) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool bm_collect_global_effective_items(const Build_Model *model,
+                                              Arena *scratch,
+                                              BM_String_Item_View **out,
+                                              BM_Effective_Query_Kind kind) {
+    if (!model || !scratch || !out) return false;
+
+    switch (kind) {
+        case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
+            return bm_collect_items(scratch, out, model->global_properties.include_directories, false) &&
+                   bm_collect_items(scratch, out, model->global_properties.system_include_directories, false);
+
+        case BM_EFFECTIVE_COMPILE_DEFINITIONS:
+            return bm_collect_items(scratch, out, model->global_properties.compile_definitions, false);
+
+        case BM_EFFECTIVE_COMPILE_OPTIONS:
+            return bm_collect_items(scratch, out, model->global_properties.compile_options, false);
+
+        case BM_EFFECTIVE_LINK_LIBRARIES: {
+            const BM_Raw_Property_Record *record =
+                bm_find_raw_property(model->global_properties.raw_properties, nob_sv_from_cstr("LINK_LIBRARIES"));
+            if (!record) return true;
+            return bm_collect_raw_property_items(scratch, out, record);
+        }
+
+        case BM_EFFECTIVE_LINK_OPTIONS:
+            return bm_collect_items(scratch, out, model->global_properties.link_options, false);
+
+        case BM_EFFECTIVE_LINK_DIRECTORIES:
+            return bm_collect_items(scratch, out, model->global_properties.link_directories, false);
+    }
+
+    return true;
+}
+
+static bool bm_collect_directory_chain_items(const Build_Model *model,
+                                             BM_Directory_Id owner_directory_id,
+                                             Arena *scratch,
+                                             BM_String_Item_View **out,
+                                             BM_Effective_Query_Kind kind) {
     BM_Directory_Id *chain = NULL;
     BM_Directory_Id current = owner_directory_id;
 
@@ -117,21 +186,124 @@ static bool bm_collect_directory_chain(const Build_Model *model,
     for (size_t i = arena_arr_len(chain); i > 0; --i) {
         const BM_Directory_Record *directory = bm_model_directory(model, chain[i - 1]);
         if (!directory) continue;
+
         switch (kind) {
             case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
-                if (!bm_collect_item_values(scratch, out, directory->include_directories, false) ||
-                    !bm_collect_item_values(scratch, out, directory->system_include_directories, false)) {
+                if (!bm_collect_items(scratch, out, directory->include_directories, false) ||
+                    !bm_collect_items(scratch, out, directory->system_include_directories, false)) {
                     return false;
                 }
                 break;
 
             case BM_EFFECTIVE_COMPILE_DEFINITIONS:
-                if (!bm_collect_item_values(scratch, out, directory->compile_definitions, false)) return false;
+                if (!bm_collect_items(scratch, out, directory->compile_definitions, false)) return false;
                 break;
 
-            case BM_EFFECTIVE_LINK_LIBRARIES:
+            case BM_EFFECTIVE_COMPILE_OPTIONS:
+                if (!bm_collect_items(scratch, out, directory->compile_options, false)) return false;
+                break;
+
+            case BM_EFFECTIVE_LINK_LIBRARIES: {
+                const BM_Raw_Property_Record *record =
+                    bm_find_raw_property(directory->raw_properties, nob_sv_from_cstr("LINK_LIBRARIES"));
+                if (record && !bm_collect_raw_property_items(scratch, out, record)) return false;
+                break;
+            }
+
+            case BM_EFFECTIVE_LINK_OPTIONS:
+                if (!bm_collect_items(scratch, out, directory->link_options, false)) return false;
+                break;
+
+            case BM_EFFECTIVE_LINK_DIRECTORIES:
+                if (!bm_collect_items(scratch, out, directory->link_directories, false)) return false;
                 break;
         }
+    }
+
+    return true;
+}
+
+static bool bm_collect_target_items(Arena *scratch,
+                                    BM_String_Item_View **out,
+                                    const BM_Target_Record *target,
+                                    BM_Effective_Query_Kind kind,
+                                    bool public_only) {
+    if (!scratch || !out || !target) return false;
+
+    switch (kind) {
+        case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
+            return bm_collect_items(scratch, out, target->include_directories, public_only);
+
+        case BM_EFFECTIVE_COMPILE_DEFINITIONS:
+            return bm_collect_items(scratch, out, target->compile_definitions, public_only);
+
+        case BM_EFFECTIVE_COMPILE_OPTIONS:
+            return bm_collect_items(scratch, out, target->compile_options, public_only);
+
+        case BM_EFFECTIVE_LINK_LIBRARIES:
+            return bm_collect_items(scratch, out, target->link_libraries, public_only);
+
+        case BM_EFFECTIVE_LINK_OPTIONS:
+            return bm_collect_items(scratch, out, target->link_options, public_only);
+
+        case BM_EFFECTIVE_LINK_DIRECTORIES:
+            return bm_collect_items(scratch, out, target->link_directories, public_only);
+    }
+
+    return true;
+}
+
+static BM_Target_Id bm_resolve_alias_target_id(const Build_Model *model, BM_Target_Id id) {
+    size_t remaining = model ? arena_arr_len(model->targets) : 0;
+    BM_Target_Id current = id;
+
+    while (remaining-- > 0) {
+        const BM_Target_Record *target = bm_model_target(model, current);
+        if (!target) return BM_TARGET_ID_INVALID;
+        if (!target->alias) return current;
+        current = target->alias_of_id;
+        if (current == BM_TARGET_ID_INVALID) return BM_TARGET_ID_INVALID;
+    }
+
+    return BM_TARGET_ID_INVALID;
+}
+
+static bool bm_resolve_link_library_target_id(const Build_Model *model,
+                                              String_View item,
+                                              BM_Target_Id *out) {
+    BM_Target_Id id = BM_TARGET_ID_INVALID;
+    if (out) *out = BM_TARGET_ID_INVALID;
+    if (!out) return false;
+
+    id = bm_find_target_by_name_id(model, item);
+    if (id == BM_TARGET_ID_INVALID) return false;
+
+    id = bm_resolve_alias_target_id(model, id);
+    if (id == BM_TARGET_ID_INVALID) return false;
+
+    *out = id;
+    return true;
+}
+
+static bool bm_collect_dependency_interface(const Build_Model *model,
+                                            BM_Target_Id id,
+                                            Arena *scratch,
+                                            uint8_t *visited,
+                                            BM_String_Item_View **out,
+                                            BM_Effective_Query_Kind kind);
+
+static bool bm_collect_dependency_usage_from_link_items(const Build_Model *model,
+                                                        const BM_Target_Record *target,
+                                                        Arena *scratch,
+                                                        uint8_t *visited,
+                                                        BM_String_Item_View **out,
+                                                        BM_Effective_Query_Kind kind) {
+    if (!model || !target || !scratch || !visited || !out) return false;
+
+    for (size_t i = 0; i < arena_arr_len(target->link_libraries); ++i) {
+        BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
+        if (!bm_resolve_link_library_target_id(model, target->link_libraries[i].value, &dep_id)) continue;
+        if (!bm_collect_dependency_interface(model, dep_id, scratch, visited, out, kind)) return false;
     }
 
     return true;
@@ -141,42 +313,24 @@ static bool bm_collect_dependency_interface(const Build_Model *model,
                                             BM_Target_Id id,
                                             Arena *scratch,
                                             uint8_t *visited,
-                                            String_View **out,
+                                            BM_String_Item_View **out,
                                             BM_Effective_Query_Kind kind) {
     const BM_Target_Record *target = bm_model_target(model, id);
     if (!target || !visited) return false;
     if (visited[id]) return true;
     visited[id] = 1;
 
-    switch (kind) {
-        case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
-            if (!bm_collect_item_values(scratch, out, target->include_directories, true)) return false;
-            break;
-
-        case BM_EFFECTIVE_COMPILE_DEFINITIONS:
-            if (!bm_collect_item_values(scratch, out, target->compile_definitions, true)) return false;
-            break;
-
-        case BM_EFFECTIVE_LINK_LIBRARIES:
-            if (!bm_collect_item_values(scratch, out, target->link_libraries, true)) return false;
-            break;
-    }
-
-    for (size_t i = 0; i < arena_arr_len(target->explicit_dependency_ids); ++i) {
-        if (!bm_collect_dependency_interface(model, target->explicit_dependency_ids[i], scratch, visited, out, kind)) {
-            return false;
-        }
-    }
-    return true;
+    if (!bm_collect_target_items(scratch, out, target, kind, true)) return false;
+    return bm_collect_dependency_usage_from_link_items(model, target, scratch, visited, out, kind);
 }
 
-static bool bm_query_target_effective_common(const Build_Model *model,
-                                             BM_Target_Id id,
-                                             Arena *scratch,
-                                             BM_String_Span *out,
-                                             BM_Effective_Query_Kind kind) {
+static bool bm_query_target_effective_items_common(const Build_Model *model,
+                                                   BM_Target_Id id,
+                                                   Arena *scratch,
+                                                   BM_String_Item_Span *out,
+                                                   BM_Effective_Query_Kind kind) {
     const BM_Target_Record *target = bm_model_target(model, id);
-    String_View *values = NULL;
+    BM_String_Item_View *items = NULL;
     uint8_t *visited = NULL;
 
     if (!out) return false;
@@ -184,44 +338,37 @@ static bool bm_query_target_effective_common(const Build_Model *model,
     out->count = 0;
     if (!model || !target || !scratch) return false;
 
-    if (kind == BM_EFFECTIVE_INCLUDE_DIRECTORIES) {
-        if (!bm_collect_item_values(scratch, &values, model->global_properties.include_directories, false) ||
-            !bm_collect_item_values(scratch, &values, model->global_properties.system_include_directories, false)) {
-            return false;
-        }
-    } else if (kind == BM_EFFECTIVE_COMPILE_DEFINITIONS) {
-        if (!bm_collect_item_values(scratch, &values, model->global_properties.compile_definitions, false)) return false;
-    }
-
-    if (!bm_collect_directory_chain(model, target->owner_directory_id, scratch, &values, kind)) return false;
-
-    switch (kind) {
-        case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
-            if (!bm_collect_item_values(scratch, &values, target->include_directories, false)) return false;
-            break;
-
-        case BM_EFFECTIVE_COMPILE_DEFINITIONS:
-            if (!bm_collect_item_values(scratch, &values, target->compile_definitions, false)) return false;
-            break;
-
-        case BM_EFFECTIVE_LINK_LIBRARIES:
-            if (!bm_collect_item_values(scratch, &values, target->link_libraries, false)) return false;
-            break;
-    }
+    if (!bm_collect_global_effective_items(model, scratch, &items, kind)) return false;
+    if (!bm_collect_directory_chain_items(model, target->owner_directory_id, scratch, &items, kind)) return false;
+    if (!bm_collect_target_items(scratch, &items, target, kind, false)) return false;
 
     visited = arena_alloc_array_zero(scratch, uint8_t, arena_arr_len(model->targets));
     if (!visited) return false;
     visited[id] = 1;
 
-    for (size_t i = 0; i < arena_arr_len(target->explicit_dependency_ids); ++i) {
-        if (!bm_collect_dependency_interface(model,
-                                             target->explicit_dependency_ids[i],
-                                             scratch,
-                                             visited,
-                                             &values,
-                                             kind)) {
-            return false;
-        }
+    if (!bm_collect_dependency_usage_from_link_items(model, target, scratch, visited, &items, kind)) return false;
+
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
+static bool bm_query_target_effective_values_common(const Build_Model *model,
+                                                    BM_Target_Id id,
+                                                    Arena *scratch,
+                                                    BM_String_Span *out,
+                                                    BM_Effective_Query_Kind kind) {
+    BM_String_Item_Span item_span = {0};
+    String_View *values = NULL;
+
+    if (!out) return false;
+    out->items = NULL;
+    out->count = 0;
+
+    if (!bm_query_target_effective_items_common(model, id, scratch, &item_span, kind)) return false;
+
+    for (size_t i = 0; i < item_span.count; ++i) {
+        if (!arena_arr_push(scratch, values, item_span.items[i].value)) return false;
     }
 
     out->items = values;
@@ -321,11 +468,7 @@ BM_String_Span bm_query_global_raw_property_items(const Build_Model *model, Stri
 }
 
 BM_Target_Id bm_query_target_by_name(const Build_Model *model, String_View name) {
-    if (!model) return BM_TARGET_ID_INVALID;
-    for (size_t i = 0; i < arena_arr_len(model->target_name_index); ++i) {
-        if (nob_sv_eq(model->target_name_index[i].name, name)) return (BM_Target_Id)model->target_name_index[i].id;
-    }
-    return BM_TARGET_ID_INVALID;
+    return bm_find_target_by_name_id(model, name);
 }
 
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name) {
@@ -357,6 +500,26 @@ BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id) {
 BM_Directory_Id bm_query_target_owner_directory(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
     return target ? target->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+bool bm_query_target_is_imported(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->imported : false;
+}
+
+bool bm_query_target_is_alias(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->alias : false;
+}
+
+BM_Target_Id bm_query_target_alias_of(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->alias_of_id : BM_TARGET_ID_INVALID;
+}
+
+bool bm_query_target_exclude_from_all(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->exclude_from_all : false;
 }
 
 BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_Id id) {
@@ -438,25 +601,88 @@ String_View bm_query_target_folder(const Build_Model *model, BM_Target_Id id) {
     return target ? target->folder : (String_View){0};
 }
 
+bool bm_query_target_effective_include_directories_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         Arena *scratch,
+                                                         BM_String_Item_Span *out) {
+    return bm_query_target_effective_items_common(model, id, scratch, out, BM_EFFECTIVE_INCLUDE_DIRECTORIES);
+}
+
+bool bm_query_target_effective_compile_definitions_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         Arena *scratch,
+                                                         BM_String_Item_Span *out) {
+    return bm_query_target_effective_items_common(model, id, scratch, out, BM_EFFECTIVE_COMPILE_DEFINITIONS);
+}
+
+bool bm_query_target_effective_compile_options_items(const Build_Model *model,
+                                                     BM_Target_Id id,
+                                                     Arena *scratch,
+                                                     BM_String_Item_Span *out) {
+    return bm_query_target_effective_items_common(model, id, scratch, out, BM_EFFECTIVE_COMPILE_OPTIONS);
+}
+
+bool bm_query_target_effective_link_libraries_items(const Build_Model *model,
+                                                    BM_Target_Id id,
+                                                    Arena *scratch,
+                                                    BM_String_Item_Span *out) {
+    return bm_query_target_effective_items_common(model, id, scratch, out, BM_EFFECTIVE_LINK_LIBRARIES);
+}
+
+bool bm_query_target_effective_link_options_items(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  Arena *scratch,
+                                                  BM_String_Item_Span *out) {
+    return bm_query_target_effective_items_common(model, id, scratch, out, BM_EFFECTIVE_LINK_OPTIONS);
+}
+
+bool bm_query_target_effective_link_directories_items(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      Arena *scratch,
+                                                      BM_String_Item_Span *out) {
+    return bm_query_target_effective_items_common(model, id, scratch, out, BM_EFFECTIVE_LINK_DIRECTORIES);
+}
+
 bool bm_query_target_effective_include_directories(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
                                                    BM_String_Span *out) {
-    return bm_query_target_effective_common(model, id, scratch, out, BM_EFFECTIVE_INCLUDE_DIRECTORIES);
+    return bm_query_target_effective_values_common(model, id, scratch, out, BM_EFFECTIVE_INCLUDE_DIRECTORIES);
 }
 
 bool bm_query_target_effective_compile_definitions(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
                                                    BM_String_Span *out) {
-    return bm_query_target_effective_common(model, id, scratch, out, BM_EFFECTIVE_COMPILE_DEFINITIONS);
+    return bm_query_target_effective_values_common(model, id, scratch, out, BM_EFFECTIVE_COMPILE_DEFINITIONS);
+}
+
+bool bm_query_target_effective_compile_options(const Build_Model *model,
+                                               BM_Target_Id id,
+                                               Arena *scratch,
+                                               BM_String_Span *out) {
+    return bm_query_target_effective_values_common(model, id, scratch, out, BM_EFFECTIVE_COMPILE_OPTIONS);
 }
 
 bool bm_query_target_effective_link_libraries(const Build_Model *model,
                                               BM_Target_Id id,
                                               Arena *scratch,
                                               BM_String_Span *out) {
-    return bm_query_target_effective_common(model, id, scratch, out, BM_EFFECTIVE_LINK_LIBRARIES);
+    return bm_query_target_effective_values_common(model, id, scratch, out, BM_EFFECTIVE_LINK_LIBRARIES);
+}
+
+bool bm_query_target_effective_link_options(const Build_Model *model,
+                                            BM_Target_Id id,
+                                            Arena *scratch,
+                                            BM_String_Span *out) {
+    return bm_query_target_effective_values_common(model, id, scratch, out, BM_EFFECTIVE_LINK_OPTIONS);
+}
+
+bool bm_query_target_effective_link_directories(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                Arena *scratch,
+                                                BM_String_Span *out) {
+    return bm_query_target_effective_values_common(model, id, scratch, out, BM_EFFECTIVE_LINK_DIRECTORIES);
 }
 
 bool bm_query_testing_enabled(const Build_Model *model) {

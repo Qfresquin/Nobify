@@ -13,16 +13,55 @@
 #include "build_model_validate.h"
 #include "build_model_freeze.h"
 #include "build_model_query.h"
+#include "nob_codegen.h"
 
 #include <string.h>
 
 static void print_usage(const char *program) {
-    nob_log(NOB_INFO, "Usage: %s [--strict] [--tokens] [--ast] [--events] [input]", program);
+    nob_log(NOB_INFO, "Usage: %s [--strict] [--tokens] [--ast] [--events] [--out path] [input]", program);
 }
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
     return arena_arr_push(arena, *list, token);
+}
+
+static void nobify_init_event(Event *ev, Event_Kind kind, const char *file_path, size_t line) {
+    if (!ev) return;
+    *ev = (Event){0};
+    ev->h.kind = kind;
+    ev->h.origin.file_path = nob_sv_from_cstr(file_path ? file_path : "CMakeLists.txt");
+    ev->h.origin.line = line;
+    ev->h.origin.col = 1;
+}
+
+static Event_Stream *nobify_wrap_stream_with_root(Arena *arena,
+                                                  const Event_Stream *stream,
+                                                  const char *current_file,
+                                                  String_View source_dir,
+                                                  String_View binary_dir) {
+    Event_Stream *wrapped = NULL;
+    Event ev = {0};
+    if (!arena || !stream) return NULL;
+
+    wrapped = event_stream_create(arena);
+    if (!wrapped) return NULL;
+
+    nobify_init_event(&ev, EVENT_DIRECTORY_ENTER, current_file, 0);
+    ev.as.directory_enter.source_dir = source_dir;
+    ev.as.directory_enter.binary_dir = binary_dir;
+    if (!event_stream_push(wrapped, &ev)) return NULL;
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        if (!event_stream_push(wrapped, &stream->items[i])) return NULL;
+    }
+
+    nobify_init_event(&ev, EVENT_DIRECTORY_LEAVE, current_file, 0);
+    ev.as.directory_leave.source_dir = source_dir;
+    ev.as.directory_leave.binary_dir = binary_dir;
+    if (!event_stream_push(wrapped, &ev)) return NULL;
+
+    return wrapped;
 }
 
 int main(int argc, char **argv) {
@@ -31,6 +70,7 @@ int main(int argc, char **argv) {
     bool print_ast_tree = false;
     bool print_events = false;
     const char *input_path = "CMakeLists.txt";
+    const char *output_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--strict") == 0) {
@@ -49,6 +89,15 @@ int main(int argc, char **argv) {
             print_events = true;
             continue;
         }
+        if (strcmp(argv[i], "--out") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --out");
+                print_usage(argv[0]);
+                return 1;
+            }
+            output_path = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -59,6 +108,10 @@ int main(int argc, char **argv) {
             return 1;
         }
         input_path = argv[i];
+    }
+
+    if (!output_path) {
+        output_path = nob_temp_sprintf("%s/nob.c", nob_temp_dir_name(input_path));
     }
 
     diag_reset();
@@ -87,6 +140,12 @@ int main(int argc, char **argv) {
     }
 
     String_View content = nob_sv_from_parts(content_cstr, strlen(content_cstr));
+    char *input_dir = arena_strdup(arena, nob_temp_dir_name(input_path));
+    if (!input_dir) {
+        nob_log(NOB_ERROR, "Failed to resolve input directory");
+        arena_destroy(arena);
+        return 1;
+    }
     Lexer lexer = lexer_init(content);
     Token_List tokens = NULL;
 
@@ -146,6 +205,7 @@ int main(int argc, char **argv) {
     }
 
     Event_Stream *stream = event_stream_create(event_arena);
+    Event_Stream *build_stream = NULL;
     if (!stream) {
         nob_log(NOB_ERROR, "Failed to create event stream");
         arena_destroy(event_arena);
@@ -158,8 +218,8 @@ int main(int argc, char **argv) {
     eval_init.arena = eval_arena;
     eval_init.event_arena = event_arena;
     eval_init.stream = stream;
-    eval_init.source_dir = sv_from_cstr(".");
-    eval_init.binary_dir = sv_from_cstr(".");
+    eval_init.source_dir = sv_from_cstr(input_dir);
+    eval_init.binary_dir = sv_from_cstr(input_dir);
     eval_init.current_file = input_path;
 
     Evaluator_Context *eval_ctx = evaluator_create(&eval_init);
@@ -234,7 +294,23 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!bm_builder_apply_stream(builder, stream)) {
+    build_stream = nobify_wrap_stream_with_root(event_arena,
+                                                stream,
+                                                input_path,
+                                                eval_init.source_dir,
+                                                eval_init.binary_dir);
+    if (!build_stream) {
+        nob_log(NOB_ERROR, "Failed to wrap semantic events with root directory context");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    if (!bm_builder_apply_stream(builder, build_stream)) {
         nob_log(NOB_ERROR, "Build-model builder failed while consuming semantic events");
         arena_destroy(build_model_freeze_arena);
         arena_destroy(build_model_validate_arena);
@@ -287,6 +363,36 @@ int main(int argc, char **argv) {
             bm_query_test_count(model),
             bm_query_package_count(model));
 
+    Arena *codegen_arena = arena_create(8 * 1024 * 1024);
+    if (!codegen_arena) {
+        nob_log(NOB_ERROR, "Failed to allocate codegen arena");
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+
+    Nob_Codegen_Options codegen_opts = {
+        .input_path = nob_sv_from_cstr(input_path),
+        .output_path = nob_sv_from_cstr(output_path),
+    };
+    if (!nob_codegen_write_file(model, codegen_arena, &codegen_opts)) {
+        nob_log(NOB_ERROR, "Codegen failed while writing %s", output_path);
+        arena_destroy(codegen_arena);
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+    nob_log(NOB_INFO, "Generated Nob build file: %s", output_path);
+
+    arena_destroy(codegen_arena);
     arena_destroy(build_model_freeze_arena);
     arena_destroy(build_model_validate_arena);
     arena_destroy(build_model_arena);

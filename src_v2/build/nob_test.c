@@ -21,12 +21,14 @@
 #define TEST_PARSER_OUT TEMP_TESTS_BIN "/test_parser"
 #define TEST_EVALUATOR_OUT TEMP_TESTS_BIN "/test_evaluator"
 #define TEST_PIPELINE_OUT TEMP_TESTS_BIN "/test_pipeline"
+#define TEST_CODEGEN_OUT TEMP_TESTS_BIN "/test_codegen"
 
 #define TEST_ARENA_RUN "../bin/test_arena"
 #define TEST_LEXER_RUN "../bin/test_lexer"
 #define TEST_PARSER_RUN "../bin/test_parser"
 #define TEST_EVALUATOR_RUN "../bin/test_evaluator"
 #define TEST_PIPELINE_RUN "../bin/test_pipeline"
+#define TEST_CODEGEN_RUN "../bin/test_codegen"
 
 typedef struct {
     bool exists;
@@ -46,6 +48,7 @@ static bool test_parser(void);
 static bool test_evaluator(void);
 static bool test_pipeline(void);
 static bool test_arena(void);
+static bool test_codegen(void);
 
 static Test_Module TEST_MODULES[] = {
     {"arena", test_arena},
@@ -53,6 +56,7 @@ static Test_Module TEST_MODULES[] = {
     {"parser", test_parser},
     {"evaluator", test_evaluator},
     {"pipeline", test_pipeline},
+    {"codegen", test_codegen},
 };
 
 static void append_v2_common_flags(Nob_Cmd *cmd) {
@@ -79,6 +83,7 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
         "-Isrc_v2/transpiler",
         "-Isrc_v2/evaluator",
         "-Isrc_v2/build_model",
+        "-Isrc_v2/codegen",
         "-Isrc_v2/genex",
         "-Itest_v2");
 
@@ -225,6 +230,13 @@ static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
         "test_v2/pipeline/test_pipeline_v2_suite.c");
 }
 
+static void append_v2_codegen_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/test_workspace.c",
+        "test_v2/codegen/test_codegen_v2_main.c",
+        "test_v2/codegen/test_codegen_v2_suite.c");
+}
+
 static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "src_v2/build_model/build_model_builder.c",
@@ -238,6 +250,11 @@ static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_query.c",
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_validate_cycles.c");
+}
+
+static void append_v2_codegen_runtime_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "src_v2/codegen/nob_codegen.c");
 }
 
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
@@ -587,6 +604,20 @@ static bool build_test_pipeline(void) {
     return nob_cmd_run_sync(cmd);
 }
 
+static bool build_test_codegen(void) {
+    Nob_Cmd cmd = {0};
+    nob_cc(&cmd);
+    append_v2_common_flags(&cmd);
+    nob_cmd_append(&cmd, "-o", TEST_CODEGEN_OUT);
+    append_v2_codegen_test_sources(&cmd);
+    append_v2_evaluator_runtime_sources(&cmd);
+    append_v2_build_model_runtime_sources(&cmd);
+    append_v2_codegen_runtime_sources(&cmd);
+    append_v2_pcre_sources(&cmd);
+    append_platform_link_flags(&cmd);
+    return nob_cmd_run_sync(cmd);
+}
+
 static bool test_evaluator(void) {
     nob_log(NOB_INFO, "[v2] build+run evaluator");
     if (!build_test_evaluator()) return false;
@@ -597,6 +628,12 @@ static bool test_pipeline(void) {
     nob_log(NOB_INFO, "[v2] build+run pipeline");
     if (!build_test_pipeline()) return false;
     return run_binary_in_workspace(TEST_PIPELINE_RUN);
+}
+
+static bool test_codegen(void) {
+    nob_log(NOB_INFO, "[v2] build+run codegen");
+    if (!build_test_codegen()) return false;
+    return run_binary_in_workspace(TEST_CODEGEN_RUN);
 }
 
 static bool test_arena(void) {
@@ -662,8 +699,9 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "test-parser") == 0) return run_in_temp_workspace(test_parser) ? 0 : 1;
     if (strcmp(cmd, "test-evaluator") == 0) return run_in_temp_workspace(test_evaluator) ? 0 : 1;
     if (strcmp(cmd, "test-pipeline") == 0) return run_in_temp_workspace(test_pipeline) ? 0 : 1;
+    if (strcmp(cmd, "test-codegen") == 0) return run_in_temp_workspace(test_codegen) ? 0 : 1;
     if (strcmp(cmd, "test-v2") == 0) return run_in_temp_workspace(test_v2_all) ? 0 : 1;
 
-    nob_log(NOB_INFO, "Usage: %s [test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-v2]", argv[0]);
+    nob_log(NOB_INFO, "Usage: %s [test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-codegen|test-v2]", argv[0]);
     return 1;
 }
