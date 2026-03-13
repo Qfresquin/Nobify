@@ -282,6 +282,39 @@ static bool codegen_compile_generated_nob(const char *repo_root,
     return nob_cmd_run_sync(cmd);
 }
 
+static bool codegen_write_text_file(const char *path, const char *text) {
+    const char *dir = NULL;
+    if (!path || !text) return false;
+    dir = nob_temp_dir_name(path);
+    if (dir && strcmp(dir, ".") != 0 && !nob_mkdir_if_not_exists(dir)) return false;
+    return nob_write_entire_file(path, text, strlen(text));
+}
+
+static bool codegen_run_binary(const char *binary_path, const char *arg1, const char *arg2) {
+    Nob_Cmd cmd = {0};
+    if (!binary_path) return false;
+    nob_cmd_append(&cmd, binary_path);
+    if (arg1) nob_cmd_append(&cmd, arg1);
+    if (arg2) nob_cmd_append(&cmd, arg2);
+    return nob_cmd_run_sync(cmd);
+}
+
+static bool codegen_run_binary_in_dir(const char *dir,
+                                      const char *binary_path,
+                                      const char *arg1,
+                                      const char *arg2) {
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    bool ok = false;
+    if (!dir || !binary_path || !cwd) return false;
+    if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
+    memcpy(prev_cwd, cwd, strlen(cwd) + 1);
+    if (!nob_set_current_dir(dir)) return false;
+    ok = codegen_run_binary(binary_path, arg1, arg2);
+    if (!nob_set_current_dir(prev_cwd)) return false;
+    return ok;
+}
+
 TEST(codegen_simple_executable_generates_compilable_nob) {
     Nob_String_Builder sb = {0};
     ASSERT(codegen_render_script(
@@ -339,6 +372,10 @@ TEST(codegen_output_properties_shape_artifact_paths) {
         "project(Test C)\n"
         "add_library(core STATIC core.c)\n"
         "set_target_properties(core PROPERTIES OUTPUT_NAME fancy PREFIX pre_ SUFFIX .pkg ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "add_library(plugin SHARED plugin.c)\n"
+        "set_target_properties(plugin PROPERTIES OUTPUT_NAME dyn PREFIX mod_ SUFFIX .sox LIBRARY_OUTPUT_DIRECTORY artifacts/shlib)\n"
+        "add_library(bundle MODULE bundle.c)\n"
+        "set_target_properties(bundle PROPERTIES LIBRARY_OUTPUT_DIRECTORY artifacts/modules)\n"
         "add_executable(app main.c)\n"
         "set_target_properties(app PROPERTIES OUTPUT_NAME runner RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n",
         "CMakeLists.txt",
@@ -347,6 +384,8 @@ TEST(codegen_output_properties_shape_artifact_paths) {
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
     ASSERT(strstr(output, "artifacts/lib/pre_fancy.pkg") != NULL);
+    ASSERT(strstr(output, "artifacts/shlib/mod_dyn.sox") != NULL);
+    ASSERT(strstr(output, "artifacts/modules/libbundle.so") != NULL);
     ASSERT(strstr(output, "artifacts/bin/runner") != NULL);
     nob_sb_free(sb);
     TEST_PASS();
@@ -371,14 +410,71 @@ TEST(codegen_write_file_rebases_paths_and_generated_file_compiles) {
     TEST_PASS();
 }
 
-TEST(codegen_rejects_shared_target) {
+TEST(codegen_shared_and_module_targets_build_on_posix_backend) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core SHARED core.c)\n"
+        "set_target_properties(core PROPERTIES OUTPUT_NAME corex LIBRARY_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "add_library(plugin MODULE plugin.c)\n"
+        "set_target_properties(plugin PROPERTIES LIBRARY_OUTPUT_DIRECTORY artifacts/modules)\n";
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("core.c", "int core_value(void) { return 7; }\n"));
+    ASSERT(codegen_write_text_file("plugin.c", "int plugin_value(void) { return 11; }\n"));
+    ASSERT(codegen_write_script(script, "CMakeLists.txt", "generated/shared/nob.c"));
+    ASSERT(codegen_load_text_file_to_arena(arena, "generated/shared/nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "\"-shared\""));
+    ASSERT(codegen_sv_contains(generated, "\"-fPIC\""));
+    ASSERT(codegen_compile_generated_nob(s_codegen_repo_root, "generated/shared/nob.c", "generated/shared/nob_gen"));
+    ASSERT(codegen_run_binary_in_dir("generated/shared", "./nob_gen", NULL, NULL));
+    ASSERT(nob_file_exists("generated/shared/../../artifacts/lib/libcorex.so"));
+    ASSERT(nob_file_exists("generated/shared/../../artifacts/modules/libplugin.so"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_cxx_static_dependency_uses_cxx_driver_for_link) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    const char *script =
+        "project(Test C CXX)\n"
+        "add_library(core STATIC core.cpp)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n";
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file(
+        "core.cpp",
+        "#include <string>\n"
+        "extern \"C\" int core_value(void) {\n"
+        "    static std::string text = \"seven\";\n"
+        "    return (int)text.size();\n"
+        "}\n"));
+    ASSERT(codegen_write_text_file(
+        "main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 5 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script(script, "CMakeLists.txt", "generated/cxx/nob.c"));
+    ASSERT(codegen_load_text_file_to_arena(arena, "generated/cxx/nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "append_toolchain_cmd(&cc_cmd, true);"));
+    ASSERT(codegen_sv_contains(generated, "append_toolchain_cmd(&link_cmd, true);"));
+    ASSERT(codegen_compile_generated_nob(s_codegen_repo_root, "generated/cxx/nob.c", "generated/cxx/nob_gen"));
+    ASSERT(codegen_run_binary_in_dir("generated/cxx", "./nob_gen", "app", NULL));
+    ASSERT(nob_file_exists("generated/cxx/../../build/app"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_module_target_as_link_dependency) {
     Nob_String_Builder sb = {0};
     diag_reset();
     diag_set_strict(false);
     diag_telemetry_reset();
     ASSERT(!codegen_render_script(
         "project(Test C)\n"
-        "add_library(plugin SHARED plugin.c)\n",
+        "add_library(plugin MODULE plugin.c)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE plugin)\n",
         "CMakeLists.txt",
         "nob.c",
         &sb));
@@ -429,7 +525,9 @@ void run_codegen_v2_tests(int *passed, int *failed) {
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed);
     test_codegen_output_properties_shape_artifact_paths(passed, failed);
     test_codegen_write_file_rebases_paths_and_generated_file_compiles(passed, failed);
-    test_codegen_rejects_shared_target(passed, failed);
+    test_codegen_shared_and_module_targets_build_on_posix_backend(passed, failed);
+    test_codegen_cxx_static_dependency_uses_cxx_driver_for_link(passed, failed);
+    test_codegen_rejects_module_target_as_link_dependency(passed, failed);
     test_codegen_rejects_imported_target_reference(passed, failed);
 
     if (!test_ws_leave(prev_cwd)) {

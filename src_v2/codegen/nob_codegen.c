@@ -20,7 +20,19 @@ typedef struct {
     String_View name;
     const char *ident;
     String_View artifact_path;
+    bool needs_cxx_linker_known;
+    bool needs_cxx_linker;
 } CG_Target_Info;
+
+typedef enum {
+    CG_SOURCE_LANG_C = 0,
+    CG_SOURCE_LANG_CXX,
+} CG_Source_Lang;
+
+typedef struct {
+    String_View path;
+    CG_Source_Lang lang;
+} CG_Source_Info;
 
 typedef struct {
     const Build_Model *model;
@@ -32,6 +44,9 @@ typedef struct {
     CG_Target_Info *targets;
     size_t target_count;
 } CG_Context;
+
+static const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id);
+static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out);
 
 static bool cg_sv_eq_lit(String_View sv, const char *lit) {
     return nob_sv_eq(sv, nob_sv_from_cstr(lit));
@@ -75,6 +90,13 @@ static bool cg_is_header_like(String_View sv) {
 
 static bool cg_is_c_source(String_View sv) {
     return cg_ends_with(sv, ".c");
+}
+
+static bool cg_is_cxx_source(String_View sv) {
+    return cg_ends_with(sv, ".cc") ||
+           cg_ends_with(sv, ".cpp") ||
+           cg_ends_with(sv, ".cxx") ||
+           cg_ends_with(sv, ".c++");
 }
 
 static bool cg_is_link_file_like(String_View sv) {
@@ -325,17 +347,44 @@ static BM_Target_Id cg_resolve_alias_target(CG_Context *ctx, BM_Target_Id id) {
 }
 
 static bool cg_target_is_supported_concrete(BM_Target_Kind kind) {
-    return kind == BM_TARGET_EXECUTABLE || kind == BM_TARGET_STATIC_LIBRARY;
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
 }
 
 static bool cg_target_is_non_emitting(BM_Target_Kind kind) {
     return kind == BM_TARGET_INTERFACE_LIBRARY;
 }
 
+static bool cg_target_needs_pic(BM_Target_Kind kind) {
+    return kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+static bool cg_target_kind_is_linkable_artifact(BM_Target_Kind kind) {
+    return kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY;
+}
+
 static bool cg_check_no_genex(const char *what, String_View sv) {
     if (!cg_is_genex(sv)) return true;
     nob_log(NOB_ERROR, "codegen: unsupported generator expression in %s: %.*s",
             what, (int)sv.count, sv.data ? sv.data : "");
+    return false;
+}
+
+static bool cg_classify_source_lang(String_View src, CG_Source_Lang *out_lang) {
+    if (out_lang) *out_lang = CG_SOURCE_LANG_C;
+    if (cg_is_c_source(src)) {
+        if (out_lang) *out_lang = CG_SOURCE_LANG_C;
+        return true;
+    }
+    if (cg_is_cxx_source(src)) {
+        if (out_lang) *out_lang = CG_SOURCE_LANG_CXX;
+        return true;
+    }
     return false;
 }
 
@@ -371,6 +420,15 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
         if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
         if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
         if (suffix.count == 0) suffix = nob_sv_from_cstr(".a");
+        nob_sb_append_buf(&name_sb, prefix.data ? prefix.data : "", prefix.count);
+        nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
+        nob_sb_append_buf(&name_sb, suffix.data ? suffix.data : "", suffix.count);
+    } else if (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY) {
+        output_dir = bm_query_target_library_output_directory(ctx->model, id);
+        if (output_dir.count == 0) output_dir = nob_sv_from_cstr("build");
+        if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
+        if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
+        if (suffix.count == 0) suffix = nob_sv_from_cstr(".so");
         nob_sb_append_buf(&name_sb, prefix.data ? prefix.data : "", prefix.count);
         nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
         nob_sb_append_buf(&name_sb, suffix.data ? suffix.data : "", suffix.count);
@@ -440,6 +498,13 @@ static bool cg_init_targets(CG_Context *ctx) {
         ctx->targets[i].emits_artifact = ctx->targets[resolved].emits_artifact;
     }
 
+    for (size_t i = 0; i < ctx->target_count; ++i) {
+        bool needs_cxx_linker = false;
+        if (!cg_target_needs_cxx_linker_recursive(ctx, (BM_Target_Id)i, &needs_cxx_linker)) return false;
+        ctx->targets[i].needs_cxx_linker = needs_cxx_linker;
+        ctx->targets[i].needs_cxx_linker_known = true;
+    }
+
     return true;
 }
 
@@ -465,6 +530,75 @@ static bool cg_collect_unique_target(Arena *scratch, BM_Target_Id **list, BM_Tar
     return arena_arr_push(scratch, *list, value);
 }
 
+static bool cg_target_has_cxx_sources(CG_Context *ctx, BM_Target_Id id, bool *out) {
+    BM_String_Span sources = {0};
+    if (out) *out = false;
+    if (!ctx || !out) return false;
+
+    sources = bm_query_target_sources_raw(ctx->model, id);
+    for (size_t i = 0; i < sources.count; ++i) {
+        CG_Source_Lang lang = CG_SOURCE_LANG_C;
+        if (cg_is_header_like(sources.items[i])) continue;
+        if (!cg_classify_source_lang(sources.items[i], &lang)) continue;
+        if (lang == CG_SOURCE_LANG_CXX) {
+            *out = true;
+            return true;
+        }
+    }
+
+    return true;
+}
+
+static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out) {
+    const CG_Target_Info *info = NULL;
+    BM_String_Item_Span libs = {0};
+    if (out) *out = false;
+    if (!ctx || !out) return false;
+
+    info = cg_target_info(ctx, id);
+    if (!info) return false;
+    if (info->needs_cxx_linker_known) {
+        *out = info->needs_cxx_linker;
+        return true;
+    }
+
+    ctx->targets[id].needs_cxx_linker_known = true;
+    ctx->targets[id].needs_cxx_linker = false;
+
+    if (info->alias) {
+        bool resolved_needs_cxx = false;
+        if (!bm_target_id_is_valid(info->resolved_id)) return false;
+        if (!cg_target_needs_cxx_linker_recursive(ctx, info->resolved_id, &resolved_needs_cxx)) return false;
+        ctx->targets[id].needs_cxx_linker = resolved_needs_cxx;
+        *out = resolved_needs_cxx;
+        return true;
+    }
+
+    if (!info->imported && !cg_target_has_cxx_sources(ctx, id, &ctx->targets[id].needs_cxx_linker)) {
+        return false;
+    }
+    if (ctx->targets[id].needs_cxx_linker) {
+        *out = true;
+        return true;
+    }
+
+    libs = bm_query_target_link_libraries_raw(ctx->model, id);
+    for (size_t i = 0; i < libs.count; ++i) {
+        BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
+        bool dep_needs_cxx = false;
+        if (!cg_resolve_link_item_target(ctx, libs.items[i].value, &dep_id)) continue;
+        if (!cg_target_needs_cxx_linker_recursive(ctx, dep_id, &dep_needs_cxx)) return false;
+        if (dep_needs_cxx) {
+            ctx->targets[id].needs_cxx_linker = true;
+            *out = true;
+            return true;
+        }
+    }
+
+    *out = ctx->targets[id].needs_cxx_linker;
+    return true;
+}
+
 static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_Target_Id **out) {
     BM_Target_Id_Span explicit_deps = bm_query_target_dependencies_explicit(ctx->model, id);
     BM_String_Item_Span raw_link_libs = bm_query_target_link_libraries_raw(ctx->model, id);
@@ -484,7 +618,7 @@ static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_T
     return true;
 }
 
-static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, String_View **out) {
+static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Source_Info **out) {
     BM_String_Span sources = bm_query_target_sources_raw(ctx->model, id);
     BM_Directory_Id owner = bm_query_target_owner_directory(ctx->model, id);
     String_View owner_source_dir = bm_query_directory_source_dir(ctx->model, owner);
@@ -492,12 +626,13 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, String_
     for (size_t i = 0; i < sources.count; ++i) {
         String_View src = sources.items[i];
         String_View rebased = {0};
+        CG_Source_Lang lang = CG_SOURCE_LANG_C;
         bool dup = false;
 
         if (!cg_check_no_genex("target source", src)) return false;
         if (cg_is_header_like(src)) continue;
-        if (!cg_is_c_source(src)) {
-            nob_log(NOB_ERROR, "codegen: unsupported non-C source on target '%.*s': %.*s",
+        if (!cg_classify_source_lang(src, &lang)) {
+            nob_log(NOB_ERROR, "codegen: unsupported source language on target '%.*s': %.*s",
                     (int)bm_query_target_name(ctx->model, id).count,
                     bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
                     (int)src.count, src.data ? src.data : "");
@@ -506,12 +641,14 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, String_
 
         if (!cg_rebase_from_base(ctx, src, owner_source_dir, &rebased)) return false;
         for (size_t j = 0; j < arena_arr_len(*out); ++j) {
-            if (nob_sv_eq((*out)[j], rebased)) {
+            if (nob_sv_eq((*out)[j].path, rebased)) {
                 dup = true;
                 break;
             }
         }
-        if (!dup && !arena_arr_push(ctx->scratch, *out, rebased)) return false;
+        if (!dup && !arena_arr_push(ctx->scratch, *out, ((CG_Source_Info){.path = rebased, .lang = lang}))) {
+            return false;
+        }
     }
 
     return true;
@@ -613,8 +750,8 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
                 return false;
             }
             if (dep->kind == BM_TARGET_INTERFACE_LIBRARY) continue;
-            if (dep->kind != BM_TARGET_STATIC_LIBRARY) {
-                nob_log(NOB_ERROR, "codegen: local link target '%.*s' is not linkable in the minimal backend",
+            if (!cg_target_kind_is_linkable_artifact(dep->kind)) {
+                nob_log(NOB_ERROR, "codegen: local link target '%.*s' is not linkable in the POSIX backend",
                         (int)item.count, item.data ? item.data : "");
                 return false;
             }
@@ -666,6 +803,16 @@ static bool cg_emit_cmd_append_sv(Nob_String_Builder *out, const char *cmd_var, 
     return true;
 }
 
+static bool cg_emit_cmd_append_toolchain(Nob_String_Builder *out, const char *cmd_var, bool use_cxx) {
+    if (!out || !cmd_var) return false;
+    nob_sb_append_cstr(out, "        append_toolchain_cmd(&");
+    nob_sb_append_cstr(out, cmd_var);
+    nob_sb_append_cstr(out, ", ");
+    nob_sb_append_cstr(out, use_cxx ? "true" : "false");
+    nob_sb_append_cstr(out, ");\n");
+    return true;
+}
+
 static bool cg_emit_target_forward_decls(CG_Context *ctx, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
     for (size_t i = 0; i < ctx->target_count; ++i) {
@@ -680,6 +827,12 @@ static bool cg_emit_target_forward_decls(CG_Context *ctx, Nob_String_Builder *ou
 static bool cg_emit_support_helpers(Nob_String_Builder *out) {
     if (!out) return false;
     nob_sb_append_cstr(out,
+        "static void append_toolchain_cmd(Nob_Cmd *cmd, bool use_cxx) {\n"
+        "    const char *tool = getenv(use_cxx ? \"CXX\" : \"CC\");\n"
+        "    if (!tool || tool[0] == '\\0') tool = use_cxx ? \"c++\" : \"cc\";\n"
+        "    nob_cmd_append(cmd, tool);\n"
+        "}\n"
+        "\n"
         "static bool ensure_dir(const char *path) {\n"
         "    Nob_Cmd cmd = {0};\n"
         "    nob_cmd_append(&cmd, \"mkdir\", \"-p\", path);\n"
@@ -697,7 +850,7 @@ static bool cg_emit_support_helpers(Nob_String_Builder *out) {
 
 static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info, Nob_String_Builder *out) {
     BM_Target_Id *deps = NULL;
-    String_View *sources = NULL;
+    CG_Source_Info *sources = NULL;
     String_View *compile_args = NULL;
     String_View *link_dir_args = NULL;
     String_View *link_opt_args = NULL;
@@ -705,6 +858,8 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     String_View *link_rebuild_inputs = NULL;
     String_View object_dir = {0};
     String_View artifact_dir = {0};
+    bool needs_cxx_linker = false;
+    bool needs_pic = false;
     if (!ctx || !info || !out) return false;
 
     nob_sb_append_cstr(out, "static bool build_");
@@ -753,10 +908,12 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     }
 
     if (arena_arr_empty(sources)) {
-        nob_log(NOB_ERROR, "codegen: target '%.*s' has no compilable C sources",
+        nob_log(NOB_ERROR, "codegen: target '%.*s' has no compilable C/C++ sources",
                 (int)info->name.count, info->name.data ? info->name.data : "");
         return false;
     }
+    needs_cxx_linker = info->needs_cxx_linker;
+    needs_pic = cg_target_needs_pic(info->kind);
 
     if (!cg_join_paths_to_arena(ctx->scratch,
                                 nob_sv_from_cstr("build/obj"),
@@ -793,15 +950,16 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, "    if (nob_needs_rebuild(");
         if (!cg_sb_append_c_string(out, obj_path)) return false;
         nob_sb_append_cstr(out, ", (const char*[]){__FILE__, ");
-        if (!cg_sb_append_c_string(out, sources[i])) return false;
+        if (!cg_sb_append_c_string(out, sources[i].path)) return false;
         nob_sb_append_cstr(out, "}, 2)) {\n");
         nob_sb_append_cstr(out, "        Nob_Cmd cc_cmd = {0};\n");
-        nob_sb_append_cstr(out, "        nob_cc(&cc_cmd);\n");
+        if (!cg_emit_cmd_append_toolchain(out, "cc_cmd", sources[i].lang == CG_SOURCE_LANG_CXX)) return false;
         for (size_t arg = 0; arg < arena_arr_len(compile_args); ++arg) {
             if (!cg_emit_cmd_append_sv(out, "cc_cmd", compile_args[arg])) return false;
         }
+        if (needs_pic && !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-fPIC"))) return false;
         if (!cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-c")) ||
-            !cg_emit_cmd_append_sv(out, "cc_cmd", sources[i]) ||
+            !cg_emit_cmd_append_sv(out, "cc_cmd", sources[i].path) ||
             !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-o")) ||
             !cg_emit_cmd_append_sv(out, "cc_cmd", obj_path)) {
             return false;
@@ -845,7 +1003,9 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, ");\n");
         nob_sb_append_cstr(out, "        if (!nob_cmd_run_sync(ar_cmd)) return false;\n");
         nob_sb_append_cstr(out, "    }\n");
-    } else if (info->kind == BM_TARGET_EXECUTABLE) {
+    } else if (info->kind == BM_TARGET_EXECUTABLE ||
+               info->kind == BM_TARGET_SHARED_LIBRARY ||
+               info->kind == BM_TARGET_MODULE_LIBRARY) {
         if (!cg_collect_link_dir_args(ctx, info->id, &link_dir_args) ||
             !cg_collect_link_option_args(ctx, info->id, &link_opt_args) ||
             !cg_collect_link_library_args(ctx, info->id, &link_lib_args, &link_rebuild_inputs)) {
@@ -874,7 +1034,11 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", arena_arr_len(sources) + arena_arr_len(link_rebuild_inputs) + 1));
         nob_sb_append_cstr(out, ")) {\n");
         nob_sb_append_cstr(out, "        Nob_Cmd link_cmd = {0};\n");
-        nob_sb_append_cstr(out, "        nob_cc(&link_cmd);\n");
+        if (!cg_emit_cmd_append_toolchain(out, "link_cmd", needs_cxx_linker)) return false;
+        if ((info->kind == BM_TARGET_SHARED_LIBRARY || info->kind == BM_TARGET_MODULE_LIBRARY) &&
+            !cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("-shared"))) {
+            return false;
+        }
         if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("-o")) ||
             !cg_emit_cmd_append_sv(out, "link_cmd", info->artifact_path)) {
             return false;
@@ -993,6 +1157,7 @@ bool nob_codegen_render(const Build_Model *model,
         "#define NOB_IMPLEMENTATION\n"
         "#include \"nob.h\"\n"
         "\n"
+        "#include <stdlib.h>\n"
         "#include <string.h>\n"
         "\n");
 
