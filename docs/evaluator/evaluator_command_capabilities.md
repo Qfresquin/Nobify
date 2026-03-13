@@ -1,6 +1,16 @@
 # Evaluator Command Capabilities (Rewrite Draft)
 
-Status: Draft rewrite. This document describes the current command-capability metadata contract exposed by evaluator APIs and backed by the registry in `src_v2/evaluator`.
+Status: Draft rewrite. This document describes the current command-capability
+metadata contract exposed by evaluator APIs and backed by the registry in
+`src_v2/evaluator`.
+
+Project priority framing:
+- capability metadata is interpreted under the canonical project direction in
+  [`../project_priorities.md`](../project_priorities.md),
+- the primary goal remains CMake 3.28 semantic parity,
+- historical compatibility wrappers are secondary and should not be read as
+  outranking remaining CMake 3.28 gaps,
+- Nob backend optimization is out of scope for this metadata contract.
 
 ## 1. Scope
 

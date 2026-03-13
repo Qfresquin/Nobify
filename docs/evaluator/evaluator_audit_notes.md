@@ -1,6 +1,17 @@
 # Evaluator Audit Notes (Rewrite Draft)
 
-Status: Analytical draft. This document captures implementation-audit findings, risk prioritization, and remediation backlog for the evaluator rewrite set in `docs/evaluator/`.
+Status: Analytical draft. This document captures implementation-audit findings,
+risk prioritization, and remediation backlog for the evaluator rewrite set in
+`docs/evaluator/`.
+
+Project priority framing:
+- this audit is organized around the canonical project direction in
+  [`../project_priorities.md`](../project_priorities.md),
+- the primary objective is **CMake 3.28 semantic compatibility**,
+- historical CMake behavior is secondary unless it changes observable CMake
+  3.28 outcomes for real projects,
+- Nob backend optimization is downstream work and is not treated as a competing
+  priority inside this evaluator audit.
 
 ## 1. Scope
 
@@ -11,6 +22,13 @@ This document records:
 - prioritized follow-up actions.
 
 It does not redefine evaluator contracts. Canonical behavior remains in `evaluator_v2_spec.md`.
+
+This means:
+- parity risks against CMake 3.28 outrank historical-compatibility polish,
+- historical behavior still matters when it is required to preserve the CMake
+  3.28 baseline,
+- optimization topics are discussed only when they affect maintainability or
+  the evaluator's ability to deliver that baseline.
 
 ## 2. Source of Truth
 
@@ -146,14 +164,22 @@ Risk:
 - Behavioral confidence remains uneven despite broad command-name availability.
 
 Recommendation:
-- Keep Phase G promotion backlog focused on clusters (not one-off commands), starting with `ctest_*` + property/query/introspection + `target_* advanced` + `try_run`, without reopening the now-closed G0 boundary.
+- Keep Phase G promotion backlog focused on clusters (not one-off commands),
+  starting with `ctest_*` + property/query/introspection + `target_* advanced`
+  + `try_run`, because those are still open gaps against the **primary CMake
+  3.28 parity goal**. Historical-only refinements and downstream optimization
+  work should stay behind that queue unless they directly affect the same
+  baseline.
 
 ## 7. Remediation Backlog
 
 Priority tiers for next engineering/doc pass:
 
 1. P0
-- Keep the Phase G semantic-promotion roadmap aligned with `evaluator_coverage_matrix.md`, focusing on clustered `PARTIAL` surfaces without reopening the evaluator -> Event IR contract (F-07).
+- Keep the Phase G semantic-promotion roadmap aligned with
+  `evaluator_coverage_matrix.md`, focusing on clustered `PARTIAL` surfaces that
+  still block the primary CMake 3.28 parity goal, without reopening the
+  evaluator -> Event IR contract (F-07).
 
 2. P1
 - Document or remove ambiguity around stale local runner binaries vs current runner source (`build/nob_test` vs `build/nob_v2_test`) in evaluator verification workflow (F-10).
@@ -292,6 +318,9 @@ Disposition:
 - Should the shared diagnostics module eventually expose richer metadata than warning/error counts for evaluator-specific CI dashboards?
 
 ## 11. Relationship to Other Docs
+
+- `../project_priorities.md`
+Canonical project-level priority order referenced by this audit.
 
 - `evaluator_v2_spec.md`
 Canonical contract; this file is analytical only.

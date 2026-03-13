@@ -6,6 +6,13 @@ Status: Canonical rewrite draft for `docs/evaluator/`. This file defines the top
 
 The evaluator consumes parser AST and emits semantic Event IR through an append-only stream.
 
+Version and priority baseline:
+- evaluator semantics target **CMake 3.28** first,
+- historical behavior is modeled second, when it is needed for real-project
+  compatibility around that baseline,
+- Nob backend optimization is out of scope for the evaluator layer and belongs
+  downstream of semantic reconstruction.
+
 Primary boundary:
 - Input: `Ast_Root` from `src_v2/parser`.
 - Output: `Event_Stream` from `src_v2/transpiler/event_ir.h`.
@@ -18,6 +25,9 @@ This document specifies:
 - diagnostics/reporting boundary,
 - compatibility-profile controls,
 - evaluator-side Event IR guarantees.
+
+Project-level direction is defined in
+[`../project_priorities.md`](../project_priorities.md).
 
 Detailed semantics are delegated to annexes in `docs/evaluator/`, but those annexes cannot redefine this root contract.
 

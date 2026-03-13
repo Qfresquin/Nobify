@@ -7,6 +7,12 @@
 
 It is the only writer of draft state.
 
+Its job is semantic reconstruction first:
+- preserve the evaluator's validated CMake 3.28-visible semantics,
+- keep historical behavior only when that is required for the same observable
+  baseline,
+- avoid backend-specific optimization or semantic guessing during ingest.
+
 ## 2. Public API
 
 The canonical builder API is:

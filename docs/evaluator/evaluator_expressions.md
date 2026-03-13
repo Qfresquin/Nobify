@@ -1,6 +1,15 @@
 # Evaluator Expressions (Rewrite Draft)
 
-Status: Draft rewrite. This document describes the current expression subsystem in `src_v2/evaluator/eval_expr.c`, including variable expansion, truthiness, and `if()/while()` condition parsing.
+Status: Draft rewrite. This document describes the current expression subsystem
+in `src_v2/evaluator/eval_expr.c`, including variable expansion, truthiness,
+and `if()/while()` condition parsing.
+
+Project priority framing:
+- expression behavior is documented in service of the primary CMake 3.28
+  semantic baseline in [`../project_priorities.md`](../project_priorities.md),
+- historical behavior remains secondary unless it changes observable CMake 3.28
+  outcomes,
+- backend optimization is outside the scope of this expression slice.
 
 ## 1. Scope
 

@@ -2,6 +2,13 @@
 
 Status: active contract for the current evaluator output.
 
+Project priority framing:
+- this contract exists to preserve evaluator-reconstructed CMake 3.28 semantics
+  as a stable boundary before build-model reconstruction and later Nob
+  optimization,
+- historical behavior is secondary unless it affects those observable
+  semantics.
+
 ## 1. Scope
 
 This document defines the evaluator as an `Event IR` producer:

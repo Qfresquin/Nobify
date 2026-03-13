@@ -2,6 +2,13 @@
 
 Status: code-first contract implemented in `src_v2/evaluator`.
 
+Project priority framing:
+- evaluator diagnostics are interpreted under the CMake 3.28-first project
+  direction in [`../project_priorities.md`](../project_priorities.md),
+- historical-compatibility diagnostics matter when they affect observable
+  CMake 3.28 behavior,
+- backend optimization is outside the scope of this diagnostic contract.
+
 ## 1. Scope
 
 This document describes the evaluator-local diagnostic model:

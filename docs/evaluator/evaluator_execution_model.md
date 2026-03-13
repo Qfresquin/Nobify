@@ -1,6 +1,15 @@
 # Evaluator Execution Model (Rewrite Draft)
 
-Status: Draft rewrite. This document describes how the evaluator currently executes AST nodes, propagates control flow, and enters nested execution contexts.
+Status: Draft rewrite. This document describes how the evaluator currently
+executes AST nodes, propagates control flow, and enters nested execution
+contexts.
+
+Project priority framing:
+- execution semantics are interpreted under the CMake 3.28-first project
+  direction in [`../project_priorities.md`](../project_priorities.md),
+- historical behavior remains secondary unless it changes observable CMake 3.28
+  results for real projects,
+- Nob backend optimization is downstream of this execution layer.
 
 ## 1. Scope
 

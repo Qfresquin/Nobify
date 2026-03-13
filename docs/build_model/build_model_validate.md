@@ -6,6 +6,9 @@ Validation is the semantic gate between draft reconstruction and freeze.
 
 It is read-only over `Build_Model_Draft`.
 
+Validation exists to protect correctness of the reconstructed CMake 3.28
+semantic baseline before freeze and any downstream Nob optimization.
+
 ## 2. Public API
 
 ```c

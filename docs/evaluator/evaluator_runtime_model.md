@@ -1,6 +1,15 @@
 # Evaluator Runtime Model (Rewrite Draft)
 
-Status: Draft rewrite. This document describes the runtime lifecycle and state topology currently implemented by `src_v2/evaluator`, with `evaluator_v2_spec.md` remaining the higher-level contract.
+Status: Draft rewrite. This document describes the runtime lifecycle and state
+topology currently implemented by `src_v2/evaluator`, with
+`evaluator_v2_spec.md` remaining the higher-level contract.
+
+Project priority framing:
+- this runtime model exists to support the primary CMake 3.28 semantic baseline
+  defined in [`../project_priorities.md`](../project_priorities.md),
+- historical compatibility remains secondary unless it changes observable
+  CMake 3.28 behavior,
+- Nob backend optimization is not a runtime-layer responsibility.
 
 ## 1. Scope
 

@@ -1,6 +1,16 @@
 # Evaluator Variables and Scope (Rewrite Draft)
 
-Status: Draft rewrite. This document describes the current variable model implemented by `src_v2/evaluator`, including scope visibility, mutation semantics, macro/function binding differences, and cache/environment interaction.
+Status: Draft rewrite. This document describes the current variable model
+implemented by `src_v2/evaluator`, including scope visibility, mutation
+semantics, macro/function binding differences, and cache/environment
+interaction.
+
+Project priority framing:
+- variable and scope behavior is interpreted under the primary CMake 3.28
+  semantic baseline in [`../project_priorities.md`](../project_priorities.md),
+- historical behavior remains secondary unless it changes observable CMake 3.28
+  script outcomes,
+- backend optimization is downstream and outside this slice.
 
 ## 1. Scope
 

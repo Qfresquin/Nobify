@@ -1,6 +1,17 @@
 # Evaluator Coverage Matrix (CMake 3.28 Audit)
 
-Status: Analytical audit. This document tracks evaluator parity against the CMake 3.28 command/language surface that matters to this repository and its audited corpus. It is intentionally broader than raw registry metadata.
+Status: Analytical audit. This document tracks evaluator parity against the
+CMake 3.28 command/language surface that matters to this repository and its
+audited corpus. It is intentionally broader than raw registry metadata.
+
+Project priority framing:
+- this audit serves the primary project goal defined in
+  [`../project_priorities.md`](../project_priorities.md): **CMake 3.28 semantic
+  compatibility first**,
+- historical CMake behavior is secondary here unless it changes the observable
+  CMake 3.28 outcome that real projects depend on,
+- Nob backend optimization is downstream of semantic parity and is therefore
+  outside the scoring scope of this document.
 
 ## 1. Scope
 
@@ -44,6 +55,14 @@ Important distinction:
 - `Registry Tag` is the static metadata exported by the native-command registry.
 - `Audit Status` is this document's parity verdict against actual CMake 3.28 behavior for the audited corpus.
 - the two intentionally diverge when code/docs show a real evaluator gap despite a registry `FULL` tag.
+
+Priority interpretation:
+- rows and gaps are prioritized first by how directly they block the primary
+  CMake 3.28 parity goal,
+- historical-compatibility refinements matter when they change that baseline's
+  observable behavior,
+- optimization opportunities are not used to upgrade or downgrade audit status
+  in this document.
 
 Excluded from `MISSING`:
 - non-built-in command names introduced by project or module code at runtime;
@@ -220,6 +239,16 @@ No `missing-official` rows were found in the current workspace after restricting
 
 Every row below corresponds to one `Audit Status = PARTIAL` command from the main table.
 
+Priority labels used in `Why It Matters`:
+- `artifact-critical`: blocks or weakens the primary CMake 3.28 parity goal in
+  artifact generation, dependency reconstruction, or other build-defining
+  outcomes.
+- `project-relevant`: affects the primary CMake 3.28 goal in real project
+  scripts, but is not currently in the highest-risk artifact-defining tier.
+- `low`: still a real CMake 3.28 gap, but lower priority than the current
+  parity blockers; historical-only refinements generally stay here unless they
+  affect observable 3.28 behavior.
+
 | Command | What CMake 3.28 Does | What Evaluator Already Does | What Is Still Missing | Why It Matters | Evaluator Work Needed | Code Evidence | Official Doc |
 |---|---|---|---|---|---|---|---|
 | `cmake_host_system_information` | Exposes a broad `QUERY` key surface for host/system introspection. | Supports the `FQDN` query key and returns script-visible result variables. | The remaining documented query keys still emit not-implemented diagnostics. | `external_corpus` | Implement the missing query-key handlers and normalize their result formatting in `eval_host.c`. | `src_v2/evaluator/eval_host.c` | [`cmake_host_system_information`](https://cmake.org/cmake/help/v3.28/command/cmake_host_system_information.html) |
@@ -270,8 +299,13 @@ Every row below corresponds to one `Audit Status = PARTIAL` command from the mai
 - A registry `FULL` tag can still audit as `PARTIAL` when the current code rejects a documented CMake 3.28 behavior that matters to the audited corpus.
 - The inverse did not occur in this snapshot: no registry `PARTIAL` rows were promoted to audit `FULL`.
 - `parser` / `lexer` goldens were used only as syntax signals and did not raise implementation priority by themselves.
+- The matrix should be read in project-priority order: CMake 3.28 parity first,
+  historical behavior second, backend optimization later and outside this audit.
 
 ## 7. Relationship to Other Docs
+
+- `../project_priorities.md`
+  Canonical project-level priority order used to interpret this audit.
 
 - `evaluator_v2_spec.md`
   Canonical top-level evaluator contract.

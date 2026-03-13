@@ -35,6 +35,19 @@ I am aiming for a clean, deterministic, and well-thought-out architecture (likel
 *   **Goal:** Strict separation of concerns (AST -> Event Stream -> Build Model -> Codegen).
 *   **Status:** The v2 architecture is currently being specified and implemented. You can read the rigorous engineering contracts in the `docs/` folder.
 
+## Priority Order
+
+The current project direction is:
+
+1. **Primary:** achieve semantic compatibility with **CMake 3.28**.
+2. **Secondary:** preserve historical CMake behavior when it is needed to keep
+   real projects compatible with that 3.28 baseline.
+3. **Tertiary:** optimize the generated **Nob** backend once semantic parity is
+   trustworthy.
+
+The canonical project-level statement of that order lives in
+[`project_priorities.md`](./project_priorities.md).
+
 ---
 
 ## How It Works
@@ -57,6 +70,7 @@ Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 
 The implementation-level contracts for v2 live in focused docs under `docs/`.
 
+- `docs/project_priorities.md`: canonical project direction and priority order.
 - `docs/evaluator/`: active evaluator documentation rewrite.
 - `docs/Evaluator/`: archived evaluator documentation baseline kept during the rewrite.
 - `docs/build_model/`: canonical build-model rewrite docs plus historical v2 notes kept during migration.
@@ -69,10 +83,14 @@ The implementation-level contracts for v2 live in focused docs under `docs/`.
 
 ## Disclaimer
 
-Nobify is not a 1:1 clone of CMake. It does not promise to support every legacy policy or historical quirk of the last 20 years.
+Nobify now treats **CMake 3.28** as its primary semantic baseline.
 
-**It promises functional compatibility for real-world libraries.**
-If the library compiles, the artifacts are correct, and dependencies are preserved, Nobify has succeeded.
+It is not trying to give every historical CMake release equal priority.
+Older policies, wrappers, and quirks matter, but they are a **secondary**
+compatibility target behind the CMake 3.28 baseline.
+
+Backend-specific optimization is also important, but it comes **after**
+semantic correctness and parity.
 
 ---
 

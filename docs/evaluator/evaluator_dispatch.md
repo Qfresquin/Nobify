@@ -1,6 +1,14 @@
 # Evaluator Dispatch (Rewrite Draft)
 
-Status: Draft rewrite. This document describes how `NODE_COMMAND` nodes are routed to handlers in the current evaluator implementation.
+Status: Draft rewrite. This document describes how `NODE_COMMAND` nodes are
+routed to handlers in the current evaluator implementation.
+
+Project priority framing:
+- dispatch behavior is documented in service of the primary CMake 3.28 semantic
+  baseline defined in [`../project_priorities.md`](../project_priorities.md),
+- historical behavior remains secondary unless it changes observable CMake 3.28
+  outcomes,
+- backend optimization is outside this dispatch slice.
 
 ## 1. Scope
 

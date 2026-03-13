@@ -7,9 +7,21 @@ This document supersedes `build_model_architecture_v2.md`.
 It defines the canonical architecture for the active build-model
 implementation under `src_v2/build_model/`.
 
+Project priority framing:
+- the build model serves the canonical project direction in
+  [`../project_priorities.md`](../project_priorities.md),
+- its first job is to preserve reconstructed CMake 3.28 semantics faithfully,
+- historical behavior is secondary unless it is required to preserve that
+  observable baseline,
+- downstream Nob optimization should consume this stable semantic model rather
+  than bypass it.
+
 ## 2. System Boundary
 
 The build model is not part of the evaluator.
+
+Its role in the pipeline is semantic preservation first, optimization substrate
+second.
 
 Boundary rules:
 - The evaluator emits `Event_Stream` only.

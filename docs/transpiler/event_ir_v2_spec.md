@@ -6,6 +6,14 @@
 
 This is no longer a builder-shaped IR. It is the evaluator output contract. A future build-model builder will consume a formal subset of these events.
 
+Project priority framing:
+- this IR exists to preserve evaluator-reconstructed CMake 3.28 semantics at a
+  stable boundary before build-model reconstruction,
+- historical behavior is secondary unless it changes those observable
+  semantics,
+- Nob backend optimization is downstream and should consume later semantic
+  layers built on top of this contract.
+
 Core properties:
 - one append-only `Event_Stream`
 - per-kind static metadata

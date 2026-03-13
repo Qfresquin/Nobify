@@ -15,6 +15,8 @@ As of March 8, 2026:
 
 ## Goals
 
+- Preserve the reconstructed semantics needed for **CMake 3.28 parity**.
+- Provide a stable semantic model that downstream Nob optimization can trust.
 - Rebuild the build model from scratch around the canonical `Event_Stream`.
 - Preserve the good boundaries from the legacy implementation:
   `builder -> validate -> freeze -> query`.
@@ -29,6 +31,10 @@ As of March 8, 2026:
 - Recreating evaluator-private compatibility state inside the build model.
 - Inferring target dependency edges from textual `link_libraries(...)` payload.
 - Adding a new "v3" naming layer. This documentation is the canonical baseline.
+
+Project-level priority order is documented in
+[`../project_priorities.md`](../project_priorities.md): CMake 3.28 parity
+first, historical behavior second, Nob optimization third.
 
 ## Canonical Pipeline
 

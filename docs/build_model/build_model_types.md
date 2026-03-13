@@ -4,6 +4,9 @@
 
 This document defines the canonical public type system for the new build model.
 
+The type system exists to keep reconstructed semantics stable and explicit
+before any downstream Nob optimization consumes them.
+
 The top-level principle is:
 - mutable draft state is opaque
 - frozen model state is opaque

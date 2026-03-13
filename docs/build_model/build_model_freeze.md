@@ -7,6 +7,9 @@ Freeze converts a validated `Build_Model_Draft` into an immutable
 
 The frozen model is compact, indexable, and independent from builder state.
 
+Freeze preserves validated semantics first, while making the model compact
+enough for stable query/codegen use and later optimization work.
+
 ## 2. Public API
 
 ```c

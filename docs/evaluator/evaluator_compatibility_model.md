@@ -1,6 +1,16 @@
 # Evaluator Compatibility Model (Rewrite Draft)
 
-Status: Draft rewrite. This document describes the current compatibility controls implemented by `src_v2/evaluator`, including evaluator profiles, unsupported-command policy, budget/stop behavior, and the policy-engine axis (`cmake_policy`/`CMP*`).
+Status: Draft rewrite. This document describes the current compatibility
+controls implemented by `src_v2/evaluator`, including evaluator profiles,
+unsupported-command policy, budget/stop behavior, and the policy-engine axis
+(`cmake_policy`/`CMP*`).
+
+Project priority framing:
+- compatibility controls are interpreted under the canonical project direction
+  in [`../project_priorities.md`](../project_priorities.md),
+- the primary target is CMake 3.28 semantic compatibility,
+- historical behavior matters when it preserves observable CMake 3.28 outcomes,
+- Nob backend optimization is downstream and outside this compatibility slice.
 
 ## 1. Scope
 

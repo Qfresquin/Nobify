@@ -1,6 +1,17 @@
 # Evaluator General Refactor Roadmap (Filtered + Revised)
 
-Status: decision-complete roadmap for evaluator architecture/documentation alignment, including the next bulk-first internal refactor campaign.
+Status: decision-complete roadmap for evaluator architecture/documentation
+alignment, including the next bulk-first internal refactor campaign.
+
+Project priority framing:
+- this roadmap serves the canonical project direction in
+  [`../project_priorities.md`](../project_priorities.md),
+- structural and semantic work is prioritized first by how much it advances
+  CMake 3.28 parity,
+- historical compatibility remains secondary and should not outrank unfinished
+  CMake 3.28 gaps,
+- Nob backend optimization is downstream of the evaluator roadmap and should
+  consume the stable semantic layers this roadmap produces.
 
 ## 1. Decision Log
 
@@ -222,7 +233,9 @@ Recommended promotion order:
 
 5. **G5 Legacy compatibility wrappers**
    - Tackle only after the modern/core surfaces above have stabilized.
-   - Prioritize wrappers that unblock real projects or reduce compatibility surprise; do not chase perfect historical parity by default.
+   - Prioritize wrappers that unblock real projects or reduce compatibility
+     surprise, but do not let historical parity outrank unfinished CMake 3.28
+     gaps in the core roadmap.
    - Status in the March 8, 2026 workspace: completed for the documented evaluator subset. `build_name`, `build_command`, `exec_program`, `source_group`, and the legacy metadata/file/install/Qt/watch wrappers are now treated as stable `FULL` capabilities in the registry, while explicit evaluator-side constraints remain part of the contract: `CMP0036` still gates `build_name()`, `CMP0153` still gates `exec_program()`, metadata wrappers still publish inspection state instead of historical side effects, and `variable_watch()` remains evaluator-local tracking rather than external callback execution.
 
 Phase G working rules:

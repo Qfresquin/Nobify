@@ -7,6 +7,9 @@ Query is the only public read surface over `Build_Model`.
 Codegen and tooling must use query helpers instead of touching internal storage
 directly.
 
+This keeps semantic correctness primary: downstream Nob optimization should
+consume query-visible model semantics instead of bypassing the frozen model.
+
 ## 2. Query Design Rules
 
 - `Build_Model` is opaque.
