@@ -10,6 +10,8 @@ String_View cmk_path_stem_from_name_sv(String_View name, bool last_only);
 String_View cmk_path_relative_part_temp(Evaluator_Context *ctx, String_View path);
 String_View cmk_path_parent_part_sv(String_View path);
 String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input);
+String_View cmk_path_set_temp(Evaluator_Context *ctx, String_View input, bool normalize);
+String_View cmk_path_append_temp(Evaluator_Context *ctx, String_View path, String_View input);
 String_View cmk_path_current_source_dir(Evaluator_Context *ctx);
 String_View cmk_path_make_absolute_temp(Evaluator_Context *ctx, String_View value, String_View base_dir);
 String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View path, String_View base_dir);
@@ -30,6 +32,8 @@ String_View cmk_path_transform_extension_temp(Evaluator_Context *ctx,
                                               bool replace_mode,
                                               String_View replacement);
 bool cmk_path_is_component_supports_last_only(String_View component);
+bool cmk_path_is_absolute_sv(String_View path);
+bool cmk_path_is_prefix_temp(Evaluator_Context *ctx, String_View prefix, String_View input, bool normalize);
 String_View cmk_path_compare_canonical_temp(Evaluator_Context *ctx, String_View in);
 
 #endif // EVAL_CMAKE_PATH_INTERNAL_H_

@@ -790,6 +790,7 @@ Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node)
 
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return eval_result_from_ctx(ctx);
     if (is_imported) {
+        if (!eval_target_set_imported(ctx, name, true)) return eval_result_from_ctx(ctx);
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return eval_result_from_ctx(ctx);
         if (is_global) {
             if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED_GLOBAL")) return eval_result_from_ctx(ctx);
@@ -928,6 +929,7 @@ Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
 
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return eval_result_from_ctx(ctx);
     if (is_imported) {
+        if (!eval_target_set_imported(ctx, name, true)) return eval_result_from_ctx(ctx);
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return eval_result_from_ctx(ctx);
         if (is_global) {
             if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED_GLOBAL")) return eval_result_from_ctx(ctx);

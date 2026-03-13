@@ -1,5 +1,6 @@
 #include "eval_cmake_path.h"
 #include "eval_cmake_path_internal.h"
+#include "eval_hash.h"
 
 #include "evaluator_internal.h"
 #include "sv_utils.h"
@@ -34,6 +35,7 @@ static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
 
     String_View path_var = a[1];
     bool normalize = false;
+    bool have_input = false;
     String_View input = nob_sv_from_cstr("");
 
     for (size_t i = 2; i < arena_arr_len(a); i++) {
@@ -41,23 +43,24 @@ static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
             normalize = true;
             continue;
         }
-        if (input.count > 0) {
+        if (have_input) {
             cmk_path_error(ctx, node, o,
                            "cmake_path(SET) received unexpected argument",
                            a[i]);
             return true;
         }
         input = a[i];
+        have_input = true;
     }
 
-    if (input.count == 0) {
+    if (!have_input) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(SET) requires an input path",
                        nob_sv_from_cstr("Usage: cmake_path(SET <path-var> [NORMALIZE] <input>)"));
         return true;
     }
 
-    String_View out = normalize ? cmk_path_normalize_temp(ctx, input) : input;
+    String_View out = cmk_path_set_temp(ctx, input, normalize);
     (void)eval_var_set_current(ctx, path_var, out);
     return true;
 }
@@ -132,6 +135,7 @@ static bool handle_append_like(Evaluator_Context *ctx,
     String_View path_var = a[1];
     String_View out_var = nob_sv_from_cstr("");
     String_View current = eval_var_get_visible(ctx, path_var);
+    if (!string_mode) current = cmk_path_set_temp(ctx, current, false);
 
     for (size_t i = 2; i < arena_arr_len(a); i++) {
         if (eval_sv_eq_ci_lit(a[i], "OUTPUT_VARIABLE")) {
@@ -149,8 +153,7 @@ static bool handle_append_like(Evaluator_Context *ctx,
             String_View parts[2] = {current, a[i]};
             current = svu_join_no_sep_temp(ctx, parts, 2);
         } else {
-            if (current.count == 0) current = a[i];
-            else current = eval_sv_path_join(eval_temp_arena(ctx), current, a[i]);
+            current = cmk_path_append_temp(ctx, current, a[i]);
         }
     }
 
@@ -610,22 +613,75 @@ static bool handle_has_component(Evaluator_Context *ctx,
     return true;
 }
 
-static bool handle_is_absolute(Evaluator_Context *ctx,
-                               const Node *node,
-                               Cmake_Event_Origin o,
-                               SV_List a,
-                               String_View mode) {
+static bool handle_hash(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+    if (arena_arr_len(a) != 3) {
+        cmk_path_error(ctx, node, o,
+                       "cmake_path(HASH) requires <path-var> and <out-var>",
+                       nob_sv_from_cstr("Usage: cmake_path(HASH <path-var> <out-var>)"));
+        return true;
+    }
+
+    String_View value = cmk_path_normalize_temp(ctx, cmk_path_set_temp(ctx, eval_var_get_visible(ctx, a[1]), false));
+    if (eval_should_stop(ctx)) return false;
+
+    String_View hash = nob_sv_from_cstr("");
+    if (!eval_hash_compute_hex_temp(ctx, nob_sv_from_cstr("SHA256"), value, &hash)) {
+        cmk_path_error(ctx, node, o,
+                       "cmake_path(HASH) failed to hash normalized path",
+                       a[1]);
+        return true;
+    }
+
+    (void)eval_var_set_current(ctx, a[2], hash);
+    return true;
+}
+
+static bool handle_is_mode(Evaluator_Context *ctx,
+                           const Node *node,
+                           Cmake_Event_Origin o,
+                           SV_List a,
+                           String_View mode) {
+    if (eval_sv_eq_ci_lit(mode, "IS_PREFIX")) {
+        if (arena_arr_len(a) < 4 || arena_arr_len(a) > 5) {
+            cmk_path_error(ctx, node, o,
+                           "cmake_path(IS_PREFIX) requires <path-var> <input> [NORMALIZE] <out-var>",
+                           nob_sv_from_cstr("Usage: cmake_path(IS_PREFIX <path-var> <input> [NORMALIZE] <out-var>)"));
+            return true;
+        }
+
+        bool normalize = false;
+        String_View input = a[2];
+        String_View out_var = a[arena_arr_len(a) - 1];
+        if (arena_arr_len(a) == 5) {
+            if (!eval_sv_eq_ci_lit(a[3], "NORMALIZE")) {
+                cmk_path_error(ctx, node, o,
+                               "cmake_path(IS_PREFIX) received unexpected argument",
+                               a[3]);
+                return true;
+            }
+            normalize = true;
+        }
+
+        String_View value = eval_var_get_visible(ctx, a[1]);
+        bool result = cmk_path_is_prefix_temp(ctx, value, input, normalize);
+        if (eval_should_stop(ctx)) return false;
+        (void)eval_var_set_current(ctx, out_var, result ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
+        return true;
+    }
+
     if (arena_arr_len(a) != 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(IS_*) requires <path-var> and <out-var>",
-                       nob_sv_from_cstr("Usage: cmake_path(IS_ABSOLUTE <path-var> <out-var>)"));
+                       nob_sv_from_cstr("Usage: cmake_path(IS_ABSOLUTE|IS_RELATIVE <path-var> <out-var>)"));
         return true;
     }
 
     String_View value = eval_var_get_visible(ctx, a[1]);
     bool result = false;
     if (eval_sv_eq_ci_lit(mode, "IS_ABSOLUTE")) {
-        result = eval_sv_is_abs_path(value);
+        result = cmk_path_is_absolute_sv(value);
+    } else if (eval_sv_eq_ci_lit(mode, "IS_RELATIVE")) {
+        result = !cmk_path_is_absolute_sv(value);
     } else {
         cmk_path_error(ctx, node, o,
                        "cmake_path() unsupported IS_* mode",
@@ -710,9 +766,10 @@ Eval_Result eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
         }
         return eval_result_from_bool(ok);
     }
+    if (eval_sv_eq_ci_lit(mode, "HASH")) return eval_result_from_bool(handle_hash(ctx, node, o, a));
 
     if (svu_has_prefix_ci_lit(mode, "HAS_")) return eval_result_from_bool(handle_has_component(ctx, node, o, a, mode));
-    if (svu_has_prefix_ci_lit(mode, "IS_")) return eval_result_from_bool(handle_is_absolute(ctx, node, o, a, mode));
+    if (svu_has_prefix_ci_lit(mode, "IS_")) return eval_result_from_bool(handle_is_mode(ctx, node, o, a, mode));
 
     cmk_path_error(ctx, node, o,
                    "cmake_path() subcommand is not implemented",

@@ -1805,8 +1805,16 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
         "cmake_path(HAS_RELATIVE_PART P_UNC P_HAS_RELATIVE_PART)\n"
         "cmake_path(HAS_PARENT_PATH P_UNC P_HAS_PARENT_PATH)\n"
         "cmake_path(IS_ABSOLUTE P_UNC P_IS_ABSOLUTE)\n"
+        "cmake_path(SET P_REL_ONLY rel/part)\n"
+        "cmake_path(IS_RELATIVE P_REL_ONLY P_IS_RELATIVE)\n"
+        "cmake_path(SET P_PREFIX \"/srv/share\")\n"
+        "cmake_path(IS_PREFIX P_PREFIX \"/srv/share/dir/file.tar.gz\" P_PREFIX_OK)\n"
+        "cmake_path(IS_PREFIX P_PREFIX \"/srv/share/dir/../dir/file.tar.gz\" NORMALIZE P_PREFIX_NORM)\n"
+        "cmake_path(IS_PREFIX P_PREFIX \"/srv/other/file.tar.gz\" P_PREFIX_BAD)\n"
+        "cmake_path(HASH P_UNC P_HASH)\n"
         "list(LENGTH P_CMAKE_LIST P_CMAKE_LEN)\n"
         "string(LENGTH \"${P_NATIVE_LIST}\" P_NATIVE_LEN)\n"
+        "string(LENGTH \"${P_HASH}\" P_HASH_LEN)\n"
         "cmake_path(COMPARE \"a//b\" EQUAL \"a/b\" P_CMP_EQ)\n"
         "cmake_path(COMPARE \"a\" NOT_EQUAL \"b\" P_CMP_NEQ)\n"
         "cmake_path(GET P BAD_COMPONENT P_BAD)\n"
@@ -1822,7 +1830,9 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
         "P_HAS_ROOT_PATH=${P_HAS_ROOT_PATH} P_HAS_FILENAME=${P_HAS_FILENAME} "
         "P_HAS_EXTENSION=${P_HAS_EXTENSION} P_HAS_STEM=${P_HAS_STEM} "
         "P_HAS_RELATIVE_PART=${P_HAS_RELATIVE_PART} P_HAS_PARENT_PATH=${P_HAS_PARENT_PATH} "
-        "P_IS_ABSOLUTE=${P_IS_ABSOLUTE})\n",
+        "P_IS_ABSOLUTE=${P_IS_ABSOLUTE} P_IS_RELATIVE=${P_IS_RELATIVE} "
+        "P_PREFIX_OK=${P_PREFIX_OK} P_PREFIX_NORM=${P_PREFIX_NORM} "
+        "P_PREFIX_BAD=${P_PREFIX_BAD} P_HASH_LEN=${P_HASH_LEN})\n",
         convert_to_cmake_input);
     Ast_Root root = parse_cmake(temp_arena, script);
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
@@ -1848,6 +1858,11 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
     bool saw_has_relative_part = false;
     bool saw_has_parent_path = false;
     bool saw_is_absolute = false;
+    bool saw_is_relative = false;
+    bool saw_prefix_ok = false;
+    bool saw_prefix_norm = false;
+    bool saw_prefix_bad = false;
+    bool saw_hash_len = false;
     bool saw_bad_component = false;
     bool saw_bad_native = false;
     bool saw_bad_convert = false;
@@ -1874,6 +1889,11 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
             if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_RELATIVE_PART=ON"))) saw_has_relative_part = true;
             if (nob_sv_eq(item, nob_sv_from_cstr("P_HAS_PARENT_PATH=ON"))) saw_has_parent_path = true;
             if (nob_sv_eq(item, nob_sv_from_cstr("P_IS_ABSOLUTE=ON"))) saw_is_absolute = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_IS_RELATIVE=ON"))) saw_is_relative = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_PREFIX_OK=ON"))) saw_prefix_ok = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_PREFIX_NORM=ON"))) saw_prefix_norm = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_PREFIX_BAD=OFF"))) saw_prefix_bad = true;
+            if (nob_sv_eq(item, nob_sv_from_cstr("P_HASH_LEN=64"))) saw_hash_len = true;
             continue;
         }
         if (ev->h.kind == EV_DIAGNOSTIC && ev->as.diag.severity == EV_DIAG_ERROR) {
@@ -1906,6 +1926,11 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
     ASSERT(saw_has_relative_part);
     ASSERT(saw_has_parent_path);
     ASSERT(saw_is_absolute);
+    ASSERT(saw_is_relative);
+    ASSERT(saw_prefix_ok);
+    ASSERT(saw_prefix_norm);
+    ASSERT(saw_prefix_bad);
+    ASSERT(saw_hash_len);
     ASSERT(saw_bad_component);
     ASSERT(saw_bad_native);
     ASSERT(saw_bad_convert);
@@ -6403,10 +6428,13 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
         temp_arena,
         "add_library(real STATIC real.c)\n"
         "add_library(alias_real ALIAS real)\n"
+        "add_library(imported_mod STATIC IMPORTED)\n"
         "add_executable(app app.c)\n"
         "target_sources(real PRIVATE priv.c PUBLIC pub.h INTERFACE iface.h)\n"
         "target_sources(real PUBLIC FILE_SET HEADERS BASE_DIRS include FILES include/public.hpp include/detail.hpp)\n"
         "target_sources(real INTERFACE FILE_SET api TYPE HEADERS BASE_DIRS api FILES api/iface.hpp)\n"
+        "target_sources(real PUBLIC FILE_SET CXX_MODULES BASE_DIRS modules FILES modules/core.cppm)\n"
+        "target_sources(imported_mod INTERFACE FILE_SET CXX_MODULES BASE_DIRS imported FILES imported/api.cppm)\n"
         "target_compile_features(real PRIVATE cxx_std_20 PUBLIC cxx_std_17 INTERFACE c_std_11)\n"
         "target_precompile_headers(real PRIVATE pch.h PUBLIC pch_pub.h INTERFACE <vector>)\n"
         "target_precompile_headers(app REUSE_FROM real)\n"
@@ -6418,13 +6446,20 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
         "get_target_property(REAL_HEADER_DIRS real HEADER_DIRS)\n"
         "get_target_property(REAL_HEADER_SET_API real HEADER_SET_API)\n"
         "get_target_property(REAL_HEADER_DIRS_API real HEADER_DIRS_API)\n"
+        "get_target_property(REAL_CXX_MODULE_SETS real CXX_MODULE_SETS)\n"
+        "get_target_property(REAL_CXX_MODULE_SET real CXX_MODULE_SET)\n"
+        "get_target_property(REAL_CXX_MODULE_DIRS real CXX_MODULE_DIRS)\n"
+        "get_target_property(IMPORTED_IFACE_CXX_MODULE_SETS imported_mod INTERFACE_CXX_MODULE_SETS)\n"
+        "get_target_property(IMPORTED_CXX_MODULE_SET imported_mod CXX_MODULE_SET)\n"
+        "get_target_property(IMPORTED_CXX_MODULE_DIRS imported_mod CXX_MODULE_DIRS)\n"
         "get_target_property(REAL_COMPILE_FEATURES real COMPILE_FEATURES)\n"
         "get_target_property(REAL_IFACE_COMPILE_FEATURES real INTERFACE_COMPILE_FEATURES)\n"
         "get_target_property(REAL_PCH real PRECOMPILE_HEADERS)\n"
         "get_target_property(REAL_IFACE_PCH real INTERFACE_PRECOMPILE_HEADERS)\n"
         "get_target_property(APP_REUSE app PRECOMPILE_HEADERS_REUSE_FROM)\n"
         "target_sources(real bad.c another.c)\n"
-        "target_sources(real PUBLIC FILE_SET modules TYPE CXX_MODULES FILES bad.h)\n"
+        "target_sources(real INTERFACE FILE_SET ifacemods TYPE CXX_MODULES FILES iface_bad.cppm)\n"
+        "target_sources(real PUBLIC FILE_SET custom_modules FILES missing_type.cppm)\n"
         "target_compile_features(alias_real PRIVATE bad_feature)\n"
         "target_precompile_headers(missing_pch PRIVATE missing.h)\n"
         "target_sources(missing_src PRIVATE bad.c)\n");
@@ -6432,13 +6467,18 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 5);
+    ASSERT(report->error_count == 6);
 
     bool saw_priv_source = false;
     bool saw_pub_source = false;
+    bool saw_module_source_event = false;
     bool saw_iface_prop = false;
     bool saw_header_set_prop = false;
     bool saw_interface_header_sets_prop = false;
+    bool saw_cxx_module_sets_prop = false;
+    bool saw_cxx_module_set_prop = false;
+    bool saw_cxx_module_dirs_prop = false;
+    bool saw_imported_cxx_module_sets_prop = false;
     bool saw_compile_feature_local = false;
     bool saw_compile_feature_iface = false;
     bool saw_pch_local = false;
@@ -6446,7 +6486,8 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
     bool saw_reuse_from = false;
     bool saw_reuse_dep = false;
     bool saw_visibility_error = false;
-    bool saw_file_set_error = false;
+    bool saw_cxx_module_interface_error = false;
+    bool saw_cxx_module_missing_type_error = false;
     bool saw_alias_error = false;
     bool saw_missing_pch_error = false;
     bool saw_missing_src_error = false;
@@ -6457,6 +6498,7 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
             nob_sv_eq(ev->as.target_add_source.target_name, nob_sv_from_cstr("real"))) {
             if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("priv.c"))) saw_priv_source = true;
             if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("pub.h"))) saw_pub_source = true;
+            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("core.cppm"))) saw_module_source_event = true;
             ASSERT(!sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("iface.h")));
         } else if (ev->h.kind == EV_TARGET_PROP_SET &&
                    nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("real"))) {
@@ -6471,6 +6513,18 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_HEADER_SETS")) &&
                 nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("api"))) {
                 saw_interface_header_sets_prop = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("CXX_MODULE_SETS")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("CXX_MODULES"))) {
+                saw_cxx_module_sets_prop = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("CXX_MODULE_SET")) &&
+                sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("modules/core.cppm"))) {
+                saw_cxx_module_set_prop = true;
+            }
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("CXX_MODULE_DIRS")) &&
+                sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("modules"))) {
+                saw_cxx_module_dirs_prop = true;
             }
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("COMPILE_FEATURES")) &&
                 nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("cxx_std_20"))) {
@@ -6490,6 +6544,12 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
                 saw_pch_iface = true;
             }
         } else if (ev->h.kind == EV_TARGET_PROP_SET &&
+                   nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("imported_mod"))) {
+            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS")) &&
+                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("CXX_MODULES"))) {
+                saw_imported_cxx_module_sets_prop = true;
+            }
+        } else if (ev->h.kind == EV_TARGET_PROP_SET &&
                    nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("app")) &&
                    nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM")) &&
                    nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("real"))) {
@@ -6503,8 +6563,11 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
                           nob_sv_from_cstr("target command requires PUBLIC, PRIVATE or INTERFACE before items"))) {
                 saw_visibility_error = true;
             } else if (nob_sv_eq(ev->as.diag.cause,
-                                 nob_sv_from_cstr("target_sources(FILE_SET ...) currently supports only TYPE HEADERS"))) {
-                saw_file_set_error = true;
+                                 nob_sv_from_cstr("target_sources(FILE_SET TYPE CXX_MODULES) may not use INTERFACE scope on non-IMPORTED targets"))) {
+                saw_cxx_module_interface_error = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("target_sources(FILE_SET ...) requires TYPE for non-default file-set names"))) {
+                saw_cxx_module_missing_type_error = true;
             } else if (nob_sv_eq(ev->as.diag.cause,
                                  nob_sv_from_cstr("target_compile_features() cannot be used on ALIAS targets"))) {
                 saw_alias_error = true;
@@ -6520,9 +6583,14 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
 
     ASSERT(saw_priv_source);
     ASSERT(saw_pub_source);
+    ASSERT(!saw_module_source_event);
     ASSERT(saw_iface_prop);
     ASSERT(saw_header_set_prop);
     ASSERT(saw_interface_header_sets_prop);
+    ASSERT(saw_cxx_module_sets_prop);
+    ASSERT(saw_cxx_module_set_prop);
+    ASSERT(saw_cxx_module_dirs_prop);
+    ASSERT(saw_imported_cxx_module_sets_prop);
     ASSERT(saw_compile_feature_local);
     ASSERT(saw_compile_feature_iface);
     ASSERT(saw_pch_local);
@@ -6530,7 +6598,8 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
     ASSERT(saw_reuse_from);
     ASSERT(saw_reuse_dep);
     ASSERT(saw_visibility_error);
-    ASSERT(saw_file_set_error);
+    ASSERT(saw_cxx_module_interface_error);
+    ASSERT(saw_cxx_module_missing_type_error);
     ASSERT(saw_alias_error);
     ASSERT(saw_missing_pch_error);
     ASSERT(saw_missing_src_error);
@@ -6561,6 +6630,18 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
                           nob_sv_from_cstr("api/iface.hpp")));
     ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("REAL_HEADER_DIRS_API")),
                           nob_sv_from_cstr("api")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REAL_CXX_MODULE_SETS")),
+                     nob_sv_from_cstr("CXX_MODULES")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("REAL_CXX_MODULE_SET")),
+                          nob_sv_from_cstr("modules/core.cppm")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("REAL_CXX_MODULE_DIRS")),
+                          nob_sv_from_cstr("modules")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IMPORTED_IFACE_CXX_MODULE_SETS")),
+                     nob_sv_from_cstr("CXX_MODULES")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("IMPORTED_CXX_MODULE_SET")),
+                          nob_sv_from_cstr("imported/api.cppm")));
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("IMPORTED_CXX_MODULE_DIRS")),
+                          nob_sv_from_cstr("imported")));
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REAL_COMPILE_FEATURES")),
                      nob_sv_from_cstr("cxx_std_20;cxx_std_17")));

@@ -405,6 +405,17 @@ bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->known_targets, record);
 }
 
+bool eval_target_set_imported(Evaluator_Context *ctx, String_View name, bool imported) {
+    if (!ctx) return false;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
+        if (!eval_sv_key_eq(commands->known_targets[i].name, name)) continue;
+        commands->known_targets[i].imported = imported;
+        return true;
+    }
+    return false;
+}
+
 bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_View *out_dir) {
     if (!out_dir) return false;
     *out_dir = nob_sv_from_cstr("");
@@ -417,6 +428,16 @@ bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_V
         return true;
     }
     return true;
+}
+
+bool eval_target_is_imported(Evaluator_Context *ctx, String_View name) {
+    if (!ctx) return false;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
+        if (!eval_sv_key_eq(commands->known_targets[i].name, name)) continue;
+        return commands->known_targets[i].imported;
+    }
+    return false;
 }
 
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {

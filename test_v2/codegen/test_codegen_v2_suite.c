@@ -465,6 +465,26 @@ TEST(codegen_cxx_static_dependency_uses_cxx_driver_for_link) {
     TEST_PASS();
 }
 
+TEST(codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs) {
+    Nob_String_Builder sb = {0};
+    ASSERT(codegen_render_script(
+        "project(Test CXX)\n"
+        "add_library(core STATIC core.cpp)\n"
+        "target_sources(core PUBLIC FILE_SET CXX_MODULES BASE_DIRS modules FILES modules/core.cppm)\n"
+        "add_executable(app main.cpp)\n"
+        "target_link_libraries(app PRIVATE core)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "core.cpp") != NULL);
+    ASSERT(strstr(output, "main.cpp") != NULL);
+    ASSERT(strstr(output, "core.cppm") == NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 TEST(codegen_rejects_module_target_as_link_dependency) {
     Nob_String_Builder sb = {0};
     diag_reset();
@@ -527,6 +547,7 @@ void run_codegen_v2_tests(int *passed, int *failed) {
     test_codegen_write_file_rebases_paths_and_generated_file_compiles(passed, failed);
     test_codegen_shared_and_module_targets_build_on_posix_backend(passed, failed);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link(passed, failed);
+    test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed);
     test_codegen_rejects_module_target_as_link_dependency(passed, failed);
     test_codegen_rejects_imported_target_reference(passed, failed);
 

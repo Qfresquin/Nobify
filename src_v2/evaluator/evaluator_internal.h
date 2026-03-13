@@ -88,6 +88,7 @@ typedef User_Command *User_Command_List;
 typedef struct {
     String_View name;
     String_View declared_dir;
+    bool imported;
 } Eval_Target_Record;
 
 typedef Eval_Target_Record *Eval_Target_Record_List;
@@ -1738,7 +1739,9 @@ static inline String_View eval_current_list_file(Evaluator_Context *ctx) {
 // ---- targets ----
 bool eval_target_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_register(Evaluator_Context *ctx, String_View name);
+bool eval_target_set_imported(Evaluator_Context *ctx, String_View name, bool imported);
 bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_View *out_dir);
+bool eval_target_is_imported(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);

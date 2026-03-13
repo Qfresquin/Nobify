@@ -29,10 +29,16 @@ static bool target_usage_store_and_emit_target_property(Evaluator_Context *ctx,
 typedef struct {
     String_View name;
     String_View type;
+    int kind;
     SV_List base_dirs;
     SV_List files;
     size_t next_index;
 } Target_File_Set_Parse;
+
+typedef enum {
+    TARGET_FILE_SET_HEADERS = 0,
+    TARGET_FILE_SET_CXX_MODULES,
+} Target_File_Set_Kind;
 
 static bool target_sources_is_file_set_clause_keyword(String_View tok) {
     return eval_sv_eq_ci_lit(tok, "TYPE") ||
@@ -43,6 +49,19 @@ static bool target_sources_is_file_set_clause_keyword(String_View tok) {
 static bool target_sources_is_group_boundary(String_View tok) {
     return target_usage_parse_visibility(tok, &(Cmake_Visibility){0}) ||
            eval_sv_eq_ci_lit(tok, "FILE_SET");
+}
+
+static bool target_sources_file_set_kind_from_type(String_View type, Target_File_Set_Kind *out_kind) {
+    if (!out_kind) return false;
+    if (eval_sv_eq_ci_lit(type, "HEADERS")) {
+        *out_kind = TARGET_FILE_SET_HEADERS;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(type, "CXX_MODULES")) {
+        *out_kind = TARGET_FILE_SET_CXX_MODULES;
+        return true;
+    }
+    return false;
 }
 
 static bool target_sources_append_file_set_items(Evaluator_Context *ctx,
@@ -75,13 +94,15 @@ static bool target_sources_parse_file_set(Evaluator_Context *ctx,
         target_diag_error(ctx,
                           node,
                           nob_sv_from_cstr("target_sources(FILE_SET ...) requires a set name"),
-                          nob_sv_from_cstr("Usage: target_sources(<tgt> <vis> FILE_SET <name> [TYPE HEADERS] [BASE_DIRS <dir>...] FILES <file>...)"));
+                          nob_sv_from_cstr("Usage: target_sources(<tgt> <vis> FILE_SET <name> [TYPE HEADERS|CXX_MODULES] [BASE_DIRS <dir>...] FILES <file>...)"));
         return false;
     }
 
     out_parse->name = args[start++];
     if (eval_sv_eq_ci_lit(out_parse->name, "HEADERS")) {
         out_parse->type = nob_sv_from_cstr("HEADERS");
+    } else if (eval_sv_eq_ci_lit(out_parse->name, "CXX_MODULES")) {
+        out_parse->type = nob_sv_from_cstr("CXX_MODULES");
     }
 
     bool saw_base_dirs = false;
@@ -99,7 +120,7 @@ static bool target_sources_parse_file_set(Evaluator_Context *ctx,
                 target_diag_error(ctx,
                                   node,
                                   nob_sv_from_cstr("target_sources(FILE_SET TYPE) requires a file-set type"),
-                                  nob_sv_from_cstr("Supported type in this batch: HEADERS"));
+                                  nob_sv_from_cstr("Supported types in this batch: HEADERS, CXX_MODULES"));
                 return false;
             }
             out_parse->type = args[start + 1];
@@ -160,16 +181,18 @@ static bool target_sources_parse_file_set(Evaluator_Context *ctx,
         target_diag_error(ctx,
                           node,
                           nob_sv_from_cstr("target_sources(FILE_SET ...) requires TYPE for non-default file-set names"),
-                          nob_sv_from_cstr("Use FILE_SET HEADERS ... or FILE_SET <name> TYPE HEADERS ..."));
+                          nob_sv_from_cstr("Use FILE_SET HEADERS ..., FILE_SET CXX_MODULES ..., or FILE_SET <name> TYPE HEADERS|CXX_MODULES ..."));
         return false;
     }
-    if (!eval_sv_eq_ci_lit(out_parse->type, "HEADERS")) {
+    Target_File_Set_Kind kind = TARGET_FILE_SET_HEADERS;
+    if (!target_sources_file_set_kind_from_type(out_parse->type, &kind)) {
         target_diag_error(ctx,
                           node,
-                          nob_sv_from_cstr("target_sources(FILE_SET ...) currently supports only TYPE HEADERS"),
+                          nob_sv_from_cstr("target_sources(FILE_SET ...) currently supports only TYPE HEADERS or TYPE CXX_MODULES"),
                           out_parse->type);
         return false;
     }
+    out_parse->kind = (int)kind;
     if (!saw_base_dirs) {
         if (!svu_list_push_temp(ctx, &out_parse->base_dirs, current_src_dir)) return false;
     }
@@ -186,26 +209,39 @@ static bool target_sources_parse_file_set(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_sources_store_header_file_set(Evaluator_Context *ctx,
-                                                 Cmake_Event_Origin origin,
-                                                 String_View target_name,
-                                                 Cmake_Visibility vis,
-                                                 const Target_File_Set_Parse *file_set) {
+static bool target_sources_store_file_set(Evaluator_Context *ctx,
+                                          Cmake_Event_Origin origin,
+                                          String_View target_name,
+                                          Cmake_Visibility vis,
+                                          const Target_File_Set_Parse *file_set) {
     if (!ctx || !file_set) return false;
     String_View set_name_upper = eval_property_upper_name_temp(ctx, file_set->name);
     if (eval_should_stop(ctx)) return false;
 
-    String_View set_prop = nob_sv_from_cstr(nob_temp_sprintf("HEADER_SET_%.*s",
+    bool is_headers = file_set->kind == TARGET_FILE_SET_HEADERS;
+    bool is_default_set =
+        (is_headers && eval_sv_eq_ci_lit(file_set->name, "HEADERS")) ||
+        (!is_headers && eval_sv_eq_ci_lit(file_set->name, "CXX_MODULES"));
+    const char *sets_prop_name = is_headers ? "HEADER_SETS" : "CXX_MODULE_SETS";
+    const char *interface_sets_prop_name = is_headers ? "INTERFACE_HEADER_SETS" : "INTERFACE_CXX_MODULE_SETS";
+    const char *set_prop_prefix = is_headers ? "HEADER_SET_" : "CXX_MODULE_SET_";
+    const char *dirs_prop_prefix = is_headers ? "HEADER_DIRS_" : "CXX_MODULE_DIRS_";
+    const char *set_prop_default = is_headers ? "HEADER_SET" : "CXX_MODULE_SET";
+    const char *dirs_prop_default = is_headers ? "HEADER_DIRS" : "CXX_MODULE_DIRS";
+
+    String_View set_prop = nob_sv_from_cstr(nob_temp_sprintf("%s%.*s",
+                                                             set_prop_prefix,
                                                              (int)set_name_upper.count,
                                                              set_name_upper.data));
-    String_View dirs_prop = nob_sv_from_cstr(nob_temp_sprintf("HEADER_DIRS_%.*s",
+    String_View dirs_prop = nob_sv_from_cstr(nob_temp_sprintf("%s%.*s",
+                                                              dirs_prop_prefix,
                                                               (int)set_name_upper.count,
                                                               set_name_upper.data));
     if (vis != EV_VISIBILITY_INTERFACE) {
         if (!target_usage_store_and_emit_target_property(ctx,
                                                          origin,
                                                          target_name,
-                                                         nob_sv_from_cstr("HEADER_SETS"),
+                                                         nob_sv_from_cstr(sets_prop_name),
                                                          file_set->name,
                                                          EV_PROP_APPEND_LIST)) {
             return false;
@@ -215,7 +251,7 @@ static bool target_sources_store_header_file_set(Evaluator_Context *ctx,
         if (!target_usage_store_and_emit_target_property(ctx,
                                                          origin,
                                                          target_name,
-                                                         nob_sv_from_cstr("INTERFACE_HEADER_SETS"),
+                                                         nob_sv_from_cstr(interface_sets_prop_name),
                                                          file_set->name,
                                                          EV_PROP_APPEND_LIST)) {
             return false;
@@ -231,11 +267,11 @@ static bool target_sources_store_header_file_set(Evaluator_Context *ctx,
                                                          EV_PROP_APPEND_LIST)) {
             return false;
         }
-        if (eval_sv_eq_ci_lit(file_set->name, "HEADERS") &&
+        if (is_default_set &&
             !target_usage_store_and_emit_target_property(ctx,
                                                          origin,
                                                          target_name,
-                                                         nob_sv_from_cstr("HEADER_DIRS"),
+                                                         nob_sv_from_cstr(dirs_prop_default),
                                                          file_set->base_dirs[i],
                                                          EV_PROP_APPEND_LIST)) {
             return false;
@@ -251,11 +287,11 @@ static bool target_sources_store_header_file_set(Evaluator_Context *ctx,
                                                          EV_PROP_APPEND_LIST)) {
             return false;
         }
-        if (eval_sv_eq_ci_lit(file_set->name, "HEADERS") &&
+        if (is_default_set &&
             !target_usage_store_and_emit_target_property(ctx,
                                                          origin,
                                                          target_name,
-                                                         nob_sv_from_cstr("HEADER_SET"),
+                                                         nob_sv_from_cstr(set_prop_default),
                                                          file_set->files[i],
                                                          EV_PROP_APPEND_LIST)) {
             return false;
@@ -648,7 +684,16 @@ Eval_Result eval_handle_target_sources(Evaluator_Context *ctx, const Node *node)
             if (!target_sources_parse_file_set(ctx, node, o, a, i + 1, &file_set)) {
                 return eval_result_from_ctx(ctx);
             }
-            if (!target_sources_store_header_file_set(ctx, o, tgt, vis, &file_set)) {
+            if (file_set.kind == TARGET_FILE_SET_CXX_MODULES &&
+                vis == EV_VISIBILITY_INTERFACE &&
+                !eval_target_is_imported(ctx, tgt)) {
+                target_diag_error(ctx,
+                                  node,
+                                  nob_sv_from_cstr("target_sources(FILE_SET TYPE CXX_MODULES) may not use INTERFACE scope on non-IMPORTED targets"),
+                                  tgt);
+                return eval_result_from_ctx(ctx);
+            }
+            if (!target_sources_store_file_set(ctx, o, tgt, vis, &file_set)) {
                 return eval_result_from_ctx(ctx);
             }
             i = file_set.next_index - 1;

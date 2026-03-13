@@ -56,6 +56,19 @@ static String_View cmk_path_root_directory_sv(String_View path) {
     return nob_sv_from_cstr("");
 }
 
+bool cmk_path_is_absolute_sv(String_View path) {
+    String_View root_name = cmk_path_root_name_sv(path);
+    String_View root_dir = cmk_path_root_directory_sv(path);
+    if (root_name.count > 0) {
+        return root_dir.count > 0 || svu_is_path_sep(root_name.data[0]);
+    }
+#if defined(_WIN32)
+    return false;
+#else
+    return root_dir.count > 0;
+#endif
+}
+
 String_View cmk_path_root_path_temp(Evaluator_Context *ctx, String_View path) {
     String_View root_name = cmk_path_root_name_sv(path);
     String_View root_dir = cmk_path_root_directory_sv(path);
@@ -137,6 +150,12 @@ String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
     return eval_sv_path_normalize_temp(ctx, input);
 }
 
+String_View cmk_path_set_temp(Evaluator_Context *ctx, String_View input, bool normalize) {
+    String_View out = cmk_path_to_cmake_seps_temp(ctx, input);
+    if (ctx->oom) return nob_sv_from_cstr("");
+    return normalize ? cmk_path_normalize_temp(ctx, out) : out;
+}
+
 String_View cmk_path_current_source_dir(Evaluator_Context *ctx) {
     return eval_current_source_dir(ctx);
 }
@@ -169,6 +188,12 @@ static void cmk_path_collect_segments_after_root(Evaluator_Context *ctx,
         if (pos > start) (void)svu_list_push_temp(ctx, out, nob_sv_from_parts(path.data + start, pos - start));
         while (pos < path.count && svu_is_path_sep(path.data[pos])) pos++;
     }
+}
+
+static bool cmk_path_has_filename_temp(Evaluator_Context *ctx, String_View path) {
+    String_View rel = cmk_path_relative_part_temp(ctx, path);
+    if (ctx->oom || rel.count == 0) return false;
+    return cmk_path_filename_sv(rel).count > 0;
 }
 
 String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View path, String_View base_dir) {
@@ -248,6 +273,44 @@ String_View cmk_path_to_native_seps_temp(Evaluator_Context *ctx, String_View in)
     }
     buf[in.count] = '\0';
     return nob_sv_from_cstr(buf);
+}
+
+String_View cmk_path_append_temp(Evaluator_Context *ctx, String_View path, String_View input) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    path = cmk_path_set_temp(ctx, path, false);
+    input = cmk_path_set_temp(ctx, input, false);
+    if (ctx->oom) return nob_sv_from_cstr("");
+
+    String_View path_root_name = cmk_path_root_name_sv(path);
+    String_View input_root_name = cmk_path_root_name_sv(input);
+    String_View input_root_dir = cmk_path_root_directory_sv(input);
+
+    if (cmk_path_is_absolute_sv(input) ||
+        (input_root_name.count > 0 && !nob_sv_eq(input_root_name, path_root_name))) {
+        return input;
+    }
+
+    if (input_root_dir.count > 0) {
+        path = path_root_name;
+    } else if (path.count > 0 &&
+               (cmk_path_has_filename_temp(ctx, path) ||
+                (cmk_path_root_directory_sv(path).count == 0 || cmk_path_is_absolute_sv(path)))) {
+        if (path.count == 0 || path.data[path.count - 1] != '/') {
+            String_View parts[2] = {path, nob_sv_from_cstr("/")};
+            path = svu_join_no_sep_temp(ctx, parts, 2);
+            if (ctx->oom) return nob_sv_from_cstr("");
+        }
+    }
+
+    String_View input_without_root_name = input;
+    if (input_root_name.count > 0 && input.count >= input_root_name.count) {
+        input_without_root_name =
+            nob_sv_from_parts(input.data + input_root_name.count, input.count - input_root_name.count);
+    }
+
+    String_View parts[2] = {path, input_without_root_name};
+    return svu_join_no_sep_temp(ctx, parts, 2);
 }
 
 bool cmk_path_split_char_list_temp(Evaluator_Context *ctx, String_View in, char sep, SV_List *out) {
@@ -387,4 +450,35 @@ String_View cmk_path_compare_canonical_temp(Evaluator_Context *ctx, String_View 
     }
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
+}
+
+static String_View cmk_path_prefix_operand_temp(Evaluator_Context *ctx, String_View in, bool normalize) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (normalize) return cmk_path_normalize_temp(ctx, cmk_path_set_temp(ctx, in, false));
+    return cmk_path_compare_canonical_temp(ctx, in);
+}
+
+bool cmk_path_is_prefix_temp(Evaluator_Context *ctx, String_View prefix, String_View input, bool normalize) {
+    if (!ctx) return false;
+
+    prefix = cmk_path_prefix_operand_temp(ctx, prefix, normalize);
+    input = cmk_path_prefix_operand_temp(ctx, input, normalize);
+    if (ctx->oom) return false;
+
+    String_View prefix_root = cmk_path_root_path_temp(ctx, prefix);
+    String_View input_root = cmk_path_root_path_temp(ctx, input);
+    if (ctx->oom) return false;
+    if (!nob_sv_eq(prefix_root, input_root)) return false;
+
+    SV_List prefix_segments = NULL;
+    SV_List input_segments = NULL;
+    cmk_path_collect_segments_after_root(ctx, prefix, prefix_root, &prefix_segments);
+    cmk_path_collect_segments_after_root(ctx, input, input_root, &input_segments);
+    if (ctx->oom) return false;
+    if (arena_arr_len(prefix_segments) > arena_arr_len(input_segments)) return false;
+
+    for (size_t i = 0; i < arena_arr_len(prefix_segments); i++) {
+        if (!nob_sv_eq(prefix_segments[i], input_segments[i])) return false;
+    }
+    return true;
 }
