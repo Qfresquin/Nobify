@@ -281,10 +281,47 @@ typedef struct {
     bool in_variable_watch_notification;
 } Eval_Runtime_State;
 
+typedef enum {
+    EVAL_FETCHCONTENT_TRANSPORT_NONE = 0,
+    EVAL_FETCHCONTENT_TRANSPORT_URL,
+    EVAL_FETCHCONTENT_TRANSPORT_GIT,
+} Eval_FetchContent_Transport;
+
+typedef enum {
+    EVAL_FETCHCONTENT_TRY_FIND_OPT_IN = 0,
+    EVAL_FETCHCONTENT_TRY_FIND_ALWAYS,
+    EVAL_FETCHCONTENT_TRY_FIND_NEVER,
+} Eval_FetchContent_Try_Find_Mode;
+
 typedef struct {
     String_View name;
     String_View canonical_name;
     SV_List args;
+    String_View source_dir;
+    String_View binary_dir;
+    String_View source_subdir;
+    bool has_source_dir;
+    bool has_binary_dir;
+    bool exclude_from_all;
+    bool system;
+    bool override_find_package;
+    bool has_find_package_args;
+    SV_List find_package_args;
+    Eval_FetchContent_Transport transport;
+    String_View url;
+    String_View url_hash;
+    String_View url_md5;
+    bool download_no_extract;
+    bool download_extract_timestamp;
+    String_View git_repository;
+    String_View git_tag;
+    bool git_shallow;
+    bool git_progress;
+    bool has_git_submodules;
+    SV_List git_submodules;
+    bool git_submodules_recurse;
+    Eval_FetchContent_Try_Find_Mode try_find_mode;
+    bool find_package_targets_global;
 } Eval_FetchContent_Declaration;
 
 typedef Eval_FetchContent_Declaration *Eval_FetchContent_Declaration_List;

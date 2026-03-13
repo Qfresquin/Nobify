@@ -833,6 +833,12 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return NULL;
+    {
+        String_View cmakefiles_dir = eval_sv_path_join(ctx->event_arena, ctx->binary_dir, nob_sv_from_cstr("CMakeFiles"));
+        String_View redirects_dir = eval_sv_path_join(ctx->event_arena, cmakefiles_dir, nob_sv_from_cstr("pkgRedirects"));
+        if (eval_should_stop(ctx)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"), redirects_dir)) return NULL;
+    }
     if (ctx->current_file) {
         if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(ctx->current_file))) return NULL;
     } else {

@@ -57,6 +57,7 @@
     X("FetchContent_Declare", eval_handle_fetchcontent_declare, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_GetProperties", eval_handle_fetchcontent_getproperties, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_MakeAvailable", eval_handle_fetchcontent_makeavailable, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("FetchContent_Populate", eval_handle_fetchcontent_populate, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_SetPopulated", eval_handle_fetchcontent_setpopulated, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("get_cmake_property", eval_handle_get_cmake_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("get_directory_property", eval_handle_get_directory_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \

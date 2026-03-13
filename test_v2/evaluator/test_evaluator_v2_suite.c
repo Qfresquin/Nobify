@@ -192,6 +192,69 @@ static bool evaluator_prepare_site_name_command(char *out_path, size_t out_path_
 #endif
 }
 
+static bool evaluator_run_system_command(const char *cmd) {
+    if (!cmd) return false;
+    return system(cmd) == 0;
+}
+
+static bool evaluator_create_tar_archive(const char *archive_path,
+                                         const char *parent_dir,
+                                         const char *entry_name) {
+    if (!archive_path || !parent_dir || !entry_name) return false;
+    char cmd[2048] = {0};
+    int n = snprintf(cmd,
+                     sizeof(cmd),
+                     "tar -cf \"%s\" -C \"%s\" \"%s\"",
+                     archive_path,
+                     parent_dir,
+                     entry_name);
+    if (n < 0 || n >= (int)sizeof(cmd)) return false;
+    return evaluator_run_system_command(cmd);
+}
+
+static bool evaluator_create_fetchcontent_git_repo(const char *repo_dir,
+                                                   const char *cmakelists_text,
+                                                   const char *version_text,
+                                                   const char *tag_name) {
+    if (!repo_dir || !cmakelists_text || !version_text || !tag_name) return false;
+
+    char cmakelists_path[1024] = {0};
+    char version_path[1024] = {0};
+    int cmakelists_n = snprintf(cmakelists_path, sizeof(cmakelists_path), "%s/CMakeLists.txt", repo_dir);
+    int version_n = snprintf(version_path, sizeof(version_path), "%s/version.txt", repo_dir);
+    if (cmakelists_n < 0 || cmakelists_n >= (int)sizeof(cmakelists_path) ||
+        version_n < 0 || version_n >= (int)sizeof(version_path)) {
+        return false;
+    }
+
+    if (!nob_mkdir_if_not_exists(repo_dir)) return false;
+    if (!nob_write_entire_file(cmakelists_path, cmakelists_text, strlen(cmakelists_text))) return false;
+    if (!nob_write_entire_file(version_path, version_text, strlen(version_text))) return false;
+
+    char git_init[2048] = {0};
+    char git_add[2048] = {0};
+    char git_commit[2048] = {0};
+    char git_tag[2048] = {0};
+    int init_n = snprintf(git_init, sizeof(git_init), "git -C \"%s\" init", repo_dir);
+    int add_n = snprintf(git_add, sizeof(git_add), "git -C \"%s\" add .", repo_dir);
+    int commit_n = snprintf(git_commit,
+                            sizeof(git_commit),
+                            "git -C \"%s\" -c user.name=\"Nobify Tests\" -c user.email=\"tests@example.com\" commit -m init",
+                            repo_dir);
+    int tag_n = snprintf(git_tag, sizeof(git_tag), "git -C \"%s\" tag \"%s\"", repo_dir, tag_name);
+    if (init_n < 0 || init_n >= (int)sizeof(git_init) ||
+        add_n < 0 || add_n >= (int)sizeof(git_add) ||
+        commit_n < 0 || commit_n >= (int)sizeof(git_commit) ||
+        tag_n < 0 || tag_n >= (int)sizeof(git_tag)) {
+        return false;
+    }
+
+    return evaluator_run_system_command(git_init) &&
+           evaluator_run_system_command(git_add) &&
+           evaluator_run_system_command(git_commit) &&
+           evaluator_run_system_command(git_tag);
+}
+
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     if (!arena || !list) return false;
     return arena_arr_push(arena, *list, token);
@@ -3174,10 +3237,12 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
         "endmacro()\n"
         "include(FetchContent)\n"
         "FetchContent_Declare(ProvidedDep)\n"
+        "FetchContent_Declare(DeclaredOnly)\n"
         "FetchContent_Declare(LocalDep\n"
         "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_local\"\n"
         "  BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_local_build\")\n"
         "FetchContent_Declare(BypassDep)\n"
+        "FetchContent_GetProperties(DeclaredOnly SOURCE_DIR DECLARED_SRC BINARY_DIR DECLARED_BIN POPULATED DECLARED_POPULATED)\n"
         "set(FETCHCONTENT_SOURCE_DIR_BYPASSDEP \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_bypass\")\n"
         "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n"
         "FetchContent_MakeAvailable(ProvidedDep LocalDep BypassDep)\n"
@@ -3198,8 +3263,11 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_POPULATED")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LOCAL_POPULATED")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BYPASS_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DECLARED_POPULATED")), nob_sv_from_cstr("0")));
     ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC")).count > 0);
     ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("DECLARED_SRC")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("DECLARED_BIN")).count > 0);
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_POPULATED")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_SOURCE_DIR")),
                      eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC"))));
@@ -3210,6 +3278,321 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
     ASSERT(ctx->command_state.dependency_provider.command_name.count == 0);
     ASSERT(!ctx->command_state.dependency_provider.supports_find_package);
     ASSERT(!ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("fc_url_archive_root"));
+    ASSERT(nob_mkdir_if_not_exists("fc_url_archive_root/url_src"));
+    ASSERT(nob_write_entire_file("fc_url_archive_root/url_src/CMakeLists.txt",
+                                 "add_library(url_from_fetch INTERFACE)\n",
+                                 strlen("add_library(url_from_fetch INTERFACE)\n")));
+    ASSERT(evaluator_create_tar_archive("fc_url_dep.tar", "fc_url_archive_root", "url_src"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include(FetchContent)\n"
+        "file(SHA256 fc_url_dep.tar FC_URL_HASH)\n"
+        "FetchContent_Declare(UrlDep\n"
+        "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_url_dep.tar\"\n"
+        "  URL_HASH \"SHA256=${FC_URL_HASH}\"\n"
+        "  SOURCE_SUBDIR url_src\n"
+        "  OVERRIDE_FIND_PACKAGE)\n"
+        "FetchContent_GetProperties(UrlDep SOURCE_DIR URL_DECL_SRC BINARY_DIR URL_DECL_BIN POPULATED URL_DECL_POP)\n"
+        "FetchContent_MakeAvailable(UrlDep)\n"
+        "if(EXISTS \"${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/UrlDepConfig.cmake\")\n"
+        "  set(REDIRECT_CFG_EXISTS 1)\n"
+        "endif()\n"
+        "find_package(UrlDep CONFIG QUIET)\n"
+        "FetchContent_GetProperties(UrlDep POPULATED URL_POP)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("URL_DECL_POP")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("URL_POP")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("URL_DECL_SRC")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("URL_DECL_BIN")).count > 0);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REDIRECT_CFG_EXISTS")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("UrlDep_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("UrlDep_DIR")).count > 0);
+    ASSERT(eval_target_known(ctx, nob_sv_from_cstr("url_from_fetch")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("fc_noextract_archive_root"));
+    ASSERT(nob_mkdir_if_not_exists("fc_noextract_archive_root/noextract_src"));
+    ASSERT(nob_write_entire_file("fc_noextract_archive_root/noextract_src/CMakeLists.txt",
+                                 "add_library(noextract_lib INTERFACE)\n",
+                                 strlen("add_library(noextract_lib INTERFACE)\n")));
+    ASSERT(evaluator_create_tar_archive("fc_noextract_dep.tar", "fc_noextract_archive_root", "noextract_src"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include(FetchContent)\n"
+        "file(SHA256 fc_noextract_dep.tar FC_NOEXTRACT_HASH)\n"
+        "FetchContent_Populate(NoExtractDep\n"
+        "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_noextract_dep.tar\"\n"
+        "  URL_HASH \"SHA256=${FC_NOEXTRACT_HASH}\"\n"
+        "  DOWNLOAD_NO_EXTRACT TRUE\n"
+        "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_noextract_src\")\n"
+        "FetchContent_GetProperties(NoExtractDep SOURCE_DIR NOEXTRACT_SRC BINARY_DIR NOEXTRACT_BIN POPULATED NOEXTRACT_POP)\n"
+        "if(EXISTS \"${noextractdep_SOURCE_DIR}/fc_noextract_dep.tar\")\n"
+        "  set(NOEXTRACT_EXISTS 1)\n"
+        "endif()\n"
+        "if(TARGET noextract_lib)\n"
+        "  set(NOEXTRACT_TARGET 1)\n"
+        "endif()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_POP")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_EXISTS")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_SRC")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_BIN")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_TARGET")).count == 0);
+    ASSERT(!eval_target_known(ctx, nob_sv_from_cstr("noextract_lib")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(evaluator_create_fetchcontent_git_repo("fc_git_saved_repo",
+                                                  "add_library(git_saved_lib INTERFACE)\n",
+                                                  "v1\n",
+                                                  "v1"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include(FetchContent)\n"
+        "FetchContent_Declare(GitSaved\n"
+        "  GIT_REPOSITORY \"${CMAKE_CURRENT_BINARY_DIR}/fc_git_saved_repo\"\n"
+        "  GIT_TAG v1\n"
+        "  GIT_SHALLOW TRUE)\n"
+        "FetchContent_Populate(GitSaved)\n"
+        "FetchContent_GetProperties(GitSaved SOURCE_DIR GIT_SRC BINARY_DIR GIT_BIN POPULATED GIT_POP)\n"
+        "file(READ \"${gitsaved_SOURCE_DIR}/version.txt\" GIT_VERSION)\n"
+        "if(TARGET git_saved_lib)\n"
+        "  set(GIT_TARGET 1)\n"
+        "endif()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GIT_POP")), nob_sv_from_cstr("1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("GIT_SRC")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("GIT_BIN")).count > 0);
+    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("GIT_VERSION")), nob_sv_from_cstr("v1")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("GIT_TARGET")).count == 0);
+    ASSERT(!eval_target_known(ctx, nob_sv_from_cstr("git_saved_lib")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_package_resolution) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include(FetchContent)\n"
+        "file(MAKE_DIRECTORY fc_try_pkg/lib/cmake/TryPkg)\n"
+        "file(WRITE fc_try_pkg/lib/cmake/TryPkg/TryPkgConfig.cmake [=[set(TryPkg_FOUND 1)\n"
+        "set(TryPkg_FROM package)\n"
+        "]=])\n"
+        "file(MAKE_DIRECTORY fc_try_pkg_local)\n"
+        "file(WRITE fc_try_pkg_local/CMakeLists.txt [=[add_library(try_local_lib INTERFACE)\n"
+        "]=])\n"
+        "set(CMAKE_PREFIX_PATH \"${CMAKE_CURRENT_BINARY_DIR}/fc_try_pkg\")\n"
+        "set(FETCHCONTENT_TRY_FIND_PACKAGE_MODE ALWAYS)\n"
+        "FetchContent_Declare(TryPkg\n"
+        "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_try_pkg_local\")\n"
+        "FetchContent_MakeAvailable(TryPkg)\n"
+        "FetchContent_GetProperties(TryPkg SOURCE_DIR TRY_SRC BINARY_DIR TRY_BIN POPULATED TRY_POP)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TRY_POP")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TryPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TryPkg_FROM")), nob_sv_from_cstr("package")));
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("TRY_SRC")).count > 0);
+    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("TRY_BIN")).count > 0);
+    ASSERT(!eval_target_known(ctx, nob_sv_from_cstr("try_local_lib")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("fc_bad_hash_root"));
+    ASSERT(nob_mkdir_if_not_exists("fc_bad_hash_root/bad_hash_src"));
+    ASSERT(nob_write_entire_file("fc_bad_hash_root/bad_hash_src/CMakeLists.txt",
+                                 "add_library(bad_hash_lib INTERFACE)\n",
+                                 strlen("add_library(bad_hash_lib INTERFACE)\n")));
+    ASSERT(evaluator_create_tar_archive("fc_bad_hash.tar", "fc_bad_hash_root", "bad_hash_src"));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include(FetchContent)\n"
+        "FetchContent_Declare(BadMixed\n"
+        "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_bad_hash.tar\"\n"
+        "  GIT_REPOSITORY \"${CMAKE_CURRENT_BINARY_DIR}/fc_git_saved_repo\")\n"
+        "FetchContent_Declare(BadUnsupported SVN_REPOSITORY some_repo)\n"
+        "FetchContent_Declare(BadArgs\n"
+        "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_bad_hash.tar\"\n"
+        "  FIND_PACKAGE_ARGS QUIET OVERRIDE_FIND_PACKAGE)\n"
+        "FetchContent_Declare(BadGit GIT_TAG v1)\n"
+        "FetchContent_Declare(BadUrl URL_HASH SHA256=1234)\n"
+        "FetchContent_Populate(BadHash\n"
+        "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_bad_hash.tar\"\n"
+        "  URL_HASH \"SHA256=0000\"\n"
+        "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_bad_hash_out\")\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count >= 6);
+
+    bool saw_mixed = false;
+    bool saw_unsupported = false;
+    bool saw_args_combo = false;
+    bool saw_missing_git_repo = false;
+    bool saw_missing_url = false;
+    bool saw_hash_failure = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_DIAG) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("FetchContent_Declare() may not mix URL and GIT transports"))) {
+            saw_mixed = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("FetchContent transport is not supported in this wave"))) {
+            saw_unsupported = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("FetchContent_Declare() may not combine FIND_PACKAGE_ARGS with OVERRIDE_FIND_PACKAGE"))) {
+            saw_args_combo = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("FetchContent GIT transport requires GIT_REPOSITORY"))) {
+            saw_missing_git_repo = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("FetchContent URL transport requires URL"))) {
+            saw_missing_url = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("file(DOWNLOAD) hash verification failed"))) {
+            saw_hash_failure = true;
+        }
+    }
+
+    ASSERT(saw_mixed);
+    ASSERT(saw_unsupported);
+    ASSERT(saw_args_combo);
+    ASSERT(saw_missing_git_repo);
+    ASSERT(saw_missing_url);
+    ASSERT(saw_hash_failure);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -9720,6 +10103,11 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_cmake_language_core_subcommands_work(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed);
+    test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed);
+    test_evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory(passed, failed);
+    test_evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory(passed, failed);
+    test_evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_package_resolution(passed, failed);
+    test_evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);

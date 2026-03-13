@@ -859,6 +859,63 @@ static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, S
     return out;
 }
 
+static bool find_package_try_redirect(Evaluator_Context *ctx,
+                                      const Find_Package_Options *opt,
+                                      String_View *out_path) {
+    if (!ctx || !opt || !out_path) return false;
+    *out_path = nob_sv_from_cstr("");
+
+    String_View redirects_dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"));
+    if (redirects_dir.count == 0) return false;
+    redirects_dir = eval_path_resolve_for_cmake_arg(ctx,
+                                                    redirects_dir,
+                                                    eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR")),
+                                                    false);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View names[16] = {0};
+    size_t name_count = 0;
+    SV_List parsed_names = NULL;
+    if (!find_package_split_semicolon_temp(ctx, opt->names, &parsed_names)) return false;
+    if (arena_arr_len(parsed_names) > 0) {
+        for (size_t i = 0; i < arena_arr_len(parsed_names) && name_count < NOB_ARRAY_LEN(names); i++) {
+            if (parsed_names[i].count == 0) continue;
+            names[name_count++] = parsed_names[i];
+        }
+    }
+    if (name_count == 0) names[name_count++] = opt->pkg;
+
+    String_View config_names[32] = {0};
+    size_t config_name_count = 0;
+    SV_List parsed_configs = NULL;
+    if (!find_package_split_semicolon_temp(ctx, opt->configs, &parsed_configs)) return false;
+    if (arena_arr_len(parsed_configs) > 0) {
+        for (size_t i = 0; i < arena_arr_len(parsed_configs) && config_name_count < NOB_ARRAY_LEN(config_names); i++) {
+            if (parsed_configs[i].count == 0) continue;
+            config_names[config_name_count++] = parsed_configs[i];
+        }
+    } else {
+        for (size_t i = 0; i < name_count && config_name_count + 2 <= NOB_ARRAY_LEN(config_names); i++) {
+            config_names[config_name_count++] = svu_concat_suffix_temp(ctx, names[i], "Config.cmake");
+            String_View lower_name = sv_to_lower_temp(ctx, names[i]);
+            if (lower_name.count > 0) {
+                config_names[config_name_count++] = svu_concat_suffix_temp(ctx, lower_name, "-config.cmake");
+            }
+        }
+    }
+    if (eval_should_stop(ctx)) return false;
+
+    return find_package_try_config_in_prefixes(ctx,
+                                               eval_current_source_dir(ctx),
+                                               opt->pkg,
+                                               opt->names,
+                                               config_names,
+                                               config_name_count,
+                                               nob_sv_from_cstr(""),
+                                               redirects_dir,
+                                               out_path);
+}
+
 static bool find_package_resolve(Evaluator_Context *ctx,
                                  const Find_Package_Options *opt,
                                  String_View *out_found_path) {
@@ -1193,18 +1250,25 @@ Eval_Result eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
 
     String_View found_path = nob_sv_from_cstr("");
     bool found = false;
+    bool found_from_provider = false;
     if (!opt.bypass_provider &&
         ctx->command_state.dependency_provider.command_name.count > 0 &&
         ctx->command_state.dependency_provider.supports_find_package) {
         if (!find_package_invoke_dependency_provider(ctx, node, &a, &found, &found_path)) {
             return eval_result_from_ctx(ctx);
         }
+        found_from_provider = found;
+    }
+    if (!found) {
+        found = find_package_try_redirect(ctx, &opt, &found_path);
     }
     if (!found) {
         found = find_package_resolve(ctx, &opt, &found_path);
         if (!find_package_execute_resolved_artifacts(ctx, &opt, &found, found_path)) {
             return eval_result_from_ctx(ctx);
         }
+    } else if (!found_from_provider && !find_package_execute_resolved_artifacts(ctx, &opt, &found, found_path)) {
+        return eval_result_from_ctx(ctx);
     }
     find_package_finalize_found_var(ctx, &opt, &found);
     find_package_emit_result(ctx, node, o, &opt, found, found_path);
