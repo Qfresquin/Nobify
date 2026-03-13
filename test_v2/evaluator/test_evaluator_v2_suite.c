@@ -6044,6 +6044,54 @@ TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_run_new_signature_accepts_no_log_and_runs) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr("try_run_no_log_bin");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_run(RUN_NEW COMPILE_NEW\n"
+        "  SOURCE_FROM_CONTENT probe_new.c [=[#include <stdio.h>\n"
+        "int main(void){putchar(78);return 2;}\n"
+        "]=]\n"
+        "  NO_CACHE\n"
+        "  NO_LOG\n"
+        "  LOG_DESCRIPTION hidden_try_run_probe\n"
+        "  RUN_OUTPUT_VARIABLE RUN_NEW_ALL\n"
+        "  RUN_OUTPUT_STDOUT_VARIABLE RUN_NEW_STDOUT)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_NEW")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_NEW")), nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_NEW_STDOUT")), nob_sv_from_cstr("N")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_NEW_ALL")), nob_sv_from_cstr("N")));
+    ASSERT(!nob_file_exists("try_run_no_log_bin/CMakeFiles/CMakeConfigureLog.yaml"));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
     Arena *temp_arena = arena_create(3 * 1024 * 1024);
     Arena *event_arena = arena_create(3 * 1024 * 1024);
@@ -6090,6 +6138,10 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
         "  RUN_OUTPUT_VARIABLE RUN_ALL\n"
         "  RUN_OUTPUT_STDOUT_VARIABLE RUN_STDOUT\n"
         "  RUN_OUTPUT_STDERR_VARIABLE RUN_STDERR)\n"
+        "try_run(RUN_LEGACY COMPILE_LEGACY tc_try_run_legacy\n"
+        "  probe_ok_try_run.c\n"
+        "  NO_CACHE\n"
+        "  OUTPUT_VARIABLE RUN_LEGACY_ALL)\n"
         "try_run(RUN_BAD COMPILE_BAD tc_try_run_bad\n"
         "  SOURCE_FROM_CONTENT probe_bad.c \"int main(void){return 7;}\"\n"
         "  NO_CACHE)\n"
@@ -6098,10 +6150,13 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
         "  NO_CACHE\n"
         "  COMPILE_OUTPUT_VARIABLE COMPILE_FAIL_LOG)\n"
         "set(CMAKE_CROSSCOMPILING ON)\n"
-        "try_run(RUN_XC COMPILE_XC tc_try_run_xc\n"
+        "unset(CMAKE_CROSSCOMPILING_EMULATOR)\n"
+        "try_run(RUN_XC COMPILE_XC\n"
         "  SOURCE_FROM_CONTENT probe_xc.c \"int main(void){return 0;}\"\n"
         "  NO_CACHE\n"
-        "  RUN_OUTPUT_VARIABLE RUN_XC_ALL)\n"
+        "  RUN_OUTPUT_VARIABLE RUN_XC_ALL\n"
+        "  RUN_OUTPUT_STDOUT_VARIABLE RUN_XC_STDOUT\n"
+        "  RUN_OUTPUT_STDERR_VARIABLE RUN_XC_STDERR)\n"
         "set(CMAKE_CROSSCOMPILING OFF)\n"
         "try_run(RUN_PROJECT COMPILE_PROJECT PROJECT Demo\n"
         "  SOURCE_DIR tc_try_run_project\n"
@@ -6123,6 +6178,10 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_STDERR")), nob_sv_from_cstr("B")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_ALL")), nob_sv_from_cstr("AB")));
 
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_LEGACY")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_LEGACY")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_LEGACY_ALL")), nob_sv_from_cstr("AB")));
+
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_BAD")), nob_sv_from_cstr("7")));
 
@@ -6132,9 +6191,16 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_XC")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC")),
-                     nob_sv_from_cstr("FAILED_TO_RUN")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC_ALL")),
-                     nob_sv_from_cstr("try_run skipped due to CMAKE_CROSSCOMPILING")));
+                     nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN")));
+    ASSERT(!eval_var_defined_visible(ctx, nob_sv_from_cstr("RUN_XC_ALL")));
+    ASSERT(!eval_var_defined_visible(ctx, nob_sv_from_cstr("RUN_XC_STDOUT")));
+    ASSERT(!eval_var_defined_visible(ctx, nob_sv_from_cstr("RUN_XC_STDERR")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT")),
+                     nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDOUT")),
+                     nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDERR")),
+                     nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_PROJECT")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT")), nob_sv_from_cstr("0")));
@@ -6142,6 +6208,83 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_STDERR")), nob_sv_from_cstr("Q")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_ALL")), nob_sv_from_cstr("PQ")));
 
+    String_View try_run_results = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "TryRunResults.cmake", &try_run_results));
+    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC")));
+    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT")));
+    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDOUT")));
+    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDERR")));
+    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN")));
+    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_try_run_uses_crosscompiling_emulator_when_available) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Nob_String_Builder script_sb = {0};
+#if defined(_WIN32)
+    nob_sb_append_cstr(&script_sb,
+                       "set(CMAKE_CROSSCOMPILING ON)\n"
+                       "set(CMAKE_CROSSCOMPILING_EMULATOR cmd /C)\n");
+#else
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    char emulator_path[4096] = {0};
+    int emulator_n = snprintf(emulator_path, sizeof(emulator_path), "%s/%s", cwd, "try_run_emulator.sh");
+    ASSERT(emulator_n > 0 && (size_t)emulator_n < sizeof(emulator_path));
+    ASSERT(nob_write_entire_file("try_run_emulator.sh", "exec \"$@\"\n", strlen("exec \"$@\"\n")));
+    nob_sb_appendf(&script_sb,
+                   "set(CMAKE_CROSSCOMPILING ON)\n"
+                   "set(CMAKE_CROSSCOMPILING_EMULATOR /bin/sh [=[%s]=])\n",
+                   emulator_path);
+#endif
+    nob_sb_append_cstr(&script_sb,
+                       "try_run(RUN_EMU COMPILE_EMU\n"
+                       "  SOURCE_FROM_CONTENT probe_emu.c [=[#include <stdio.h>\n"
+                       "int main(void){putchar(69);fputc(70, stderr);return 4;}\n"
+                       "]=]\n"
+                       "  NO_CACHE\n"
+                       "  RUN_OUTPUT_VARIABLE RUN_EMU_ALL\n"
+                       "  RUN_OUTPUT_STDOUT_VARIABLE RUN_EMU_STDOUT\n"
+                       "  RUN_OUTPUT_STDERR_VARIABLE RUN_EMU_STDERR)\n");
+    nob_sb_append_null(&script_sb);
+
+    Ast_Root root = parse_cmake(temp_arena, script_sb.items);
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("COMPILE_EMU")), nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_EMU")), nob_sv_from_cstr("4")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_EMU_STDOUT")), nob_sv_from_cstr("E")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_EMU_STDERR")), nob_sv_from_cstr("F")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("RUN_EMU_ALL")), nob_sv_from_cstr("EF")));
+    ASSERT(!eval_var_defined_visible(ctx, nob_sv_from_cstr("RUN_EMU__TRYRUN_OUTPUT")));
+
+    nob_sb_free(script_sb);
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
@@ -10140,7 +10283,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
+    test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed);
     test_evaluator_try_run_executes_native_artifacts_and_reports_partial_limits(passed, failed);
+    test_evaluator_try_run_uses_crosscompiling_emulator_when_available(passed, failed);
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
     test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);
     test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);

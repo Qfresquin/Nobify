@@ -827,7 +827,7 @@ Eval_Result try_compile_execute_and_publish(Evaluator_Context *ctx,
         return eval_result_from_ctx(ctx);
     }
 
-    if (req->log_description.count > 0) {
+    if (req->log_description.count > 0 && !req->no_log) {
         Nob_String_Builder log = {0};
         nob_sb_append_buf(&log, req->log_description.data, req->log_description.count);
         nob_sb_append_cstr(&log, ": ");

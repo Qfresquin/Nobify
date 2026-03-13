@@ -106,6 +106,7 @@ bool try_compile_is_keyword(String_View tok) {
            eval_sv_eq_ci_lit(tok, "LINK_LIBRARIES") ||
            eval_sv_eq_ci_lit(tok, "LINKER_LANGUAGE") ||
            eval_sv_eq_ci_lit(tok, "NO_CACHE") ||
+           eval_sv_eq_ci_lit(tok, "NO_LOG") ||
            eval_sv_eq_ci_lit(tok, "LOG_DESCRIPTION") ||
            eval_sv_eq_ci_lit(tok, "SOURCES") ||
            eval_sv_eq_ci_lit(tok, "SOURCES_TYPE") ||

@@ -80,6 +80,7 @@ typedef struct {
     Try_Compile_Lang_Props c_lang;
     Try_Compile_Lang_Props cxx_lang;
     bool no_cache;
+    bool no_log;
 } Try_Compile_Request;
 
 typedef struct {
@@ -95,8 +96,10 @@ typedef struct {
     String_View run_output_var;
     String_View run_stdout_var;
     String_View run_stderr_var;
+    String_View legacy_output_var;
     String_View working_directory;
     SV_List run_args;
+    bool allow_legacy_output_variable;
 } Try_Run_Request;
 
 typedef struct {

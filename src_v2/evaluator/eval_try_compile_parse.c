@@ -12,6 +12,7 @@ typedef enum {
     TRY_COMPILE_SRC_OPT_LINK_LIBRARIES,
     TRY_COMPILE_SRC_OPT_LINKER_LANGUAGE,
     TRY_COMPILE_SRC_OPT_NO_CACHE,
+    TRY_COMPILE_SRC_OPT_NO_LOG,
     TRY_COMPILE_SRC_OPT_LOG_DESCRIPTION,
     TRY_COMPILE_SRC_OPT_SOURCES,
     TRY_COMPILE_SRC_OPT_SOURCES_TYPE,
@@ -38,11 +39,13 @@ typedef enum {
     TRY_COMPILE_PROJECT_OPT_OUTPUT_VARIABLE,
     TRY_COMPILE_PROJECT_OPT_LOG_DESCRIPTION,
     TRY_COMPILE_PROJECT_OPT_NO_CACHE,
+    TRY_COMPILE_PROJECT_OPT_NO_LOG,
     TRY_COMPILE_PROJECT_OPT_CMAKE_FLAGS,
 } Try_Compile_Project_Opt_Id;
 
 typedef enum {
     TRY_RUN_OPT_COMPILE_OUTPUT_VARIABLE = 0,
+    TRY_RUN_OPT_OUTPUT_VARIABLE,
     TRY_RUN_OPT_RUN_OUTPUT_VARIABLE,
     TRY_RUN_OPT_RUN_OUTPUT_STDOUT_VARIABLE,
     TRY_RUN_OPT_RUN_OUTPUT_STDERR_VARIABLE,
@@ -79,6 +82,7 @@ static const Eval_Opt_Spec k_try_compile_source_specs[] = {
     EVAL_OPT_SPEC(TRY_COMPILE_SRC_OPT_LINK_LIBRARIES, "LINK_LIBRARIES", EVAL_OPT_MULTI),
     EVAL_OPT_SPEC_REQ(TRY_COMPILE_SRC_OPT_LINKER_LANGUAGE, "LINKER_LANGUAGE", EVAL_OPT_SINGLE, 1, true, "try_compile(LINKER_LANGUAGE) requires a language", "Usage: try_compile(... LINKER_LANGUAGE <lang>)"),
     EVAL_OPT_SPEC(TRY_COMPILE_SRC_OPT_NO_CACHE, "NO_CACHE", EVAL_OPT_FLAG),
+    EVAL_OPT_SPEC(TRY_COMPILE_SRC_OPT_NO_LOG, "NO_LOG", EVAL_OPT_FLAG),
     EVAL_OPT_SPEC_REQ(TRY_COMPILE_SRC_OPT_LOG_DESCRIPTION, "LOG_DESCRIPTION", EVAL_OPT_SINGLE, 1, true, "try_compile(LOG_DESCRIPTION) requires a description", "Usage: try_compile(... LOG_DESCRIPTION <text>)"),
     EVAL_OPT_SPEC(TRY_COMPILE_SRC_OPT_SOURCES, "SOURCES", EVAL_OPT_MULTI),
     EVAL_OPT_SPEC_REQ(TRY_COMPILE_SRC_OPT_SOURCES_TYPE, "SOURCES_TYPE", EVAL_OPT_SINGLE, 1, true, "try_compile(SOURCES_TYPE) requires a language selector", "Usage: try_compile(... SOURCES_TYPE <C|CXX|HEADERS>)"),
@@ -105,11 +109,13 @@ static const Eval_Opt_Spec k_try_compile_project_specs[] = {
     EVAL_OPT_SPEC_REQ(TRY_COMPILE_PROJECT_OPT_OUTPUT_VARIABLE, "OUTPUT_VARIABLE", EVAL_OPT_SINGLE, 1, true, "try_compile(OUTPUT_VARIABLE) requires an output variable", "Usage: try_compile(... OUTPUT_VARIABLE <var>)"),
     EVAL_OPT_SPEC_REQ(TRY_COMPILE_PROJECT_OPT_LOG_DESCRIPTION, "LOG_DESCRIPTION", EVAL_OPT_SINGLE, 1, true, "try_compile(LOG_DESCRIPTION) requires a description", "Usage: try_compile(... LOG_DESCRIPTION <text>)"),
     EVAL_OPT_SPEC(TRY_COMPILE_PROJECT_OPT_NO_CACHE, "NO_CACHE", EVAL_OPT_FLAG),
+    EVAL_OPT_SPEC(TRY_COMPILE_PROJECT_OPT_NO_LOG, "NO_LOG", EVAL_OPT_FLAG),
     EVAL_OPT_SPEC(TRY_COMPILE_PROJECT_OPT_CMAKE_FLAGS, "CMAKE_FLAGS", EVAL_OPT_MULTI),
 };
 
 static const Eval_Opt_Spec k_try_run_specs[] = {
     EVAL_OPT_SPEC_REQ(TRY_RUN_OPT_COMPILE_OUTPUT_VARIABLE, "COMPILE_OUTPUT_VARIABLE", EVAL_OPT_SINGLE, 1, true, "try_run(COMPILE_OUTPUT_VARIABLE) requires an output variable", "Usage: try_run(... COMPILE_OUTPUT_VARIABLE <var>)"),
+    EVAL_OPT_SPEC_REQ(TRY_RUN_OPT_OUTPUT_VARIABLE, "OUTPUT_VARIABLE", EVAL_OPT_SINGLE, 1, true, "try_run(OUTPUT_VARIABLE) requires an output variable", "Usage: try_run(<run-var> <compile-var> <bindir> <src> ... OUTPUT_VARIABLE <var>)"),
     EVAL_OPT_SPEC_REQ(TRY_RUN_OPT_RUN_OUTPUT_VARIABLE, "RUN_OUTPUT_VARIABLE", EVAL_OPT_SINGLE, 1, true, "try_run(RUN_OUTPUT_VARIABLE) requires an output variable", "Usage: try_run(... RUN_OUTPUT_VARIABLE <var>)"),
     EVAL_OPT_SPEC_REQ(TRY_RUN_OPT_RUN_OUTPUT_STDOUT_VARIABLE, "RUN_OUTPUT_STDOUT_VARIABLE", EVAL_OPT_SINGLE, 1, true, "try_run(RUN_OUTPUT_STDOUT_VARIABLE) requires an output variable", "Usage: try_run(... RUN_OUTPUT_STDOUT_VARIABLE <var>)"),
     EVAL_OPT_SPEC_REQ(TRY_RUN_OPT_RUN_OUTPUT_STDERR_VARIABLE, "RUN_OUTPUT_STDERR_VARIABLE", EVAL_OPT_SINGLE, 1, true, "try_run(RUN_OUTPUT_STDERR_VARIABLE) requires an output variable", "Usage: try_run(... RUN_OUTPUT_STDERR_VARIABLE <var>)"),
@@ -216,6 +222,9 @@ static bool try_compile_parse_source_option(Evaluator_Context *ctx,
             return true;
         case TRY_COMPILE_SRC_OPT_NO_CACHE:
             state->req->no_cache = true;
+            return true;
+        case TRY_COMPILE_SRC_OPT_NO_LOG:
+            state->req->no_log = true;
             return true;
         case TRY_COMPILE_SRC_OPT_LOG_DESCRIPTION:
             state->req->log_description = values[0];
@@ -341,6 +350,9 @@ static bool try_compile_parse_project_option(Evaluator_Context *ctx,
         case TRY_COMPILE_PROJECT_OPT_NO_CACHE:
             state->req->no_cache = true;
             return true;
+        case TRY_COMPILE_PROJECT_OPT_NO_LOG:
+            state->req->no_log = true;
+            return true;
         case TRY_COMPILE_PROJECT_OPT_CMAKE_FLAGS:
             return try_compile_sv_list_append_all(ctx, &state->req->cmake_flags, values);
         default:
@@ -360,6 +372,19 @@ static bool try_run_parse_option(Evaluator_Context *ctx,
     switch ((Try_Run_Opt_Id)id) {
         case TRY_RUN_OPT_COMPILE_OUTPUT_VARIABLE:
             state->req->compile_output_var = values[0];
+            return true;
+        case TRY_RUN_OPT_OUTPUT_VARIABLE:
+            if (!state->req->allow_legacy_output_variable) {
+                return EVAL_DIAG_BOOL_SEV(ctx,
+                                          EV_DIAG_ERROR,
+                                          EVAL_DIAG_INVALID_VALUE,
+                                          nob_sv_from_cstr("dispatcher"),
+                                          state->node->as.cmd.name,
+                                          state->origin,
+                                          nob_sv_from_cstr("try_run(OUTPUT_VARIABLE) is supported only by the legacy signature with an explicit binary directory"),
+                                          nob_sv_from_cstr("Use COMPILE_OUTPUT_VARIABLE and RUN_OUTPUT_* variables with the new signature"));
+            }
+            state->req->legacy_output_var = values[0];
             return true;
         case TRY_RUN_OPT_RUN_OUTPUT_VARIABLE:
             state->req->run_output_var = values[0];
@@ -504,8 +529,8 @@ bool try_run_parse_request(Evaluator_Context *ctx,
                            const SV_List *args,
                            Try_Run_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
-    if (arena_arr_len(*args) < 4) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires run result, compile result, binary directory and sources"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
+    if (arena_arr_len(*args) < 3) {
+        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires run result, compile result and try_compile-style inputs"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...) or try_run(<run-var> <compile-var> SOURCE_FROM_CONTENT ...)"));
     }
 
     *out_req = (Try_Run_Request){
@@ -513,11 +538,10 @@ bool try_run_parse_request(Evaluator_Context *ctx,
     };
 
     bool project_signature = eval_sv_eq_ci_lit((*args)[2], "PROJECT");
-    if (!project_signature &&
-        (try_compile_is_keyword((*args)[2]) ||
-         eval_opt_token_is_keyword((*args)[2], k_try_run_specs, NOB_ARRAY_LEN(k_try_run_specs)))) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires an explicit binary directory"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...)"));
-    }
+    bool explicit_binary_dir = !project_signature &&
+        !try_compile_is_keyword((*args)[2]) &&
+        !eval_opt_token_is_keyword((*args)[2], k_try_run_specs, NOB_ARRAY_LEN(k_try_run_specs));
+    out_req->allow_legacy_output_variable = explicit_binary_dir;
 
     SV_List compile_args = NULL;
     if (!eval_sv_arr_push_temp(ctx, &compile_args, (*args)[1])) return false;
