@@ -6,7 +6,6 @@
 #include <stdlib.h>
 
 
-// nob não possui um sistema de delete recursivo de diretórios, então implementamos um aqui para limpar a sandbox dos testes.
 #if defined(_WIN32)
     #include <windows.h> // RemoveDirectoryA, DeleteFileA, GetFileAttributesA
 #else
@@ -32,36 +31,6 @@ static bool arg_has_flag(int argc, char **argv, const char *flag) {
         if (strcmp(argv[i], flag) == 0) return true;
     }
     return false;
-}
-
-typedef struct {
-    char *path;           // heap-owned
-    Nob_File_Type type;
-} Walk_Item;
-
-typedef struct {
-    Walk_Item *items;
-    size_t count;
-    size_t cap;
-} Walk_List;
-
-static void walk_list_push(Walk_List *wl, const char *path, Nob_File_Type type) {
-    if (wl->count == wl->cap) {
-        wl->cap = wl->cap ? wl->cap * 2 : 256;
-        wl->items = (Walk_Item*)realloc(wl->items, wl->cap * sizeof(*wl->items));
-        NOB_ASSERT(wl->items != NULL);
-    }
-    size_t n = strlen(path);
-    char *dup = (char*)malloc(n + 1);
-    NOB_ASSERT(dup != NULL);
-    memcpy(dup, path, n + 1);
-    wl->items[wl->count++] = (Walk_Item){ .path = dup, .type = type };
-}
-
-static bool walk_collect(Nob_Walk_Entry e) {
-    Walk_List *wl = (Walk_List*)e.data;
-    walk_list_push(wl, e.path, e.type);
-    return true;
 }
 
 static bool delete_empty_dir(const char *path) {
@@ -104,6 +73,19 @@ static bool delete_file_ok_if_missing(const char *path) {
 #endif
 }
 
+typedef struct {
+    bool ok;
+} Delete_Tree_State;
+
+static bool delete_tree_walk(Nob_Walk_Entry e) {
+    Delete_Tree_State *state = (Delete_Tree_State*)e.data;
+    bool step_ok = e.type == NOB_FILE_DIRECTORY
+        ? delete_empty_dir(e.path)
+        : delete_file_ok_if_missing(e.path);
+    if (state) state->ok = state->ok && step_ok;
+    return step_ok;
+}
+
 static bool path_exists_and_is_dir(const char *path, bool *is_dir_out) {
     if (is_dir_out) *is_dir_out = false;
 #if defined(_WIN32)
@@ -143,29 +125,12 @@ static bool delete_tree_if_exists(const char *root) {
         return delete_file_ok_if_missing(root);
     }
 
-    Walk_List wl = {0};
-    bool ok = nob_walk_dir(root, walk_collect, .data = &wl);
+    Delete_Tree_State state = { .ok = true };
+    bool ok = nob_walk_dir(root, delete_tree_walk, .data = &state, .post_order = true);
     if (!ok) {
         nob_log(NOB_ERROR, "delete_tree: walk failed for %s", root);
     }
-
-    // Delete em ordem reversa: arquivos primeiro, dirs depois
-    for (size_t i = wl.count; i-- > 0;) {
-        Walk_Item it = wl.items[i];
-        bool step_ok = true;
-
-        if (it.type == NOB_FILE_DIRECTORY) {
-            step_ok = delete_empty_dir(it.path);
-        } else {
-            step_ok = delete_file_ok_if_missing(it.path);
-        }
-
-        free(it.path);
-        if (!step_ok) ok = false;
-    }
-
-    free(wl.items);
-    return ok;
+    return ok && state.ok;
 }
 
 static void run_suite_in_sandbox(const char *suite_name,

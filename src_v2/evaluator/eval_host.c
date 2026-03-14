@@ -1,6 +1,7 @@
 #include "eval_host.h"
 
 #include "evaluator_internal.h"
+#include "sv_utils.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -66,13 +67,7 @@ static int host_sv_compare_exact(String_View a, String_View b) {
 }
 
 static String_View host_trim_sv(String_View value) {
-    while (value.count > 0 && isspace((unsigned char)value.data[0])) {
-        value = nob_sv_from_parts(value.data + 1, value.count - 1);
-    }
-    while (value.count > 0 && isspace((unsigned char)value.data[value.count - 1])) {
-        value = nob_sv_from_parts(value.data, value.count - 1);
-    }
-    return value;
+    return svu_trim_ascii_ws(value);
 }
 
 static String_View host_format_bool_temp(Evaluator_Context *ctx, bool value) {

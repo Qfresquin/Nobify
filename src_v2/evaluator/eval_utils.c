@@ -1,6 +1,5 @@
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
-#include "tinydir.h"
 #include "sv_utils.h"
 #include "stb_ds.h"
 #include <ctype.h>
@@ -364,35 +363,57 @@ static bool eval_source_extension_allowed(String_View path) {
            eval_sv_eq_ci_lit(ext, "mm");
 }
 
+static int eval_cstr_cmp_qsort(const void *a, const void *b) {
+    const char *const *aa = (const char *const *)a;
+    const char *const *bb = (const char *const *)b;
+    return strcmp(*aa, *bb);
+}
+
 bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, SV_List *out_sources) {
+    Nob_File_Paths entries = {0};
     if (!ctx || !out_sources) return false;
     *out_sources = (SV_List){0};
 
     char *dir_c = eval_sv_to_cstr_temp(ctx, dir);
     EVAL_OOM_RETURN_IF_NULL(ctx, dir_c, false);
 
-    tinydir_dir td = {0};
-    if (tinydir_open_sorted(&td, dir_c) != 0) return true;
+    if (!nob_file_exists(dir_c) || nob_get_file_type(dir_c) != NOB_FILE_DIRECTORY) {
+        return true;
+    }
+    if (!nob_read_entire_dir(dir_c, &entries)) return true;
+    if (entries.count > 1) {
+        qsort(entries.items, entries.count, sizeof(entries.items[0]), eval_cstr_cmp_qsort);
+    }
 
-    for (size_t i = 0; i < td.n_files; i++) {
-        tinydir_file tf = {0};
-        if (tinydir_readfile_n(&td, &tf, i) != 0) continue;
-        if (tf.is_dir) continue;
+    for (size_t i = 0; i < entries.count; i++) {
+        const char *entry_name = entries.items[i];
+        String_View name = {0};
+        String_View full = {0};
+        char *full_c = NULL;
+        Nob_File_Type kind = NOB_FILE_OTHER;
 
-        String_View name = nob_sv_from_cstr(tf.name);
+        if (!entry_name || strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0) continue;
+        name = nob_sv_from_cstr(entry_name);
         if (!eval_source_extension_allowed(name)) continue;
-        String_View full = eval_sv_path_join(eval_temp_arena(ctx), dir, name);
+        full = eval_sv_path_join(eval_temp_arena(ctx), dir, name);
         if (eval_should_stop(ctx)) {
-            tinydir_close(&td);
+            nob_da_free(entries);
             return false;
         }
+        full_c = eval_sv_to_cstr_temp(ctx, full);
+        if (!full_c) {
+            nob_da_free(entries);
+            return false;
+        }
+        kind = nob_get_file_type(full_c);
+        if (kind == NOB_FILE_DIRECTORY) continue;
         if (!svu_list_push_temp(ctx, out_sources, full)) {
-            tinydir_close(&td);
+            nob_da_free(entries);
             return false;
         }
     }
 
-    tinydir_close(&td);
+    nob_da_free(entries);
     return true;
 }
 

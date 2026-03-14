@@ -2,7 +2,6 @@
 #include "eval_opt_parser.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
-#include "tinydir.h"
 
 #include <pcre2posix.h>
 
@@ -147,14 +146,16 @@ static String_View copy_basename_sv(String_View path) {
 }
 
 static bool copy_copy_entry_raw(const char *src_c, const char *dst_c, bool *out_src_is_dir) {
-    if (!src_c || !dst_c) return false;
     bool src_is_dir = false;
-    bool ok = true;
-    tinydir_file tf = {0};
-    if (tinydir_file_open(&tf, src_c) == 0) {
-        src_is_dir = tf.is_dir != 0;
-        ok = tf.is_dir ? nob_copy_directory_recursively(src_c, dst_c)
-                       : nob_copy_file(src_c, dst_c);
+    bool ok = false;
+    if (!src_c || !dst_c) return false;
+
+    if (nob_file_exists(src_c)) {
+        Nob_File_Type kind = nob_get_file_type(src_c);
+        if ((int)kind < 0) return false;
+        src_is_dir = kind == NOB_FILE_DIRECTORY;
+        ok = src_is_dir ? nob_copy_directory_recursively(src_c, dst_c)
+                        : nob_copy_file(src_c, dst_c);
     } else {
         ok = nob_copy_file(src_c, dst_c);
     }

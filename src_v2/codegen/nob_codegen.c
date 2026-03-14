@@ -835,14 +835,20 @@ static bool cg_emit_support_helpers(Nob_String_Builder *out) {
         "\n"
         "static bool ensure_dir(const char *path) {\n"
         "    Nob_Cmd cmd = {0};\n"
+        "    bool ok = false;\n"
         "    nob_cmd_append(&cmd, \"mkdir\", \"-p\", path);\n"
-        "    return nob_cmd_run_sync(cmd);\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    return ok;\n"
         "}\n"
         "\n"
         "static bool clean_all(void) {\n"
         "    Nob_Cmd cmd = {0};\n"
+        "    bool ok = false;\n"
         "    nob_cmd_append(&cmd, \"rm\", \"-rf\", \"build\");\n"
-        "    return nob_cmd_run_sync(cmd);\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    return ok;\n"
         "}\n"
         "\n");
     return true;
@@ -964,7 +970,11 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
             !cg_emit_cmd_append_sv(out, "cc_cmd", obj_path)) {
             return false;
         }
-        nob_sb_append_cstr(out, "        if (!nob_cmd_run_sync(cc_cmd)) return false;\n");
+        nob_sb_append_cstr(out, "        {\n");
+        nob_sb_append_cstr(out, "            bool ok = nob_cmd_run(&cc_cmd);\n");
+        nob_sb_append_cstr(out, "            nob_cmd_free(cc_cmd);\n");
+        nob_sb_append_cstr(out, "            if (!ok) return false;\n");
+        nob_sb_append_cstr(out, "        }\n");
         nob_sb_append_cstr(out, "    }\n");
     }
 
@@ -1001,7 +1011,11 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
             if (!cg_sb_append_c_string(out, obj_path)) return false;
         }
         nob_sb_append_cstr(out, ");\n");
-        nob_sb_append_cstr(out, "        if (!nob_cmd_run_sync(ar_cmd)) return false;\n");
+        nob_sb_append_cstr(out, "        {\n");
+        nob_sb_append_cstr(out, "            bool ok = nob_cmd_run(&ar_cmd);\n");
+        nob_sb_append_cstr(out, "            nob_cmd_free(ar_cmd);\n");
+        nob_sb_append_cstr(out, "            if (!ok) return false;\n");
+        nob_sb_append_cstr(out, "        }\n");
         nob_sb_append_cstr(out, "    }\n");
     } else if (info->kind == BM_TARGET_EXECUTABLE ||
                info->kind == BM_TARGET_SHARED_LIBRARY ||
@@ -1062,7 +1076,11 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         for (size_t i = 0; i < arena_arr_len(link_lib_args); ++i) {
             if (!cg_emit_cmd_append_sv(out, "link_cmd", link_lib_args[i])) return false;
         }
-        nob_sb_append_cstr(out, "        if (!nob_cmd_run_sync(link_cmd)) return false;\n");
+        nob_sb_append_cstr(out, "        {\n");
+        nob_sb_append_cstr(out, "            bool ok = nob_cmd_run(&link_cmd);\n");
+        nob_sb_append_cstr(out, "            nob_cmd_free(link_cmd);\n");
+        nob_sb_append_cstr(out, "            if (!ok) return false;\n");
+        nob_sb_append_cstr(out, "        }\n");
         nob_sb_append_cstr(out, "    }\n");
     }
 
@@ -1190,8 +1208,11 @@ bool nob_codegen_write_file(const Build_Model *model,
     out_dir = nob_temp_dir_name(out_path);
     if (out_dir && strcmp(out_dir, ".") != 0) {
         Nob_Cmd mkdir_cmd = {0};
+        bool mkdir_ok = false;
         nob_cmd_append(&mkdir_cmd, "mkdir", "-p", out_dir);
-        if (!nob_cmd_run_sync(mkdir_cmd)) return false;
+        mkdir_ok = nob_cmd_run(&mkdir_cmd);
+        nob_cmd_free(mkdir_cmd);
+        if (!mkdir_ok) return false;
     }
     if (!nob_codegen_render(model, scratch, opts, &sb)) {
         nob_sb_free(sb);

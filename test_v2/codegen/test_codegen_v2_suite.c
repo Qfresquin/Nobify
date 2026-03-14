@@ -269,6 +269,7 @@ static bool codegen_compile_generated_nob(const char *repo_root,
                                           const char *generated_path,
                                           const char *output_path) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
     nob_cmd_append(&cmd, "cc");
     nob_cmd_append(&cmd,
                    "-D_GNU_SOURCE",
@@ -279,7 +280,9 @@ static bool codegen_compile_generated_nob(const char *repo_root,
                    "-o",
                    output_path,
                    generated_path);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool codegen_write_text_file(const char *path, const char *text) {
@@ -292,11 +295,14 @@ static bool codegen_write_text_file(const char *path, const char *text) {
 
 static bool codegen_run_binary(const char *binary_path, const char *arg1, const char *arg2) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
     if (!binary_path) return false;
     nob_cmd_append(&cmd, binary_path);
     if (arg1) nob_cmd_append(&cmd, arg1);
     if (arg2) nob_cmd_append(&cmd, arg2);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool codegen_run_binary_in_dir(const char *dir,

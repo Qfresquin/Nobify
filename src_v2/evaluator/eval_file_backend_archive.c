@@ -1,7 +1,6 @@
 #include "eval_file_backend_archive.h"
 
 #include "sv_utils.h"
-#include "tinydir.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -260,29 +259,23 @@ static bool archive_add_path_recursive(Evaluator_Context *ctx,
 
     if (!S_ISDIR(st.st_mode)) return true;
 
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, src_c) != 0) {
+    Nob_Dir_Entry dir = {0};
+    if (!nob_dir_entry_open(src_c, &dir)) {
         *out_status = 1;
         archive_log_line(log_sb, "libarchive: failed to open directory for recursion");
         return true;
     }
 
     bool ok = true;
-    while (dir.has_next) {
-        tinydir_file f = {0};
-        if (tinydir_readfile(&dir, &f) != 0) {
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-            ok = false;
-            break;
-        }
-        if (strcmp(f.name, ".") == 0 || strcmp(f.name, "..") == 0) continue;
+    while (nob_dir_entry_next(&dir)) {
+        String_View child_name = {0};
+        String_View child_src = {0};
+        String_View child_entry = {0};
 
-        String_View child_name = nob_sv_from_cstr(f.name);
-        String_View child_src = eval_sv_path_join(eval_temp_arena(ctx), src_path, child_name);
-        String_View child_entry = archive_path_join_unix_temp(ctx, entry_name, child_name);
+        if (strcmp(dir.name, ".") == 0 || strcmp(dir.name, "..") == 0) continue;
+        child_name = nob_sv_from_cstr(dir.name);
+        child_src = eval_sv_path_join(eval_temp_arena(ctx), src_path, child_name);
+        child_entry = archive_path_join_unix_temp(ctx, entry_name, child_name);
         if (ctx->oom) {
             ok = false;
             break;
@@ -298,7 +291,8 @@ static bool archive_add_path_recursive(Evaluator_Context *ctx,
         }
     }
 
-    tinydir_close(&dir);
+    if (dir.error) ok = false;
+    nob_dir_entry_close(dir);
     return ok;
 }
 

@@ -11,6 +11,25 @@ static inline bool svu_is_path_sep(char c) {
     return c == '/' || c == '\\';
 }
 
+static inline String_View svu_trim_ascii_ws(String_View sv) {
+    return nob_sv_trim(sv);
+}
+
+static inline String_View svu_trim_cr(String_View sv) {
+    if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
+        return nob_sv_from_parts(sv.data, sv.count - 1);
+    }
+    return sv;
+}
+
+static inline bool svu_starts_with_lit(String_View sv, const char *lit) {
+    return lit && nob_sv_starts_with(sv, nob_sv_from_cstr(lit));
+}
+
+static inline bool svu_strip_prefix_lit(String_View *sv, const char *lit) {
+    return sv && lit && nob_sv_chop_prefix(sv, nob_sv_from_cstr(lit));
+}
+
 static inline bool svu_has_prefix_ci_lit(String_View sv, const char *lit) {
     if (!lit || sv.count == 0) return false;
     size_t n = strlen(lit);

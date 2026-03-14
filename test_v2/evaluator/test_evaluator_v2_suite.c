@@ -1,4 +1,5 @@
 #include "test_v2_assert.h"
+#include "test_case_pack.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
@@ -39,7 +40,7 @@ typedef struct {
 } Evaluator_Case_List;
 
 static Nob_String_Builder g_evaluator_captured_nob_logs = {0};
-static nob_log_handler *g_evaluator_prev_log_handler = NULL;
+static Nob_Log_Handler *g_evaluator_prev_log_handler = NULL;
 
 static void evaluator_capture_nob_log(Nob_Log_Level level, const char *fmt, va_list args) {
     char message[4096] = {0};
@@ -443,19 +444,6 @@ static String_View evaluator_normalize_newlines_to_arena(Arena *arena, String_Vi
     return nob_sv_from_parts(buf, out_count);
 }
 
-static bool evaluator_case_list_append(Arena *arena, Evaluator_Case_List *list, Evaluator_Case value) {
-    if (!arena || !list) return false;
-    if (!arena_da_reserve(arena, (void**)&list->items, &list->capacity, sizeof(list->items[0]), list->count + 1)) return false;
-    list->items[list->count++] = value;
-    return true;
-}
-
-static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
-    String_View p = nob_sv_from_cstr(prefix);
-    if (sv.count < p.count) return false;
-    return memcmp(sv.data, p.data, p.count) == 0;
-}
-
 static bool sv_contains_sv(String_View haystack, String_View needle) {
     if (needle.count == 0) return true;
     if (haystack.count < needle.count) return false;
@@ -491,85 +479,15 @@ static String_View semicolon_list_item_at(String_View list, size_t index) {
     return nob_sv_from_cstr("");
 }
 
-static String_View sv_trim_cr(String_View sv) {
-    if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
-        return nob_sv_from_parts(sv.data, sv.count - 1);
-    }
-    return sv;
-}
-
 static bool parse_case_pack_to_arena(Arena *arena, String_View content, Evaluator_Case_List *out) {
-    if (!arena || !out) return false;
+    Test_Case_Pack_Entry *items = NULL;
+    if (!out) return false;
     *out = (Evaluator_Case_List){0};
-
-    Nob_String_Builder script_sb = {0};
-    bool in_case = false;
-    String_View current_name = {0};
-
-    size_t pos = 0;
-    while (pos < content.count) {
-        size_t line_start = pos;
-        while (pos < content.count && content.data[pos] != '\n') pos++;
-        size_t line_end = pos;
-        if (pos < content.count && content.data[pos] == '\n') pos++;
-
-        String_View raw_line = nob_sv_from_parts(content.data + line_start, line_end - line_start);
-        String_View line = sv_trim_cr(raw_line);
-
-        if (sv_starts_with_cstr(line, "#@@CASE ")) {
-            if (in_case) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-            in_case = true;
-            current_name = nob_sv_from_parts(line.data + 8, line.count - 8);
-            script_sb.count = 0;
-            continue;
-        }
-
-        if (nob_sv_eq(line, nob_sv_from_cstr("#@@ENDCASE"))) {
-            if (!in_case) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-
-            char *name = arena_strndup(arena, current_name.data, current_name.count);
-            char *script = arena_strndup(arena, script_sb.items ? script_sb.items : "", script_sb.count);
-            if (!name || !script) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-
-            if (!evaluator_case_list_append(arena, out, (Evaluator_Case){
-                .name = nob_sv_from_parts(name, current_name.count),
-                .script = nob_sv_from_parts(script, script_sb.count),
-            })) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-
-            in_case = false;
-            current_name = (String_View){0};
-            script_sb.count = 0;
-            continue;
-        }
-
-        if (in_case) {
-            nob_sb_append_buf(&script_sb, raw_line.data, raw_line.count);
-            nob_sb_append(&script_sb, '\n');
-        }
-    }
-
-    nob_sb_free(script_sb);
-    if (in_case) return false;
-
-    for (size_t i = 0; i < out->count; i++) {
-        for (size_t j = i + 1; j < out->count; j++) {
-            if (nob_sv_eq(out->items[i].name, out->items[j].name)) return false;
-        }
-    }
-
-    return out->count > 0;
+    if (!test_case_pack_parse(arena, content, &items)) return false;
+    out->items = (Evaluator_Case*)items;
+    out->count = arena_arr_len(items);
+    out->capacity = arena_arr_cap(items);
+    return true;
 }
 
 static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
@@ -634,9 +552,9 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
     }
     if (kind == EVENT_VAR_SET) {
         String_View key = ev->as.var_set.key;
-        if (sv_starts_with_cstr(key, "NOBIFY_PROPERTY_TARGET::")) return false;
-        if (sv_starts_with_cstr(key, "NOBIFY_PROPERTY_SOURCE::")) return false;
-        if (sv_starts_with_cstr(key, "NOBIFY_PROPERTY_TEST::")) return false;
+        if (nob_sv_starts_with(key, nob_sv_from_cstr("NOBIFY_PROPERTY_TARGET::"))) return false;
+        if (nob_sv_starts_with(key, nob_sv_from_cstr("NOBIFY_PROPERTY_SOURCE::"))) return false;
+        if (nob_sv_starts_with(key, nob_sv_from_cstr("NOBIFY_PROPERTY_TEST::"))) return false;
     }
     switch (kind) {
         case EV_DIAGNOSTIC:
@@ -2335,7 +2253,7 @@ TEST(evaluator_include_supports_result_variable_optional_and_module_search) {
         if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
         if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("include_probe"))) continue;
         if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MYINC_FLAG=1"))) saw_myinc_flag = true;
-        if (sv_starts_with_cstr(ev->as.target_compile_definitions.item, "INC_MOD_RES=") &&
+        if (nob_sv_starts_with(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INC_MOD_RES=")) &&
             !nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INC_MOD_RES=")) &&
             !nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INC_MOD_RES=NOTFOUND"))) {
             saw_mod_res_nonempty = true;
@@ -10765,7 +10683,7 @@ TEST(evaluator_try_compile_failure_populates_output_variable) {
             saw_fail_result = true;
             continue;
         }
-        if (sv_starts_with_cstr(ev->as.target_compile_definitions.item, "TC_FAIL_LOG_LEN=")) {
+        if (nob_sv_starts_with(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_FAIL_LOG_LEN="))) {
             String_View len_sv = nob_sv_from_parts(
                 ev->as.target_compile_definitions.item.data + strlen("TC_FAIL_LOG_LEN="),
                 ev->as.target_compile_definitions.item.count - strlen("TC_FAIL_LOG_LEN="));

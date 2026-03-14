@@ -3,7 +3,6 @@
 #include "eval_expr.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
-#include "tinydir.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -263,28 +262,32 @@ static void file_glob_walk(Evaluator_Context *ctx,
     memcpy(dir_c, dir_full.data, dir_full.count);
     dir_c[dir_full.count] = 0;
 
-    tinydir_dir d;
-    if (tinydir_open(&d, dir_c) != 0) {
-        const char *err = strerror(errno);
+    Nob_Dir_Entry dir = {0};
+    if (!nob_dir_entry_open(dir_c, &dir)) {
         String_View cause = nob_sv_from_cstr("file(GLOB) failed to open directory");
-        if (err && err[0] != '\0') {
-            cause = nob_sv_from_cstr(nob_temp_sprintf("file(GLOB) failed to open directory: %s", err));
-        }
         if (io_open_failures) (*io_open_failures)++;
         EVAL_DIAG_EMIT_SEV(ctx, strict_failures ? EV_DIAG_ERROR : EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("eval_file"), node ? node->as.cmd.name : nob_sv_from_cstr("file"), origin, cause, dir_full);
         return;
     }
 
-    while (d.has_next) {
-        tinydir_file f;
-        if (tinydir_readfile(&d, &f) != 0) break;
-        tinydir_next(&d);
+    while (nob_dir_entry_next(&dir)) {
+        bool is_dir = false;
+        String_View name = {0};
+        String_View full = {0};
+        char *full_c = NULL;
+        Nob_File_Type kind = NOB_FILE_OTHER;
 
-        if (strcmp(f.name, ".") == 0 || strcmp(f.name, "..") == 0) continue;
-
-        bool is_dir = f.is_dir != 0;
-        String_View name = nob_sv_from_cstr(f.name);
-        String_View full = eval_sv_path_join(eval_temp_arena(ctx), dir_full, name);
+        if (strcmp(dir.name, ".") == 0 || strcmp(dir.name, "..") == 0) continue;
+        name = nob_sv_from_cstr(dir.name);
+        full = eval_sv_path_join(eval_temp_arena(ctx), dir_full, name);
+        full_c = eval_sv_to_cstr_temp(ctx, full);
+        if (!full_c) {
+            nob_dir_entry_close(dir);
+            return;
+        }
+        kind = nob_get_file_type(full_c);
+        if ((int)kind < 0) continue;
+        is_dir = kind == NOB_FILE_DIRECTORY;
 
         if (eval_file_glob_match_sv(pat, full, ci)) {
             if (list_dirs || !is_dir) {
@@ -303,7 +306,8 @@ static void file_glob_walk(Evaluator_Context *ctx,
         }
     }
 
-    tinydir_close(&d);
+    if (dir.error && io_open_failures) (*io_open_failures)++;
+    nob_dir_entry_close(dir);
 }
 
 void eval_file_handle_glob(Evaluator_Context *ctx, const Node *node, SV_List args, bool recurse) {

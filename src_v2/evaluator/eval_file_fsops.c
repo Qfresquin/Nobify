@@ -2,7 +2,6 @@
 #include "eval_expr.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
-#include "tinydir.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -251,47 +250,27 @@ static bool file_remove_leaf(const char *path, bool is_dir) {
 #endif
 }
 
+typedef struct {
+    bool ok;
+} File_Remove_Walk_State;
+
+static bool file_remove_tree_walk(Nob_Walk_Entry entry) {
+    File_Remove_Walk_State *state = (File_Remove_Walk_State*)entry.data;
+    bool ok = file_remove_leaf(entry.path, entry.type == NOB_FILE_DIRECTORY);
+    if (state) state->ok = state->ok && ok;
+    return ok;
+}
+
 static bool file_remove_tree_recursive(const char *path) {
+    File_Remove_Walk_State state = { .ok = true };
     if (!path || path[0] == '\0') return false;
     if (!file_leaf_exists(path)) return true;
 
-    struct stat st = {0};
-    if (stat(path, &st) != 0) {
-        return errno == ENOENT;
+    if (nob_get_file_type(path) != NOB_FILE_DIRECTORY) return file_remove_leaf(path, false);
+    if (!nob_walk_dir(path, file_remove_tree_walk, .data = &state, .post_order = true)) {
+        return false;
     }
-    if (!S_ISDIR(st.st_mode)) return file_remove_leaf(path, false);
-
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, path) != 0) return false;
-
-    bool ok = true;
-    while (dir.has_next) {
-        tinydir_file file = {0};
-        if (tinydir_readfile(&dir, &file) != 0) {
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-            ok = false;
-            break;
-        }
-        if (strcmp(file.name, ".") == 0 || strcmp(file.name, "..") == 0) continue;
-
-        if (file.is_dir) {
-            if (!file_remove_tree_recursive(file.path)) {
-                ok = false;
-                break;
-            }
-        } else {
-            if (!file_remove_leaf(file.path, false)) {
-                ok = false;
-                break;
-            }
-        }
-    }
-    tinydir_close(&dir);
-    if (!ok) return false;
-    return file_remove_leaf(path, true);
+    return state.ok;
 }
 
 static bool file_apply_mode_one(const char *path, mode_t mode) {
@@ -304,38 +283,27 @@ static bool file_apply_mode_one(const char *path, mode_t mode) {
 #endif
 }
 
+typedef struct {
+    mode_t mode;
+    bool ok;
+} File_Chmod_Walk_State;
+
+static bool file_chmod_recursive_walk(Nob_Walk_Entry entry) {
+    File_Chmod_Walk_State *state = (File_Chmod_Walk_State*)entry.data;
+    bool ok = state && file_apply_mode_one(entry.path, state->mode);
+    if (state) state->ok = state->ok && ok;
+    return ok;
+}
+
 static bool file_chmod_recursive_c(const char *path, mode_t mode) {
+    File_Chmod_Walk_State state = {
+        .mode = mode,
+        .ok = true,
+    };
     if (!path || path[0] == '\0') return false;
     if (!file_leaf_exists(path)) return false;
-
-    struct stat st = {0};
-    if (lstat(path, &st) != 0) return false;
-
-    bool is_dir = S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode);
-    if (!file_apply_mode_one(path, mode)) return false;
-    if (!is_dir) return true;
-
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, path) != 0) return false;
-    bool ok = true;
-    while (dir.has_next) {
-        tinydir_file file = {0};
-        if (tinydir_readfile(&dir, &file) != 0) {
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-            ok = false;
-            break;
-        }
-        if (strcmp(file.name, ".") == 0 || strcmp(file.name, "..") == 0) continue;
-        if (!file_chmod_recursive_c(file.path, mode)) {
-            ok = false;
-            break;
-        }
-    }
-    tinydir_close(&dir);
-    return ok;
+    if (!nob_walk_dir(path, file_chmod_recursive_walk, .data = &state)) return false;
+    return state.ok;
 }
 
 static bool file_prepare_parent_dir(Evaluator_Context *ctx, String_View path) {

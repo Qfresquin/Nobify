@@ -148,6 +148,7 @@ static void append_linker_flags(Nob_Cmd *cmd) {
 }
 
 static bool build_app(void) {
+    bool ok = false;
     if (!nob_mkdir_if_not_exists("build")) return false;
     if (!nob_mkdir_if_not_exists("build/v2")) return false;
 
@@ -165,11 +166,14 @@ static bool build_app(void) {
     
     // 4. Libs externas (Linker)
     append_linker_flags(&cmd);
-    
-    return nob_cmd_run_sync(cmd);
+
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool run_valgrind(int argc, char **argv) {
+    bool ok = false;
     if (!build_app()) return false;
 
     Nob_Cmd cmd = {0};
@@ -193,7 +197,9 @@ static bool run_valgrind(int argc, char **argv) {
         nob_cmd_append(&cmd, argv[i]);
     }
 
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool clean_all(void) {

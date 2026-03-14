@@ -1,4 +1,5 @@
 #include "test_v2_assert.h"
+#include "test_case_pack.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
@@ -60,98 +61,8 @@ static String_View normalize_newlines_to_arena(Arena *arena, String_View in) {
     return nob_sv_from_parts(buf, out_count);
 }
 
-static bool parser_case_list_append(Arena *arena, Parser_Case_List *list, Parser_Case value) {
-    if (!arena || !list) return false;
-    return arena_arr_push(arena, *list, value);
-}
-
-static bool sv_starts_with_cstr(String_View sv, const char *prefix) {
-    String_View p = nob_sv_from_cstr(prefix);
-    if (sv.count < p.count) return false;
-    return memcmp(sv.data, p.data, p.count) == 0;
-}
-
-static String_View sv_trim_cr(String_View sv) {
-    if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
-        return nob_sv_from_parts(sv.data, sv.count - 1);
-    }
-    return sv;
-}
-
 static bool parse_case_pack_to_arena(Arena *arena, String_View content, Parser_Case_List *out) {
-    if (!arena || !out) return false;
-    *out = NULL;
-
-    Nob_String_Builder script_sb = {0};
-    bool in_case = false;
-    String_View current_name = {0};
-
-    size_t pos = 0;
-    while (pos < content.count) {
-        size_t line_start = pos;
-        while (pos < content.count && content.data[pos] != '\n') pos++;
-        size_t line_end = pos;
-        if (pos < content.count && content.data[pos] == '\n') pos++;
-
-        String_View raw_line = nob_sv_from_parts(content.data + line_start, line_end - line_start);
-        String_View line = sv_trim_cr(raw_line);
-
-        if (sv_starts_with_cstr(line, "#@@CASE ")) {
-            if (in_case) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-            in_case = true;
-            current_name = nob_sv_from_parts(line.data + 8, line.count - 8);
-            script_sb.count = 0;
-            continue;
-        }
-
-        if (nob_sv_eq(line, nob_sv_from_cstr("#@@ENDCASE"))) {
-            if (!in_case) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-
-            char *name = arena_strndup(arena, current_name.data, current_name.count);
-            char *script = arena_strndup(arena, script_sb.items ? script_sb.items : "", script_sb.count);
-            if (!name || !script) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-
-            if (!parser_case_list_append(arena, out, (Parser_Case){
-                .name = nob_sv_from_parts(name, current_name.count),
-                .script = nob_sv_from_parts(script, script_sb.count),
-            })) {
-                nob_sb_free(script_sb);
-                return false;
-            }
-
-            in_case = false;
-            current_name = (String_View){0};
-            script_sb.count = 0;
-            continue;
-        }
-
-        if (in_case) {
-            nob_sb_append_buf(&script_sb, raw_line.data, raw_line.count);
-            nob_sb_append(&script_sb, '\n');
-        }
-    }
-
-    nob_sb_free(script_sb);
-    if (in_case) return false;
-
-    for (size_t i = 0; i < arena_arr_len(*out); i++) {
-        for (size_t j = i + 1; j < arena_arr_len(*out); j++) {
-            if (nob_sv_eq((*out)[i].name, (*out)[j].name)) {
-                return false;
-            }
-        }
-    }
-
-    return arena_arr_len(*out) > 0;
+    return test_case_pack_parse(arena, content, (Test_Case_Pack_Entry**)out);
 }
 
 static void snapshot_append_indent(Nob_String_Builder *sb, int indent) {

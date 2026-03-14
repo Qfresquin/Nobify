@@ -36,11 +36,7 @@ static String_View gx_copy_cstr_to_arena(Arena *arena, const char *s) {
 }
 
 static String_View gx_trim(String_View sv) {
-    size_t b = 0;
-    size_t e = sv.count;
-    while (b < e && isspace((unsigned char)sv.data[b])) b++;
-    while (e > b && isspace((unsigned char)sv.data[e - 1])) e--;
-    return nob_sv_from_parts(sv.data + b, e - b);
+    return nob_sv_trim(sv);
 }
 
 static bool gx_sv_eq_ci(String_View a, String_View b) {

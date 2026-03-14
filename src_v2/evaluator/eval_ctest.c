@@ -2,7 +2,6 @@
 
 #include "evaluator_internal.h"
 #include "sv_utils.h"
-#include "tinydir.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -618,34 +617,25 @@ static bool ctest_remove_leaf(const char *path, bool is_dir) {
 #endif
 }
 
-static bool ctest_remove_tree(const char *path) {
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, path) != 0) return false;
+typedef struct {
+    bool ok;
+} Ctest_Remove_Walk_State;
 
-    bool ok = true;
-    while (dir.has_next) {
-        tinydir_file file = {0};
-        if (tinydir_readfile(&dir, &file) != 0) {
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-            ok = false;
-            break;
-        }
-        if (strcmp(file.name, ".") == 0 || strcmp(file.name, "..") == 0) continue;
-        if (file.is_dir) {
-            if (!ctest_remove_tree(file.path) || !ctest_remove_leaf(file.path, true)) {
-                ok = false;
-                break;
-            }
-        } else if (!ctest_remove_leaf(file.path, false)) {
-            ok = false;
-            break;
-        }
-    }
-    tinydir_close(&dir);
+static bool ctest_remove_tree_walk(Nob_Walk_Entry entry) {
+    Ctest_Remove_Walk_State *state = (Ctest_Remove_Walk_State*)entry.data;
+    bool ok = ctest_remove_leaf(entry.path, entry.type == NOB_FILE_DIRECTORY);
+    if (state) state->ok = state->ok && ok;
     return ok;
+}
+
+static bool ctest_remove_tree(const char *path) {
+    Ctest_Remove_Walk_State state = { .ok = true };
+    if (!path || !path[0]) return false;
+    if (!nob_file_exists(path)) return true;
+    if (!nob_walk_dir(path, ctest_remove_tree_walk, .data = &state, .post_order = true)) {
+        return false;
+    }
+    return state.ok;
 }
 
 static bool ctest_handle_metadata_with_context(Evaluator_Context *ctx,
@@ -724,9 +714,7 @@ Eval_Result eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, con
     char *target_c = eval_sv_to_cstr_temp(ctx, target);
     EVAL_OOM_RETURN_IF_NULL(ctx, target_c, eval_result_fatal());
 
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, target_c) == 0) {
-        tinydir_close(&dir);
+    if (nob_file_exists(target_c) && nob_get_file_type(target_c) == NOB_FILE_DIRECTORY) {
         if (!ctest_remove_tree(target_c)) {
             (void)ctest_emit_diag(ctx,
                                   node,
@@ -778,10 +766,9 @@ Eval_Result eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const No
         String_View custom = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr("CTestCustom.cmake"));
         if (eval_should_stop(ctx)) return eval_result_fatal();
 
-        tinydir_file probe = {0};
         char *custom_c = eval_sv_to_cstr_temp(ctx, custom);
         EVAL_OOM_RETURN_IF_NULL(ctx, custom_c, eval_result_fatal());
-        if (tinydir_file_open(&probe, custom_c) == 0) {
+        if (nob_file_exists(custom_c) && nob_get_file_type(custom_c) != NOB_FILE_DIRECTORY) {
             Eval_Result exec_res = eval_execute_file(ctx, custom, false, nob_sv_from_cstr(""));
             if (eval_result_is_fatal(exec_res)) return exec_res;
             if (!svu_list_push_temp(ctx, &loaded, custom)) return eval_result_fatal();

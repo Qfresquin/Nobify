@@ -1,6 +1,7 @@
 #include "test_workspace.h"
 
 #include "nob.h"
+#include "test_fs.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,147 +18,12 @@
 
 #define TEMP_TESTS_BASE "Temp_tests"
 
-typedef struct {
-    bool exists;
-    bool is_dir;
-    bool is_link_like;
-} Tiny_Path_Info;
-
 static unsigned long test_ws_pid(void) {
 #if defined(_WIN32)
     return (unsigned long)GetCurrentProcessId();
 #else
     return (unsigned long)getpid();
 #endif
-}
-
-static bool tiny_is_dot_or_dotdot(const char *name) {
-    return strcmp(name, ".") == 0 || strcmp(name, "..") == 0;
-}
-
-static bool tiny_join_path(const char *lhs, const char *rhs, char out[_TINYDIR_PATH_MAX]) {
-    int n = snprintf(out, _TINYDIR_PATH_MAX, "%s/%s", lhs, rhs);
-    if (n < 0 || n >= _TINYDIR_PATH_MAX) {
-        nob_log(NOB_ERROR, "path too long while joining '%s' and '%s'", lhs, rhs);
-        return false;
-    }
-    return true;
-}
-
-static bool tiny_get_path_info(const char *path, Tiny_Path_Info *out) {
-    if (!path || !out) return false;
-    *out = (Tiny_Path_Info){0};
-
-#if defined(_WIN32)
-    DWORD attr = GetFileAttributesA(path);
-    if (attr == INVALID_FILE_ATTRIBUTES) {
-        DWORD err = GetLastError();
-        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
-        nob_log(NOB_ERROR, "could not stat path %s: %s", path, nob_win32_error_message(err));
-        return false;
-    }
-    out->exists = true;
-    out->is_dir = (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    out->is_link_like = (attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-    return true;
-#else
-    struct stat st = {0};
-    if (lstat(path, &st) != 0) {
-        if (errno == ENOENT) return true;
-        nob_log(NOB_ERROR, "could not lstat path %s: %s", path, strerror(errno));
-        return false;
-    }
-    out->exists = true;
-    out->is_dir = S_ISDIR(st.st_mode);
-    out->is_link_like = S_ISLNK(st.st_mode);
-    return true;
-#endif
-}
-
-static bool tiny_delete_file_like(const char *path) {
-#if defined(_WIN32)
-    if (DeleteFileA(path)) return true;
-    DWORD err = GetLastError();
-    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
-    nob_log(NOB_ERROR, "could not delete file %s: %s", path, nob_win32_error_message(err));
-    return false;
-#else
-    if (unlink(path) == 0) return true;
-    if (errno == ENOENT) return true;
-    nob_log(NOB_ERROR, "could not delete file %s: %s", path, strerror(errno));
-    return false;
-#endif
-}
-
-static bool tiny_delete_dir_like(const char *path) {
-#if defined(_WIN32)
-    if (RemoveDirectoryA(path)) return true;
-    DWORD err = GetLastError();
-    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
-    nob_log(NOB_ERROR, "could not remove directory %s: %s", path, nob_win32_error_message(err));
-    return false;
-#else
-    if (rmdir(path) == 0) return true;
-    if (errno == ENOENT) return true;
-    nob_log(NOB_ERROR, "could not remove directory %s: %s", path, strerror(errno));
-    return false;
-#endif
-}
-
-static bool tiny_remove_tree(const char *path) {
-    Tiny_Path_Info info = {0};
-    if (!tiny_get_path_info(path, &info)) return false;
-    if (!info.exists) return true;
-
-    if (info.is_link_like) {
-        if (info.is_dir) return tiny_delete_dir_like(path);
-        return tiny_delete_file_like(path);
-    }
-
-    if (!info.is_dir) return tiny_delete_file_like(path);
-
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, path) != 0) {
-#if defined(_WIN32)
-        nob_log(NOB_ERROR, "could not open directory %s", path);
-#else
-        nob_log(NOB_ERROR, "could not open directory %s: %s", path, strerror(errno));
-#endif
-        return false;
-    }
-
-    bool ok = true;
-    while (dir.has_next) {
-        tinydir_file file = {0};
-        if (tinydir_readfile(&dir, &file) != 0) {
-#if defined(_WIN32)
-            nob_log(NOB_ERROR, "could not read entry from %s", path);
-#else
-            nob_log(NOB_ERROR, "could not read entry from %s: %s", path, strerror(errno));
-#endif
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-#if defined(_WIN32)
-            nob_log(NOB_ERROR, "could not advance directory %s", path);
-#else
-            nob_log(NOB_ERROR, "could not advance directory %s: %s", path, strerror(errno));
-#endif
-            ok = false;
-            break;
-        }
-
-        if (tiny_is_dot_or_dotdot(file.name)) continue;
-        if (!tiny_remove_tree(file.path)) {
-            ok = false;
-            break;
-        }
-    }
-
-    tinydir_close(&dir);
-    if (!tiny_delete_dir_like(path)) ok = false;
-    return ok;
 }
 
 static bool build_abs_path(const char *cwd, const char *rel, char out[_TINYDIR_PATH_MAX]) {
@@ -191,7 +57,7 @@ bool test_ws_prepare(Test_Workspace *ws, const char *suite_name) {
             nob_log(NOB_ERROR, "workspace: current directory path too long");
             return false;
         }
-        if (!tiny_join_path(ws->work, "test_v2", ws->suite_copy)) return false;
+        if (!test_fs_join_path(ws->work, "test_v2", ws->suite_copy)) return false;
         nob_log(NOB_INFO, "workspace created: %s", ws->root);
         return true;
     }
@@ -207,12 +73,12 @@ bool test_ws_prepare(Test_Workspace *ws, const char *suite_name) {
     }
 
     if (!build_abs_path(cwd, root_rel, ws->root)) return false;
-    if (!tiny_join_path(ws->root, "work", ws->work)) return false;
-    if (!tiny_join_path(ws->root, "bin", ws->bin)) return false;
-    if (!tiny_join_path(ws->work, "test_v2", ws->suite_copy)) return false;
+    if (!test_fs_join_path(ws->root, "work", ws->work)) return false;
+    if (!test_fs_join_path(ws->root, "bin", ws->bin)) return false;
+    if (!test_fs_join_path(ws->work, "test_v2", ws->suite_copy)) return false;
 
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_BASE)) return false;
-    if (!tiny_remove_tree(ws->root)) return false;
+    if (!test_fs_remove_tree(ws->root)) return false;
     if (!nob_mkdir_if_not_exists(ws->root)) return false;
     if (!nob_mkdir_if_not_exists(ws->work)) return false;
     if (!nob_mkdir_if_not_exists(ws->bin)) return false;
@@ -261,8 +127,8 @@ bool test_ws_cleanup(const Test_Workspace *ws) {
         nob_log(NOB_INFO, "workspace cleaned: %s", ws->root);
         return true;
     }
-    if (!tiny_remove_tree(ws->root)) return false;
-    (void)tiny_delete_dir_like(TEMP_TESTS_BASE);
+    if (!test_fs_remove_tree(ws->root)) return false;
+    (void)test_fs_delete_dir_like(TEMP_TESTS_BASE);
     nob_log(NOB_INFO, "workspace cleaned: %s", ws->root);
     return true;
 }

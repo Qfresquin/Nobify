@@ -1,6 +1,6 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
-#include "tinydir.h"
+#include "test_fs.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -29,12 +29,6 @@
 #define TEST_EVALUATOR_RUN "../bin/test_evaluator"
 #define TEST_PIPELINE_RUN "../bin/test_pipeline"
 #define TEST_CODEGEN_RUN "../bin/test_codegen"
-
-typedef struct {
-    bool exists;
-    bool is_dir;
-    bool is_link_like;
-} Tiny_Path_Info;
 
 typedef bool (*Test_Module_Run_Fn)(void);
 
@@ -313,198 +307,6 @@ static void append_platform_link_flags(Nob_Cmd *cmd) {
     }
 }
 
-static bool tiny_is_dot_or_dotdot(const char *name) {
-    return strcmp(name, ".") == 0 || strcmp(name, "..") == 0;
-}
-
-static bool tiny_join_path(const char *lhs, const char *rhs, char out[_TINYDIR_PATH_MAX]) {
-    int n = snprintf(out, _TINYDIR_PATH_MAX, "%s/%s", lhs, rhs);
-    if (n < 0 || n >= _TINYDIR_PATH_MAX) {
-        nob_log(NOB_ERROR, "path too long while joining '%s' and '%s'", lhs, rhs);
-        return false;
-    }
-    return true;
-}
-
-static bool tiny_get_path_info(const char *path, Tiny_Path_Info *out) {
-    if (!path || !out) return false;
-    *out = (Tiny_Path_Info){0};
-
-#if defined(_WIN32)
-    DWORD attr = GetFileAttributesA(path);
-    if (attr == INVALID_FILE_ATTRIBUTES) {
-        DWORD err = GetLastError();
-        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
-        nob_log(NOB_ERROR, "could not stat path %s: %s", path, nob_win32_error_message(err));
-        return false;
-    }
-    out->exists = true;
-    out->is_dir = (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    out->is_link_like = (attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-    return true;
-#else
-    struct stat st = {0};
-    if (lstat(path, &st) != 0) {
-        if (errno == ENOENT) return true;
-        nob_log(NOB_ERROR, "could not lstat path %s: %s", path, strerror(errno));
-        return false;
-    }
-    out->exists = true;
-    out->is_dir = S_ISDIR(st.st_mode);
-    out->is_link_like = S_ISLNK(st.st_mode);
-    return true;
-#endif
-}
-
-static bool tiny_delete_file_like(const char *path) {
-#if defined(_WIN32)
-    if (DeleteFileA(path)) return true;
-    DWORD err = GetLastError();
-    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
-    nob_log(NOB_ERROR, "could not delete file %s: %s", path, nob_win32_error_message(err));
-    return false;
-#else
-    if (unlink(path) == 0) return true;
-    if (errno == ENOENT) return true;
-    nob_log(NOB_ERROR, "could not delete file %s: %s", path, strerror(errno));
-    return false;
-#endif
-}
-
-static bool tiny_delete_dir_like(const char *path) {
-#if defined(_WIN32)
-    if (RemoveDirectoryA(path)) return true;
-    DWORD err = GetLastError();
-    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
-    nob_log(NOB_ERROR, "could not remove directory %s: %s", path, nob_win32_error_message(err));
-    return false;
-#else
-    if (rmdir(path) == 0) return true;
-    if (errno == ENOENT) return true;
-    nob_log(NOB_ERROR, "could not remove directory %s: %s", path, strerror(errno));
-    return false;
-#endif
-}
-
-static bool tiny_remove_tree(const char *path) {
-    Tiny_Path_Info info = {0};
-    if (!tiny_get_path_info(path, &info)) return false;
-    if (!info.exists) return true;
-
-    if (info.is_link_like) {
-        if (info.is_dir) return tiny_delete_dir_like(path);
-        return tiny_delete_file_like(path);
-    }
-
-    if (!info.is_dir) {
-        return tiny_delete_file_like(path);
-    }
-
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, path) != 0) {
-        nob_log(NOB_ERROR, "could not open directory %s: %s", path, strerror(errno));
-        return false;
-    }
-
-    bool ok = true;
-    while (dir.has_next) {
-        tinydir_file file = {0};
-        if (tinydir_readfile(&dir, &file) != 0) {
-            nob_log(NOB_ERROR, "could not read entry from %s: %s", path, strerror(errno));
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-            nob_log(NOB_ERROR, "could not advance directory %s: %s", path, strerror(errno));
-            ok = false;
-            break;
-        }
-
-        if (tiny_is_dot_or_dotdot(file.name)) continue;
-        if (!tiny_remove_tree(file.path)) {
-            ok = false;
-            break;
-        }
-    }
-
-    tinydir_close(&dir);
-    if (!tiny_delete_dir_like(path)) ok = false;
-    return ok;
-}
-
-static bool tiny_copy_tree(const char *src, const char *dst) {
-    Tiny_Path_Info info = {0};
-    if (!tiny_get_path_info(src, &info)) return false;
-    if (!info.exists) {
-        nob_log(NOB_ERROR, "source path does not exist: %s", src);
-        return false;
-    }
-    if (info.is_link_like) {
-        nob_log(NOB_ERROR, "refusing to copy link/reparse path: %s", src);
-        return false;
-    }
-
-    if (!info.is_dir) {
-        return nob_copy_file(src, dst);
-    }
-
-    if (!nob_mkdir_if_not_exists(dst)) return false;
-
-    tinydir_dir dir = {0};
-    if (tinydir_open(&dir, src) != 0) {
-        nob_log(NOB_ERROR, "could not open directory %s: %s", src, strerror(errno));
-        return false;
-    }
-
-    bool ok = true;
-    while (dir.has_next) {
-        tinydir_file file = {0};
-        if (tinydir_readfile(&dir, &file) != 0) {
-            nob_log(NOB_ERROR, "could not read entry from %s: %s", src, strerror(errno));
-            ok = false;
-            break;
-        }
-        if (tinydir_next(&dir) != 0 && dir.has_next) {
-            nob_log(NOB_ERROR, "could not advance directory %s: %s", src, strerror(errno));
-            ok = false;
-            break;
-        }
-
-        if (tiny_is_dot_or_dotdot(file.name)) continue;
-
-        char dst_child[_TINYDIR_PATH_MAX] = {0};
-        if (!tiny_join_path(dst, file.name, dst_child)) {
-            ok = false;
-            break;
-        }
-
-        if (!tiny_copy_tree(file.path, dst_child)) {
-            ok = false;
-            break;
-        }
-    }
-
-    tinydir_close(&dir);
-    return ok;
-}
-
-static bool save_current_dir(char out[_TINYDIR_PATH_MAX]) {
-    const char *cwd = nob_get_current_dir_temp();
-    if (!cwd) {
-        nob_log(NOB_ERROR, "could not get current directory");
-        return false;
-    }
-
-    size_t n = strlen(cwd);
-    if (n + 1 > _TINYDIR_PATH_MAX) {
-        nob_log(NOB_ERROR, "current directory path is too long");
-        return false;
-    }
-
-    memcpy(out, cwd, n + 1);
-    return true;
-}
-
 static void set_env_or_unset(const char *name, const char *value) {
 #if defined(_WIN32)
     _putenv_s(name, value ? value : "");
@@ -514,28 +316,36 @@ static void set_env_or_unset(const char *name, const char *value) {
 #endif
 }
 
-static bool prepare_temp_tests_workspace(void) {
-    if (!tiny_remove_tree(TEMP_TESTS_ROOT)) return false;
+static bool ensure_temp_tests_layout(void) {
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_ROOT)) return false;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_WORK)) return false;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_BIN)) return false;
-    if (!tiny_copy_tree("test_v2", TEMP_TESTS_WORK "/test_v2")) return false;
+    return true;
+}
+
+static bool prepare_temp_tests_workspace(void) {
+    if (!test_fs_remove_tree(TEMP_TESTS_ROOT)) return false;
+    if (!ensure_temp_tests_layout()) return false;
+    if (!test_fs_copy_tree("test_v2", TEMP_TESTS_WORK "/test_v2")) return false;
     return true;
 }
 
 static bool cleanup_temp_tests_workspace(void) {
-    return tiny_remove_tree(TEMP_TESTS_ROOT);
+    return test_fs_remove_tree(TEMP_TESTS_ROOT);
 }
 
 static bool run_binary_in_workspace(const char *bin_rel_path) {
     char cwd[_TINYDIR_PATH_MAX] = {0};
-    if (!save_current_dir(cwd)) return false;
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+
+    if (!test_fs_save_current_dir(cwd)) return false;
     if (!nob_set_current_dir(TEMP_TESTS_WORK)) return false;
     set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", "1");
 
-    Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, bin_rel_path);
-    bool ok = nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
     set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", NULL);
 
     if (!nob_set_current_dir(cwd)) {
@@ -548,39 +358,53 @@ static bool run_binary_in_workspace(const char *bin_rel_path) {
 
 static bool build_test_lexer(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!ensure_temp_tests_layout()) return false;
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", TEST_LEXER_OUT);
     append_v2_lexer_test_sources(&cmd);
     append_v2_lexer_runtime_sources(&cmd);
     append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool build_test_arena(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!ensure_temp_tests_layout()) return false;
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", TEST_ARENA_OUT);
     append_v2_arena_test_sources(&cmd);
     append_v2_arena_runtime_sources(&cmd);
     append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool build_test_parser(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!ensure_temp_tests_layout()) return false;
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", TEST_PARSER_OUT);
     append_v2_parser_test_sources(&cmd);
     append_v2_parser_runtime_sources(&cmd);
     append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool build_test_evaluator(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!ensure_temp_tests_layout()) return false;
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", TEST_EVALUATOR_OUT);
@@ -588,11 +412,15 @@ static bool build_test_evaluator(void) {
     append_v2_evaluator_runtime_sources(&cmd);
     append_v2_pcre_sources(&cmd);
     append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool build_test_pipeline(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!ensure_temp_tests_layout()) return false;
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", TEST_PIPELINE_OUT);
@@ -601,11 +429,15 @@ static bool build_test_pipeline(void) {
     append_v2_build_model_runtime_sources(&cmd);
     append_v2_pcre_sources(&cmd);
     append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool build_test_codegen(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!ensure_temp_tests_layout()) return false;
     nob_cc(&cmd);
     append_v2_common_flags(&cmd);
     nob_cmd_append(&cmd, "-o", TEST_CODEGEN_OUT);
@@ -615,7 +447,9 @@ static bool build_test_codegen(void) {
     append_v2_codegen_runtime_sources(&cmd);
     append_v2_pcre_sources(&cmd);
     append_platform_link_flags(&cmd);
-    return nob_cmd_run_sync(cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
 }
 
 static bool test_evaluator(void) {

@@ -3,6 +3,7 @@
 #include "evaluator_internal.h"
 #include "eval_expr.h"
 #include "eval_opt_parser.h"
+#include "sv_utils.h"
 #include "arena_dyn.h"
 
 #include <stdio.h>
@@ -497,13 +498,7 @@ static Eval_Cmdline_Mode separate_arguments_selected_mode(bool unix_mode,
 
 static bool separate_arguments_trim_whitespace(String_View input, String_View *out_trimmed) {
     if (!out_trimmed) return false;
-    size_t start = 0;
-    while (start < input.count && isspace((unsigned char)input.data[start])) start++;
-
-    size_t end = input.count;
-    while (end > start && isspace((unsigned char)input.data[end - 1])) end--;
-
-    *out_trimmed = nob_sv_from_parts(input.data + start, end - start);
+    *out_trimmed = svu_trim_ascii_ws(input);
     return true;
 }
 

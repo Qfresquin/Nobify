@@ -110,12 +110,7 @@ BM_Provenance bm_provenance_from_event(Arena *arena, const Event *ev) {
 }
 
 static String_View bm_trim_whitespace(String_View input) {
-    size_t begin = 0;
-    size_t end = input.count;
-
-    while (begin < end && isspace((unsigned char)input.data[begin])) begin++;
-    while (end > begin && isspace((unsigned char)input.data[end - 1])) end--;
-    return nob_sv_from_parts(input.data + begin, end - begin);
+    return nob_sv_trim(input);
 }
 
 bool bm_split_cmake_list(Arena *arena, String_View raw, String_View **out_items) {

@@ -43,7 +43,7 @@ static bool file_cmd_append_checked(Evaluator_Context *ctx, Nob_Cmd *cmd, const 
 
 static void file_cmd_reset(Nob_Cmd *cmd) {
     if (!cmd) return;
-    free((void*)cmd->items);
+    nob_cmd_free((*cmd));
     cmd->items = NULL;
     cmd->count = 0;
     cmd->capacity = 0;
@@ -874,7 +874,7 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
         }
     }
 
-    if (!nob_cmd_run_sync(cmd)) {
+    if (!nob_cmd_run(&cmd)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed to run tar backend"), out_path);
     }
     file_cmd_reset(&cmd);
@@ -967,7 +967,7 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
             return true;
         }
     }
-    if (!nob_cmd_run_sync(cmd)) {
+    if (!nob_cmd_run(&cmd)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed to run tar backend"), in_path);
     }
     file_cmd_reset(&cmd);

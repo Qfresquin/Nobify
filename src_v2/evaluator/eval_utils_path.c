@@ -292,13 +292,7 @@ static bool eval_program_candidate_is_file(Evaluator_Context *ctx, String_View c
 }
 
 static String_View eval_trim_whitespace_view(String_View input) {
-    size_t start = 0;
-    while (start < input.count && isspace((unsigned char)input.data[start])) start++;
-
-    size_t end = input.count;
-    while (end > start && isspace((unsigned char)input.data[end - 1])) end--;
-
-    return nob_sv_from_parts(input.data + start, end - start);
+    return svu_trim_ascii_ws(input);
 }
 
 bool eval_find_program_full_path_temp(Evaluator_Context *ctx,
