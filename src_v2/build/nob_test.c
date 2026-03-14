@@ -229,7 +229,12 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_workspace.c",
         "test_v2/evaluator/test_evaluator_v2_main.c",
-        "test_v2/evaluator/test_evaluator_v2_suite.c");
+        "test_v2/evaluator/test_evaluator_v2_suite.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch1.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch2.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch3.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch4.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch5.c");
 }
 
 static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
@@ -243,7 +248,10 @@ static void append_v2_codegen_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_workspace.c",
         "test_v2/codegen/test_codegen_v2_main.c",
-        "test_v2/codegen/test_codegen_v2_suite.c");
+        "test_v2/codegen/test_codegen_v2_suite.c",
+        "test_v2/codegen/test_codegen_v2_suite_render.c",
+        "test_v2/codegen/test_codegen_v2_suite_build.c",
+        "test_v2/codegen/test_codegen_v2_suite_reject.c");
 }
 
 static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
