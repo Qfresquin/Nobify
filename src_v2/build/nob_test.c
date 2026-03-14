@@ -12,9 +12,20 @@
 #include <unistd.h>
 #endif
 
+#if !defined(_WIN32)
+#if defined(__APPLE__)
+#define TEST_STAT_MTIME_SEC(st) ((st).st_mtimespec.tv_sec)
+#define TEST_STAT_MTIME_NSEC(st) ((st).st_mtimespec.tv_nsec)
+#else
+#define TEST_STAT_MTIME_SEC(st) ((st).st_mtim.tv_sec)
+#define TEST_STAT_MTIME_NSEC(st) ((st).st_mtim.tv_nsec)
+#endif
+#endif
+
 #define TEMP_TESTS_ROOT "Temp_tests"
 #define TEMP_TESTS_WORK TEMP_TESTS_ROOT "/work"
 #define TEMP_TESTS_BIN TEMP_TESTS_ROOT "/bin"
+#define TEMP_TESTS_OBJ TEMP_TESTS_ROOT "/obj"
 
 #define TEST_ARENA_OUT TEMP_TESTS_BIN "/test_arena"
 #define TEST_LEXER_OUT TEMP_TESTS_BIN "/test_lexer"
@@ -31,6 +42,7 @@
 #define TEST_CODEGEN_RUN "../bin/test_codegen"
 
 typedef bool (*Test_Module_Run_Fn)(void);
+typedef void (*Append_Source_List_Fn)(Nob_Cmd *cmd);
 
 typedef struct {
     const char *name;
@@ -43,6 +55,9 @@ static bool test_evaluator(void);
 static bool test_pipeline(void);
 static bool test_arena(void);
 static bool test_codegen(void);
+static void append_v2_pcre_sources(Nob_Cmd *cmd);
+static void append_platform_link_flags(Nob_Cmd *cmd);
+static bool ensure_temp_tests_layout(void);
 
 static Test_Module TEST_MODULES[] = {
     {"arena", test_arena},
@@ -251,6 +266,316 @@ static void append_v2_codegen_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/codegen/nob_codegen.c");
 }
 
+static const char *test_object_config_dir_temp(void) {
+    const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
+    const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
+    bool with_curl = use_libcurl && strcmp(use_libcurl, "1") == 0;
+    bool with_archive = use_libarchive && strcmp(use_libarchive, "1") == 0;
+    return nob_temp_sprintf("%s/curl%d_archive%d",
+                            TEMP_TESTS_OBJ,
+                            with_curl ? 1 : 0,
+                            with_archive ? 1 : 0);
+}
+
+static bool ensure_dir_chain(const char *path) {
+    char buffer[_TINYDIR_PATH_MAX] = {0};
+    size_t len = 0;
+    size_t start = 0;
+    if (!path || path[0] == '\0') return true;
+
+    len = strlen(path);
+    if (len + 1 > sizeof(buffer)) {
+        nob_log(NOB_ERROR, "path too long while creating directories: %s", path);
+        return false;
+    }
+
+    memcpy(buffer, path, len + 1);
+
+#if defined(_WIN32)
+    if (len >= 2 && buffer[1] == ':') start = 2;
+#else
+    if (buffer[0] == '/') start = 1;
+#endif
+
+    for (size_t i = start + 1; i < len; ++i) {
+        if (buffer[i] != '/' && buffer[i] != '\\') continue;
+        buffer[i] = '\0';
+        if (buffer[0] != '\0' && !nob_mkdir_if_not_exists(buffer)) return false;
+        buffer[i] = '/';
+    }
+
+    return nob_mkdir_if_not_exists(buffer);
+}
+
+static bool ensure_parent_dir(const char *path) {
+    bool ok = false;
+    size_t temp_mark = nob_temp_save();
+    const char *dir = nob_temp_dir_name(path);
+    ok = ensure_dir_chain(dir);
+    nob_temp_rewind(temp_mark);
+    return ok;
+}
+
+static const char *test_object_path_temp(const char *source_path) {
+    return nob_temp_sprintf("%s/%s.o", test_object_config_dir_temp(), source_path);
+}
+
+static const char *test_dep_path_temp(const char *source_path) {
+    return nob_temp_sprintf("%s/%s.d", test_object_config_dir_temp(), source_path);
+}
+
+static bool depfile_collect_inputs(const char *dep_path, Nob_File_Paths *inputs) {
+    Nob_String_Builder file = {0};
+    Nob_String_Builder token = {0};
+    const char *cursor = NULL;
+    bool ok = false;
+
+    if (!nob_read_entire_file(dep_path, &file)) goto defer;
+    nob_da_append(&file, '\0');
+
+    cursor = file.items;
+    while (*cursor && *cursor != ':') ++cursor;
+    if (*cursor != ':') {
+        nob_log(NOB_ERROR, "invalid depfile: %s", dep_path);
+        goto defer;
+    }
+    ++cursor;
+
+    while (*cursor) {
+        while (*cursor) {
+            if (*cursor == '\\' && cursor[1] == '\n') {
+                cursor += 2;
+                continue;
+            }
+            if (*cursor == '\\' && cursor[1] == '\r' && cursor[2] == '\n') {
+                cursor += 3;
+                continue;
+            }
+            if (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') {
+                ++cursor;
+                continue;
+            }
+            break;
+        }
+
+        if (*cursor == '\0') break;
+        token.count = 0;
+
+        while (*cursor) {
+            if (*cursor == '\\' && cursor[1] == '\n') {
+                cursor += 2;
+                continue;
+            }
+            if (*cursor == '\\' && cursor[1] == '\r' && cursor[2] == '\n') {
+                cursor += 3;
+                continue;
+            }
+            if (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') break;
+            nob_da_append(&token, *cursor);
+            ++cursor;
+        }
+
+        nob_da_append(&token, '\0');
+        nob_da_append(inputs, nob_temp_strdup(token.items));
+    }
+
+    ok = true;
+
+defer:
+    nob_da_free(token);
+    nob_da_free(file);
+    return ok;
+}
+
+static int inputs_need_rebuild(const char *output_path, const Nob_File_Paths *inputs) {
+#if defined(_WIN32)
+    WIN32_FILE_ATTRIBUTE_DATA output_attr = {0};
+    ULARGE_INTEGER output_time = {0};
+
+    if (!GetFileAttributesExA(output_path, GetFileExInfoStandard, &output_attr)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return 1;
+        nob_log(NOB_ERROR, "Could not stat %s: %s", output_path, nob_win32_error_message(err));
+        return -1;
+    }
+
+    output_time.LowPart = output_attr.ftLastWriteTime.dwLowDateTime;
+    output_time.HighPart = output_attr.ftLastWriteTime.dwHighDateTime;
+
+    for (size_t i = 0; i < inputs->count; ++i) {
+        WIN32_FILE_ATTRIBUTE_DATA input_attr = {0};
+        ULARGE_INTEGER input_time = {0};
+        const char *input_path = inputs->items[i];
+
+        if (!GetFileAttributesExA(input_path, GetFileExInfoStandard, &input_attr)) {
+            nob_log(NOB_ERROR, "Could not stat %s: %s", input_path, nob_win32_error_message(GetLastError()));
+            return -1;
+        }
+
+        input_time.LowPart = input_attr.ftLastWriteTime.dwLowDateTime;
+        input_time.HighPart = input_attr.ftLastWriteTime.dwHighDateTime;
+        if (input_time.QuadPart > output_time.QuadPart) return 1;
+    }
+#else
+    struct stat output_stat = {0};
+
+    if (stat(output_path, &output_stat) < 0) {
+        if (errno == ENOENT) return 1;
+        nob_log(NOB_ERROR, "could not stat %s: %s", output_path, strerror(errno));
+        return -1;
+    }
+
+    for (size_t i = 0; i < inputs->count; ++i) {
+        struct stat input_stat = {0};
+        const char *input_path = inputs->items[i];
+
+        if (stat(input_path, &input_stat) < 0) {
+            nob_log(NOB_ERROR, "could not stat %s: %s", input_path, strerror(errno));
+            return -1;
+        }
+
+        if (TEST_STAT_MTIME_SEC(input_stat) > TEST_STAT_MTIME_SEC(output_stat)) return 1;
+        if (TEST_STAT_MTIME_SEC(input_stat) == TEST_STAT_MTIME_SEC(output_stat) &&
+            TEST_STAT_MTIME_NSEC(input_stat) > TEST_STAT_MTIME_NSEC(output_stat)) {
+            return 1;
+        }
+    }
+#endif
+
+    return 0;
+}
+
+static bool object_needs_rebuild(const char *object_path, const char *dep_path) {
+    Nob_File_Paths inputs = {0};
+    size_t temp_mark = nob_temp_save();
+    bool ok = true;
+    int rebuild = 1;
+
+    if (!nob_file_exists(object_path) || !nob_file_exists(dep_path)) goto defer;
+    if (!depfile_collect_inputs(dep_path, &inputs)) goto defer;
+
+    nob_da_append(&inputs, __FILE__);
+    rebuild = inputs_need_rebuild(object_path, &inputs);
+    ok = rebuild != 0;
+
+defer:
+    nob_da_free(inputs);
+    nob_temp_rewind(temp_mark);
+    return ok;
+}
+
+static bool build_object_file(const char *source_path,
+                              const char *object_path,
+                              const char *dep_path) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+
+    if (!ensure_parent_dir(object_path) || !ensure_parent_dir(dep_path)) return false;
+    if (!object_needs_rebuild(object_path, dep_path)) return true;
+
+    nob_log(NOB_INFO, "[v2] compile %s", source_path);
+    nob_cc(&cmd);
+    append_v2_common_flags(&cmd);
+    nob_cmd_append(&cmd, "-MMD", "-MF", dep_path, "-c", source_path, "-o", object_path);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
+static bool link_test_binary(const char *output_path, const Nob_File_Paths *object_paths) {
+    Nob_Cmd cmd = {0};
+    Nob_File_Paths inputs = {0};
+    bool ok = false;
+
+    for (size_t i = 0; i < object_paths->count; ++i) {
+        nob_da_append(&inputs, object_paths->items[i]);
+    }
+    nob_da_append(&inputs, __FILE__);
+
+    if (!inputs_need_rebuild(output_path, &inputs)) {
+        ok = true;
+        goto defer;
+    }
+
+    nob_log(NOB_INFO, "[v2] link %s", output_path);
+    nob_cc(&cmd);
+    nob_cmd_append(&cmd, "-o", output_path);
+    for (size_t i = 0; i < object_paths->count; ++i) {
+        nob_cmd_append(&cmd, object_paths->items[i]);
+    }
+    append_platform_link_flags(&cmd);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+
+defer:
+    nob_da_free(inputs);
+    return ok;
+}
+
+static bool build_incremental_test_binary(const char *output_path,
+                                          Append_Source_List_Fn append_sources) {
+    Nob_Cmd sources = {0};
+    Nob_File_Paths object_paths = {0};
+    bool ok = false;
+    size_t temp_mark = nob_temp_save();
+
+    if (!ensure_temp_tests_layout()) goto defer;
+
+    append_sources(&sources);
+    for (size_t i = 0; i < sources.count; ++i) {
+        const char *source_path = sources.items[i];
+        const char *object_path = test_object_path_temp(source_path);
+        const char *dep_path = test_dep_path_temp(source_path);
+
+        nob_da_append(&object_paths, object_path);
+        if (!build_object_file(source_path, object_path, dep_path)) goto defer;
+    }
+
+    ok = link_test_binary(output_path, &object_paths);
+
+defer:
+    nob_da_free(object_paths);
+    nob_cmd_free(sources);
+    nob_temp_rewind(temp_mark);
+    return ok;
+}
+
+static void append_test_arena_all_sources(Nob_Cmd *cmd) {
+    append_v2_arena_test_sources(cmd);
+    append_v2_arena_runtime_sources(cmd);
+}
+
+static void append_test_lexer_all_sources(Nob_Cmd *cmd) {
+    append_v2_lexer_test_sources(cmd);
+    append_v2_lexer_runtime_sources(cmd);
+}
+
+static void append_test_parser_all_sources(Nob_Cmd *cmd) {
+    append_v2_parser_test_sources(cmd);
+    append_v2_parser_runtime_sources(cmd);
+}
+
+static void append_test_evaluator_all_sources(Nob_Cmd *cmd) {
+    append_v2_evaluator_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_pipeline_all_sources(Nob_Cmd *cmd) {
+    append_v2_pipeline_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_codegen_all_sources(Nob_Cmd *cmd) {
+    append_v2_codegen_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
 static void append_v2_pcre_sources(Nob_Cmd *cmd) {
 #ifdef _WIN32
     nob_cmd_append(cmd,
@@ -320,18 +645,19 @@ static bool ensure_temp_tests_layout(void) {
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_ROOT)) return false;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_WORK)) return false;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_BIN)) return false;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_OBJ)) return false;
     return true;
 }
 
 static bool prepare_temp_tests_workspace(void) {
-    if (!test_fs_remove_tree(TEMP_TESTS_ROOT)) return false;
+    if (!test_fs_remove_tree(TEMP_TESTS_WORK)) return false;
     if (!ensure_temp_tests_layout()) return false;
     if (!test_fs_copy_tree("test_v2", TEMP_TESTS_WORK "/test_v2")) return false;
     return true;
 }
 
 static bool cleanup_temp_tests_workspace(void) {
-    return test_fs_remove_tree(TEMP_TESTS_ROOT);
+    return test_fs_remove_tree(TEMP_TESTS_WORK);
 }
 
 static bool run_binary_in_workspace(const char *bin_rel_path) {
@@ -357,99 +683,27 @@ static bool run_binary_in_workspace(const char *bin_rel_path) {
 }
 
 static bool build_test_lexer(void) {
-    Nob_Cmd cmd = {0};
-    bool ok = false;
-    if (!ensure_temp_tests_layout()) return false;
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_LEXER_OUT);
-    append_v2_lexer_test_sources(&cmd);
-    append_v2_lexer_runtime_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
-    return ok;
+    return build_incremental_test_binary(TEST_LEXER_OUT, append_test_lexer_all_sources);
 }
 
 static bool build_test_arena(void) {
-    Nob_Cmd cmd = {0};
-    bool ok = false;
-    if (!ensure_temp_tests_layout()) return false;
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_ARENA_OUT);
-    append_v2_arena_test_sources(&cmd);
-    append_v2_arena_runtime_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
-    return ok;
+    return build_incremental_test_binary(TEST_ARENA_OUT, append_test_arena_all_sources);
 }
 
 static bool build_test_parser(void) {
-    Nob_Cmd cmd = {0};
-    bool ok = false;
-    if (!ensure_temp_tests_layout()) return false;
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_PARSER_OUT);
-    append_v2_parser_test_sources(&cmd);
-    append_v2_parser_runtime_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
-    return ok;
+    return build_incremental_test_binary(TEST_PARSER_OUT, append_test_parser_all_sources);
 }
 
 static bool build_test_evaluator(void) {
-    Nob_Cmd cmd = {0};
-    bool ok = false;
-    if (!ensure_temp_tests_layout()) return false;
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_EVALUATOR_OUT);
-    append_v2_evaluator_test_sources(&cmd);
-    append_v2_evaluator_runtime_sources(&cmd);
-    append_v2_pcre_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
-    return ok;
+    return build_incremental_test_binary(TEST_EVALUATOR_OUT, append_test_evaluator_all_sources);
 }
 
 static bool build_test_pipeline(void) {
-    Nob_Cmd cmd = {0};
-    bool ok = false;
-    if (!ensure_temp_tests_layout()) return false;
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_PIPELINE_OUT);
-    append_v2_pipeline_test_sources(&cmd);
-    append_v2_evaluator_runtime_sources(&cmd);
-    append_v2_build_model_runtime_sources(&cmd);
-    append_v2_pcre_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
-    return ok;
+    return build_incremental_test_binary(TEST_PIPELINE_OUT, append_test_pipeline_all_sources);
 }
 
 static bool build_test_codegen(void) {
-    Nob_Cmd cmd = {0};
-    bool ok = false;
-    if (!ensure_temp_tests_layout()) return false;
-    nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
-    nob_cmd_append(&cmd, "-o", TEST_CODEGEN_OUT);
-    append_v2_codegen_test_sources(&cmd);
-    append_v2_evaluator_runtime_sources(&cmd);
-    append_v2_build_model_runtime_sources(&cmd);
-    append_v2_codegen_runtime_sources(&cmd);
-    append_v2_pcre_sources(&cmd);
-    append_platform_link_flags(&cmd);
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
-    return ok;
+    return build_incremental_test_binary(TEST_CODEGEN_OUT, append_test_codegen_all_sources);
 }
 
 static bool test_evaluator(void) {
@@ -528,6 +782,7 @@ static bool run_in_temp_workspace(Test_Module_Run_Fn run_fn) {
 int main(int argc, char **argv) {
     const char *cmd = (argc > 1) ? argv[1] : "test-v2";
 
+    if (strcmp(cmd, "clean-tests") == 0) return test_fs_remove_tree(TEMP_TESTS_ROOT) ? 0 : 1;
     if (strcmp(cmd, "test-arena") == 0) return run_in_temp_workspace(test_arena) ? 0 : 1;
     if (strcmp(cmd, "test-lexer") == 0) return run_in_temp_workspace(test_lexer) ? 0 : 1;
     if (strcmp(cmd, "test-parser") == 0) return run_in_temp_workspace(test_parser) ? 0 : 1;
@@ -536,6 +791,6 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "test-codegen") == 0) return run_in_temp_workspace(test_codegen) ? 0 : 1;
     if (strcmp(cmd, "test-v2") == 0) return run_in_temp_workspace(test_v2_all) ? 0 : 1;
 
-    nob_log(NOB_INFO, "Usage: %s [test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-codegen|test-v2]", argv[0]);
+    nob_log(NOB_INFO, "Usage: %s [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-codegen|test-v2]", argv[0]);
     return 1;
 }
