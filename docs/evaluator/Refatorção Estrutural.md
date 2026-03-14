@@ -61,6 +61,12 @@ Exit criteria:
   public boundary
 - Event IR and build-model docs reference the new evaluator boundary
 
+Implementation notes (March 14, 2026):
+- `docs/evaluator/README.md` maps canonical target docs vs implementation
+  audits
+- Event IR and build-model docs now name the session/request boundary
+  explicitly when they refer back to evaluator APIs
+
 ### Phase B: Public API Split
 
 Deliverables:

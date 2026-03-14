@@ -13,6 +13,9 @@ Upstream producer note:
   [`../evaluator/evaluator_v2_spec.md`](../evaluator/evaluator_v2_spec.md)
   and
   [`../evaluator/evaluator_architecture_target.md`](../evaluator/evaluator_architecture_target.md)
+- the canonical producer entry is
+  `eval_session_run(EvalSession *, const EvalExec_Request *, Ast_Root)`
+- `EvalExec_Request.stream` controls whether a run projects `Event_Stream`
 - Event IR is projected from the evaluator's session/request execution model
   after committed semantic mutations
 - downstream consumers must not depend on the legacy evaluator API shape

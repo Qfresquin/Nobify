@@ -32,6 +32,10 @@ may exist during migration, but they are shims only.
 The builder consumes the canonical `Event` type from
 `src_v2/transpiler/event_ir.h`.
 
+The upstream producer is the evaluator run entry
+`eval_session_run(EvalSession *, const EvalExec_Request *, Ast_Root)` when
+`EvalExec_Request.stream != NULL`.
+
 Required behavior:
 - If `event_kind_has_role(ev->h.kind, EVENT_ROLE_BUILD_SEMANTIC)` is false, the
   event is ignored and the function returns `true`.

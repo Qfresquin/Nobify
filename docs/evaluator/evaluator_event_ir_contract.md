@@ -22,7 +22,11 @@ The canonical evaluator boundary is:
 `Ast_Root -> execution pipeline -> semantic state mutation -> Event IR/result projection`
 
 Target API consequence:
+- the canonical producer entry point is
+  `eval_session_run(EvalSession *, const EvalExec_Request *, Ast_Root)`
 - `Event_Stream` is supplied per run through `EvalExec_Request`
+- `EvalExec_Request.stream` enables or disables Event IR projection for that
+  run
 - `Event_Stream` is optional
 - `EvalRunResult` is always returned, regardless of whether a stream is present
 
@@ -95,6 +99,12 @@ Downstream consumers, including the build model, must depend only on:
 - event kind metadata,
 - event ordering guarantees,
 - documented semantic roles.
+
+If a downstream document needs to name the evaluator boundary, it should refer
+to:
+- `EvalSession`
+- `EvalExec_Request`
+- `EvalRunResult`
 
 They must not depend on:
 - `Evaluator_Context`,

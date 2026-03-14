@@ -4,6 +4,13 @@ Status: Canonical Target. This document is the source of truth for the
 post-refactor evaluator architecture, independent of the current
 `src_v2/evaluator` implementation.
 
+Canonical document hierarchy note:
+- [evaluator_v2_spec.md](./evaluator_v2_spec.md) remains the top-level
+  evaluator contract
+- this document defines the architecture required by that contract
+- implementation-current descriptions belong in audit documents, not in the
+  canonical architecture set
+
 ## 1. Purpose
 
 The evaluator target architecture exists to make continued CMake 3.28 feature
@@ -238,6 +245,9 @@ required.
 
 ## 10. Relationship to Other Docs
 
+- `README.md`
+  Canonical evaluator doc map and audit split.
+
 - `evaluator_v2_spec.md`
   Top-level API and boundary contract.
 
@@ -252,3 +262,10 @@ required.
 
 - `Refatorção Estrutural.md`
   Migration plan from the current implementation to this target architecture.
+
+- `../transpiler/event_ir_v2_spec.md`
+  Normative downstream Event IR contract emitted from this architecture.
+
+- `../build_model/README.md`
+  Downstream consumer docs that depend on `Event_Stream`, not on legacy
+  `Evaluator_Context` APIs.
