@@ -1865,6 +1865,15 @@ String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, s
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out);
 bool eval_split_command_line_temp(Evaluator_Context *ctx, Eval_Cmdline_Mode mode, String_View input, SV_List *out_tokens);
+bool eval_split_program_from_command_line_temp(Evaluator_Context *ctx,
+                                               Eval_Cmdline_Mode mode,
+                                               String_View input,
+                                               String_View *out_program,
+                                               String_View *out_args);
+bool eval_find_program_full_path_temp(Evaluator_Context *ctx,
+                                      String_View token,
+                                      String_View *out_program,
+                                      bool *out_found);
 bool eval_process_run_capture(Evaluator_Context *ctx, const Eval_Process_Run_Request *req, Eval_Process_Run_Result *out);
 bool eval_process_run_nob_cmd_capture(Evaluator_Context *ctx,
                                       const Nob_Cmd *cmd,

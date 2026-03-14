@@ -70,15 +70,15 @@ Excluded from `MISSING`:
 
 ## 3. Snapshot Summary
 
-Snapshot date: March 11, 2026.
+Snapshot date: March 13, 2026.
 
 | Metric | Value |
 |---|---:|
 | Registry built-ins | 123 |
 | Structural nodes outside registry | 12 |
 | Audited universe | 135 |
-| Audit `FULL` | 94 |
-| Audit `PARTIAL` | 41 |
+| Audit `FULL` | 95 |
+| Audit `PARTIAL` | 40 |
 | Audit `MISSING` | 0 |
 | Relevant to `first_party_runtime` | 55 |
 | Relevant to `external_corpus` | 60 |
@@ -216,7 +216,7 @@ Current native-tag divergences:
 | `qt_wrap_ui` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 | `remove` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 | `remove_definitions` | native | PARTIAL | PARTIAL | none | Remove directory-level compile definitions with legacy CMake-compatible normalization. | Removes exact `-D...` definitions from directory compile-definition state; broader legacy parity is narrower. | `src_v2/evaluator/eval_directory.c` | [`remove_definitions`](https://cmake.org/cmake/help/v3.28/command/remove_definitions.html) |
-| `separate_arguments` | native | PARTIAL | PARTIAL | none | Support all documented parsing modes, including `PROGRAM` handling. | Core parsing modes work, but `PROGRAM` mode is explicitly not implemented yet. | `src_v2/evaluator/eval_vars_parse.c` | [`separate_arguments`](https://cmake.org/cmake/help/v3.28/command/separate_arguments.html) |
+| `separate_arguments` | native | FULL | FULL | none | Support all documented parsing modes, including `PROGRAM` handling. | Covers the legacy space-replacement form, mode-based splitting, and `PROGRAM [SEPARATE_ARGS]` output semantics used by CMake 3.28. | `src_v2/evaluator/eval_vars_parse.c` | [`separate_arguments`](https://cmake.org/cmake/help/v3.28/command/separate_arguments.html) |
 | `set_directory_properties` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 | `set_source_files_properties` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
 | `set_tests_properties` | native | FULL | FULL | none | Implement the documented CMake 3.28 semantics needed before build-model projection. | Native handler present; this audit found no project-relevant gap in the exercised CMake 3.28 surface. | `src_v2/evaluator/eval_command_registry.h` | [cmake-commands(7)](https://cmake.org/cmake/help/v3.28/manual/cmake-commands.7.html) |
@@ -281,7 +281,6 @@ Priority labels used in `Why It Matters`:
 | `include_external_msproject` | Integrates an external MS project into the build graph and generated metadata. | Parses the supported arguments, registers a target placeholder, and publishes evaluator-side metadata. | Full native Visual Studio/generator integration semantics are still missing. | `low` | Extend metadata and graph handling to cover the remaining documented integration behavior. | `src_v2/evaluator/eval_meta.c` | [`include_external_msproject`](https://cmake.org/cmake/help/v3.28/command/include_external_msproject.html) |
 | `load_cache` | Imports cache entries using the documented modes and visibility controls. | Supports `READ_WITH_PREFIX` plus selective import modes backed by direct cache parsing. | Remaining documented modes/argument shapes are still unsupported. | `low` | Finish the unsupported mode parser branches and align imported-entry behavior with CMake 3.28. | `src_v2/evaluator/eval_vars.c` | [`load_cache`](https://cmake.org/cmake/help/v3.28/command/load_cache.html) |
 | `remove_definitions` | Removes compile definitions with legacy-compatible normalization. | Removes exact `-D...` entries from directory compile-definition state and resynchronizes the directory property. | Broader legacy normalization and edge-case parity remain incomplete. | `low` | Extend removal normalization and compatibility behavior in `eval_directory.c`. | `src_v2/evaluator/eval_directory.c` | [`remove_definitions`](https://cmake.org/cmake/help/v3.28/command/remove_definitions.html) |
-| `separate_arguments` | Supports all documented parsing modes, including `PROGRAM`. | Core parsing modes are implemented. | `PROGRAM` mode is explicitly not implemented yet. | `low` | Implement the `PROGRAM` branch in `eval_vars_parse.c` and align result variables with CMake 3.28. | `src_v2/evaluator/eval_vars_parse.c` | [`separate_arguments`](https://cmake.org/cmake/help/v3.28/command/separate_arguments.html) |
 | `target_compile_features` | Records compile-feature requirements and their native semantics. | Stores `COMPILE_FEATURES` and `INTERFACE_COMPILE_FEATURES` in the evaluator property store. | Feature availability/standard-resolution semantics are not fully modeled. | `project-relevant` | Add compile-feature interpretation/validation beyond raw property storage. | `src_v2/evaluator/eval_target_usage.c` | [`target_compile_features`](https://cmake.org/cmake/help/v3.28/command/target_compile_features.html) |
 | `target_precompile_headers` | Records precompiled-header declarations and reuse semantics. | Stores `PRECOMPILE_HEADERS`, `INTERFACE_PRECOMPILE_HEADERS`, and `REUSE_FROM` dependencies. | Full realization semantics beyond property/dependency recording remain incomplete. | `project-relevant` | Extend evaluator-visible semantics for the remaining PCH behavior that scripts depend on. | `src_v2/evaluator/eval_target_usage.c` | [`target_precompile_headers`](https://cmake.org/cmake/help/v3.28/command/target_precompile_headers.html) |
 | `target_sources` | Records regular sources plus documented `FILE_SET` families. | Stores regular sources and supports `FILE_SET TYPE HEADERS`. | Other `FILE_SET` families, notably `CXX_MODULES`, remain unsupported. | `artifact-critical` | Extend `target_sources_parse_file_set(...)` and related storage to the remaining file-set families. | `src_v2/evaluator/eval_target_usage.c` | [`target_sources`](https://cmake.org/cmake/help/v3.28/command/target_sources.html) |

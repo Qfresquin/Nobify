@@ -5798,7 +5798,7 @@ TEST(evaluator_option_mark_as_advanced_and_include_regular_expression_follow_pol
     TEST_PASS();
 }
 
-TEST(evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode) {
+TEST(evaluator_separate_arguments_covers_program_mode_and_legacy_form) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -5823,30 +5823,106 @@ TEST(evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode) {
         "separate_arguments(OUT_WIN WINDOWS_COMMAND [=[alpha \"two words\" C:\\\\tmp\\\\x]=])\n"
         "set(OUT_NATIVE [=[alpha \"two words\"]=])\n"
         "separate_arguments(OUT_NATIVE)\n"
-        "separate_arguments(BAD_PROGRAM UNIX_COMMAND PROGRAM alpha)\n");
+        "separate_arguments(OUT_EMPTY UNIX_COMMAND)\n"
+#if defined(_WIN32)
+        "separate_arguments(OUT_PROGRAM_RAW NATIVE_COMMAND PROGRAM [=[cmd /C echo]=])\n"
+        "separate_arguments(OUT_PROGRAM_SPLIT NATIVE_COMMAND PROGRAM SEPARATE_ARGS [=[cmd /C echo]=])\n"
+        "separate_arguments(OUT_PROGRAM_MISSING NATIVE_COMMAND PROGRAM [=[nobify_missing_tool /C echo]=])\n");
+#else
+        "separate_arguments(OUT_PROGRAM_RAW NATIVE_COMMAND PROGRAM [=[sh -c echo]=])\n"
+        "separate_arguments(OUT_PROGRAM_SPLIT NATIVE_COMMAND PROGRAM SEPARATE_ARGS [=[sh -c echo]=])\n"
+        "separate_arguments(OUT_PROGRAM_MISSING NATIVE_COMMAND PROGRAM [=[nobify_missing_tool -c echo]=])\n");
+#endif
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 1);
+    ASSERT(report->error_count == 0);
 
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_UNIX")),
                      nob_sv_from_cstr("alpha;two words;three four")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_WIN")),
                      nob_sv_from_cstr("alpha;two words;C:\\\\tmp\\\\x")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_NATIVE")),
-                     nob_sv_from_cstr("alpha;two words")));
+                     nob_sv_from_cstr("alpha;\"two;words\"")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_EMPTY")),
+                     nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("OUT_PROGRAM_MISSING")),
+                     nob_sv_from_cstr("")));
 
-    bool saw_program_diag = false;
+#if defined(_WIN32)
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("OUT_PROGRAM_RAW")),
+                           "cmd.exe; /C echo"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("OUT_PROGRAM_SPLIT")),
+                           "cmd.exe;/C;echo"));
+#else
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("OUT_PROGRAM_RAW")),
+                           "/sh; -c echo"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("OUT_PROGRAM_SPLIT")),
+                           "/sh;-c;echo"));
+#endif
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_separate_arguments_rejects_invalid_option_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "separate_arguments(BAD_MISSING_MODE PROGRAM alpha)\n"
+        "separate_arguments(BAD_MULTI_MODE UNIX_COMMAND WINDOWS_COMMAND alpha)\n"
+        "separate_arguments(BAD_SEPARATE_ONLY UNIX_COMMAND SEPARATE_ARGS alpha)\n"
+        "separate_arguments(BAD_EXTRA UNIX_COMMAND alpha beta)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    bool saw_missing_mode = false;
+    bool saw_multi_mode = false;
+    bool saw_separate_only = false;
+    bool saw_unexpected = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind == EV_DIAGNOSTIC &&
-            ev->as.diag.severity == EV_DIAG_ERROR &&
-            nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"))) {
-            saw_program_diag = true;
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("separate_arguments"))) continue;
+
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments() missing required mode"))) {
+            saw_missing_mode = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments() modes are mutually exclusive"))) {
+            saw_multi_mode = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments(SEPARATE_ARGS) requires PROGRAM"))) {
+            saw_separate_only = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments() given unexpected argument(s)"))) {
+            saw_unexpected = true;
         }
     }
-    ASSERT(saw_program_diag);
+
+    ASSERT(saw_missing_mode);
+    ASSERT(saw_multi_mode);
+    ASSERT(saw_separate_only);
+    ASSERT(saw_unexpected);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -9053,7 +9129,7 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
         "math()\n"
         "message(WARNING warn-msg)\n"
         "message(SEND_ERROR err-msg)\n"
-        "separate_arguments(BAD_PROGRAM UNIX_COMMAND PROGRAM alpha)\n");
+        "cmake_host_system_information(RESULT HOST_INFO QUERY NUMBER_OF_PHYSICAL_CORES)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
@@ -9072,7 +9148,7 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
     bool saw_math_missing_required = false;
     bool saw_message_warning = false;
     bool saw_message_error = false;
-    bool saw_not_implemented = false;
+    bool saw_host_not_implemented = false;
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -9108,11 +9184,12 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
             ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_SCRIPT_ERROR")));
             ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
             saw_message_error = true;
-        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"))) {
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"))) {
             ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
             ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_NOT_IMPLEMENTED")));
             ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("ENGINE_LIMITATION")));
-            saw_not_implemented = true;
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("NUMBER_OF_PHYSICAL_CORES")));
+            saw_host_not_implemented = true;
         }
     }
 
@@ -9122,7 +9199,7 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
     ASSERT(saw_math_missing_required);
     ASSERT(saw_message_warning);
     ASSERT(saw_message_error);
-    ASSERT(saw_not_implemented);
+    ASSERT(saw_host_not_implemented);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -10279,7 +10356,8 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists(passed, failed);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
-    test_evaluator_separate_arguments_parses_mode_forms_and_rejects_program_mode(passed, failed);
+    test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
+    test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);
     test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);

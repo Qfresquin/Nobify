@@ -439,103 +439,72 @@ Eval_Result eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node
     return eval_result_from_ctx(ctx);
 }
 
-static bool join_sv_with_spaces_temp(Evaluator_Context *ctx,
-                                     String_View *items,
-                                     size_t count,
-                                     String_View *out_value) {
-    if (!out_value) return false;
-    *out_value = nob_sv_from_cstr("");
+static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
+                                            Eval_Cmdline_Mode mode,
+                                            String_View input,
+                                            SV_List *out) {
+    return eval_split_command_line_temp(ctx, mode, input, out);
+}
+
+static String_View separate_arguments_replace_spaces_temp(Evaluator_Context *ctx, String_View input) {
+    if (!ctx || input.count == 0) return nob_sv_from_cstr("");
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < input.count; i++) {
+        buf[i] = (input.data[i] == ' ') ? ';' : input.data[i];
+    }
+    buf[input.count] = '\0';
+    return nob_sv_from_parts(buf, input.count);
+}
+
+static bool separate_arguments_set_program_pair(Evaluator_Context *ctx,
+                                                String_View out_var,
+                                                String_View program,
+                                                String_View args_string) {
     if (!ctx) return false;
-    if (count == 0) return true;
 
-    size_t total = 0;
-    for (size_t i = 0; i < count; i++) total += items[i].count;
-    if (count > 1) total += count - 1;
-
+    size_t total = program.count + 1 + args_string.count;
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
 
     size_t off = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (i > 0) buf[off++] = ' ';
-        if (items[i].count > 0) {
-            memcpy(buf + off, items[i].data, items[i].count);
-            off += items[i].count;
-        }
+    if (program.count > 0) {
+        memcpy(buf + off, program.data, program.count);
+        off += program.count;
+    }
+    buf[off++] = ';';
+    if (args_string.count > 0) {
+        memcpy(buf + off, args_string.data, args_string.count);
+        off += args_string.count;
     }
     buf[off] = '\0';
-    *out_value = nob_sv_from_parts(buf, off);
+    return eval_var_set_current(ctx, out_var, nob_sv_from_parts(buf, off));
+}
+
+static size_t separate_arguments_mode_count(bool unix_mode, bool windows_mode, bool native_mode) {
+    return (unix_mode ? 1u : 0u) + (windows_mode ? 1u : 0u) + (native_mode ? 1u : 0u);
+}
+
+static Eval_Cmdline_Mode separate_arguments_selected_mode(bool unix_mode,
+                                                          bool windows_mode,
+                                                          bool native_mode) {
+    if (unix_mode) return EVAL_CMDLINE_UNIX;
+    if (windows_mode) return EVAL_CMDLINE_WINDOWS;
+    if (native_mode) return EVAL_CMDLINE_NATIVE;
+    return EVAL_CMDLINE_NATIVE;
+}
+
+static bool separate_arguments_trim_whitespace(String_View input, String_View *out_trimmed) {
+    if (!out_trimmed) return false;
+    size_t start = 0;
+    while (start < input.count && isspace((unsigned char)input.data[start])) start++;
+
+    size_t end = input.count;
+    while (end > start && isspace((unsigned char)input.data[end - 1])) end--;
+
+    *out_trimmed = nob_sv_from_parts(input.data + start, end - start);
     return true;
-}
-
-static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
-                                            bool windows_mode,
-                                            String_View input,
-                                            SV_List *out) {
-    return eval_split_command_line_temp(ctx,
-                                        windows_mode ? EVAL_CMDLINE_WINDOWS : EVAL_CMDLINE_UNIX,
-                                        input,
-                                        out);
-}
-
-typedef enum {
-    SEPARATE_ARGUMENTS_MODE_UNIX = 0,
-    SEPARATE_ARGUMENTS_MODE_WINDOWS,
-    SEPARATE_ARGUMENTS_MODE_NATIVE,
-} Separate_Arguments_Mode_Opt_Id;
-
-typedef struct {
-    const Node *node;
-    Cmake_Event_Origin origin;
-    bool *windows_mode;
-    String_View *input;
-} Separate_Arguments_Mode_Parse_State;
-
-static const Eval_Opt_Spec k_separate_arguments_mode_specs[] = {
-    EVAL_OPT_SPEC_REQ(SEPARATE_ARGUMENTS_MODE_UNIX, "UNIX_COMMAND", EVAL_OPT_TAIL, 1, false, "separate_arguments() mode form requires an input command line", "Add the command string after the parsing mode"),
-    EVAL_OPT_SPEC_REQ(SEPARATE_ARGUMENTS_MODE_WINDOWS, "WINDOWS_COMMAND", EVAL_OPT_TAIL, 1, false, "separate_arguments() mode form requires an input command line", "Add the command string after the parsing mode"),
-    EVAL_OPT_SPEC_REQ(SEPARATE_ARGUMENTS_MODE_NATIVE, "NATIVE_COMMAND", EVAL_OPT_TAIL, 1, false, "separate_arguments() mode form requires an input command line", "Add the command string after the parsing mode"),
-};
-
-static bool separate_arguments_parse_mode_option(Evaluator_Context *ctx,
-                                                 void *userdata,
-                                                 int id,
-                                                 SV_List values,
-                                                 size_t token_index) {
-    (void)token_index;
-    Separate_Arguments_Mode_Parse_State *state = (Separate_Arguments_Mode_Parse_State *)userdata;
-    if (!state || !state->node || !state->windows_mode || !state->input) return false;
-
-    if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "PROGRAM")) {
-        return EVAL_DIAG_BOOL_SEV(ctx,
-                                  EV_DIAG_ERROR,
-                                  EVAL_DIAG_NOT_IMPLEMENTED,
-                                  nob_sv_from_cstr("separate_arguments"),
-                                  state->node->as.cmd.name,
-                                  state->origin,
-                                  nob_sv_from_cstr("separate_arguments(PROGRAM ...) is not implemented yet"),
-                                  nob_sv_from_cstr("Supported in this batch: UNIX_COMMAND, WINDOWS_COMMAND, NATIVE_COMMAND, and one-argument list form"));
-    }
-
-    switch ((Separate_Arguments_Mode_Opt_Id)id) {
-        case SEPARATE_ARGUMENTS_MODE_UNIX:
-            *state->windows_mode = false;
-            break;
-        case SEPARATE_ARGUMENTS_MODE_WINDOWS:
-            *state->windows_mode = true;
-            break;
-        case SEPARATE_ARGUMENTS_MODE_NATIVE:
-#if defined(_WIN32)
-            *state->windows_mode = true;
-#else
-            *state->windows_mode = false;
-#endif
-            break;
-        default:
-            return false;
-    }
-
-    return join_sv_with_spaces_temp(ctx, values, arena_arr_len(values), state->input);
 }
 
 Eval_Result eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
@@ -551,54 +520,165 @@ Eval_Result eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *n
     }
 
     String_View out_var = a[0];
-    bool windows_mode =
-#if defined(_WIN32)
-        true;
-#else
-        false;
-#endif
-
-    String_View input = nob_sv_from_cstr("");
     if (arena_arr_len(a) == 1) {
-        input = eval_var_get_visible(ctx, out_var);
-    } else if (eval_opt_token_is_keyword(a[1],
-                                         k_separate_arguments_mode_specs,
-                                         NOB_ARRAY_LEN(k_separate_arguments_mode_specs))) {
-        Separate_Arguments_Mode_Parse_State state = {
-            .node = node,
-            .origin = o,
-            .windows_mode = &windows_mode,
-            .input = &input,
-        };
-        Eval_Opt_Parse_Config cfg = {
-            .origin = o,
-            .component = nob_sv_from_cstr("separate_arguments"),
-            .command = node->as.cmd.name,
-            .unknown_as_positional = false,
-            .warn_unknown = false,
-        };
-        if (!eval_opt_parse_walk(ctx,
-                                 a,
-                                 1,
-                                 k_separate_arguments_mode_specs,
-                                 NOB_ARRAY_LEN(k_separate_arguments_mode_specs),
-                                 cfg,
-                                 separate_arguments_parse_mode_option,
-                                 NULL,
-                                 &state)) {
+        String_View current = eval_var_get_visible(ctx, out_var);
+        if (!eval_var_set_current(ctx, out_var, separate_arguments_replace_spaces_temp(ctx, current))) {
             return eval_result_from_ctx(ctx);
         }
-    } else {
-        if (!join_sv_with_spaces_temp(ctx, &a[1], arena_arr_len(a) - 1, &input)) {
-            return eval_result_from_ctx(ctx);
-        }
-    }
-
-    SV_List tokens = NULL;
-    if (!separate_arguments_parse_tokens(ctx, windows_mode, input, &tokens)) return eval_result_from_ctx(ctx);
-    if (!eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)))) {
         return eval_result_from_ctx(ctx);
     }
 
+    bool unix_mode = false;
+    bool windows_mode = false;
+    bool native_mode = false;
+    bool program_mode = false;
+    bool separate_args = false;
+    String_View input = nob_sv_from_cstr("");
+    size_t positional_count = 0;
+
+    for (size_t i = 1; i < arena_arr_len(a); i++) {
+        if (eval_sv_eq_ci_lit(a[i], "UNIX_COMMAND")) {
+            unix_mode = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a[i], "WINDOWS_COMMAND")) {
+            windows_mode = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a[i], "NATIVE_COMMAND")) {
+            native_mode = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a[i], "PROGRAM")) {
+            program_mode = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(a[i], "SEPARATE_ARGS")) {
+            separate_args = true;
+            continue;
+        }
+
+        positional_count++;
+        if (positional_count > 1) {
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                 node,
+                                                 o,
+                                                 EV_DIAG_ERROR,
+                                                 EVAL_DIAG_UNEXPECTED_ARGUMENT,
+                                                 "separate_arguments",
+                                                 nob_sv_from_cstr("separate_arguments() given unexpected argument(s)"),
+                                                 a[i]);
+            return eval_result_from_ctx(ctx);
+        }
+        input = a[i];
+    }
+
+    if (separate_arguments_mode_count(unix_mode, windows_mode, native_mode) == 0) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                             node,
+                                             o,
+                                             EV_DIAG_ERROR,
+                                             EVAL_DIAG_MISSING_REQUIRED,
+                                             "separate_arguments",
+                                             nob_sv_from_cstr("separate_arguments() missing required mode"),
+                                             nob_sv_from_cstr("Use UNIX_COMMAND, WINDOWS_COMMAND, or NATIVE_COMMAND"));
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (separate_arguments_mode_count(unix_mode, windows_mode, native_mode) > 1) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                             node,
+                                             o,
+                                             EV_DIAG_ERROR,
+                                             EVAL_DIAG_INVALID_VALUE,
+                                             "separate_arguments",
+                                             nob_sv_from_cstr("separate_arguments() modes are mutually exclusive"),
+                                             nob_sv_from_cstr("Choose exactly one of UNIX_COMMAND, WINDOWS_COMMAND, or NATIVE_COMMAND"));
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (separate_args && !program_mode) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                             node,
+                                             o,
+                                             EV_DIAG_ERROR,
+                                             EVAL_DIAG_INVALID_VALUE,
+                                             "separate_arguments",
+                                             nob_sv_from_cstr("separate_arguments(SEPARATE_ARGS) requires PROGRAM"),
+                                             nob_sv_from_cstr("Add PROGRAM before SEPARATE_ARGS"));
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (positional_count == 0 || input.count == 0) {
+        if (!eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""))) {
+            return eval_result_from_ctx(ctx);
+        }
+        return eval_result_from_ctx(ctx);
+    }
+
+    Eval_Cmdline_Mode mode = separate_arguments_selected_mode(unix_mode, windows_mode, native_mode);
+    if (!program_mode) {
+        SV_List tokens = NULL;
+        if (!separate_arguments_parse_tokens(ctx, mode, input, &tokens)) return eval_result_from_ctx(ctx);
+        if (!eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)))) {
+            return eval_result_from_ctx(ctx);
+        }
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (separate_args) {
+        SV_List tokens = NULL;
+        if (!separate_arguments_parse_tokens(ctx, mode, input, &tokens)) return eval_result_from_ctx(ctx);
+        if (arena_arr_len(tokens) == 0) {
+            if (!eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""))) return eval_result_from_ctx(ctx);
+            return eval_result_from_ctx(ctx);
+        }
+
+        String_View program_path = nob_sv_from_cstr("");
+        bool found = false;
+        if (!eval_find_program_full_path_temp(ctx, tokens[0], &program_path, &found)) return eval_result_from_ctx(ctx);
+        if (!found) {
+            if (!eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""))) return eval_result_from_ctx(ctx);
+            return eval_result_from_ctx(ctx);
+        }
+
+        tokens[0] = program_path;
+        if (!eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)))) {
+            return eval_result_from_ctx(ctx);
+        }
+        return eval_result_from_ctx(ctx);
+    }
+
+    String_View trimmed = nob_sv_from_cstr("");
+    if (!separate_arguments_trim_whitespace(input, &trimmed)) return eval_result_fatal();
+
+    String_View program_path = nob_sv_from_cstr("");
+    bool found = false;
+    if (trimmed.count > 0 &&
+        !eval_find_program_full_path_temp(ctx, trimmed, &program_path, &found)) {
+        return eval_result_from_ctx(ctx);
+    }
+
+    String_View program_args = nob_sv_from_cstr("");
+    if (!found) {
+        String_View program_token = nob_sv_from_cstr("");
+        if (!eval_split_program_from_command_line_temp(ctx, mode, input, &program_token, &program_args)) {
+            return eval_result_from_ctx(ctx);
+        }
+        if (program_token.count > 0 &&
+            !eval_find_program_full_path_temp(ctx, program_token, &program_path, &found)) {
+            return eval_result_from_ctx(ctx);
+        }
+        if (!found) program_args = nob_sv_from_cstr("");
+    }
+
+    if (!found) {
+        if (!eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""))) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (!separate_arguments_set_program_pair(ctx, out_var, program_path, program_args)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }

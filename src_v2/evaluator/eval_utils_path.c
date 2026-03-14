@@ -129,19 +129,250 @@ static bool eval_split_windows_command_temp(Evaluator_Context *ctx, String_View 
     return true;
 }
 
+static Eval_Cmdline_Mode eval_cmdline_mode_normalized(Eval_Cmdline_Mode mode) {
+    if (mode == EVAL_CMDLINE_NATIVE) {
+#if defined(_WIN32)
+        return EVAL_CMDLINE_WINDOWS;
+#else
+        return EVAL_CMDLINE_UNIX;
+#endif
+    }
+    return mode;
+}
+
+static bool eval_split_unix_program_from_args_temp(Evaluator_Context *ctx,
+                                                   String_View input,
+                                                   String_View *out_program,
+                                                   String_View *out_args) {
+    if (!ctx || !out_program || !out_args) return false;
+    *out_program = nob_sv_from_cstr("");
+    *out_args = nob_sv_from_cstr("");
+
+    size_t i = 0;
+    while (i < input.count && isspace((unsigned char)input.data[i])) i++;
+    if (i >= input.count) return true;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+    size_t off = 0;
+    char quote = '\0';
+    while (i < input.count) {
+        char c = input.data[i];
+        if (quote != '\0') {
+            if (c == quote) {
+                quote = '\0';
+                i++;
+                continue;
+            }
+            if (c == '\\' && quote == '"' && i + 1 < input.count) {
+                buf[off++] = input.data[i + 1];
+                i += 2;
+                continue;
+            }
+            buf[off++] = c;
+            i++;
+            continue;
+        }
+
+        if (isspace((unsigned char)c)) break;
+        if (c == '"' || c == '\'') {
+            quote = c;
+            i++;
+            continue;
+        }
+        if (c == '\\' && i + 1 < input.count) {
+            buf[off++] = input.data[i + 1];
+            i += 2;
+            continue;
+        }
+        buf[off++] = c;
+        i++;
+    }
+
+    buf[off] = '\0';
+    *out_program = nob_sv_from_parts(buf, off);
+    if (i < input.count) *out_args = nob_sv_from_parts(input.data + i, input.count - i);
+    return true;
+}
+
+static bool eval_split_windows_program_from_args_temp(Evaluator_Context *ctx,
+                                                      String_View input,
+                                                      String_View *out_program,
+                                                      String_View *out_args) {
+    if (!ctx || !out_program || !out_args) return false;
+    *out_program = nob_sv_from_cstr("");
+    *out_args = nob_sv_from_cstr("");
+
+    size_t i = 0;
+    while (i < input.count && isspace((unsigned char)input.data[i])) i++;
+    if (i >= input.count) return true;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+
+    size_t off = 0;
+    bool in_quotes = false;
+    while (i < input.count) {
+        char c = input.data[i];
+        if (!in_quotes && isspace((unsigned char)c)) break;
+
+        if (c == '\\') {
+            size_t slash_count = 0;
+            while (i + slash_count < input.count && input.data[i + slash_count] == '\\') slash_count++;
+
+            bool next_is_quote = (i + slash_count < input.count && input.data[i + slash_count] == '"');
+            if (next_is_quote) {
+                size_t literal_slashes = slash_count / 2;
+                for (size_t si = 0; si < literal_slashes; si++) buf[off++] = '\\';
+                if ((slash_count % 2) == 0) {
+                    in_quotes = !in_quotes;
+                } else {
+                    buf[off++] = '"';
+                }
+                i += slash_count + 1;
+                continue;
+            }
+
+            for (size_t si = 0; si < slash_count; si++) buf[off++] = '\\';
+            i += slash_count;
+            continue;
+        }
+
+        if (c == '"') {
+            if (in_quotes && i + 1 < input.count && input.data[i + 1] == '"') {
+                buf[off++] = '"';
+                i += 2;
+                continue;
+            }
+            in_quotes = !in_quotes;
+            i++;
+            continue;
+        }
+
+        buf[off++] = c;
+        i++;
+    }
+
+    buf[off] = '\0';
+    *out_program = nob_sv_from_parts(buf, off);
+    if (i < input.count) *out_args = nob_sv_from_parts(input.data + i, input.count - i);
+    return true;
+}
+
+bool eval_split_program_from_command_line_temp(Evaluator_Context *ctx,
+                                               Eval_Cmdline_Mode mode,
+                                               String_View input,
+                                               String_View *out_program,
+                                               String_View *out_args) {
+    if (!ctx || !out_program || !out_args) return false;
+
+    mode = eval_cmdline_mode_normalized(mode);
+    if (mode == EVAL_CMDLINE_WINDOWS) {
+        return eval_split_windows_program_from_args_temp(ctx, input, out_program, out_args);
+    }
+    return eval_split_unix_program_from_args_temp(ctx, input, out_program, out_args);
+}
+
+static bool eval_program_token_contains_path_sep(String_View value) {
+    if (value.count == 0) return false;
+    for (size_t i = 0; i < value.count; i++) {
+        if (svu_is_path_sep(value.data[i])) return true;
+    }
+    return false;
+}
+
+static bool eval_program_candidate_is_file(Evaluator_Context *ctx, String_View candidate) {
+    if (!ctx || candidate.count == 0) return false;
+    char *path_c = eval_sv_to_cstr_temp(ctx, candidate);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    if (!nob_file_exists(path_c)) return false;
+    Nob_File_Type kind = nob_get_file_type(path_c);
+    return kind == NOB_FILE_REGULAR || kind == NOB_FILE_SYMLINK;
+}
+
+static String_View eval_trim_whitespace_view(String_View input) {
+    size_t start = 0;
+    while (start < input.count && isspace((unsigned char)input.data[start])) start++;
+
+    size_t end = input.count;
+    while (end > start && isspace((unsigned char)input.data[end - 1])) end--;
+
+    return nob_sv_from_parts(input.data + start, end - start);
+}
+
+bool eval_find_program_full_path_temp(Evaluator_Context *ctx,
+                                      String_View token,
+                                      String_View *out_program,
+                                      bool *out_found) {
+    if (!ctx || !out_program) return false;
+    *out_program = nob_sv_from_cstr("");
+    if (out_found) *out_found = false;
+
+    String_View trimmed = eval_trim_whitespace_view(token);
+    if (trimmed.count == 0) return true;
+
+    String_View current_src = eval_current_source_dir(ctx);
+    if (eval_sv_is_abs_path(trimmed) || eval_program_token_contains_path_sep(trimmed)) {
+        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, trimmed, current_src, false);
+        if (eval_should_stop(ctx)) return false;
+        *out_program = resolved;
+        if (eval_program_candidate_is_file(ctx, resolved) && out_found) *out_found = true;
+        return true;
+    }
+
+    const char *path_env = eval_getenv_temp(ctx, "PATH");
+    if (!path_env || path_env[0] == '\0') return true;
+
+    String_View raw_path = nob_sv_from_cstr(path_env);
+    const char path_sep =
+#if defined(_WIN32)
+        ';';
+#else
+        ':';
+#endif
+
+#if defined(_WIN32)
+    static const char *const k_exts[] = {"", ".exe", ".cmd", ".bat", ".com"};
+#else
+    static const char *const k_exts[] = {""};
+#endif
+
+    const char *p = raw_path.data;
+    const char *end = raw_path.data + raw_path.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != path_sep) q++;
+        String_View dir = nob_sv_from_parts(p, (size_t)(q - p));
+        if (dir.count > 0) {
+            for (size_t ei = 0; ei < NOB_ARRAY_LEN(k_exts); ei++) {
+                String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, trimmed);
+                if (eval_should_stop(ctx)) return false;
+                if (k_exts[ei][0] != '\0') {
+                    candidate = svu_concat_suffix_temp(ctx, candidate, k_exts[ei]);
+                    if (eval_should_stop(ctx)) return false;
+                }
+                if (!eval_program_candidate_is_file(ctx, candidate)) continue;
+                *out_program = eval_sv_path_normalize_temp(ctx, candidate);
+                if (eval_should_stop(ctx)) return false;
+                if (out_found) *out_found = true;
+                return true;
+            }
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
+
+    return true;
+}
+
 bool eval_split_command_line_temp(Evaluator_Context *ctx,
                                   Eval_Cmdline_Mode mode,
                                   String_View input,
                                   SV_List *out_tokens) {
     if (!ctx || !out_tokens) return false;
 
-    if (mode == EVAL_CMDLINE_NATIVE) {
-#if defined(_WIN32)
-        mode = EVAL_CMDLINE_WINDOWS;
-#else
-        mode = EVAL_CMDLINE_UNIX;
-#endif
-    }
+    mode = eval_cmdline_mode_normalized(mode);
 
     if (mode == EVAL_CMDLINE_WINDOWS) return eval_split_windows_command_temp(ctx, input, out_tokens);
     return eval_split_shell_like_temp(ctx, input, out_tokens);

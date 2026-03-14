@@ -97,7 +97,7 @@
     X("remove", eval_handle_remove, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("remove_definitions", eval_handle_remove_definitions, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("return", eval_handle_return, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("separate_arguments", eval_handle_separate_arguments, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("separate_arguments", eval_handle_separate_arguments, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("set", eval_handle_set, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("set_directory_properties", eval_handle_set_directory_properties, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("set_property", eval_handle_set_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \

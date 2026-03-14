@@ -295,86 +295,13 @@ static String_View gfc_stem_from_name(String_View name, bool last_only) {
     return nob_sv_from_parts(name.data, (size_t)dot);
 }
 
-static bool gfc_contains_path_sep(String_View value) {
-    if (value.count == 0) return false;
-    for (size_t i = 0; i < value.count; i++) {
-        if (svu_is_path_sep(value.data[i])) return true;
-    }
-    return false;
-}
-
-static bool gfc_candidate_is_file(Evaluator_Context *ctx, String_View candidate) {
-    if (!ctx || candidate.count == 0) return false;
-    char *path_c = eval_sv_to_cstr_temp(ctx, candidate);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    if (!nob_file_exists(path_c)) return false;
-    Nob_File_Type kind = nob_get_file_type(path_c);
-    return kind == NOB_FILE_REGULAR || kind == NOB_FILE_SYMLINK;
-}
-
 static bool gfc_resolve_program_full_path(Evaluator_Context *ctx,
                                           String_View token,
                                           String_View *out_program) {
     if (!ctx || !out_program) return false;
-    *out_program = token;
-    if (token.count == 0) return true;
-
-    String_View current_src = eval_current_source_dir(ctx);
-
-    if (eval_sv_is_abs_path(token) || gfc_contains_path_sep(token)) {
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, token, current_src, false);
-        if (eval_should_stop(ctx)) return false;
-        *out_program = resolved;
-        return true;
-    }
-
-    const char *path_env = eval_getenv_temp(ctx, "PATH");
-    if (!path_env || path_env[0] == '\0') return true;
-
-    String_View raw_path = nob_sv_from_cstr(path_env);
-    const char path_sep =
-#if defined(_WIN32)
-        ';';
-#else
-        ':';
-#endif
-
-#if defined(_WIN32)
-    static const char *const k_exts[] = {"", ".exe", ".cmd", ".bat", ".com"};
-#else
-    static const char *const k_exts[] = {""};
-#endif
-    const char *const *exts = k_exts;
-    const size_t ext_count =
-#if defined(_WIN32)
-        NOB_ARRAY_LEN(k_exts);
-#else
-        NOB_ARRAY_LEN(k_exts);
-#endif
-
-    const char *p = raw_path.data;
-    const char *end = raw_path.data + raw_path.count;
-    while (p <= end) {
-        const char *q = p;
-        while (q < end && *q != path_sep) q++;
-        String_View dir = nob_sv_from_parts(p, (size_t)(q - p));
-        if (dir.count > 0) {
-            for (size_t ei = 0; ei < ext_count; ei++) {
-                String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dir, token);
-                if (eval_should_stop(ctx)) return false;
-                if (exts[ei][0] != '\0') {
-                    candidate = svu_concat_suffix_temp(ctx, candidate, exts[ei]);
-                    if (eval_should_stop(ctx)) return false;
-                }
-                if (!gfc_candidate_is_file(ctx, candidate)) continue;
-                *out_program = eval_sv_path_normalize_temp(ctx, candidate);
-                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
-            }
-        }
-        if (q >= end) break;
-        p = q + 1;
-    }
-
+    bool found = false;
+    if (!eval_find_program_full_path_temp(ctx, token, out_program, &found)) return false;
+    if (!found && out_program->count == 0) *out_program = token;
     return true;
 }
 
