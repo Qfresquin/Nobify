@@ -2873,7 +2873,7 @@ TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "add_definitions(-DLEGACY=1 /DWIN_DEF -fPIC /EHsc -D)\n"
+        "add_definitions(-DLEGACY=1 /DWIN_DEF -fPIC /EHsc -D -D1BAD)\n"
         "add_executable(defs_probe main.c)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
@@ -2890,6 +2890,8 @@ TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
     bool saw_target_def_win = false;
     bool saw_target_opt_fpic = false;
     bool saw_target_opt_eh = false;
+    bool saw_target_opt_dash_d = false;
+    bool saw_target_opt_invalid_d = false;
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -2901,6 +2903,8 @@ TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
                    nob_sv_eq(ev->as.target_compile_options.target_name, nob_sv_from_cstr("defs_probe"))) {
             if (nob_sv_eq(ev->as.target_compile_options.item, nob_sv_from_cstr("-fPIC"))) saw_target_opt_fpic = true;
             if (nob_sv_eq(ev->as.target_compile_options.item, nob_sv_from_cstr("/EHsc"))) saw_target_opt_eh = true;
+            if (nob_sv_eq(ev->as.target_compile_options.item, nob_sv_from_cstr("-D"))) saw_target_opt_dash_d = true;
+            if (nob_sv_eq(ev->as.target_compile_options.item, nob_sv_from_cstr("-D1BAD"))) saw_target_opt_invalid_d = true;
         }
     }
 
@@ -2913,6 +2917,8 @@ TEST(evaluator_add_definitions_routes_d_flags_to_compile_definitions) {
     ASSERT(saw_target_def_win);
     ASSERT(saw_target_opt_fpic);
     ASSERT(saw_target_opt_eh);
+    ASSERT(saw_target_opt_dash_d);
+    ASSERT(saw_target_opt_invalid_d);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -6079,7 +6085,7 @@ TEST(evaluator_separate_arguments_rejects_invalid_option_shapes) {
     TEST_PASS();
 }
 
-TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions) {
+TEST(evaluator_remove_definitions_updates_directory_definition_and_option_state) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -6100,8 +6106,8 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "add_definitions(-DKEEP=1 -DREMOVE_ME=1 -Wall)\n"
-        "remove_definitions(-DREMOVE_ME=1 -Wall /DUNKNOWN=1)\n"
+        "add_definitions(-DKEEP=1 -DREMOVE_ME=1 -Wall -D1BAD)\n"
+        "remove_definitions(-DREMOVE_ME=1 -Wall -D1BAD /DUNKNOWN=1)\n"
         "get_property(DIR_DEFS DIRECTORY PROPERTY COMPILE_DEFINITIONS)\n"
         "get_property(DIR_OPTS DIRECTORY PROPERTY COMPILE_OPTIONS)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
@@ -6113,25 +6119,31 @@ TEST(evaluator_remove_definitions_updates_directory_state_only_for_compile_defin
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_GLOBAL_COMPILE_DEFINITIONS")),
                      nob_sv_from_cstr("KEEP=1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOBIFY_GLOBAL_COMPILE_OPTIONS")),
-                     nob_sv_from_cstr("-Wall")));
+                     nob_sv_from_cstr("")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIR_DEFS")), nob_sv_from_cstr("KEEP=1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIR_OPTS")), nob_sv_from_cstr("-Wall")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIR_OPTS")), nob_sv_from_cstr("")));
 
     bool saw_remove_defs_event = false;
+    bool saw_remove_opts_event = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind != EVENT_DIRECTORY_PROPERTY_MUTATE) continue;
         if (ev->h.origin.line != 2) continue;
-        if (!nob_sv_eq(ev->as.directory_property_mutate.property_name,
-                       nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
-            continue;
+        if (nob_sv_eq(ev->as.directory_property_mutate.property_name,
+                      nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
+            saw_remove_defs_event =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_SET &&
+                ev->as.directory_property_mutate.item_count == 1 &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("KEEP=1"));
+        } else if (nob_sv_eq(ev->as.directory_property_mutate.property_name,
+                             nob_sv_from_cstr("COMPILE_OPTIONS"))) {
+            saw_remove_opts_event =
+                ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_SET &&
+                ev->as.directory_property_mutate.item_count == 0;
         }
-        saw_remove_defs_event =
-            ev->as.directory_property_mutate.op == EVENT_PROPERTY_MUTATE_SET &&
-            ev->as.directory_property_mutate.item_count == 1 &&
-            nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("KEEP=1"));
     }
     ASSERT(saw_remove_defs_event);
+    ASSERT(saw_remove_opts_event);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -8764,7 +8776,13 @@ TEST(evaluator_get_filename_component_covers_documented_modes) {
 
     ASSERT(nob_mkdir_if_not_exists("gfc_real"));
     ASSERT(nob_mkdir_if_not_exists("gfc_real/sub"));
+    ASSERT(nob_mkdir_if_not_exists("gfc spaced"));
     ASSERT(nob_write_entire_file("gfc_real/sub/file.txt", "x", 1));
+#if defined(_WIN32)
+    ASSERT(nob_write_entire_file("gfc spaced/tool spaced.bat", "@echo off\r\n", strlen("@echo off\r\n")));
+#else
+    ASSERT(nob_write_entire_file("gfc spaced/tool spaced.sh", "#!/bin/sh\n", strlen("#!/bin/sh\n")));
+#endif
 
     Evaluator_Init init = {0};
     init.arena = temp_arena;
@@ -8788,11 +8806,22 @@ TEST(evaluator_get_filename_component_covers_documented_modes) {
         "get_filename_component(GFC_NAME_WLE \"a/b/c.tar.gz\" NAME_WLE CACHE)\n"
         "get_filename_component(GFC_ABS sub/file.txt ABSOLUTE BASE_DIR gfc_real)\n"
         "get_filename_component(GFC_REAL \"gfc_real/./sub/../sub/file.txt\" REALPATH)\n"
+        "set(GFC_SPACE_ARGS sentinel-space)\n"
+        "set(GFC_MISSING_ARGS sentinel-missing)\n"
+        "set(GFC_CACHE_HIT keep-me)\n"
+        "set(GFC_CACHE_HIT_ARGS keep-args)\n"
 #if defined(_WIN32)
         "get_filename_component(GFC_PROG \"cmd /C echo\" PROGRAM PROGRAM_ARGS GFC_PROG_ARGS)\n"
+        "get_filename_component(GFC_SPACE_PROG \"gfc spaced/tool spaced.bat\" PROGRAM PROGRAM_ARGS GFC_SPACE_ARGS)\n"
+        "get_filename_component(GFC_CACHE_HIT \"cmd /C echo\" PROGRAM PROGRAM_ARGS GFC_CACHE_HIT_ARGS CACHE)\n"
+        "get_filename_component(GFC_CACHE_PROG \"cmd /C echo\" PROGRAM PROGRAM_ARGS GFC_CACHE_PROG_ARGS CACHE)\n"
 #else
         "get_filename_component(GFC_PROG \"sh -c echo\" PROGRAM PROGRAM_ARGS GFC_PROG_ARGS)\n"
+        "get_filename_component(GFC_SPACE_PROG \"gfc spaced/tool spaced.sh\" PROGRAM PROGRAM_ARGS GFC_SPACE_ARGS)\n"
+        "get_filename_component(GFC_CACHE_HIT \"sh -c echo\" PROGRAM PROGRAM_ARGS GFC_CACHE_HIT_ARGS CACHE)\n"
+        "get_filename_component(GFC_CACHE_PROG \"sh -c echo\" PROGRAM PROGRAM_ARGS GFC_CACHE_PROG_ARGS CACHE)\n"
 #endif
+        "get_filename_component(GFC_MISSING_PROG \"./gfc_missing_program --flag\" PROGRAM PROGRAM_ARGS GFC_MISSING_ARGS)\n"
     );
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
@@ -8813,11 +8842,34 @@ TEST(evaluator_get_filename_component_covers_documented_modes) {
     ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_REAL")), "gfc_real/sub/file.txt"));
 #if defined(_WIN32)
     ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG")), "cmd.exe"));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG_ARGS")), nob_sv_from_cstr("/C;echo")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG_ARGS")), nob_sv_from_cstr(" /C echo")));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_SPACE_PROG")),
+                           "gfc spaced/tool spaced.bat"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_CACHE_PROG")), "cmd.exe"));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_CACHE_PROG_ARGS")),
+                     nob_sv_from_cstr(" /C echo")));
 #else
     ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG")), "/sh"));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG_ARGS")), nob_sv_from_cstr("-c;echo")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_PROG_ARGS")), nob_sv_from_cstr(" -c echo")));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_SPACE_PROG")),
+                           "gfc spaced/tool spaced.sh"));
+    ASSERT(nob_sv_end_with(eval_var_get(ctx, nob_sv_from_cstr("GFC_CACHE_PROG")), "/sh"));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_CACHE_PROG_ARGS")),
+                     nob_sv_from_cstr(" -c echo")));
 #endif
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_SPACE_ARGS")),
+                     nob_sv_from_cstr("sentinel-space")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_MISSING_PROG")), nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_MISSING_ARGS")),
+                     nob_sv_from_cstr("sentinel-missing")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_CACHE_HIT")),
+                     nob_sv_from_cstr("keep-me")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GFC_CACHE_HIT_ARGS")),
+                     nob_sv_from_cstr("keep-args")));
+    ASSERT(!eval_cache_defined(ctx, nob_sv_from_cstr("GFC_CACHE_HIT")));
+    ASSERT(!eval_cache_defined(ctx, nob_sv_from_cstr("GFC_CACHE_HIT_ARGS")));
+    ASSERT(eval_cache_defined(ctx, nob_sv_from_cstr("GFC_CACHE_PROG")));
+    ASSERT(eval_cache_defined(ctx, nob_sv_from_cstr("GFC_CACHE_PROG_ARGS")));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -10840,7 +10892,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);
-    test_evaluator_remove_definitions_updates_directory_state_only_for_compile_definitions(passed, failed);
+    test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed);
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
     test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed);

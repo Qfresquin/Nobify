@@ -123,14 +123,36 @@ static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, Strin
     return eval_var_set_current(ctx, var, nob_sv_from_parts(buf, off));
 }
 
-static bool split_definition_flag(String_View item, String_View *out_definition) {
-    if (!out_definition) return false;
-    *out_definition = nob_sv_from_cstr("");
+static bool split_definition_flag_body(String_View item, String_View *out_body) {
+    if (!out_body) return false;
+    *out_body = nob_sv_from_cstr("");
     if (item.count < 2 || !item.data) return false;
     bool is_dash_d = item.data[0] == '-' && (item.data[1] == 'D' || item.data[1] == 'd');
     bool is_slash_d = item.data[0] == '/' && (item.data[1] == 'D' || item.data[1] == 'd');
     if (!is_dash_d && !is_slash_d) return false;
-    *out_definition = nob_sv_from_parts(item.data + 2, item.count - 2);
+    *out_body = nob_sv_from_parts(item.data + 2, item.count - 2);
+    return true;
+}
+
+static bool split_valid_definition_flag(String_View item, String_View *out_definition) {
+    if (!out_definition) return false;
+    *out_definition = nob_sv_from_cstr("");
+
+    String_View body = nob_sv_from_cstr("");
+    if (!split_definition_flag_body(item, &body)) return false;
+    if (body.count == 0 || !body.data) return false;
+
+    char first = body.data[0];
+    if (!(isalpha((unsigned char)first) || first == '_')) return false;
+
+    size_t i = 1;
+    while (i < body.count && body.data[i] != '=') {
+        char c = body.data[i];
+        if (!(isalnum((unsigned char)c) || c == '_')) return false;
+        i++;
+    }
+
+    *out_definition = body;
     return true;
 }
 
@@ -295,24 +317,41 @@ static String_View gfc_stem_from_name(String_View name, bool last_only) {
     return nob_sv_from_parts(name.data, (size_t)dot);
 }
 
+static bool gfc_sv_ends_with_ci_lit(String_View value, const char *suffix) {
+    String_View suffix_sv = nob_sv_from_cstr(suffix);
+    if (value.count < suffix_sv.count) return false;
+    return eval_sv_eq_ci_lit(nob_sv_from_parts(value.data + value.count - suffix_sv.count,
+                                               suffix_sv.count),
+                             suffix);
+}
+
+static bool gfc_is_notfound_value(String_View value) {
+    return eval_sv_eq_ci_lit(value, "NOTFOUND") || gfc_sv_ends_with_ci_lit(value, "-NOTFOUND");
+}
+
+static bool gfc_cache_request_reuses_existing_result(Evaluator_Context *ctx, String_View out_var) {
+    if (!ctx || out_var.count == 0) return false;
+    if (!eval_var_defined_visible(ctx, out_var)) return false;
+    return !gfc_is_notfound_value(eval_var_get_visible(ctx, out_var));
+}
+
 static bool gfc_resolve_program_full_path(Evaluator_Context *ctx,
                                           String_View token,
-                                          String_View *out_program) {
+                                          String_View *out_program,
+                                          bool *out_found) {
     if (!ctx || !out_program) return false;
-    bool found = false;
-    if (!eval_find_program_full_path_temp(ctx, token, out_program, &found)) return false;
-    if (!found && out_program->count == 0) *out_program = token;
-    return true;
+    return eval_find_program_full_path_temp(ctx, token, out_program, out_found);
 }
 
 static bool gfc_set_output_value(Evaluator_Context *ctx,
                                  Cmake_Event_Origin origin,
                                  String_View out_var,
                                  String_View value,
-                                 bool cache_result) {
+                                 bool cache_result,
+                                 String_View cache_type) {
     if (!ctx) return false;
     if (!cache_result) return eval_var_set_current(ctx, out_var, value);
-    if (!eval_cache_set(ctx, out_var, value, nob_sv_from_cstr(""), nob_sv_from_cstr(""))) return false;
+    if (!eval_cache_set(ctx, out_var, value, cache_type, nob_sv_from_cstr(""))) return false;
     return eval_emit_var_set_cache(ctx, origin, out_var, value);
 }
 
@@ -517,8 +556,7 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
         if (item.count == 0) continue;
 
         String_View definition = nob_sv_from_cstr("");
-        bool looks_like_definition = split_definition_flag(item, &definition);
-        if (looks_like_definition && definition.count > 0) {
+        if (split_valid_definition_flag(item, &definition)) {
             bool added = false;
             if (!append_list_var_unique(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &added)) return eval_result_fatal();
             if (!added) continue;
@@ -561,15 +599,23 @@ Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *n
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     bool removed_any = false;
+    bool removed_any_option = false;
     for (size_t i = 0; i < arena_arr_len(a); i++) {
         String_View definition = nob_sv_from_cstr("");
-        if (!split_definition_flag(a[i], &definition)) continue;
-        if (definition.count == 0) continue;
+        if (split_valid_definition_flag(a[i], &definition)) {
+            bool removed = false;
+            if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &removed)) {
+                return eval_result_from_ctx(ctx);
+            }
+            removed_any = removed_any || removed;
+            continue;
+        }
+
         bool removed = false;
-        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &removed)) {
+        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_opts_var), a[i], &removed)) {
             return eval_result_from_ctx(ctx);
         }
-        removed_any = removed_any || removed;
+        removed_any_option = removed_any_option || removed;
     }
 
     if (removed_any) {
@@ -582,6 +628,23 @@ Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *n
         if (!sync_directory_property_mutation(ctx,
                                               o,
                                               "COMPILE_DEFINITIONS",
+                                              EVENT_PROPERTY_MUTATE_SET,
+                                              EVENT_PROPERTY_MODIFIER_NONE,
+                                              &remaining)) {
+            return eval_result_fatal();
+        }
+    }
+
+    if (removed_any_option) {
+        String_View current_opts = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_opts_var));
+        SV_List remaining = {0};
+        if (current_opts.count > 0 &&
+            !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current_opts, &remaining)) {
+            return eval_result_fatal();
+        }
+        if (!sync_directory_property_mutation(ctx,
+                                              o,
+                                              "COMPILE_OPTIONS",
                                               EVENT_PROPERTY_MUTATE_SET,
                                               EVENT_PROPERTY_MODIFIER_NONE,
                                               &remaining)) {
@@ -783,6 +846,7 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
     String_View input = a[1];
     String_View mode = a[2];
     bool cache_result = false;
+    String_View cache_type = nob_sv_from_cstr("STRING");
 
     String_View current_src = eval_current_source_dir(ctx);
 
@@ -796,9 +860,13 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(DIRECTORY) received unexpected argument"), a[i]);
             return eval_result_from_ctx(ctx);
         }
+        if (cache_result && gfc_cache_request_reuses_existing_result(ctx, out_var)) {
+            return eval_result_from_ctx(ctx);
+        }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         result = gfc_directory_sv(normalized);
+        if (eval_sv_eq_ci_lit(mode, "PATH")) cache_type = nob_sv_from_cstr("FILEPATH");
     } else if (eval_sv_eq_ci_lit(mode, "NAME")) {
         for (size_t i = 3; i < arena_arr_len(a); i++) {
             if (eval_sv_eq_ci_lit(a[i], "CACHE")) {
@@ -806,6 +874,9 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 continue;
             }
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(NAME) received unexpected argument"), a[i]);
+            return eval_result_from_ctx(ctx);
+        }
+        if (cache_result && gfc_cache_request_reuses_existing_result(ctx, out_var)) {
             return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -819,6 +890,9 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
                 continue;
             }
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component() received unexpected argument for name/extension mode"), a[i]);
+            return eval_result_from_ctx(ctx);
+        }
+        if (cache_result && gfc_cache_request_reuses_existing_result(ctx, out_var)) {
             return eval_result_from_ctx(ctx);
         }
         String_View normalized = eval_sv_path_normalize_temp(ctx, input);
@@ -849,6 +923,9 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "dispatcher", nob_sv_from_cstr("get_filename_component(ABSOLUTE/REALPATH) received unexpected argument"), a[i]);
             return eval_result_from_ctx(ctx);
         }
+        if (cache_result && gfc_cache_request_reuses_existing_result(ctx, out_var)) {
+            return eval_result_from_ctx(ctx);
+        }
 
         result = eval_path_resolve_for_cmake_arg(ctx, input, base_dir, false);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -876,23 +953,53 @@ Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Nod
             return eval_result_from_ctx(ctx);
         }
 
-        SV_List tokens = {0};
-        if (!eval_split_shell_like_temp(ctx, input, &tokens)) return eval_result_from_ctx(ctx);
-        if (arena_arr_len(tokens) > 0) {
-            result = tokens[0];
-            if (!gfc_resolve_program_full_path(ctx, result, &result)) return eval_result_from_ctx(ctx);
+        if (cache_result && gfc_cache_request_reuses_existing_result(ctx, out_var)) {
+            return eval_result_from_ctx(ctx);
         }
-        if (args_var.count > 0) {
-            String_View arg_value = (arena_arr_len(tokens) > 1)
-                ? eval_sv_join_semi_temp(ctx, &tokens[1], arena_arr_len(tokens) - 1)
-                : nob_sv_from_cstr("");
-            if (!eval_var_set_current(ctx, args_var, arg_value)) return eval_result_from_ctx(ctx);
+
+        String_View program_path = nob_sv_from_cstr("");
+        bool found = false;
+        if (input.count > 0 &&
+            !gfc_resolve_program_full_path(ctx, input, &program_path, &found)) {
+            return eval_result_from_ctx(ctx);
+        }
+
+        String_View program_args = nob_sv_from_cstr("");
+        if (!found) {
+            String_View program_token = nob_sv_from_cstr("");
+            if (!eval_split_program_from_command_line_temp(ctx,
+                                                           EVAL_CMDLINE_NATIVE,
+                                                           input,
+                                                           &program_token,
+                                                           &program_args)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (program_token.count > 0 &&
+                !gfc_resolve_program_full_path(ctx, program_token, &program_path, &found)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (!found) program_args = nob_sv_from_cstr("");
+        }
+
+        if (found) result = program_path;
+
+        if (args_var.count > 0 && program_args.count > 0) {
+            if (!gfc_set_output_value(ctx,
+                                      o,
+                                      args_var,
+                                      program_args,
+                                      cache_result,
+                                      nob_sv_from_cstr("STRING"))) {
+                return eval_result_from_ctx(ctx);
+            }
         }
     } else {
         (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "dispatcher", nob_sv_from_cstr("get_filename_component() unsupported component"), mode);
         return eval_result_from_ctx(ctx);
     }
 
-    if (!gfc_set_output_value(ctx, o, out_var, result, cache_result)) return eval_result_from_ctx(ctx);
+    if (!gfc_set_output_value(ctx, o, out_var, result, cache_result, cache_type)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
