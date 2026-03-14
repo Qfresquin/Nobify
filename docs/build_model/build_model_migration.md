@@ -15,6 +15,8 @@ The migration is rewrite-first, not port-first:
 
 As of March 11, 2026:
 - canonical evaluator output is `Event_Stream`
+- the evaluator architecture feeding that stream is documented under
+  `docs/evaluator/` and is intentionally allowed to break its legacy public API
 - canonical build-model documentation lives in this directory
 - canonical build-model implementation lives in `src_v2/build_model/`
 - the active v2 test/build path now compiles and runs pipeline coverage against

@@ -1,347 +1,132 @@
-# Evaluator Variables and Scope (Rewrite Draft)
+# Evaluator Variables and Scope
 
-Status: Draft rewrite. This document describes the current variable model
-implemented by `src_v2/evaluator`, including scope visibility, mutation
-semantics, macro/function binding differences, and cache/environment
-interaction.
-
-Project priority framing:
-- variable and scope behavior is interpreted under the primary CMake 3.28
-  semantic baseline in [`../project_priorities.md`](../project_priorities.md),
-- historical behavior remains secondary unless it changes observable CMake 3.28
-  script outcomes,
-- backend optimization is downstream and outside this slice.
+Status: Canonical Target. This document defines the target variable and scope
+model for the evaluator.
 
 ## 1. Scope
 
 This document covers:
-- variable storage and lookup precedence,
-- scope-stack visibility and temporary parent/global views,
-- `set()` / `unset()` / `option()` / `load_cache()` mutation behavior,
-- function vs macro argument bindings (`ARGC`, `ARGV`, `ARGN`, `ARGV<n>`),
-- `block(PROPAGATE ...)` and `return(PROPAGATE ...)` variable propagation,
-- cache fallback behavior and process-environment interaction.
+- variable storage classes,
+- lookup precedence,
+- frame overlays,
+- function vs macro behavior,
+- propagation rules,
+- cache and environment interaction,
+- projections from typed state.
 
-It does not try to restate all command execution flow details outside variable semantics.
+## 2. Core Principle
 
-## 2. Source of Truth
+Variables are not the primary semantic source of truth.
 
-Primary implementation files for this slice:
-- `src_v2/evaluator/evaluator_internal.h`
-- `src_v2/evaluator/evaluator.c`
-- `src_v2/evaluator/eval_vars.c`
-- `src_v2/evaluator/eval_expr.c`
-- `src_v2/evaluator/eval_flow.c`
-- `src_v2/evaluator/eval_include.c`
-- `src_v2/evaluator/eval_utils.c`
+Canonical evaluator semantics live in typed session state such as:
+- directory graph,
+- property engine,
+- cache store,
+- target/test/install/export/package models,
+- compatibility and policy state.
 
-## 3. Variable Storage Model
+Variables are one projection layer over that state.
 
-### 3.1 Scope-Local Storage
+## 3. Storage Classes
 
-Each scope is:
+The target architecture distinguishes four classes of visible values:
 
-```c
-typedef struct Var_Scope {
-    Eval_Var_Entry *vars;
-} Var_Scope;
-```
+1. frame-local normal variables
+2. session cache variables
+3. environment values exposed through services
+4. synthetic projections derived from canonical semantic state
 
-`vars` is an `stb_ds` hash keyed by `char*` and storing `String_View` values.
+Normal variables are owned by execution frames.
 
-### 3.2 Cache Storage
+Cache variables are owned by the session cache model.
 
-Cache variables live in `ctx->cache_entries` (`Eval_Cache_Entry*`) and are not tied to scope depth.
+Environment values are resolved through `EvalServices`, optionally with a
+session-managed overlay when CMake semantics require mutation.
 
-Each cache entry tracks:
-- `data` (value),
-- `type` (e.g. `BOOL`, `PATH`, `INTERNAL`),
-- `doc` (docstring).
+Synthetic projections include values such as:
+- `CMAKE_*`
+- `PROJECT_*`
+- target-derived metadata
+- compatibility mirrors
+- query results that are intentionally exposed as variables
 
-### 3.3 Lifetime and Ownership
+## 4. Lookup Precedence
 
-Current behavior:
-- keys and values written through evaluator variable helpers are copied into `event_arena`,
-- scope hash tables themselves are heap-managed by `stb_ds`,
-- `eval_scope_pop(...)` frees only the popped scope hash table,
-- persistent string storage remains arena-owned until `event_arena` is destroyed.
+Target lookup order is:
 
-## 4. Lookup and Definition Rules
+1. frame-local overlay in the active execution context
+2. visible parent overlays according to the current scope rules
+3. session cache, when CMake lookup semantics permit fallback
+4. environment or synthetic providers when the relevant syntax requests them
 
-### 4.1 Visible Lookup
+Synthetic state must not be copied into ad hoc shadow variables just to make
+queries work.
 
-Primary read helper:
+## 5. Function, Macro, and Block Semantics
 
-```c
-String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key);
-```
+Functions create:
+- a new execution context,
+- a new normal variable frame,
+- local argument bindings,
+- explicit propagation only through CMake-defined mechanisms.
 
-Lookup order:
-1. visible scopes from innermost to outermost,
-2. cache (`ctx->cache_entries`),
-3. empty string if not found.
+Macros create:
+- a new execution context,
+- argument overlays,
+- no new normal variable scope.
 
-Practical consequence:
-- normal scope bindings shadow cache entries with the same key,
-- unsetting a normal binding can expose an older outer-scope or cache value.
+Blocks create:
+- a child execution context,
+- local overlays and policy visibility according to block options,
+- controlled propagation through `PROPAGATE` semantics.
 
-### 4.2 Definition Checks
+## 6. Propagation Rules
 
-Helpers:
-- `eval_var_defined_visible(...)`: true if found in any visible scope or cache,
-- `eval_var_defined_current(...)`: true only in the current visible scope.
+Variable propagation is explicit and bounded.
 
-## 5. Scope Stack and Visibility Depth
+Target propagation mechanisms include:
+- parent-scope writes,
+- `block(PROPAGATE ...)`,
+- `return(PROPAGATE ...)`,
+- command-specific directory or cache mutations.
 
-The evaluator tracks:
-- physical scope storage (`ctx->scopes`),
-- visible depth (`ctx->visible_scope_depth`).
+Propagation updates the intended target scope or model directly. It should not
+depend on replaying textual `set(...)` calls later.
 
-Invariants:
-- a live context starts with one global scope at visible depth `1`,
-- `eval_scope_pop(...)` will not pop below depth `1`.
+## 7. Directory and Child Execution Boundaries
 
-### 5.1 Push/Pop
+Directory entry creates a child execution context tied to a `DirectoryGraph`
+node.
 
-`eval_scope_push(...)`:
-- increments visible depth,
-- reuses an existing physical slot when possible,
-- clears any old hash table in the reused slot.
+That child context inherits:
+- the directory snapshot visible at entry,
+- policy visibility,
+- session-backed semantic models.
 
-`eval_scope_pop(...)`:
-- frees the current scope hash table,
-- decrements visible depth (if depth > 1).
+It may still have its own frame-local overlays for normal variables and
+arguments.
 
-### 5.2 Temporary Parent/Global Views
+## 8. Cache and Environment Rules
 
-Helpers:
-- `eval_scope_use_parent_view(...)`
-- `eval_scope_use_global_view(...)`
-- `eval_scope_restore_view(...)`
+Cache entries live in session state and remain visible across runs unless
+cleared by the owning session.
 
-These temporarily change only visible depth; they do not destructively pop scopes.
+Environment access is service-backed.
 
-## 6. Primitive Mutation Helpers
+The evaluator may expose an environment overlay when commands such as
+`set(ENV{...})` require it, but that overlay remains a dedicated model owned by
+the runtime, not a side effect hidden in arbitrary variable maps.
 
-### 6.1 Current-Scope Set/Unset
+## 9. Projections from Typed State
 
-Helpers:
-- `eval_var_set_current(...)`
-- `eval_var_unset_current(...)`
+The evaluator must be able to publish variable views derived from canonical
+state without making those views authoritative.
 
-Current behavior:
-- both require a non-stopped context and visible depth > 0,
-- `set_current` writes only in current scope,
-- `unset_current` deletes only current-scope binding.
+Examples:
+- `project(...)` updates project state first, then publishes `PROJECT_*`
+  projections
+- target and directory metadata are queried from canonical models first
+- compatibility variables mirror session configuration instead of defining it
 
-### 6.2 Variable Watch Side Effects
-
-Current local set/unset operations trigger variable-watch notifications when the key is watched:
-- writes `NOBIFY_VARIABLE_WATCH_LAST_*`,
-- emits a warning diagnostic,
-- recursion is guarded by `ctx->in_variable_watch_notification`.
-
-### 6.3 Event Emission Boundary
-
-The primitive helpers do not automatically emit `EVENT_VAR_SET/UNSET` for current-scope mutations.
-
-Current behavior:
-- cache-target variable events are emitted by cache-oriented command paths (for example `set(... CACHE ...)`, `unset(... CACHE)`, `option()` write path),
-- current-target variable events are emitted only where handlers explicitly call `eval_emit_var_set_current(...)` / `eval_emit_var_unset_current(...)`.
-
-## 7. Command-Level Variable Semantics
-
-### 7.1 `set(...)`
-
-Implemented by `eval_handle_set(...)`.
-
-Supported modes:
-- `set(ENV{<name>} [value])`
-  - writes process environment (`setenv` / `_putenv_s`),
-  - extra args after first value are ignored with warning.
-- `set(<var> <value>... CACHE <type> <doc> [FORCE])`
-  - writes/updates cache entry,
-  - supports `BOOL`, `FILEPATH`, `PATH`, `STRING`, `INTERNAL`,
-  - `INTERNAL` implies `FORCE`.
-- `set(<var>)`
-  - unsets current-scope normal binding.
-- `set(<var> <value>... [PARENT_SCOPE])`
-  - writes current scope by default,
-  - with `PARENT_SCOPE`, temporarily switches to parent view and writes there.
-
-Policy-sensitive behavior:
-- `CMP0126` affects removal of local normal binding when writing `CACHE` entries.
-
-### 7.2 `unset(...)`
-
-Implemented by `eval_handle_unset(...)`.
-
-Supported modes:
-- `unset(ENV{<name>})` (no extra options),
-- `unset(<var>)` (current scope),
-- `unset(<var> PARENT_SCOPE)` (parent visible scope),
-- `unset(<var> CACHE)` (cache removal + cache-target unset event).
-
-Invalid `PARENT_SCOPE` usage without a parent depth emits an error diagnostic.
-
-### 7.3 Other Variable-Oriented Commands
-
-- `option(...)`
-  - writes typed `BOOL` cache entry when appropriate,
-  - `CMP0077` controls interaction with pre-existing normal bindings.
-- `mark_as_advanced(...)`
-  - updates cache advanced metadata; `CMP0102` controls implicit cache creation.
-- `load_cache(...)`
-  - supports `READ_WITH_PREFIX` into normal variables,
-  - otherwise imports selected entries into cache store.
-- `cmake_parse_arguments(...)`
-  - writes/unsets prefix result variables in current scope,
-  - `PARSE_ARGV` signature is function-scope only,
-  - `CMP0174` affects whether empty single-value keyword args are treated as defined.
-- `separate_arguments(...)`
-  - reads and rewrites an output variable in current scope.
-
-## 8. Function vs Macro Variable Semantics
-
-### 8.1 `function()` Calls
-
-Current behavior in `eval_user_cmd_invoke(...)`:
-- pushes a new variable scope,
-- binds declared parameters as normal variables,
-- sets `ARGC`, `ARGV`, `ARGN`, `ARGV0..ARGVn` as normal variables in that function scope,
-- pops scope on exit.
-
-### 8.2 `macro()` Calls
-
-Current behavior:
-- does not push a variable scope,
-- pushes a macro frame (`ctx->macro_frames`),
-- stores parameter and implicit argument bindings in macro-frame bindings.
-
-### 8.3 Precedence During Reads
-
-For expansion/truthiness paths that consult macro bindings:
-- macro binding lookup is attempted first,
-- visible normal/cache variable lookup is fallback.
-
-This is used by:
-- `eval_expand_vars(...)` for `${...}`,
-- `eval_truthy(...)` for bare-token truthiness.
-
-## 9. Expansion and `if()` Variable Semantics
-
-### 9.1 Expansion
-
-`eval_expand_vars(...)` supports:
-- `${VAR}`,
-- nested `${${VAR}}`,
-- `$ENV{VAR}`,
-- escaped `\${...}`.
-
-Current behavior:
-- undefined `${VAR}` resolves to empty string,
-- expansion is iterative with cycle detection,
-- recursion limit defaults to `100` and can be tuned (bounded by a hard cap) via:
-  - `CMAKE_NOBIFY_EXPAND_MAX_RECURSION`,
-  - `NOBIFY_EVAL_EXPAND_MAX_RECURSION` (environment).
-
-### 9.2 `if(DEFINED ...)`
-
-Current behavior:
-- `DEFINED ENV{X}` checks process environment (`eval_has_env(...)`),
-- `DEFINED X` checks visible normal+cache definitions (`eval_var_defined_visible(...)`).
-
-## 10. Parent, Block, Return, and Global Writes
-
-### 10.1 Parent-Scope Writes
-
-`set(... PARENT_SCOPE)` and `unset(... PARENT_SCOPE)`:
-- temporarily lower visible depth with `eval_scope_use_parent_view(...)`,
-- perform current-scope operation in that parent view,
-- restore prior visibility.
-
-### 10.2 `block(PROPAGATE ...)`
-
-`block()` may push variable/policy scopes. On `endblock()`:
-- propagated vars are copied from current block scope to parent scope when configured.
-
-On return-unwind (`eval_unwind_blocks_for_return(...)`):
-- block frames are popped and optionally propagate according to `propagate_on_return`.
-
-### 10.3 `return(PROPAGATE ...)`
-
-Under `CMP0140 NEW`, `return(PROPAGATE <vars...>)` stores requested variable list.
-
-Current function cleanup then:
-- copies currently defined requested vars from function scope into parent scope,
-- clears return state,
-- pops function scope.
-
-`return()` inside macro context is rejected.
-
-### 10.4 Global View Writes
-
-There is no public `set(... GLOBAL_SCOPE)` form.
-
-Current code paths needing global-only writes (for example include-guard internals) use:
-- `eval_scope_use_global_view(...)` + normal current-scope set/unset + restore.
-
-## 11. Scope Boundaries Across Constructs
-
-Current scope boundaries:
-- `function()` and `block(SCOPE_FOR VARIABLES ...)` push variable scope,
-- `add_subdirectory` nested file execution pushes variable scope,
-- `include()` nested execution does not push variable scope by itself,
-- `macro()` does not push scope (uses macro frame only).
-
-Loop note:
-- `foreach()` mutates loop variable in current scope each iteration,
-- `CMP0124 NEW` restores/unsets loop variable after loop completion.
-
-## 12. Cache Interaction Model
-
-Cache behavior is fallback-based:
-- normal scope lookup has priority,
-- cache answers only when no visible normal binding exists.
-
-Additional current behavior:
-- `eval_var_defined_visible(...)` treats cache entries as defined,
-- `set(... CACHE PATH|FILEPATH ...)` may normalize previously untyped relative cache values to absolute paths,
-- cache entries persist across scope push/pop within the same evaluator context.
-
-## 13. Environment Interaction Model
-
-Environment variables are process-backed, not scope-backed.
-
-Read paths:
-- `$ENV{X}` expansion,
-- `if(DEFINED ENV{X})`,
-- utility calls via `eval_getenv_temp(...)`.
-
-Write paths:
-- `set(ENV{X} ...)`,
-- `unset(ENV{X})`.
-
-Platform note:
-- Windows environment reads/checks in these helpers normalize names to uppercase before lookup.
-
-## 14. Current Limits and Non-Goals
-
-Current limitations visible in implementation:
-- `DEFINED <name>` does not consult macro-frame bindings.
-- There is no dedicated public API for global-scope writes; internal paths use temporary visibility switching.
-- Current-scope variable mutations are not universally mirrored into var-set/var-unset events unless handlers emit them.
-- Cache storage is global to context, not scoped by block/function depth.
-
-## 15. Relationship to Other Docs
-
-- `evaluator_v2_spec.md`
-  - canonical top-level evaluator contract.
-- `evaluator_runtime_model.md`
-  - context lifecycle and state ownership that this variable model uses.
-- `evaluator_execution_model.md`
-  - traversal/control-flow behavior that triggers these scope transitions.
-- `evaluator_expressions.md`
-  - should hold the full expression grammar/semantics that consume these lookup rules.
-- `evaluator_event_ir_contract.md`
-  - should define event-level guarantees for variable/cache mutation observability.
+This rule is what keeps property, target, install, and directory semantics
+consistent across commands.

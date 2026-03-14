@@ -1,295 +1,242 @@
-# Evaluator v2 Specification (Rewrite Draft)
+# Evaluator v2 Specification
 
-Status: Canonical rewrite draft for `docs/evaluator/`. This file defines the top-level evaluator contract; focused slice documents are subordinate.
+Status: Canonical Target. This document defines the target evaluator contract
+for the post-refactor architecture. Current `src_v2/evaluator` code may lag
+behind this document during migration.
+
+Project priority framing:
+- evaluator semantics target **CMake 3.28** first,
+- historical behavior is modeled when it is required to preserve that
+  observable baseline,
+- Nob optimization remains downstream of evaluator semantic reconstruction.
 
 ## 1. Scope and Boundary
 
-The evaluator consumes parser AST and emits semantic Event IR through an append-only stream.
+The evaluator consumes parser AST and mutates canonical semantic state. It may
+project those committed changes to Event IR, diagnostics, and run results.
 
-Version and priority baseline:
-- evaluator semantics target **CMake 3.28** first,
-- historical behavior is modeled second, when it is needed for real-project
-  compatibility around that baseline,
-- Nob backend optimization is out of scope for the evaluator layer and belongs
-  downstream of semantic reconstruction.
+Canonical boundary:
 
-Primary boundary:
-- Input: `Ast_Root` from `src_v2/parser`.
-- Output: `Event_Stream` from `src_v2/transpiler/event_ir.h`.
-- Build-IR coupling (`build_model.h`) is out of scope in this roadmap (decision #2 rejected).
+`Ast_Root -> execution pipeline -> semantic state mutation -> Event IR/result projection`
 
-This document specifies:
-- public API behavior and lifecycle contracts,
-- runtime-state and stop-model guarantees,
-- execution/dispatch boundaries,
-- diagnostics/reporting boundary,
-- compatibility-profile controls,
-- evaluator-side Event IR guarantees.
+Input:
+- `Ast_Root` from `src_v2/parser`
+- `EvalSession`
+- `EvalExec_Request`
 
-Project-level direction is defined in
-[`../project_priorities.md`](../project_priorities.md).
+Output:
+- `EvalRunResult`
+- optional `Event_Stream` projection
 
-Detailed semantics are delegated to annexes in `docs/evaluator/`, but those annexes cannot redefine this root contract.
+The evaluator is no longer specified as one public mutable
+`Evaluator_Context`. The target architecture is session-based and explicitly
+separates:
+- persistent semantic state,
+- transient execution frames,
+- command registry metadata,
+- backend services,
+- transactional command application.
 
-## 2. Source of Truth
+Structural details are defined in
+[evaluator_architecture_target.md](./evaluator_architecture_target.md).
 
-Primary implementation files:
-- `src_v2/evaluator/evaluator.h`
-- `src_v2/evaluator/evaluator.c`
-- `src_v2/evaluator/eval_exec_core.h`
-- `src_v2/evaluator/eval_exec_core.c`
-- `src_v2/evaluator/eval_user_command.c`
-- `src_v2/evaluator/eval_nested_exec.c`
-- `src_v2/evaluator/evaluator_internal.h`
-- `src_v2/evaluator/eval_dispatcher.c`
-- `src_v2/evaluator/eval_compat.c`
-- `src_v2/evaluator/eval_report.c`
-- `src_v2/evaluator/eval_diag_classify.c`
-- `src_v2/evaluator/eval_string.c`
-- `src_v2/evaluator/eval_string_internal.h`
-- `src_v2/evaluator/eval_string_text.c`
-- `src_v2/evaluator/eval_string_regex.c`
-- `src_v2/evaluator/eval_string_json.c`
-- `src_v2/evaluator/eval_string_misc.c`
-- `src_v2/evaluator/eval_flow.c`
-- `src_v2/evaluator/eval_flow_internal.h`
-- `src_v2/evaluator/eval_flow_block.c`
-- `src_v2/evaluator/eval_flow_cmake_language.c`
-- `src_v2/evaluator/eval_flow_process.c`
-- `src_v2/evaluator/eval_file.c`
-- `src_v2/evaluator/eval_file_internal.h`
-- `src_v2/evaluator/eval_file_path.c`
-- `src_v2/evaluator/eval_file_glob.c`
-- `src_v2/evaluator/eval_file_rw.c`
-- `src_v2/evaluator/eval_file_copy.c`
-- `src_v2/evaluator/eval_file_extra.c`
-- `src_v2/evaluator/eval_file_fsops.c`
-- `src_v2/evaluator/eval_file_transfer.c`
-- `src_v2/evaluator/eval_file_generate_lock_archive.c`
-- `src_v2/evaluator/eval_package.c`
-- `src_v2/evaluator/eval_package_internal.h`
-- `src_v2/evaluator/eval_package_find_item.c`
-- `src_v2/evaluator/eval_target.c`
-- `src_v2/evaluator/eval_target_internal.h`
-- `src_v2/evaluator/eval_target_usage.c`
-- `src_v2/evaluator/eval_target_source_group.c`
-- `src_v2/evaluator/eval_try_compile.c`
-- `src_v2/evaluator/eval_try_compile_internal.h`
-- `src_v2/evaluator/eval_try_compile_parse.c`
-- `src_v2/evaluator/eval_try_compile_exec.c`
-- `src_v2/evaluator/eval_try_run.c`
-- `src_v2/evaluator/eval_vars.c`
-- `src_v2/evaluator/eval_include.c`
+## 2. Canonical Document Hierarchy
 
-## 3. Public API Contract
+This file is the top-level evaluator contract.
 
-Public constructor/destructor:
+Subordinate canonical target documents:
+- [evaluator_architecture_target.md](./evaluator_architecture_target.md)
+- [evaluator_runtime_model.md](./evaluator_runtime_model.md)
+- [evaluator_execution_model.md](./evaluator_execution_model.md)
+- [evaluator_dispatch.md](./evaluator_dispatch.md)
+- [evaluator_variables_and_scope.md](./evaluator_variables_and_scope.md)
+- [evaluator_compatibility_model.md](./evaluator_compatibility_model.md)
+- [evaluator_event_ir_contract.md](./evaluator_event_ir_contract.md)
+- [evaluator_diagnostics.md](./evaluator_diagnostics.md)
+- [evaluator_command_capabilities.md](./evaluator_command_capabilities.md)
+
+Implementation-current analysis remains in:
+- [evaluator_coverage_matrix.md](./evaluator_coverage_matrix.md)
+- [evaluator_audit_notes.md](./evaluator_audit_notes.md)
+- [evaluator_expressions.md](./evaluator_expressions.md)
+
+Analytical documents may describe the current implementation, but they cannot
+redefine this target contract.
+
+## 3. Target Public API
+
+The target public surface is session/request based.
+
+### 3.1 Core Types
 
 ```c
-Evaluator_Context *evaluator_create(const Evaluator_Init *init);
-void evaluator_destroy(Evaluator_Context *ctx);
+typedef struct EvalSession EvalSession;
+typedef struct EvalRegistry EvalRegistry;
+typedef struct EvalServices EvalServices;
+typedef struct EvalExec_Request EvalExec_Request;
+typedef struct EvalRunResult EvalRunResult;
 ```
 
-Execution and reporting:
+Target configuration types:
 
 ```c
-Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
-const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx);
-const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx);
+typedef struct {
+    Arena *persistent_arena;
+    const EvalServices *services;
+    EvalRegistry *registry; /* optional; default registry if NULL */
+    Eval_Compat_Profile compat_profile;
+    String_View source_root;
+    String_View binary_root;
+} EvalSession_Config;
+
+typedef struct {
+    Arena *scratch_arena;
+    String_View source_dir;
+    String_View binary_dir;
+    const char *list_file;
+    Event_Stream *stream; /* optional */
+} EvalExec_Request;
+
+typedef struct {
+    Eval_Result result;
+    Eval_Run_Report report;
+    size_t emitted_event_count;
+} EvalRunResult;
 ```
 
-Compatibility and metadata:
+### 3.2 Core Functions
 
 ```c
-bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);
-bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
-bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
-bool evaluator_get_command_capability(Evaluator_Context *ctx, String_View command_name, Command_Capability *out_capability);
+EvalSession *eval_session_create(const EvalSession_Config *cfg);
+void eval_session_destroy(EvalSession *session);
+
+EvalRunResult eval_session_run(EvalSession *session,
+                               const EvalExec_Request *request,
+                               Ast_Root ast);
+
+bool eval_session_set_compat_profile(EvalSession *session,
+                                     Eval_Compat_Profile profile);
+bool eval_session_command_exists(const EvalSession *session,
+                                 String_View command_name);
 ```
 
-Current top-level API behavior:
-- `evaluator_create(...)` returns `NULL` if required init pointers are missing or setup fails.
-- `evaluator_run(...)` returns:
-  - `EVAL_RESULT_OK` for clean execution,
-  - `EVAL_RESULT_SOFT_ERROR` when non-fatal errors were emitted,
-  - `EVAL_RESULT_FATAL` for stop-state paths (OOM / explicit stop / null or already-stopped context).
-- run report is reset/finalized per top-level run.
-- capability lookup is introspection metadata, not a direct execution call.
+### 3.3 Registry Functions
 
-## 4. Lifecycle Model
+```c
+EvalRegistry *eval_registry_create(Arena *arena);
+void eval_registry_destroy(EvalRegistry *registry);
 
-### 4.1 Create Phase
+bool eval_registry_register_native_command(
+    EvalRegistry *registry,
+    const EvalNativeCommandDef *def);
+bool eval_registry_unregister_native_command(
+    EvalRegistry *registry,
+    String_View command_name);
+bool eval_registry_get_command_capability(
+    const EvalRegistry *registry,
+    String_View command_name,
+    Command_Capability *out_capability);
+```
 
-`evaluator_create(...)` initializes one mutable `Evaluator_Context` with:
-- runtime arenas,
-- event stream sink,
-- initial source/binary/list variables,
-- one global scope,
-- baseline compatibility defaults,
-- baseline host/toolchain compatibility variables.
+### 3.4 API Break Policy
 
-### 4.2 Run Phase
+This architecture intentionally breaks the old public API.
 
-`evaluator_run(...)` performs:
-1. run-report reset and file-depth entry,
-2. AST traversal through the internal execution-core service,
-3. deferred directory flush,
-4. deferred file-generation flush,
-5. return-state cleanup,
-6. file-scope lock release and report finalization.
+The following are not the canonical public contract anymore:
+- `Evaluator_Context`
+- `Evaluator_Init`
+- `evaluator_create(...)`
+- `evaluator_destroy(...)`
+- `evaluator_run(...)`
+- `evaluator_get_run_report(...)`
+- context-attached native command registration as the primary extension point
 
-### 4.3 Destroy Phase
+Migration shims may temporarily preserve those entry points, but they are
+non-normative compatibility layers.
 
-`evaluator_destroy(...)` releases runtime-managed heap tables (for example `stb_ds` maps and file locks), but the context memory itself is arena-owned.
+## 4. Runtime Guarantees
 
-Practical ownership rule:
-- full memory release depends on destroying the owning arena(s), especially `event_arena`.
+The evaluator target runtime guarantees:
+- one persistent `EvalSession` owns semantic state across runs,
+- one transient root execution context is created per `eval_session_run(...)`,
+- nested execution creates child execution contexts over the same session,
+- commands apply semantic changes transactionally,
+- failed commands must not leave half-committed canonical state,
+- variable publication and Event IR projection happen from committed state.
 
-## 5. Runtime State and Ownership
+The canonical persistent state includes:
+- cache and compatibility state,
+- directory graph,
+- property engine,
+- project / target / test / install / export / package models,
+- user-defined function and macro definitions,
+- session-visible command namespace metadata.
 
-The evaluator is intentionally stateful.
+## 5. Event IR Boundary
 
-Core runtime ownership model:
-- `ctx->arena`: temporary scratch allocations (frequently rewound).
-- `ctx->event_arena`: persistent evaluator/event payload storage.
-- `known_targets_arena` and `user_commands_arena`: sub-arenas tied to `event_arena` lifetime.
+Event IR remains the canonical evaluator output contract for downstream
+consumers, especially the build model.
 
-State includes:
-- variable scopes and policy stacks,
-- native-command registry,
-- user-command registry,
-- macro/block/deferred/file-lock stacks,
-- diagnostics/report counters,
-- stop-state flags (`oom`, `stop_requested`).
+Important target rules:
+- `Event_Stream` is optional per run,
+- `stream == NULL` means "do not project events for this run",
+- event emission is derived from committed semantic mutations,
+- Event IR is not the source of truth for evaluator state,
+- the evaluator must still return a complete `EvalRunResult` even when no event
+  sink is provided.
 
-Threading model:
-- current implementation is not thread-safe.
+The full Event IR boundary is specified in
+[evaluator_event_ir_contract.md](./evaluator_event_ir_contract.md).
 
-## 6. Execution and Dispatch Boundary
+## 6. Diagnostics and Reporting
 
-Execution is node-driven:
-- structural nodes (`if`, `foreach`, `while`, `function`, `macro`) use dedicated evaluator paths,
-- `NODE_COMMAND` uses dispatcher routing.
+Diagnostics are produced through a diagnostics service and summarized in
+`EvalRunResult.report`.
 
-Dispatch routing order:
-1. native command lookup in the context registry (built-ins are seeded at create),
-2. user command lookup/invocation,
-3. unknown-command diagnostic fallback.
+Target rules:
+- diagnostic codes are stable and explicit,
+- severity is shaped by compatibility state and execution mode,
+- `EvalRunResult.report` is the canonical execution summary for a run,
+- diagnostics and Event IR may both be emitted from the same committed command
+  result, but they are distinct projections.
 
-Unknown-command behavior is policy-driven (`unsupported_policy`) and can be warning/error/no-op-warning semantics.
+The detailed contract is specified in
+[evaluator_diagnostics.md](./evaluator_diagnostics.md).
 
-## 7. Compatibility Model (Top-Level)
+## 7. Compatibility Model
 
-Supported profiles:
-- `EVAL_PROFILE_PERMISSIVE`
-- `EVAL_PROFILE_STRICT`
-- `EVAL_PROFILE_CI_STRICT`
+Compatibility is session-scoped, not an ad hoc side effect of arbitrary
+context mutation.
 
-Related runtime controls:
-- unsupported command policy (`EVAL_UNSUPPORTED_*`)
-- error budget
-- continue-on-error variable path
+The target model separates:
+- session-level compatibility profile,
+- policy state,
+- execution-mode flags,
+- unsupported-command behavior,
+- error-budget / continue-on-error decisions.
 
-Current behavior:
-- compatibility state can be changed both through API (`evaluator_set_compat_profile`) and by runtime variable writes sampled through `eval_refresh_runtime_compat(...)`,
-- runtime-variable changes become effective at the next command-cycle refresh boundary by default.
+Compatibility variables exposed to scripts are projections over this typed
+state, not the source of truth.
 
-## 8. Refactor Direction
+The detailed contract is specified in
+[evaluator_compatibility_model.md](./evaluator_compatibility_model.md).
 
-Strategic roadmap source:
-- `docs/evaluator/Refatorção Estrutural.md`
+## 8. Non-Goals
 
-Direction constraints for refactor waves:
-- architecture remains context-centric (`Evaluator_Context` is still the integration boundary),
-- subsystem extraction is incremental and service-oriented, not a one-shot object-graph rewrite,
-- execution traversal, user-command lifecycle, and nested external execution may move into dedicated internal services while preserving the public API,
-- evaluator boundary remains AST -> Event IR.
+The evaluator target architecture does not:
+- embed the build model inside the evaluator,
+- treat variables as the primary semantic store,
+- require one mutable object to represent both session and active execution,
+- require `Event_Stream` capture for every run,
+- use dispatcher metadata as a substitute for semantic implementation.
 
-Declared non-goals for the current roadmap:
-- no `BuildModelBuilder`/Build IR coupling in evaluator scope,
-- no child evaluator context model for nested execution.
+## 9. Migration Note
 
-Public API stability rule:
-- evaluator public API contracts remain unchanged during these refactor waves unless a separate RFC explicitly defines breaking API updates.
+During migration, the codebase may expose both:
+- the current implementation-oriented `Evaluator_Context` API,
+- the target session/request architecture described here.
 
-## 9. Diagnostics and Run Report Boundary
-
-Evaluator diagnostics are emitted through `eval_emit_diag(...)`, which currently:
-- classifies evaluator metadata (`code`, `error_class`),
-- applies evaluator compatibility severity shaping,
-- applies process-global diagnostics strict shaping as the final severity step,
-- writes one external shared-log line through `diag_log(...)`,
-- appends one `EVENT_DIAG`,
-- updates `Eval_Run_Report`,
-- applies compatibility stop/continue decision logic.
-
-Important boundary:
-- process-global diagnostics strict mode is the final severity authority for evaluator diagnostics.
-- `EVENT_DIAG.severity`, `Eval_Run_Report`, error-budget checks, stop behavior, and final `Eval_Result` all follow that final global-effective severity.
-- `Eval_Run_Report.warning_count` mirrors original warning inputs while `error_count` mirrors final effective errors, matching the shared diagnostics module.
-
-## 10. Event IR Output Contract (Top-Level)
-
-The evaluator appends semantic events to the provided stream and does not rewrite prior events.
-
-Current event categories produced include:
-- command-call events,
-- diagnostic events,
-- flow events,
-- variable/cache-related events in command paths that emit them.
-
-Ownership rule:
-- `event_stream_push(...)` is the ownership boundary for emitted payloads.
-- evaluator code may stage stable strings in `event_arena` for internal convenience before the push.
-- successful pushes deep-copy payload strings and `String_View[]` arrays into the stream arena.
-
-## 11. Stop-State Contract
-
-Stop predicate:
-- evaluator is considered stopped when `oom` or `stop_requested` is true.
-
-Current propagation pattern:
-- execution entry points return `EVAL_RESULT_FATAL` when stop is active,
-- OOM (`ctx_oom`) marks both `oom` and `stop_requested`,
-- stop is cooperative across traversal, dispatch, diagnostics, and nested file execution.
-
-## 12. Known Divergences / Limits
-
-Current contract-visible limits:
-- `while()` execution is guarded by `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS`, defaulting to `10000`.
-- the `while()` guard is read once at `while` node entry; mutations inside the loop affect only the next `while()` node.
-- invalid `CMAKE_NOBIFY_WHILE_MAX_ITERATIONS` values emit a warning and fall back to `10000`.
-- `ctest_*` implements local-session behavior (`MODEL`, `TRACK`, `SOURCE`, `BUILD`) and file staging under `Testing/TAG`; external CTest dashboard workflow and OS-process dashboard runner behavior are not implemented.
-- `cmake_file_api(QUERY API_VERSION 1 ...)` emits evaluator-side query/reply/index artifacts under `.cmake/api/v1` and `NOBIFY_CMAKE_FILE_API::*` helper paths; full CMake-generated reply semantics and external tool-driven file-api workflows are not implemented.
-- `cmake_host_system_information()` supports `FQDN` in the documented evaluator subset; other host-query coverage is not implemented.
-- `cmake_language(SET_DEPENDENCY_PROVIDER ...)` supports the file-scope `FIND_PACKAGE` provider subset for existing `function()` / `macro()` commands; `find_package(BYPASS_PROVIDER)` is valid only while a provider is actively handling that package lookup.
-- `cmake_language(SET_DEPENDENCY_PROVIDER ...)` and `FetchContent` include evaluator-side support for `SET_DEPENDENCY_PROVIDER`, `FETCHCONTENT_MAKEAVAILABLE_SERIAL`, `FetchContent_Declare`, `FetchContent_GetProperties`, `FetchContent_MakeAvailable`, and `FetchContent_SetPopulated`.
-- `FetchContent` local workflow is supported for explicit `SOURCE_DIR` / `BINARY_DIR`, provider fulfillment via `FetchContent_SetPopulated(...)`, and provider-bypass via `FETCHCONTENT_SOURCE_DIR_<UPPER>`; remote population workflows are not implemented.
-- advanced `cmake_language` commands beyond the documented subset are not implemented.
-- `target_sources(FILE_SET ...)` supports only `TYPE HEADERS`; other file-set types such as `CXX_MODULES` remain unsupported.
-- `try_run()` supports source-file/native execution and `PROJECT` via shared `try_compile(...)` flow.
-- when `CMAKE_CROSSCOMPILING` is true, `try_run()` performs compile and marks run as `FAILED_TO_RUN` with message `try_run skipped due to CMAKE_CROSSCOMPILING`; answer-file and emulator workflows are not implemented.
-- native dispatcher lookup is case-insensitive and index-backed through the runtime registry.
-- capability lookup shares that same native registry lookup path for native-command introspection only.
-- unknown-command fallback is generic and does not dynamically apply capability metadata.
-- nested evaluation remains shared-context; child-context isolation is not implemented in this roadmap.
-
-## 13. Annex Map
-
-Subordinate detailed docs:
-- `Refatorção Estrutural.md`
-- `evaluator_runtime_model.md`
-- `evaluator_execution_model.md`
-- `evaluator_variables_and_scope.md`
-- `evaluator_dispatch.md`
-- `evaluator_diagnostics.md`
-- `evaluator_compatibility_model.md`
-- `evaluator_expressions.md`
-- `evaluator_event_ir_contract.md`
-- `evaluator_command_capabilities.md`
-- `evaluator_src_v2_code_standardization.md`
-- `evaluator_coverage_matrix.md`
-- `evaluator_audit_notes.md`
-
-Planned/pending detailed docs:
-- none
+When they differ, this document and
+[evaluator_architecture_target.md](./evaluator_architecture_target.md) are the
+normative target. Implementation-current behavior must be documented as audit
+material, not as architecture direction.

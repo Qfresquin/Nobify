@@ -1,252 +1,114 @@
-# Evaluator Dispatch (Rewrite Draft)
+# Evaluator Dispatch
 
-Status: Draft rewrite. This document describes how `NODE_COMMAND` nodes are
-routed to handlers in the current evaluator implementation.
-
-Project priority framing:
-- dispatch behavior is documented in service of the primary CMake 3.28 semantic
-  baseline defined in [`../project_priorities.md`](../project_priorities.md),
-- historical behavior remains secondary unless it changes observable CMake 3.28
-  outcomes,
-- backend optimization is outside this dispatch slice.
+Status: Canonical Target. This document defines how command lookup and routing
+fit into the target execution pipeline.
 
 ## 1. Scope
 
 This document covers:
-- built-in command routing and table construction,
-- handler invocation contract and stop-state behavior,
-- user-defined function/macro fallback dispatch,
-- unknown-command policy behavior,
-- command capability metadata lookup integration.
+- command namespace ownership,
+- native vs scripted command lookup,
+- registry responsibilities,
+- capability lookup,
+- unknown-command behavior.
 
-It does not attempt to restate per-command semantic behavior.
+Dispatch is one stage of execution. It is not the architectural center of the
+evaluator.
 
-## 2. Source of Truth
+## 2. Command Namespace Model
 
-Primary implementation files for this slice:
-- `src_v2/evaluator/eval_dispatcher.h`
-- `src_v2/evaluator/eval_dispatcher.c`
-- `src_v2/evaluator/eval_command_registry.h`
-- `src_v2/evaluator/eval_command_caps.h`
-- `src_v2/evaluator/eval_command_caps.c`
-- `src_v2/evaluator/evaluator_internal.h`
-- `src_v2/evaluator/evaluator.c`
-- `src_v2/evaluator/eval_expr.c`
+The target command namespace is split between:
+- `EvalRegistry` for native commands and their metadata
+- `EvalSession` for scripted commands such as user-defined functions and macros
 
-## 3. Dispatch Entry Points
+Structural AST nodes are not resolved through the command registry.
 
-Public/internal entry points:
+`NODE_COMMAND` execution resolves against both command namespaces using a
+stable lookup order.
 
-```c
-Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node);
-bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View name);
-bool eval_dispatcher_get_command_capability(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
-bool eval_dispatcher_seed_builtin_commands(Evaluator_Context *ctx);
-```
+## 3. Lookup Order
 
-Top-level API surface:
+For command nodes, canonical lookup order is:
 
-```c
-bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
-bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
-bool evaluator_get_command_capability(Evaluator_Context *ctx, String_View command_name, Command_Capability *out_capability);
-```
+1. native command lookup in `EvalRegistry`
+2. scripted command lookup in `EvalSession`
+3. unknown-command handling through diagnostics and compatibility policy
 
-`evaluator_get_command_capability(...)` delegates directly to dispatcher capability lookup.
+The exact matching rules are:
+- command names are normalized the same way for native and scripted lookup,
+- registry lookup is deterministic,
+- capability metadata is available even when a command is unsupported,
+- unknown-command behavior is shaped by compatibility state, not by ad hoc
+  handler decisions.
 
-## 4. Native Registry Runtime Model
+## 4. Registry Responsibilities
 
-### 4.1 Registry as Single Source
+`EvalRegistry` owns:
+- built-in native command definitions,
+- externally registered native commands,
+- capability metadata,
+- dispatch handlers for native commands,
+- registry-level command existence queries.
 
-Built-ins are defined in one macro registry:
-- `EVAL_COMMAND_REGISTRY(X)` in `eval_command_registry.h`.
+The registry is the canonical metadata source for native commands.
 
-Each entry carries:
-- command name,
-- handler symbol,
-- implementation level metadata,
-- fallback metadata.
+It is not responsible for:
+- storing user-defined functions and macros,
+- owning session semantic state,
+- deciding per-run directory or policy context.
 
-### 4.2 Runtime Registry Construction
+## 5. Scripted Commands
 
-`evaluator_create(...)` calls `eval_dispatcher_seed_builtin_commands(...)`, which expands
-`EVAL_COMMAND_REGISTRY(X)` and registers each built-in into the context registry.
+Scripted commands are session state.
 
-Current routing mechanics:
-- built-ins and dynamically registered native commands live in one runtime registry,
-- register/unregister rebuild a case-insensitive hash-backed index (`native_command_index`) over that registry,
-- dispatch, known-command checks, and capability lookup all reuse `eval_native_cmd_find_const(...)`.
+The target architecture requires the session to track:
+- user-defined `function()` declarations,
+- user-defined `macro()` declarations,
+- shadowing rules between scripted and native commands,
+- origin metadata for diagnostics and introspection.
 
-Current implication:
-- native lookup semantics are case-insensitive and stay aligned across dispatch and introspection.
+Invocation of a scripted command creates an execution context appropriate to
+its kind:
+- functions create a new normal variable frame,
+- macros create argument overlays without a new normal variable scope.
 
-## 5. Command Dispatch Pipeline
+## 6. Capability Queries
 
-### 5.1 Guard Conditions
+Capability metadata belongs to the registry/session model, not to one mutable
+execution context.
 
-`eval_dispatch_command(...)` returns `EVAL_RESULT_FATAL` immediately when:
-- `ctx == NULL`,
-- evaluator is in stop state,
-- `node == NULL`,
-- `node->kind != NODE_COMMAND`.
+Target query surfaces:
+- registry-level native capability lookup,
+- session-level command-exists query,
+- optional combined session-level capability lookup for tools that want one
+  answer over native plus scripted namespaces.
 
-### 5.2 Native Match Path
+Capability metadata supports:
+- introspection,
+- diagnostics,
+- migration tracking,
+- tooling/reporting.
 
-On first native registry name match:
-1. snapshot `run_report.error_count`,
-2. invoke handler,
-3. merge handler result with runtime stop state,
-4. emit `EVENT_COMMAND_CALL` only if the handler finished without fatal state and without adding new evaluator errors.
+It does not replace semantic implementation or dynamic validation.
 
-Current event helper:
-- `eval_emit_command_call(...)` copies command name to `event_arena`.
+## 7. Unknown Commands
 
-### 5.3 User Command Fallback Path
+Unknown-command behavior must be deterministic and compatibility-shaped.
 
-If no native command matches:
-1. lookup user command (`eval_user_cmd_find(...)`),
-2. if found, resolve args with `eval_resolve_args_literal(...)` for macros or `eval_resolve_args(...)` for functions,
-3. invoke via `eval_user_cmd_invoke(...)`,
-4. emit `EVENT_COMMAND_CALL` only if invocation finished without fatal state and without adding new evaluator errors.
+The target architecture requires:
+- one stable diagnostic code family for unknown commands,
+- consistent command begin/end tracing when a stream is present,
+- no silent semantic mutation for commands that failed lookup,
+- no requirement that dispatch internals know about build-model consumers.
 
-Return behavior on user command invoke:
-- if invoke returns success, dispatcher returns `eval_result_ok_if_running(ctx)`,
-- if invoke fails, dispatcher returns `eval_result_from_ctx(ctx)`.
+## 8. Relationship to the Pipeline
 
-Practical consequence:
-- user-command execution shares the same command-cycle compatibility snapshot that was already refreshed by `eval_node(...)` before dispatcher entry.
-
-### 5.4 Unknown Command Path
-
-If native and user lookup both miss:
-- emit diagnostic component `dispatcher`, cause `"Unknown command"`,
-- diagnostic severity depends on the current-cycle snapshot in `ctx->unsupported_policy`,
-- dispatcher returns `EVAL_RESULT_SOFT_ERROR` for non-fatal unknown-command diagnostics, or `EVAL_RESULT_FATAL` if policy/stop state escalates.
-
-Current hint text:
-- `EVAL_UNSUPPORTED_NOOP_WARN`: `"No-op with warning by policy"`,
-- otherwise: `"Ignored during evaluation"`.
-
-Important event detail:
-- unknown commands currently emit diagnostic events, but no `EVENT_COMMAND_CALL`.
-
-## 6. Handler Contract
-
-Handler type:
-
-```c
-typedef Eval_Result (*Cmd_Handler)(Evaluator_Context *ctx, const Node *node);
-```
-
-Current contract shape:
-- `EVAL_RESULT_OK` means clean execution,
-- `EVAL_RESULT_SOFT_ERROR` means non-fatal diagnostics happened,
-- `EVAL_RESULT_FATAL` means hard stop path (commonly OOM/stop),
-- dispatcher merges handler result with runtime stop-state.
-
-## 7. Stop and Error Propagation
-
-Dispatch is stop-aware, not exception-based.
-
-Current behavior:
-- dispatch will not start when stop is already set,
-- any path that sets stop (`oom` or explicit request) makes dispatch return `EVAL_RESULT_FATAL`,
-- diagnostic escalation policy can indirectly cause stop (through compat/report pipeline), affecting dispatch result.
-
-## 8. Unknown-Command Policy Integration
-
-Policy source:
-- `ctx->unsupported_policy`, refreshed once at command-cycle entry by `eval_node(...)`.
-
-Current enum:
-- `EVAL_UNSUPPORTED_WARN`
-- `EVAL_UNSUPPORTED_ERROR`
-- `EVAL_UNSUPPORTED_NOOP_WARN`
-
-Current severity mapping in dispatcher unknown path:
-- default warning,
-- error when policy is `EVAL_UNSUPPORTED_ERROR`.
-
-## 9. Capability Metadata Integration
-
-### 9.1 Data Model
-
-Capability type:
-
-```c
-typedef struct {
-    String_View command_name;
-    Eval_Command_Impl_Level implemented_level;
-    Eval_Command_Fallback fallback_behavior;
-} Command_Capability;
-```
-
-Implementation level enum:
-- `EVAL_CMD_IMPL_FULL`
-- `EVAL_CMD_IMPL_PARTIAL`
-- `EVAL_CMD_IMPL_MISSING`
-
-Fallback enum:
-- `EVAL_FALLBACK_NOOP_WARN`
-- `EVAL_FALLBACK_ERROR_CONTINUE`
-- `EVAL_FALLBACK_ERROR_STOP`
-
-### 9.2 Lookup Behavior
-
-`eval_command_caps_lookup(...)`:
-- delegates to `eval_native_cmd_find_const(...)` over the runtime native-command registry,
-- writes matching metadata and returns `true` on hit,
-- on miss writes default `implemented_level = EVAL_CMD_IMPL_MISSING`, `fallback_behavior = EVAL_FALLBACK_NOOP_WARN`, and returns `false`.
-
-### 9.3 Current Boundary vs Runtime Routing
-
-Current implementation uses capability metadata for introspection/API only.
-
-Current dispatch routing does not dynamically branch on:
-- `implemented_level`,
-- `fallback_behavior`.
-
-Those fields are documentation/reporting metadata in current code paths.
-
-## 10. Relationship With Expression Semantics
-
-`if(COMMAND <name>)` currently resolves command existence by:
-- native registry presence (`eval_dispatcher_is_known_command(ctx, ...)`), or
-- user command registration (`eval_user_cmd_find(...)`).
-
-This means `COMMAND` predicates observe the same command namespace model used by dispatcher routing.
-
-## 11. Current Limits and Non-Goals
-
-Current limitations visible in implementation:
-- unknown-command handling is generic; per-command fallback metadata is not applied at runtime.
-- there is no `EVENT_COMMAND_CALL` emission for unknown-command attempts.
-- dispatcher contract is `NODE_COMMAND`-only; structural nodes (`if`, `while`, etc.) are routed elsewhere.
-
-## 12. Relationship to Other Docs
-
-- `evaluator_v2_spec.md`
-  - canonical evaluator contract.
-- `evaluator_execution_model.md`
-  - where `NODE_COMMAND` dispatch is invoked from node execution.
-- `evaluator_variables_and_scope.md`
-  - variable and argument resolution behavior used before user-command invocation.
-- `evaluator_command_capabilities.md`
-  - should detail the capability matrix and intended semantics of implementation/fallback metadata.
-- `evaluator_diagnostics.md`
-  - diagnostic emission and stop escalation behavior used by unknown-command handling.
-
-## 13. Current Contract: Lookup and Metadata
-
-Current lookup contract:
-- native command lookup is case-insensitive and index-backed through the runtime registry,
-- `eval_dispatch_command(...)`, `eval_dispatcher_is_known_command(...)`, and `eval_command_caps_lookup(...)` share that same native namespace,
-- dynamic `register/unregister` rebuild the same lookup index used by dispatcher and capability introspection.
-
-Current metadata semantics:
-- `implemented_level` and `fallback_behavior` remain descriptive first-class metadata for introspection/reporting,
-- runtime stop/continue policy remains mediated by diagnostics + compatibility policy paths.
-
-Separation rule:
-- unknown-command behavior stays explicit in dispatcher unknown-path logic,
-- capability metadata does not implicitly replace unknown-command fallback policy without a dedicated behavioral RFC.
+Dispatch is stage 1 of the command pipeline:
+- it resolves the command provider,
+- selects the request parser,
+- hands execution to validation and mutation stages.
+
+Dispatch must not:
+- mutate canonical semantic state directly,
+- open-code compatibility decisions that belong elsewhere,
+- bypass transaction commit rules.

@@ -1,6 +1,12 @@
 # Evaluator `src_v2` Code Standardization
 
-Status: normative for evaluator runtime code in `src_v2/evaluator`.
+Status: Implementation Audit. This document records the coding standard
+currently expected inside `src_v2/evaluator` while the runtime migrates toward
+the target architecture.
+
+Canonical architecture remains defined in:
+- [evaluator_v2_spec.md](./evaluator_v2_spec.md)
+- [evaluator_architecture_target.md](./evaluator_architecture_target.md)
 
 ## 1. Scope
 

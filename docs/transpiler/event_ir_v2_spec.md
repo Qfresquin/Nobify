@@ -2,9 +2,20 @@
 
 ## 1. Overview
 
-`src_v2/transpiler/event_ir.h` and `src_v2/transpiler/event_ir.c` define the canonical in-memory contract emitted by the evaluator.
+`src_v2/transpiler/event_ir.h` and `src_v2/transpiler/event_ir.c` define the
+canonical in-memory contract emitted by the evaluator.
 
-This is no longer a builder-shaped IR. It is the evaluator output contract. A future build-model builder will consume a formal subset of these events.
+This is no longer a builder-shaped IR. It is the evaluator output contract. A
+future build-model builder will consume a formal subset of these events.
+
+Upstream producer note:
+- the evaluator target architecture is defined in
+  [`../evaluator/evaluator_v2_spec.md`](../evaluator/evaluator_v2_spec.md)
+  and
+  [`../evaluator/evaluator_architecture_target.md`](../evaluator/evaluator_architecture_target.md)
+- Event IR is projected from the evaluator's session/request execution model
+  after committed semantic mutations
+- downstream consumers must not depend on the legacy evaluator API shape
 
 Project priority framing:
 - this IR exists to preserve evaluator-reconstructed CMake 3.28 semantics at a
@@ -20,6 +31,10 @@ Core properties:
 - semantic separation by `Event_Role`, not by multiple streams
 - deep-copy ownership at `event_stream_push(...)`
 - frozen G0.1 base taxonomy: 19 canonical families, 86 canonical kinds
+
+The existence of one canonical `Event_Stream` does not imply that the evaluator
+must always be called with an event sink. Event projection is optional per run;
+the stream contract becomes active when a sink is provided.
 
 ## 2. Kind Metadata
 

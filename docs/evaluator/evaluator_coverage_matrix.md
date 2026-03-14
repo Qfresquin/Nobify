@@ -1,8 +1,15 @@
 # Evaluator Coverage Matrix (CMake 3.28 Audit)
 
-Status: Analytical audit. This document tracks evaluator parity against the
-CMake 3.28 command/language surface that matters to this repository and its
-audited corpus. It is intentionally broader than raw registry metadata.
+Status: Implementation Audit. This document tracks evaluator parity against the
+CMake 3.28 command/language surface implemented in the current workspace. It is
+intentionally broader than raw registry metadata.
+
+Important boundary note:
+- this matrix audits the current implementation
+- it is not the source of truth for the target evaluator architecture
+- canonical target behavior is defined in
+  [evaluator_v2_spec.md](./evaluator_v2_spec.md) and
+  [evaluator_architecture_target.md](./evaluator_architecture_target.md)
 
 Project priority framing:
 - this audit serves the primary project goal defined in

@@ -7,6 +7,8 @@ implementation.
 
 As of March 8, 2026:
 - the canonical upstream contract is `src_v2/transpiler/event_ir.h`
+- the evaluator producer contract behind that stream is the target
+  session/request architecture documented under `docs/evaluator/`
 - the canonical implementation target is `src_v2/build_model/`
 - the operational build-model pipeline is now wired through `src_v2/build_model/`
 - `src_obsolete/build_model/` remains archival reference only
@@ -43,6 +45,8 @@ The build-model pipeline is:
 `Event_Stream -> Builder -> Validate -> Freeze -> Query`
 
 - `Event_Stream`: emitted by the evaluator and owned by the transpiler layer.
+- the build model must depend on the stream contract, not on evaluator public
+  API details such as legacy create/run entry points.
 - `Builder`: consumes build-semantic events and writes `Build_Model_Draft`.
 - `Validate`: read-only semantic checks over the draft.
 - `Freeze`: produces an immutable `Build_Model`.

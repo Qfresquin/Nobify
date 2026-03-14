@@ -25,6 +25,9 @@ second.
 
 Boundary rules:
 - The evaluator emits `Event_Stream` only.
+- The build model is intentionally decoupled from evaluator public API shape.
+  It consumes the stream produced by the target evaluator architecture whether
+  the producer is reached through legacy shims or the new session/request API.
 - The build model consumes the canonical event stream from
   `src_v2/transpiler/event_ir.h`.
 - The builder consumes only events whose kind has

@@ -1,256 +1,143 @@
-# Evaluator General Refactor Roadmap (Filtered + Revised)
+# Evaluator Structural Refactor Plan
 
-Status: decision-complete roadmap for evaluator architecture/documentation
-alignment, including the next bulk-first internal refactor campaign.
+Status: Transition Plan. This document defines how the repository migrates from
+the current evaluator implementation to the target architecture documented in
+[evaluator_v2_spec.md](./evaluator_v2_spec.md) and
+[evaluator_architecture_target.md](./evaluator_architecture_target.md).
 
-Project priority framing:
-- this roadmap serves the canonical project direction in
-  [`../project_priorities.md`](../project_priorities.md),
-- structural and semantic work is prioritized first by how much it advances
-  CMake 3.28 parity,
-- historical compatibility remains secondary and should not outrank unfinished
-  CMake 3.28 gaps,
-- Nob backend optimization is downstream of the evaluator roadmap and should
-  consume the stable semantic layers this roadmap produces.
+## 1. Goal
 
-## 1. Decision Log
+The goal of this refactor is to make continued CMake 3.28 feature work land on
+an architecture that is:
+- state-correct,
+- testable,
+- transactional,
+- coherent across directory/property/target/install/export features,
+- explicit about public API ownership and backend boundaries.
 
-| Idea | Title | Status | Decision |
-| --- | --- | --- | --- |
-| #1 | Subsystems with clear contracts | Accepted with Constraints | Extract internal modules incrementally while keeping `Evaluator_Context` as the integration boundary. No immediate full subsystem object graph/composition rewrite. |
-| #2 | Build IR inside evaluator | Rejected | Do not introduce `BuildModelBuilder` in evaluator scope now. Keep evaluator boundary focused on AST -> Event IR. |
-| #3 | Metadata-active command dispatch | Accepted with Constraints | Add indexed/hash-backed lookup for runtime native command registry. Keep capability metadata primarily descriptive/introspection-oriented, not the primary runtime policy engine. |
-| #4 | Diagnostic system based on explicit codes | Accepted | Move to deterministic diagnostic code usage at emission points, with stable mapping to severity/class/hint semantics. |
-| #5 | Domain-based split of large evaluator files | Accepted | Split high-churn large translation units by cohesive domains (string/target/file/etc.) with shared internal headers. |
-| #6 | Child context isolation for nested execution | Rejected | Do not adopt child evaluator contexts for `include()`/nested execution now. Keep shared context model and explicit scope/flow controls. |
-| #7 | Consistent compatibility refresh model | Accepted | Centralize compatibility refresh timing so decisions are based on one deterministic per-command-cycle refresh boundary. |
+This plan does not redefine the target architecture. It only describes how to
+reach it from the current codebase.
 
-## 2. Constraints and Non-Goals
+## 2. Starting Point
 
-### 2.1 Accepted-with-Constraints Boundaries
+The current implementation is still centered on `Evaluator_Context` and a
+handler-heavy execution model.
 
-- **#1 Subsystem split**: first step is internal boundary extraction (scope/policy/flow/diagnostic/file/deferred services) over the existing context model.
-- **#3 Dispatch improvements**: index-based lookup improves runtime performance and determinism for command existence checks, while capability metadata remains an introspection/reporting contract first.
+Known migration pressure points:
+- semantic state and variable projections are too tightly coupled,
+- cross-directory state is not modeled richly enough,
+- property and capability logic are still partly scattered,
+- nested execution boundaries are weaker than the target model requires,
+- diagnostics and Event IR projection still reflect current implementation
+  structure more than target transaction boundaries.
 
-### 2.2 Non-Goals (Out of Scope)
+## 3. Migration Principles
 
-- **#2 Build IR in evaluator** is out of scope for this roadmap.
-- **#6 Child context execution model** is out of scope for this roadmap.
+The migration is allowed to make intentional architecture-breaking changes.
 
-### 2.3 Temporary Breakage Policy for Bulk Waves
+Explicitly allowed changes:
+- replacing `Evaluator_Context` as the canonical public boundary
+- introducing `EvalSession` and `EvalExecContext`
+- introducing child execution contexts as first-class runtime objects
+- moving from shared mutable handler state to typed canonical models
+- changing extension APIs so registry ownership is explicit
 
-- The next internal refactor campaign is explicitly allowed to enter temporarily broken intermediate states inside the working branch or local workspace while code is being moved.
-- This permission exists to reduce repeated stabilization cost during large internal extractions; it does not change the target contract for the evaluator.
-- Temporary breakage is acceptable only between planned checkpoints inside one active wave. It is not an acceptable final state for a completed wave.
-- Each wave must close by restoring a usable evaluator baseline:
-  - current evaluator targets compile again,
-  - `./build/nob_v2_test test-evaluator` passes on a fresh rebuild baseline,
-  - docs match the resulting boundaries closely enough to guide the next wave,
-  - temporary shims/adapters are either removed or left behind intentionally with tracked follow-up.
-- Public API stability still applies at wave end unless a separate RFC explicitly changes that contract.
-- If a bulk wave becomes too large to re-stabilize in one pass, split it by subsystem boundary rather than by arbitrary file-count or line-count slices.
+The only stable downstream boundary that must remain intact throughout the
+migration is:
 
-## 3. Implementation Phases
+`Event_Stream -> build_model`
 
-### Phase A — Diagnostic Code System Contract
+## 4. Migration Phases
 
-- Define explicit diagnostic-code usage as mandatory at emission points.
-- Keep deterministic mapping from code -> default severity -> error class -> hint contract.
-- Align evaluator diagnostics docs and run-report semantics with code-first diagnostics.
+### Phase A: Canonical Docs and Target Naming
 
-### Phase B — Dispatcher Index + Lookup Contract
+Deliverables:
+- make `evaluator_v2_spec.md` the target contract
+- add and stabilize `evaluator_architecture_target.md`
+- reclassify implementation-current evaluator docs as audits where needed
 
-- Introduce indexed/hash-backed lookup over runtime native command registry.
-- Keep dispatch order and unknown-command behavior explicit and unchanged unless documented separately.
-- Preserve public capability API behavior while reducing O(N) lookup pressure in hot paths.
+Exit criteria:
+- no evaluator architecture doc still treats `Evaluator_Context` as the target
+  public boundary
+- Event IR and build-model docs reference the new evaluator boundary
 
-### Phase C — Compatibility Refresh Centralization
+### Phase B: Public API Split
 
-- Define one canonical compatibility refresh point per command evaluation cycle.
-- Ensure policy decisions (unsupported/error-budget/continue-on-error) read a consistent refreshed state.
-- Document fallback semantics for compatibility variable mutations that occur between command boundaries.
+Deliverables:
+- introduce `EvalSession`
+- introduce `EvalSession_Config`
+- introduce `EvalExec_Request`
+- introduce `EvalRunResult`
+- introduce `EvalRegistry` as the primary native extension boundary
 
-### Phase D — Domain File Decomposition
+Exit criteria:
+- session/request APIs exist
+- legacy create/run APIs are either removed or documented as compatibility
+  shims
 
-- Split oversized modules into domain-focused units (for example string/target/file families).
-- Add shared internal headers where needed for internal contracts and helper reuse.
-- Keep behavioral contracts unchanged while reducing maintenance and review surface area.
-- Status: completed in the workspace on March 6, 2026.
-- D1 completed `eval_file` decomposition into dispatcher + path/glob/rw/copy/extra/fsops/transfer units.
-- D2 completed `eval_string` decomposition into dispatcher + text/regex/json/misc units.
-- D3 completed `eval_target` decomposition into core/property handling + usage/linkage + `source_group()` units.
-- D4 completed `eval_package` decomposition into `find_package()` core + shared `find_*` item-resolution unit.
-- D5 completed `eval_flow` decomposition into shared helpers + block + `cmake_language()` + process units.
-- D6 completed `eval_try_compile` decomposition into shared helpers + parse + compile exec + `try_run` units.
+### Phase C: Runtime Topology Split
 
-### Phase E — Incremental Subsystem Extraction Boundaries
+Deliverables:
+- separate persistent session state from transient execution state
+- formalize child execution contexts
+- move current ad hoc nested execution state into explicit frame objects
 
-- Extract internal service boundaries in steps without replacing `Evaluator_Context` as the primary runtime integration object.
-- Prefer testable service seams (scope, policy, flow, diagnostics, dispatcher, file/deferred) with stable interfaces.
-- Defer any full structural composition rewrite until post-stabilization and separate RFC.
+Exit criteria:
+- includes, subdirectories, functions, macros, blocks, and deferred replay use
+  explicit execution contexts
 
-### Phase F — Bulk-First Internal Service Campaign
+### Phase D: Canonical Semantic Models
 
-- Goal: finish the bulk of the remaining internal structural movement quickly, even if that means tolerating temporary non-green states during the middle of the work.
-- Scope: remaining large translation units, cross-cutting internal storage conventions, process/runtime side-effect seams, and repetitive handwritten command parsers that still slow down changes.
-- Main rule: batch structural churn first, then do one stabilization pass per wave instead of repeatedly preserving perfect health after every micro-move.
+Deliverables:
+- introduce `DirectoryGraph`
+- introduce unified `PropertyEngine`
+- move targets/tests/install/export/package state into typed models
 
-Recommended wave order:
+Exit criteria:
+- cross-directory and property queries resolve against canonical models rather
+  than incidental variable state
 
-- F1 completed explicit `Evaluator_Context` state slices for scope/cache/bindings, runtime compatibility/report, command registry, and deferred/file queues while preserving one owning context.
-- F2 completed the property store/query service boundary on March 6, 2026 by internalizing synthetic property-key composition, centralizing property definition/query/write behavior in `eval_property.c`, and simplifying the residual property core in `eval_target.c`.
-- F3 completed the runtime process/environment service on March 6, 2026 by centralizing subprocess launch/capture/timeout/cwd handling in `eval_runtime_process.c`, routing `set(ENV{...})` and environment reads through one overlay service, and moving `try_compile` off open-coded output-file capture.
-- F4 completed the declarative command grammar layer on March 6, 2026 by extending `eval_opt_parser` with tail/missing-value/duplicate-rule support, migrating `find_*`, `try_compile`, `try_run`, and explicit-mode `separate_arguments` to grammar specs/callbacks, and keeping `cmake_parse_arguments` on its existing keyword-table parser.
-- F5 completed the remaining hotspot decomposition on March 6, 2026 by splitting property queries, runtime dependency handling, parse helpers, list helpers, path helpers, and command-line/path utilities out of `eval_target.c`, `eval_file_extra.c`, `eval_vars.c`, `eval_list.c`, `eval_cmake_path.c`, and `eval_utils.c` into adjacent internal modules.
-- F6 completed bulk cleanup and normalization on March 6, 2026 by collapsing temporary helper leakage from post-F5 boundaries, normalizing internal helper ownership in the new adjacent modules, and revalidating the full evaluator baseline before closing the structural campaign.
+### Phase E: Service Boundary and Transactions
 
-1. **F1 State Partition Around `Evaluator_Context`**
-   - Introduce explicit internal state groupings over the existing context-centric model.
-   - Candidate slices:
-     - scope/cache/bindings,
-     - runtime compatibility/report/stop state,
-     - native/user command registry,
-     - file locks/deferred generation/deferred directory queues.
-   - Keep one owning `Evaluator_Context`, but stop treating the full struct as the default mutation surface for every handler.
+Deliverables:
+- formalize `EvalServices`
+- route filesystem/process/environment/host side effects through services
+- add transaction-local mutation logs for commands
 
-2. **F2 Property Store and Property Query Service**
-   - Replace or encapsulate the current synthetic property-key convention so property reads/writes stop depending on ad hoc string-key composition spread across handlers.
-   - Move property-definition lookup, inheritance walking, non-target property writes, and property query modes behind one internal service boundary.
-   - Use this wave to simplify the remaining residual core in `eval_target`.
+Exit criteria:
+- command failures no longer leave half-committed semantic state
+- Event IR and diagnostics projection are commit-based
 
-3. **F3 Runtime Process and Environment Service**
-   - Consolidate subprocess execution, timeout handling, working-directory handling, stdout/stderr capture, and environment mutation/overlay under one internal runtime service.
-   - Remove open-coded process side-effect handling from `execute_process`, `try_compile`, `try_run`, and environment-oriented variable flows.
-   - The immediate objective is one place that owns process side effects; deeper semantic cleanup can happen later.
+### Phase F: Handler Migration and Coverage Work
 
-4. **F4 Declarative Command Grammar Layer**
-   - Extend `eval_opt_parser` or add an adjacent grammar service so complex command parsers stop hand-walking token arrays whenever possible.
-   - First migration targets:
-     - `find_*`,
-     - `try_compile`,
-     - `try_run`,
-     - `cmake_parse_arguments`,
-     - `separate_arguments`,
-     - other option-heavy handlers that still encode grammar inline.
-   - Favor grammar/data-table driven parsing once the destination service is stable, even if adapters are needed during the migration.
+Deliverables:
+- move command families to typed request parsing and canonical mutations
+- continue closing CMake 3.28 coverage gaps on top of the new model
 
-5. **F5 Residual Hotspot Decomposition**
-   - Split the remaining post-Phase-D hotspots by cohesive subdomain instead of continuing to accumulate unrelated helpers:
-     - `eval_target.c`,
-     - `eval_file_extra.c`,
-     - `eval_utils.c`,
-     - `eval_vars.c`,
-     - `eval_list.c`,
-     - `eval_cmake_path.c`.
-   - Accept temporary helper duplication during the move, then collapse duplicates at the end of the wave.
+Exit criteria:
+- new feature work lands on the target pipeline by default
+- remaining audits measure semantic coverage rather than architectural drift
 
-6. **F6 Bulk Cleanup and Normalization**
-   - Remove temporary forwarding layers that only existed to keep the bulk move flowing.
-   - Normalize internal header ownership and helper placement.
-   - Re-run the full evaluator verification baseline and align docs before declaring the campaign structurally complete.
+## 5. Temporary Compatibility Policy
 
-Bulk-first execution rules for Phase F:
+During migration, temporary adapters are allowed:
+- legacy API shims
+- transitional data projection helpers
+- compatibility wrappers around old handler entry points
 
-- Prefer moving whole concern families in one pass over a sequence of micro-refactors that each require a full stabilization cycle.
-- Accept temporary duplication, compatibility adapters, or ugly intermediate wiring inside the wave if they shorten the time to the destination boundary.
-- Defer naming polish, helper deduplication, and low-signal cleanup until the destination boundary has stopped moving.
-- Avoid reopening already-settled roadmap decisions during the bulk campaign.
-- In particular, do not reintroduce build-IR coupling or child evaluator contexts as side quests.
-- Do not spend the bulk campaign on dispatcher rewrites unless a new blocker proves the current indexed dispatcher insufficient.
+These adapters are acceptable only if:
+- the target ownership model remains clear in docs,
+- the code path does not redefine the target architecture,
+- the adapter has a clear removal path.
 
-### Phase G0 — Event IR Stabilization Before Semantic Promotion
+## 6. Acceptance Criteria
 
-- Before the main semantic-promotion wave starts, run one short Event-IR stabilization pass now that the evaluator has returned to a structurally acceptable baseline.
-- The objective is not to "complete Event IR" in the abstract. The objective is to stop moving the evaluator -> Event IR contract underneath the first semantic-promotion wave.
+The refactor is considered structurally successful when an implementor can add
+new evaluator features by extending:
+- typed request parsing,
+- canonical semantic models,
+- compatibility-aware validation,
+- transaction commit logic,
+- projection rules for variables, diagnostics, and Event IR
 
-Recommended stabilization scope:
-
-1. **G0.1 Freeze the base contract**
-   - Freeze `Event_Kind`, family, and role taxonomy for the currently supported evaluator surface.
-   - Freeze the append-only stream API and ownership boundary so `event_stream_push(...)` remains the one deep-copy boundary.
-   - Status: completed in the workspace on March 6, 2026 by locking canonical family/kind counts, rejecting non-canonical stream kinds, and adding explicit taxonomy/deep-copy contract tests.
-
-2. **G0.2 Normalize command tracing**
-   - Ensure dispatched commands emit consistent `COMMAND_BEGIN` / `COMMAND_END` framing, including unknown-command and error paths.
-   - Keep trace/diagnostic events distinct from build-semantic events so future consumers do not need to infer intent from mixed payloads.
-   - Status: completed in the workspace on March 6, 2026 by normalizing unknown-command sequencing to `BEGIN -> DIAG -> END`, keeping non-OOM error paths paired, and adding sequence contract tests for builtin/function/macro/unknown dispatch.
-
-3. **G0.3 Finish first-class directory/global semantics**
-   - Emit canonical directory/global property mutation events for build-relevant directory state.
-   - Do not rely on synthetic `NOBIFY_GLOBAL_*` variables as the only externally consumable reflection of directory/global semantics.
-   - Status: completed in the workspace on March 6, 2026 by synchronizing directory mutators into the canonical property store, emitting canonical `DIRECTORY_PROPERTY_MUTATE` / `GLOBAL_PROPERTY_MUTATE` events for queryable state, and covering `remove_definitions()` with a resulting-state `SET` event.
-
-4. **G0.4 Lock the contract with tests**
-   - Keep contract tests for metadata resolution, stream sequencing, deep-copy ownership, and the core directory/global semantic events.
-   - Add only the minimum extra coverage needed to make future semantic work safe; do not expand into a parallel semantic-promotion campaign.
-   - Status: completed in the workspace on March 6, 2026 by locking the Event IR baseline around metadata/deep-copy ownership, success and error command framing, include/add_subdirectory ordering, and the core directory/global semantic events and queries.
-
-G0 exit criteria:
-
-- kinds, roles, families, and header/stream ownership rules are no longer changing week to week;
-- command begin/end framing is consistent for dispatched commands;
-- directory/global build semantics are exposed as first-class events instead of only through evaluator-private state;
-- contract tests for Event IR are green and treated as part of the evaluator baseline.
-
-G0 non-goals:
-
-- do not block the roadmap on a hypothetical "complete Event IR" across every family before semantic promotion resumes;
-- do not reintroduce a build model inside the evaluator;
-- do not turn G0 into a second structural-bulk campaign.
-
-### Phase G — Semantic Promotion After Structural Bulk
-
-- Once G0 has frozen the evaluator -> Event IR contract enough to stop churning, shift the main effort from moving code to increasing semantic completeness.
-- Promote `PARTIAL` coverage in clusters rather than command-by-command so each wave pays one stabilization cost for one semantic family.
-
-Recommended promotion order:
-
-1. **G1 Property, query, and introspection cluster**
-   - `get_property` and related wrappers.
-   - Directory/source/target/test property query consistency.
-   - Property inheritance and definition edge cases that become easier after Phase F2.
-   - Current batch in the workspace on March 6, 2026: property query state is now backed by a persistent evaluator-internal store instead of transient variable scopes, and inherited `TARGET` plus `SOURCE TARGET_DIRECTORY` queries resolve against the target declaration directory rather than the caller's current directory.
-
-2. **G2 Advanced target and execution cluster**
-   - `target_compile_features`,
-   - `target_precompile_headers`,
-   - `target_sources`,
-   - `try_run` advanced signatures and workflows.
-   - Status: completed in the workspace on March 6, 2026 by persisting the advanced `target_*` trio into the canonical target property store, adding `target_sources(FILE_SET ...)` support for the `TYPE HEADERS` subset with queryable `HEADER_SET*` / `HEADER_DIRS*` properties, executing `try_run(PROJECT ...)` through the shared `try_compile(PROJECT ...)` path, and downgrading `CMAKE_CROSSCOMPILING` handling from a hard semantic error to a deterministic compile-only skip (`FAILED_TO_RUN` plus run-output message).
-
-3. **G3 `ctest_*` cluster**
-   - Treat the `ctest_*` family as one coordinated promotion effort instead of isolated commands.
-   - Share metadata/runtime helpers where possible so the cluster does not keep re-encoding the same workflow logic.
-   - Status: completed in the workspace on March 6, 2026 for the evaluator-side/local-orchestration slice. The family now shares CTest session state for `MODEL`, `TRACK`, `SOURCE`, and `BUILD`; `ctest_start(...)` seeds that session, stages `Testing/TAG`, and publishes `TAG` / `TAG_FILE` / `TAG_DIR` / `TESTING_DIR`. `ctest_configure` / `ctest_build` / `ctest_test` / `ctest_coverage` / `ctest_memcheck` / `ctest_update` resolve omitted source/build context from that session while publishing their resolved directories for downstream inspection, `ctest_submit` / `ctest_upload` reuse the same session tag to stage local manifest files under `Testing/<tag>/`, and `ctest_run_script(NEW_PROCESS ...)` executes through an isolated evaluator-side child scope instead of failing outright.
-   - Deferred beyond G3: real external dashboard/tool execution, networked submit/upload behavior, and true OS-process runner semantics remain intentionally outside this roadmap slice.
-
-4. **G4 Modern runtime/meta gaps**
-   - `cmake_language` advanced surface,
-   - `cmake_file_api`,
-   - `cmake_host_system_information`,
-   - remaining modern runtime/meta integration gaps.
-   - Current batch in the workspace on March 6, 2026: `cmake_file_api(QUERY API_VERSION 1 ...)` now stages local query/reply artifacts under `.cmake/api/v1` and publishes stable helper paths for downstream inspection, `cmake_host_system_information(QUERY ... FQDN)` no longer falls through the generic not-implemented path, and `cmake_language(SET_DEPENDENCY_PROVIDER ...)` now models both the file-scope `FIND_PACKAGE` subset and the `FETCHCONTENT_MAKEAVAILABLE_SERIAL` provider subset. That provider work now includes evaluator-side `FetchContent` state for `Declare` / `GetProperties` / `MakeAvailable` / `SetPopulated`, same-dependency recursive bypass, and `FETCHCONTENT_SOURCE_DIR_<UPPER>` local-source bypass. Residual G4 work is now concentrated in the rest of the advanced `cmake_language` surface plus richer external semantics for file-api and related meta/runtime integrations.
-
-5. **G5 Legacy compatibility wrappers**
-   - Tackle only after the modern/core surfaces above have stabilized.
-   - Prioritize wrappers that unblock real projects or reduce compatibility
-     surprise, but do not let historical parity outrank unfinished CMake 3.28
-     gaps in the core roadmap.
-   - Status in the March 8, 2026 workspace: completed for the documented evaluator subset. `build_name`, `build_command`, `exec_program`, `source_group`, and the legacy metadata/file/install/Qt/watch wrappers are now treated as stable `FULL` capabilities in the registry, while explicit evaluator-side constraints remain part of the contract: `CMP0036` still gates `build_name()`, `CMP0153` still gates `exec_program()`, metadata wrappers still publish inspection state instead of historical side effects, and `variable_watch()` remains evaluator-local tracking rather than external callback execution.
-
-Phase G working rules:
-
-- Structural extraction should happen before large semantic-promotion pushes whenever both touch the same code path.
-- The objective is to avoid paying the same regression-fix tax twice: once during movement and again during semantic completion.
-- Do not reopen the Event IR contract underneath a large semantic-promotion wave; G0 exists to keep that boundary frozen before Phase G work proceeds.
-
-## 4. Acceptance Conditions for This Roadmap
-
-- The evaluator boundary remains context-centric and Event-IR oriented.
-- Rejected items (#2, #6) do not reappear as active roadmap commitments.
-- Partial items (#1, #3) are implemented only under stated constraints.
-- Compatibility, diagnostics, and dispatcher documents remain mutually consistent.
-- Temporary internal breakage is permitted only inside active bulk waves and only until the next stabilization checkpoint.
-- A bulk wave is not complete until the evaluator is functional again and the current verification baseline is green.
-- Structural bulk should reduce future stabilization cost; if a wave adds churn without improving future change velocity, it failed the roadmap intent.
-- G0 is complete only when the Event IR contract is stable enough that Phase G can promote semantics without reopening the same boundary in parallel.
+without having to reinterpret the architecture for each new command family.

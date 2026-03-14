@@ -17,6 +17,12 @@ The future builder consumes:
 - one canonical `Event_Stream`
 - only the subset of kinds marked with `EVENT_ROLE_BUILD_SEMANTIC`
 
+Historical boundary note:
+- the upstream evaluator architecture has moved to a target session/request
+  design under `docs/evaluator/`
+- this historical document must be read as a stream-consumer note only, not as
+  a statement about evaluator public API shape
+
 The builder must not depend on:
 - evaluator-private variables such as `NOBIFY_GLOBAL_*`
 - trace-only breadcrumbs
