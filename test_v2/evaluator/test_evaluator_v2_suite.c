@@ -6862,6 +6862,264 @@ TEST(evaluator_batch6_metadata_commands_reject_unsupported_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("cache_multi_a"));
+    ASSERT(nob_mkdir_if_not_exists("cache_multi_b"));
+    ASSERT(nob_mkdir_if_not_exists("cache_prefix_empty"));
+    ASSERT(nob_write_entire_file("cache_multi_a/CMakeCache.txt",
+                                 "FIRST:STRING=one\n"
+                                 "SHARED:STRING=from-a\n"
+                                 "DROP:STRING=drop-a\n"
+                                 "HIDE_A:INTERNAL=secret-a\n",
+                                 strlen("FIRST:STRING=one\n"
+                                        "SHARED:STRING=from-a\n"
+                                        "DROP:STRING=drop-a\n"
+                                        "HIDE_A:INTERNAL=secret-a\n")));
+    ASSERT(nob_write_entire_file("cache_multi_b/CMakeCache.txt",
+                                 "SECOND:BOOL=ON\n"
+                                 "SHARED:STRING=from-b\n"
+                                 "DROP:STRING=drop-b\n"
+                                 "HIDE_B:INTERNAL=secret-b\n",
+                                 strlen("SECOND:BOOL=ON\n"
+                                        "SHARED:STRING=from-b\n"
+                                        "DROP:STRING=drop-b\n"
+                                        "HIDE_B:INTERNAL=secret-b\n")));
+    ASSERT(nob_write_entire_file("cache_prefix_empty/CMakeCache.txt",
+                                 "EMPTY:STRING=\n"
+                                 "KEEP:STRING=keep-prefix\n",
+                                 strlen("EMPTY:STRING=\n"
+                                        "KEEP:STRING=keep-prefix\n")));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(PFX_EMPTY sentinel)\n"
+        "load_cache(cache_multi_a cache_multi_b INCLUDE_INTERNALS HIDE_A HIDE_B EXCLUDE DROP)\n"
+        "load_cache(cache_prefix_empty READ_WITH_PREFIX PFX_ EMPTY KEEP)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("FIRST")), nob_sv_from_cstr("one")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SECOND")), nob_sv_from_cstr("ON")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SHARED")), nob_sv_from_cstr("from-b")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("HIDE_A")), nob_sv_from_cstr("secret-a")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("HIDE_B")), nob_sv_from_cstr("secret-b")));
+    ASSERT(!eval_cache_defined(ctx, nob_sv_from_cstr("DROP")));
+
+    ASSERT(!eval_var_defined_visible(ctx, nob_sv_from_cstr("PFX_EMPTY")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PFX_KEEP")),
+                     nob_sv_from_cstr("keep-prefix")));
+    ASSERT(!eval_cache_defined(ctx, nob_sv_from_cstr("PFX_KEEP")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("modules"));
+    ASSERT(nob_mkdir_if_not_exists("include"));
+    ASSERT(nob_write_entire_file("meta_impl.cpp", "int meta_impl = 0;\n", strlen("int meta_impl = 0;\n")));
+    ASSERT(nob_write_entire_file("modules/core.cppm", "export module core;\n", strlen("export module core;\n")));
+    ASSERT(nob_write_entire_file("include/meta.hpp", "#pragma once\n", strlen("#pragma once\n")));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(meta_lib STATIC meta_impl.cpp)\n"
+        "target_sources(meta_lib PUBLIC FILE_SET mods TYPE CXX_MODULES BASE_DIRS modules FILES modules/core.cppm)\n"
+        "target_include_directories(meta_lib PUBLIC include)\n"
+        "target_compile_definitions(meta_lib PUBLIC META_DEF=1)\n"
+        "target_compile_options(meta_lib PUBLIC -Wall)\n"
+        "target_compile_features(meta_lib PUBLIC cxx_std_20)\n"
+        "target_link_libraries(meta_lib PUBLIC dep::lib)\n"
+        "set_target_properties(meta_lib PROPERTIES EXPORT_NAME meta-export-name CXX_EXTENSIONS OFF)\n"
+        "install(TARGETS meta_lib EXPORT DemoExport FILE_SET mods DESTINATION include/modules)\n"
+        "export(TARGETS meta_lib FILE meta-targets.cmake NAMESPACE Demo:: CXX_MODULES_DIRECTORY cxx-modules)\n"
+        "export(EXPORT DemoExport NAMESPACE Demo:: CXX_MODULES_DIRECTORY export-modules)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx,
+                                  nob_sv_from_cstr("NOBIFY_EXPORT_LAST_CXX_MODULES_DIRECTORY")),
+                     nob_sv_from_cstr("export-modules")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx,
+                                  nob_sv_from_cstr("NOBIFY_EXPORT_LAST_CXX_MODULES_NAME")),
+                     nob_sv_from_cstr("DemoExport")));
+
+    String_View export_targets = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "meta-targets.cmake", &export_targets));
+    ASSERT(sv_contains_sv(export_targets,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULES_DIRECTORY \"cxx-modules\")")));
+    ASSERT(sv_contains_sv(export_targets,
+                          nob_sv_from_cstr("include(\"${CMAKE_CURRENT_LIST_DIR}/cxx-modules/cxx-modules-cc9f26f1f4e6.cmake\")")));
+
+    String_View targets_trampoline = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena,
+                                             "cxx-modules/cxx-modules-cc9f26f1f4e6.cmake",
+                                             &targets_trampoline));
+    ASSERT(sv_contains_sv(targets_trampoline,
+                          nob_sv_from_cstr("include(\"${CMAKE_CURRENT_LIST_DIR}/cxx-modules-cc9f26f1f4e6-noconfig.cmake\")")));
+
+    String_View targets_config = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena,
+                                             "cxx-modules/cxx-modules-cc9f26f1f4e6-noconfig.cmake",
+                                             &targets_config));
+    ASSERT(sv_contains_sv(targets_config,
+                          nob_sv_from_cstr("include(\"${CMAKE_CURRENT_LIST_DIR}/target-meta-export-name-noconfig.cmake\")")));
+
+    String_View target_modules = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena,
+                                             "cxx-modules/target-meta-export-name-noconfig.cmake",
+                                             &target_modules));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_TARGET \"Demo::meta-export-name\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_EXPORT_NAME \"meta-export-name\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_SETS \"mods\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_SET_MODS \"")));
+    ASSERT(sv_contains_sv(target_modules, nob_sv_from_cstr("modules/core.cppm")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_DIRS_MODS \"")));
+    ASSERT(sv_contains_sv(target_modules, nob_sv_from_cstr("modules")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_INCLUDE_DIRECTORIES \"")));
+    ASSERT(sv_contains_sv(target_modules, nob_sv_from_cstr("include")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_COMPILE_DEFINITIONS \"META_DEF=1\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_COMPILE_OPTIONS \"-Wall\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_COMPILE_FEATURES \"cxx_std_20\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_LINK_LIBRARIES \"dep::lib\")")));
+    ASSERT(sv_contains_sv(target_modules,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_CXX_MODULE_CXX_EXTENSIONS \"OFF\")")));
+
+    String_View export_default = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "DemoExport.cmake", &export_default));
+    ASSERT(sv_contains_sv(export_default,
+                          nob_sv_from_cstr("set(NOBIFY_EXPORT_NAME \"DemoExport\")")));
+    ASSERT(sv_contains_sv(export_default,
+                          nob_sv_from_cstr("include(\"${CMAKE_CURRENT_LIST_DIR}/export-modules/cxx-modules-DemoExport.cmake\")")));
+
+    String_View export_trampoline = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena,
+                                             "export-modules/cxx-modules-DemoExport.cmake",
+                                             &export_trampoline));
+    ASSERT(sv_contains_sv(export_trampoline,
+                          nob_sv_from_cstr("include(\"${CMAKE_CURRENT_LIST_DIR}/cxx-modules-DemoExport-noconfig.cmake\")")));
+
+    String_View export_config = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena,
+                                             "export-modules/cxx-modules-DemoExport-noconfig.cmake",
+                                             &export_config));
+    ASSERT(sv_contains_sv(export_config,
+                          nob_sv_from_cstr("include(\"${CMAKE_CURRENT_LIST_DIR}/target-meta-export-name-noconfig.cmake\")")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_export_rejects_invalid_extension_and_alias_targets) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(real INTERFACE)\n"
+        "add_library(alias_real ALIAS real)\n"
+        "export(TARGETS real FILE bad-export.txt)\n"
+        "export(TARGETS alias_real FILE alias-export.cmake)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_bad_extension = false;
+    bool saw_alias_reject = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("export(... FILE ...) requires a filename ending in .cmake"))) {
+            saw_bad_extension = true;
+        }
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("export(TARGETS ...) may not export ALIAS targets"))) {
+            saw_alias_reject = true;
+        }
+    }
+    ASSERT(saw_bad_extension);
+    ASSERT(saw_alias_reject);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     Arena *temp_arena = arena_create(3 * 1024 * 1024);
     Arena *event_arena = arena_create(3 * 1024 * 1024);
@@ -10591,6 +10849,9 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
     test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);
     test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);
+    test_evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset(passed, failed);
+    test_evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file(passed, failed);
+    test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
     test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
     test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed);

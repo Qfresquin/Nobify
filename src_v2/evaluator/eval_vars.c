@@ -19,12 +19,121 @@ static bool load_cache_emit_diag(Evaluator_Context *ctx,
     return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("load_cache"), node->as.cmd.name, eval_origin_from_node(ctx, node), cause, hint);
 }
 
+static bool load_cache_parse_line(String_View line,
+                                  String_View *out_key,
+                                  String_View *out_type,
+                                  String_View *out_value);
+
 static bool load_cache_name_in_list(String_View name, const SV_List *list) {
     if (!list) return false;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
         if (nob_sv_eq(name, (*list)[i])) return true;
     }
     return false;
+}
+
+static bool load_cache_is_keyword(String_View token) {
+    return eval_sv_eq_ci_lit(token, "EXCLUDE") ||
+           eval_sv_eq_ci_lit(token, "INCLUDE_INTERNALS");
+}
+
+static bool load_cache_push_temp(Evaluator_Context *ctx, SV_List *list, String_View value) {
+    if (!ctx || !list) return false;
+    if (value.count == 0) return true;
+    return eval_sv_arr_push_temp(ctx, list, value);
+}
+
+static bool load_cache_collect_until_keyword(Evaluator_Context *ctx,
+                                             SV_List args,
+                                             size_t *io_index,
+                                             SV_List *out_list) {
+    if (!ctx || !io_index || !out_list) return false;
+    while (*io_index < arena_arr_len(args) && !load_cache_is_keyword(args[*io_index])) {
+        if (!load_cache_push_temp(ctx, out_list, args[*io_index])) return false;
+        (*io_index)++;
+    }
+    return true;
+}
+
+static String_View load_cache_prefixed_name_temp(Evaluator_Context *ctx,
+                                                 String_View prefix,
+                                                 String_View key) {
+    if (!ctx) return nob_sv_from_cstr("");
+    size_t total = prefix.count + key.count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    if (prefix.count > 0) memcpy(buf, prefix.data, prefix.count);
+    if (key.count > 0) memcpy(buf + prefix.count, key.data, key.count);
+    buf[total] = '\0';
+    return nob_sv_from_parts(buf, total);
+}
+
+static bool load_cache_apply_prefixed_entry(Evaluator_Context *ctx,
+                                            String_View prefix,
+                                            String_View key,
+                                            String_View value) {
+    if (!ctx) return false;
+    String_View prefixed = load_cache_prefixed_name_temp(ctx, prefix, key);
+    if (eval_should_stop(ctx)) return false;
+    if (value.count == 0) return eval_var_unset_current(ctx, prefixed);
+    return eval_var_set_current(ctx, prefixed, value);
+}
+
+static bool load_cache_process_contents(Evaluator_Context *ctx,
+                                        const Node *node,
+                                        bool read_with_prefix,
+                                        String_View prefix,
+                                        const SV_List *requested,
+                                        const SV_List *excludes,
+                                        const SV_List *include_internals,
+                                        const Nob_String_Builder *sb) {
+    if (!ctx || !node || !sb) return false;
+
+    const char *data = sb->items ? sb->items : "";
+    size_t len = sb->count;
+    size_t start = 0;
+    while (start <= len) {
+        size_t end = start;
+        while (end < len && data[end] != '\n') end++;
+        size_t line_len = end - start;
+        if (line_len > 0 && data[start + line_len - 1] == '\r') line_len--;
+        String_View line = nob_sv_from_parts(data + start, line_len);
+
+        String_View key = {0};
+        String_View type = {0};
+        String_View value = {0};
+        if (line.count > 0 && line.data[0] != '#' && line.data[0] != '/') {
+            if (!load_cache_parse_line(line, &key, &type, &value)) {
+                (void)load_cache_emit_diag(ctx,
+                                           node,
+                                           EV_DIAG_WARNING,
+                                           nob_sv_from_cstr("load_cache() skipped a malformed cache entry"),
+                                           line);
+            } else {
+                bool is_internal = eval_sv_eq_ci_lit(type, "INTERNAL");
+                if (read_with_prefix) {
+                    if (load_cache_name_in_list(key, requested) &&
+                        !load_cache_apply_prefixed_entry(ctx, prefix, key, value)) {
+                        return false;
+                    }
+                } else if ((!is_internal || load_cache_name_in_list(key, include_internals)) &&
+                           !load_cache_name_in_list(key, excludes)) {
+                    if (!eval_cache_set(ctx,
+                                        key,
+                                        value,
+                                        nob_sv_from_cstr("INTERNAL"),
+                                        nob_sv_from_cstr("loaded by load_cache"))) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (end == len) break;
+        start = end + 1;
+    }
+
+    return true;
 }
 
 static bool load_cache_resolve_path(Evaluator_Context *ctx, String_View raw_path, String_View *out_path) {
@@ -527,26 +636,12 @@ Eval_Result eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View cache_path = nob_sv_from_cstr("");
-    if (!load_cache_resolve_path(ctx, a[0], &cache_path)) return eval_result_from_ctx(ctx);
-    char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, eval_result_fatal());
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(cache_path_c, &sb)) {
-        (void)load_cache_emit_diag(ctx,
-                                   node,
-                                   EV_DIAG_ERROR,
-                                   nob_sv_from_cstr("load_cache() failed to read CMakeCache.txt"),
-                                   cache_path);
-        return eval_result_from_ctx(ctx);
-    }
-
     bool read_with_prefix = false;
     String_View prefix = nob_sv_from_cstr("");
     SV_List requested = NULL;
     SV_List excludes = NULL;
     SV_List include_internals = NULL;
+    SV_List cache_inputs = NULL;
 
     size_t i = 1;
     if (eval_sv_eq_ci_lit(a[i], "READ_WITH_PREFIX")) {
@@ -557,103 +652,67 @@ Eval_Result eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
                                        EV_DIAG_ERROR,
                                        nob_sv_from_cstr("load_cache(READ_WITH_PREFIX ...) requires a prefix and at least one entry"),
                                        nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
-            nob_sb_free(sb);
             return eval_result_from_ctx(ctx);
         }
         prefix = a[i + 1];
         i += 2;
         for (; i < arena_arr_len(a); i++) {
             if (!eval_sv_arr_push_temp(ctx, &requested, a[i])) {
-                nob_sb_free(sb);
                 return eval_result_from_ctx(ctx);
             }
         }
+        if (!load_cache_push_temp(ctx, &cache_inputs, a[0])) return eval_result_from_ctx(ctx);
     } else {
+        if (!load_cache_push_temp(ctx, &cache_inputs, a[0])) return eval_result_from_ctx(ctx);
+        if (!load_cache_collect_until_keyword(ctx, a, &i, &cache_inputs)) return eval_result_from_ctx(ctx);
+
         while (i < arena_arr_len(a)) {
             if (eval_sv_eq_ci_lit(a[i], "EXCLUDE")) {
                 i++;
-                while (i < arena_arr_len(a) && !eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
-                    if (!eval_sv_arr_push_temp(ctx, &excludes, a[i])) {
-                        nob_sb_free(sb);
-                        return eval_result_from_ctx(ctx);
-                    }
-                    i++;
-                }
+                if (!load_cache_collect_until_keyword(ctx, a, &i, &excludes)) return eval_result_from_ctx(ctx);
                 continue;
             }
             if (eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
                 i++;
-                while (i < arena_arr_len(a)) {
-                    if (!eval_sv_arr_push_temp(ctx, &include_internals, a[i])) {
-                        nob_sb_free(sb);
-                        return eval_result_from_ctx(ctx);
-                    }
-                    i++;
-                }
-                break;
+                if (!load_cache_collect_until_keyword(ctx, a, &i, &include_internals)) return eval_result_from_ctx(ctx);
+                continue;
             }
             (void)load_cache_emit_diag(ctx,
                                        node,
                                        EV_DIAG_ERROR,
                                        nob_sv_from_cstr("load_cache() received an unsupported argument"),
                                        a[i]);
-            nob_sb_free(sb);
             return eval_result_from_ctx(ctx);
         }
     }
 
-    const char *data = sb.items ? sb.items : "";
-    size_t len = sb.count;
-    size_t start = 0;
-    while (start <= len) {
-        size_t end = start;
-        while (end < len && data[end] != '\n') end++;
-        size_t line_len = end - start;
-        if (line_len > 0 && data[start + line_len - 1] == '\r') line_len--;
-        String_View line = nob_sv_from_parts(data + start, line_len);
+    for (size_t path_i = 0; path_i < arena_arr_len(cache_inputs); path_i++) {
+        String_View cache_path = nob_sv_from_cstr("");
+        if (!load_cache_resolve_path(ctx, cache_inputs[path_i], &cache_path)) return eval_result_from_ctx(ctx);
+        char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
+        EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, eval_result_fatal());
 
-        String_View key = {0};
-        String_View type = {0};
-        String_View value = {0};
-        if (line.count > 0 && line.data[0] != '#' && line.data[0] != '/') {
-            if (!load_cache_parse_line(line, &key, &type, &value)) {
-                (void)load_cache_emit_diag(ctx,
-                                           node,
-                                           EV_DIAG_WARNING,
-                                           nob_sv_from_cstr("load_cache() skipped a malformed cache entry"),
-                                           line);
-            } else {
-                bool is_internal = eval_sv_eq_ci_lit(type, "INTERNAL");
-                if (read_with_prefix) {
-                    if (load_cache_name_in_list(key, &requested)) {
-                        size_t total = prefix.count + key.count;
-                        char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-                        EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
-                        if (prefix.count > 0) memcpy(buf, prefix.data, prefix.count);
-                        memcpy(buf + prefix.count, key.data, key.count);
-                        buf[total] = '\0';
-                        if (!eval_var_set_current(ctx, nob_sv_from_parts(buf, total), value)) {
-                            nob_sb_free(sb);
-                            return eval_result_from_ctx(ctx);
-                        }
-                    }
-                } else {
-                    if (!is_internal || load_cache_name_in_list(key, &include_internals)) {
-                        if (!load_cache_name_in_list(key, &excludes)) {
-                            if (!eval_cache_set(ctx, key, value, nob_sv_from_cstr("INTERNAL"), nob_sv_from_cstr("loaded by load_cache"))) {
-                                nob_sb_free(sb);
-                                return eval_result_from_ctx(ctx);
-                            }
-                        }
-                    }
-                }
-            }
+        Nob_String_Builder sb = {0};
+        if (!nob_read_entire_file(cache_path_c, &sb)) {
+            (void)load_cache_emit_diag(ctx,
+                                       node,
+                                       EV_DIAG_ERROR,
+                                       nob_sv_from_cstr("load_cache() failed to read CMakeCache.txt"),
+                                       cache_path);
+            return eval_result_from_ctx(ctx);
         }
 
-        if (end == len) break;
-        start = end + 1;
+        bool ok = load_cache_process_contents(ctx,
+                                              node,
+                                              read_with_prefix,
+                                              prefix,
+                                              &requested,
+                                              &excludes,
+                                              &include_internals,
+                                              &sb);
+        nob_sb_free(sb);
+        if (!ok) return eval_result_from_ctx(ctx);
     }
 
-    nob_sb_free(sb);
     return eval_result_from_ctx(ctx);
 }

@@ -1,5 +1,7 @@
 #include "eval_meta.h"
 
+#include "eval_file_internal.h"
+#include "eval_hash.h"
 #include "evaluator_internal.h"
 #include "sv_utils.h"
 
@@ -35,29 +37,303 @@ static String_View meta_concat3_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, prefix_len + middle.count + suffix_len);
 }
 
+static bool meta_sv_ends_with_ci_lit(String_View value, const char *suffix) {
+    if (!suffix) return false;
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > value.count) return false;
+    size_t start = value.count - suffix_len;
+    for (size_t i = 0; i < suffix_len; i++) {
+        if (tolower((unsigned char)value.data[start + i]) !=
+            tolower((unsigned char)suffix[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void meta_sb_append_cmake_escaped(Nob_String_Builder *sb, String_View value) {
+    if (!sb || value.count == 0) return;
+    for (size_t i = 0; i < value.count; i++) {
+        char c = value.data[i];
+        if (c == '\\') {
+            nob_sb_append_cstr(sb, "\\\\");
+        } else if (c == '"') {
+            nob_sb_append_cstr(sb, "\\\"");
+        } else if (c == '\n') {
+            nob_sb_append_cstr(sb, "\\n");
+        } else if (c == '\r') {
+            nob_sb_append_cstr(sb, "\\r");
+        } else {
+            nob_sb_append_buf(sb, &c, 1);
+        }
+    }
+}
+
+static void meta_sb_append_set_line(Nob_String_Builder *sb,
+                                    const char *key,
+                                    String_View value) {
+    if (!sb || !key) return;
+    nob_sb_append_cstr(sb, "set(");
+    nob_sb_append_cstr(sb, key);
+    nob_sb_append_cstr(sb, " \"");
+    meta_sb_append_cmake_escaped(sb, value);
+    nob_sb_append_cstr(sb, "\")\n");
+}
+
+static void meta_sb_append_include_line(Nob_String_Builder *sb,
+                                        String_View include_path,
+                                        bool optional) {
+    if (!sb || include_path.count == 0) return;
+    nob_sb_append_cstr(sb, "include(\"");
+    meta_sb_append_cmake_escaped(sb, include_path);
+    nob_sb_append_cstr(sb, "\"");
+    if (optional) nob_sb_append_cstr(sb, " OPTIONAL");
+    nob_sb_append_cstr(sb, ")\n");
+}
+
+static String_View meta_property_store_key_temp(Evaluator_Context *ctx,
+                                                String_View scope_upper,
+                                                String_View object_id,
+                                                String_View prop_upper) {
+    static const char prefix[] = "NOBIFY_PROPERTY_";
+    if (!ctx) return nob_sv_from_cstr("");
+
+    bool has_obj = object_id.count > 0;
+    size_t total = (sizeof(prefix) - 1) + scope_upper.count + 2 + prop_upper.count;
+    if (has_obj) total += 2 + object_id.count;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    memcpy(buf + off, prefix, sizeof(prefix) - 1);
+    off += sizeof(prefix) - 1;
+    memcpy(buf + off, scope_upper.data, scope_upper.count);
+    off += scope_upper.count;
+    buf[off++] = ':';
+    buf[off++] = ':';
+    if (has_obj) {
+        memcpy(buf + off, object_id.data, object_id.count);
+        off += object_id.count;
+        buf[off++] = ':';
+        buf[off++] = ':';
+    }
+    memcpy(buf + off, prop_upper.data, prop_upper.count);
+    off += prop_upper.count;
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static String_View meta_target_property_temp(Evaluator_Context *ctx,
+                                             String_View target_name,
+                                             String_View property_name,
+                                             bool *out_set) {
+    if (out_set) *out_set = false;
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View prop_upper = eval_property_upper_name_temp(ctx, property_name);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    String_View store_key = meta_property_store_key_temp(ctx,
+                                                         nob_sv_from_cstr("TARGET"),
+                                                         target_name,
+                                                         prop_upper);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+
+    String_View value = nob_sv_from_cstr("");
+    bool have = false;
+    if (!eval_property_store_get_key(ctx, store_key, &value, &have)) return nob_sv_from_cstr("");
+    if (out_set) *out_set = have;
+    return have ? value : nob_sv_from_cstr("");
+}
+
+static String_View meta_target_export_name_temp(Evaluator_Context *ctx,
+                                                String_View target_name) {
+    bool have = false;
+    String_View export_name = meta_target_property_temp(ctx,
+                                                        target_name,
+                                                        nob_sv_from_cstr("EXPORT_NAME"),
+                                                        &have);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (have && export_name.count > 0) return export_name;
+    return target_name;
+}
+
+static bool meta_sv_list_push_unique_temp(Evaluator_Context *ctx,
+                                          SV_List *list,
+                                          String_View value) {
+    if (!ctx || !list) return false;
+    if (value.count == 0) return true;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (eval_sv_key_eq((*list)[i], value)) return true;
+    }
+    return svu_list_push_temp(ctx, list, value);
+}
+
+static bool meta_sv_list_append_split_unique_temp(Evaluator_Context *ctx,
+                                                  SV_List *list,
+                                                  String_View value) {
+    if (!ctx || !list) return false;
+    if (value.count == 0) return true;
+
+    SV_List parts = NULL;
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), value, &parts)) return false;
+    for (size_t i = 0; i < arena_arr_len(parts); i++) {
+        if (parts[i].count == 0) continue;
+        if (!meta_sv_list_push_unique_temp(ctx, list, parts[i])) return false;
+    }
+    return true;
+}
+
+static bool meta_target_collect_cxx_module_sets_temp(Evaluator_Context *ctx,
+                                                     String_View target_name,
+                                                     SV_List *out_sets) {
+    if (!ctx || !out_sets) return false;
+    *out_sets = NULL;
+
+    bool have_value = false;
+    String_View sets = meta_target_property_temp(ctx,
+                                                 target_name,
+                                                 nob_sv_from_cstr("CXX_MODULE_SETS"),
+                                                 &have_value);
+    if (eval_should_stop(ctx)) return false;
+    if (have_value && !meta_sv_list_append_split_unique_temp(ctx, out_sets, sets)) return false;
+
+    have_value = false;
+    String_View iface_sets = meta_target_property_temp(ctx,
+                                                       target_name,
+                                                       nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS"),
+                                                       &have_value);
+    if (eval_should_stop(ctx)) return false;
+    if (have_value && !meta_sv_list_append_split_unique_temp(ctx, out_sets, iface_sets)) return false;
+
+    bool have_default_set = false;
+    bool have_default_dirs = false;
+    (void)meta_target_property_temp(ctx,
+                                    target_name,
+                                    nob_sv_from_cstr("CXX_MODULE_SET"),
+                                    &have_default_set);
+    if (eval_should_stop(ctx)) return false;
+    (void)meta_target_property_temp(ctx,
+                                    target_name,
+                                    nob_sv_from_cstr("CXX_MODULE_DIRS"),
+                                    &have_default_dirs);
+    if (eval_should_stop(ctx)) return false;
+    if ((have_default_set || have_default_dirs) &&
+        !meta_sv_list_push_unique_temp(ctx, out_sets, nob_sv_from_cstr("CXX_MODULES"))) {
+        return false;
+    }
+
+    return true;
+}
+
+static String_View meta_export_cxx_modules_name_temp(Evaluator_Context *ctx,
+                                                     String_View export_name,
+                                                     SV_List targets) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (export_name.count > 0) return export_name;
+
+    size_t total = 0;
+    for (size_t i = 0; i < arena_arr_len(targets); i++) total += targets[i].count;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < arena_arr_len(targets); i++) {
+        if (targets[i].count > 0) {
+            memcpy(buf + off, targets[i].data, targets[i].count);
+            off += targets[i].count;
+        }
+    }
+    buf[off] = '\0';
+
+    String_View digest = nob_sv_from_cstr("");
+    if (!eval_hash_compute_hex_temp(ctx,
+                                    nob_sv_from_cstr("SHA3_512"),
+                                    nob_sv_from_parts(buf, off),
+                                    &digest)) {
+        return nob_sv_from_cstr("");
+    }
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (digest.count > 12) digest.count = 12;
+    return digest;
+}
+
+static String_View meta_export_cxx_modules_include_path_temp(Evaluator_Context *ctx,
+                                                             String_View cxx_modules_directory,
+                                                             String_View cxx_modules_name) {
+    if (!ctx || cxx_modules_directory.count == 0 || cxx_modules_name.count == 0) {
+        return nob_sv_from_cstr("");
+    }
+
+    String_View rel_name = nob_sv_from_cstr(nob_temp_sprintf("cxx-modules-%.*s.cmake",
+                                                             (int)cxx_modules_name.count,
+                                                             cxx_modules_name.data));
+    if (eval_sv_is_abs_path(cxx_modules_directory)) {
+        return eval_sv_path_join(eval_temp_arena(ctx), cxx_modules_directory, rel_name);
+    }
+    return svu_join_no_sep_temp(ctx,
+                                (String_View[]){
+                                    nob_sv_from_cstr("${CMAKE_CURRENT_LIST_DIR}/"),
+                                    cxx_modules_directory,
+                                    nob_sv_from_cstr("/"),
+                                    rel_name,
+                                },
+                                4);
+}
+
+static String_View meta_export_cxx_modules_abs_dir_temp(Evaluator_Context *ctx,
+                                                        String_View export_file_path,
+                                                        String_View cxx_modules_directory) {
+    if (!ctx || cxx_modules_directory.count == 0) return nob_sv_from_cstr("");
+    if (eval_sv_is_abs_path(cxx_modules_directory)) return cxx_modules_directory;
+
+    String_View file_dir = svu_dirname(export_file_path);
+    return eval_sv_path_join(eval_temp_arena(ctx), file_dir, cxx_modules_directory);
+}
+
+static String_View meta_current_list_include_temp(Evaluator_Context *ctx,
+                                                  String_View relative_or_absolute_path) {
+    if (!ctx || relative_or_absolute_path.count == 0) return nob_sv_from_cstr("");
+    if (eval_sv_is_abs_path(relative_or_absolute_path)) return relative_or_absolute_path;
+    return svu_join_no_sep_temp(ctx,
+                                (String_View[]){
+                                    nob_sv_from_cstr("${CMAKE_CURRENT_LIST_DIR}/"),
+                                    relative_or_absolute_path,
+                                },
+                                2);
+}
+
 static bool meta_export_write(Evaluator_Context *ctx,
                               String_View out_path,
                               bool append,
                               String_View mode,
                               String_View targets,
                               String_View export_name,
-                              String_View ns) {
+                              String_View ns,
+                              String_View cxx_modules_directory,
+                              String_View cxx_modules_name) {
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "# evaluator-generated export metadata\n");
-    nob_sb_append_cstr(&sb, "set(NOBIFY_EXPORT_MODE \"");
-    nob_sb_append_buf(&sb, mode.data, mode.count);
-    nob_sb_append_cstr(&sb, "\")\n");
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_MODE", mode);
     if (export_name.count > 0) {
-        nob_sb_append_cstr(&sb, "set(NOBIFY_EXPORT_NAME \"");
-        nob_sb_append_buf(&sb, export_name.data, export_name.count);
-        nob_sb_append_cstr(&sb, "\")\n");
+        meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_NAME", export_name);
     }
-    nob_sb_append_cstr(&sb, "set(NOBIFY_EXPORT_TARGETS \"");
-    nob_sb_append_buf(&sb, targets.data, targets.count);
-    nob_sb_append_cstr(&sb, "\")\n");
-    nob_sb_append_cstr(&sb, "set(NOBIFY_EXPORT_NAMESPACE \"");
-    nob_sb_append_buf(&sb, ns.data, ns.count);
-    nob_sb_append_cstr(&sb, "\")\n");
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_TARGETS", targets);
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_NAMESPACE", ns);
+    if (cxx_modules_directory.count > 0) {
+        meta_sb_append_set_line(&sb,
+                                "NOBIFY_EXPORT_CXX_MODULES_DIRECTORY",
+                                cxx_modules_directory);
+        meta_sb_append_set_line(&sb,
+                                "NOBIFY_EXPORT_CXX_MODULES_NAME",
+                                cxx_modules_name);
+        nob_sb_append_cstr(&sb, "# Include evaluator-generated C++ module metadata\n");
+        meta_sb_append_include_line(&sb,
+                                    meta_export_cxx_modules_include_path_temp(ctx,
+                                                                              cxx_modules_directory,
+                                                                              cxx_modules_name),
+                                    false);
+    }
     return eval_write_text_file(ctx, out_path, nob_sv_from_parts(sb.items, sb.count), append);
 }
 
@@ -65,12 +341,219 @@ static bool meta_export_assign_last(Evaluator_Context *ctx,
                                     String_View mode,
                                     String_View file_path,
                                     String_View targets,
-                                    String_View ns) {
+                                    String_View ns,
+                                    String_View cxx_modules_directory,
+                                    String_View cxx_modules_name) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE"), mode)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_FILE"), file_path)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_TARGETS"), targets)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_NAMESPACE"), ns)) return false;
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("NOBIFY_EXPORT_LAST_CXX_MODULES_DIRECTORY"),
+                              cxx_modules_directory)) {
+        return false;
+    }
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("NOBIFY_EXPORT_LAST_CXX_MODULES_NAME"),
+                              cxx_modules_name)) {
+        return false;
+    }
     return true;
+}
+
+static bool meta_export_write_cxx_module_target_file(Evaluator_Context *ctx,
+                                                     String_View target_file_path,
+                                                     String_View target_name,
+                                                     String_View target_export_name,
+                                                     String_View ns,
+                                                     String_View config) {
+    if (!ctx) return false;
+
+    SV_List module_sets = NULL;
+    if (!meta_target_collect_cxx_module_sets_temp(ctx, target_name, &module_sets)) return false;
+    if (arena_arr_len(module_sets) == 0) return true;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "# evaluator-generated export C++ module metadata\n");
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_SOURCE_TARGET", target_name);
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_EXPORT_NAME", target_export_name);
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_NAMESPACE", ns);
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_CONFIG", config);
+
+    String_View full_target_name = svu_join_no_sep_temp(ctx,
+                                                        (String_View[]){
+                                                            ns,
+                                                            target_export_name,
+                                                        },
+                                                        2);
+    if (eval_should_stop(ctx)) return false;
+    meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_TARGET", full_target_name);
+    meta_sb_append_set_line(&sb,
+                            "NOBIFY_EXPORT_CXX_MODULE_SETS",
+                            eval_sv_join_semi_temp(ctx,
+                                                   module_sets,
+                                                   arena_arr_len(module_sets)));
+    if (eval_should_stop(ctx)) return false;
+
+    static const char *k_passthrough_props[] = {
+        "CXX_EXTENSIONS",
+        "INCLUDE_DIRECTORIES",
+        "COMPILE_DEFINITIONS",
+        "COMPILE_OPTIONS",
+        "COMPILE_FEATURES",
+        "LINK_LIBRARIES",
+    };
+    for (size_t i = 0; i < NOB_ARRAY_LEN(k_passthrough_props); i++) {
+        bool have = false;
+        String_View value = meta_target_property_temp(ctx,
+                                                      target_name,
+                                                      nob_sv_from_cstr(k_passthrough_props[i]),
+                                                      &have);
+        if (eval_should_stop(ctx)) return false;
+        if (!have) continue;
+        meta_sb_append_set_line(&sb,
+                                nob_temp_sprintf("NOBIFY_EXPORT_CXX_MODULE_%s",
+                                                 k_passthrough_props[i]),
+                                value);
+    }
+
+    for (size_t i = 0; i < arena_arr_len(module_sets); i++) {
+        String_View set_name = module_sets[i];
+        String_View upper = eval_property_upper_name_temp(ctx, set_name);
+        if (eval_should_stop(ctx)) return false;
+
+        String_View files_prop =
+            nob_sv_from_cstr(nob_temp_sprintf("CXX_MODULE_SET_%.*s",
+                                              (int)upper.count,
+                                              upper.data));
+        String_View dirs_prop =
+            nob_sv_from_cstr(nob_temp_sprintf("CXX_MODULE_DIRS_%.*s",
+                                              (int)upper.count,
+                                              upper.data));
+
+        bool have_files = false;
+        bool have_dirs = false;
+        String_View files = meta_target_property_temp(ctx, target_name, files_prop, &have_files);
+        if (eval_should_stop(ctx)) return false;
+        String_View dirs = meta_target_property_temp(ctx, target_name, dirs_prop, &have_dirs);
+        if (eval_should_stop(ctx)) return false;
+
+        if (eval_sv_eq_ci_lit(set_name, "CXX_MODULES")) {
+            if (!have_files) {
+                files = meta_target_property_temp(ctx,
+                                                  target_name,
+                                                  nob_sv_from_cstr("CXX_MODULE_SET"),
+                                                  &have_files);
+                if (eval_should_stop(ctx)) return false;
+            }
+            if (!have_dirs) {
+                dirs = meta_target_property_temp(ctx,
+                                                 target_name,
+                                                 nob_sv_from_cstr("CXX_MODULE_DIRS"),
+                                                 &have_dirs);
+                if (eval_should_stop(ctx)) return false;
+            }
+            if (have_files) meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_SET", files);
+            if (have_dirs) meta_sb_append_set_line(&sb, "NOBIFY_EXPORT_CXX_MODULE_DIRS", dirs);
+        }
+
+        if (have_files) {
+            meta_sb_append_set_line(&sb,
+                                    nob_temp_sprintf("NOBIFY_EXPORT_CXX_MODULE_SET_%.*s",
+                                                     (int)upper.count,
+                                                     upper.data),
+                                    files);
+        }
+        if (have_dirs) {
+            meta_sb_append_set_line(&sb,
+                                    nob_temp_sprintf("NOBIFY_EXPORT_CXX_MODULE_DIRS_%.*s",
+                                                     (int)upper.count,
+                                                     upper.data),
+                                    dirs);
+        }
+    }
+
+    return eval_write_text_file(ctx,
+                                target_file_path,
+                                nob_sv_from_parts(sb.items, sb.count),
+                                false);
+}
+
+static bool meta_export_write_cxx_module_sidecars(Evaluator_Context *ctx,
+                                                  String_View export_file_path,
+                                                  bool append,
+                                                  String_View cxx_modules_directory,
+                                                  String_View cxx_modules_name,
+                                                  SV_List targets,
+                                                  String_View ns) {
+    if (!ctx || cxx_modules_directory.count == 0 || cxx_modules_name.count == 0) return true;
+
+    String_View abs_dir = meta_export_cxx_modules_abs_dir_temp(ctx,
+                                                               export_file_path,
+                                                               cxx_modules_directory);
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_file_mkdir_p(ctx, abs_dir)) return false;
+
+    String_View trampoline_name =
+        nob_sv_from_cstr(nob_temp_sprintf("cxx-modules-%.*s.cmake",
+                                          (int)cxx_modules_name.count,
+                                          cxx_modules_name.data));
+    String_View config_name =
+        nob_sv_from_cstr(nob_temp_sprintf("cxx-modules-%.*s-noconfig.cmake",
+                                          (int)cxx_modules_name.count,
+                                          cxx_modules_name.data));
+
+    String_View trampoline_path = eval_sv_path_join(eval_temp_arena(ctx), abs_dir, trampoline_name);
+    if (eval_should_stop(ctx)) return false;
+    String_View config_path = eval_sv_path_join(eval_temp_arena(ctx), abs_dir, config_name);
+    if (eval_should_stop(ctx)) return false;
+
+    Nob_String_Builder trampoline = {0};
+    nob_sb_append_cstr(&trampoline, "# evaluator-generated export C++ module trampoline\n");
+    meta_sb_append_include_line(&trampoline,
+                                meta_current_list_include_temp(ctx, config_name),
+                                false);
+    if (!eval_write_text_file(ctx,
+                              trampoline_path,
+                              nob_sv_from_parts(trampoline.items, trampoline.count),
+                              false)) {
+        return false;
+    }
+
+    Nob_String_Builder config = {0};
+    nob_sb_append_cstr(&config, "# evaluator-generated export C++ module config metadata\n");
+    for (size_t i = 0; i < arena_arr_len(targets); i++) {
+        SV_List module_sets = NULL;
+        if (!meta_target_collect_cxx_module_sets_temp(ctx, targets[i], &module_sets)) return false;
+        if (arena_arr_len(module_sets) == 0) continue;
+
+        String_View target_export_name = meta_target_export_name_temp(ctx, targets[i]);
+        if (eval_should_stop(ctx)) return false;
+        String_View target_file_name =
+            nob_sv_from_cstr(nob_temp_sprintf("target-%.*s-noconfig.cmake",
+                                              (int)target_export_name.count,
+                                              target_export_name.data));
+        String_View target_file_path =
+            eval_sv_path_join(eval_temp_arena(ctx), abs_dir, target_file_name);
+        if (eval_should_stop(ctx)) return false;
+
+        if (!meta_export_write_cxx_module_target_file(ctx,
+                                                      target_file_path,
+                                                      targets[i],
+                                                      target_export_name,
+                                                      ns,
+                                                      nob_sv_from_cstr("noconfig"))) {
+            return false;
+        }
+        meta_sb_append_include_line(&config,
+                                    meta_current_list_include_temp(ctx, target_file_name),
+                                    false);
+    }
+
+    return eval_write_text_file(ctx,
+                                config_path,
+                                nob_sv_from_parts(config.items, config.count),
+                                append);
 }
 
 Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
@@ -99,6 +582,7 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
     String_View file_path = nob_sv_from_cstr("");
     String_View ns = nob_sv_from_cstr("");
     String_View export_name = nob_sv_from_cstr("");
+    String_View cxx_modules_directory = nob_sv_from_cstr("");
     SV_List targets = NULL;
 
     if (eval_sv_eq_ci_lit(a[0], "TARGETS")) {
@@ -130,12 +614,16 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
             }
             if (eval_sv_eq_ci_lit(a[i], "EXPORT_LINK_INTERFACE_LIBRARIES")) continue;
             if (eval_sv_eq_ci_lit(a[i], "CXX_MODULES_DIRECTORY")) {
-                (void)meta_emit_diag(ctx,
-                                     node,
-                                     EV_DIAG_ERROR,
-                                     nob_sv_from_cstr("export(... CXX_MODULES_DIRECTORY ...) is not implemented yet"),
-                                     nob_sv_from_cstr("This batch models only classic build-tree export metadata"));
-                return eval_result_from_ctx(ctx);
+                if (i + 1 >= arena_arr_len(a)) {
+                    (void)meta_emit_diag(ctx,
+                                         node,
+                                         EV_DIAG_ERROR,
+                                         nob_sv_from_cstr("export(... CXX_MODULES_DIRECTORY ...) requires a directory"),
+                                         nob_sv_from_cstr("Usage: ... CXX_MODULES_DIRECTORY <dir>"));
+                    return eval_result_from_ctx(ctx);
+                }
+                cxx_modules_directory = a[++i];
+                continue;
             }
             if (eval_sv_eq_ci_lit(a[i], "NAMESPACE")) {
                 if (i + 1 >= arena_arr_len(a)) {
@@ -175,6 +663,14 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                                      node,
                                      EV_DIAG_ERROR,
                                      nob_sv_from_cstr("export(TARGETS ...) target was not declared"),
+                                     targets[ti]);
+                return eval_result_from_ctx(ctx);
+            }
+            if (eval_target_alias_known(ctx, targets[ti])) {
+                (void)meta_emit_diag(ctx,
+                                     node,
+                                     EV_DIAG_ERROR,
+                                     nob_sv_from_cstr("export(TARGETS ...) may not export ALIAS targets"),
                                      targets[ti]);
                 return eval_result_from_ctx(ctx);
             }
@@ -220,12 +716,16 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
                 continue;
             }
             if (eval_sv_eq_ci_lit(a[i], "CXX_MODULES_DIRECTORY")) {
-                (void)meta_emit_diag(ctx,
-                                     node,
-                                     EV_DIAG_ERROR,
-                                     nob_sv_from_cstr("export(... CXX_MODULES_DIRECTORY ...) is not implemented yet"),
-                                     nob_sv_from_cstr("This batch models only classic build-tree export metadata"));
-                return eval_result_from_ctx(ctx);
+                if (i + 1 >= arena_arr_len(a)) {
+                    (void)meta_emit_diag(ctx,
+                                         node,
+                                         EV_DIAG_ERROR,
+                                         nob_sv_from_cstr("export(... CXX_MODULES_DIRECTORY ...) requires a directory"),
+                                         nob_sv_from_cstr("Usage: ... CXX_MODULES_DIRECTORY <dir>"));
+                    return eval_result_from_ctx(ctx);
+                }
+                cxx_modules_directory = a[++i];
+                continue;
             }
             (void)meta_emit_diag(ctx,
                                  node,
@@ -256,11 +756,25 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (file_path.count == 0) {
+        if (export_name.count > 0) {
+            file_path = meta_concat3_temp(ctx, "", export_name, ".cmake");
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+        } else {
+            (void)meta_emit_diag(ctx,
+                                 node,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("export() requires FILE <path> in the supported signatures"),
+                                 nob_sv_from_cstr("Usage: export(TARGETS ... FILE <file>) or export(EXPORT ... [FILE <file>])"));
+            return eval_result_from_ctx(ctx);
+        }
+    }
+
+    if (!meta_sv_ends_with_ci_lit(file_path, ".cmake")) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
-                             nob_sv_from_cstr("export() requires FILE <path> in the supported signatures"),
-                             nob_sv_from_cstr("Usage: export(TARGETS ... FILE <file>) or export(EXPORT ... FILE <file>)"));
+                             nob_sv_from_cstr("export(... FILE ...) requires a filename ending in .cmake"),
+                             file_path);
         return eval_result_from_ctx(ctx);
     }
 
@@ -272,7 +786,17 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
     String_View targets_joined = eval_sv_join_semi_temp(ctx, targets, arena_arr_len(targets));
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     String_View mode = export_name.count > 0 ? nob_sv_from_cstr("EXPORT") : nob_sv_from_cstr("TARGETS");
-    if (!meta_export_write(ctx, file_path, append, mode, targets_joined, export_name, ns)) {
+    String_View cxx_modules_name = meta_export_cxx_modules_name_temp(ctx, export_name, targets);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    if (!meta_export_write(ctx,
+                           file_path,
+                           append,
+                           mode,
+                           targets_joined,
+                           export_name,
+                           ns,
+                           cxx_modules_directory,
+                           cxx_modules_name)) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
@@ -281,7 +805,30 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
         return eval_result_from_ctx(ctx);
     }
 
-    if (!meta_export_assign_last(ctx, mode, file_path, targets_joined, ns)) return eval_result_from_ctx(ctx);
+    if (!meta_export_write_cxx_module_sidecars(ctx,
+                                               file_path,
+                                               append,
+                                               cxx_modules_directory,
+                                               cxx_modules_name,
+                                               targets,
+                                               ns)) {
+        (void)meta_emit_diag(ctx,
+                             node,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("export() failed to write C++ module metadata"),
+                             file_path);
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (!meta_export_assign_last(ctx,
+                                 mode,
+                                 file_path,
+                                 targets_joined,
+                                 ns,
+                                 cxx_modules_directory,
+                                 cxx_modules_name)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
