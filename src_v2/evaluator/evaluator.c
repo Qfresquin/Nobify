@@ -9,6 +9,7 @@
 #include "eval_report.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
+#include "sv_utils.h"
 #include "stb_ds.h"
 
 #include <stdio.h>
@@ -457,6 +458,45 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->alias_targets, name);
 }
 
+bool eval_test_known(Evaluator_Context *ctx, String_View name) {
+    if (!ctx) return false;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_tests); i++) {
+        if (eval_sv_key_eq(commands->known_tests[i].name, name)) return true;
+    }
+    return false;
+}
+
+bool eval_test_known_in_directory(Evaluator_Context *ctx, String_View name, String_View declared_dir) {
+    if (!ctx) return false;
+    if (declared_dir.count == 0) declared_dir = eval_current_source_dir_for_paths(ctx);
+    declared_dir = eval_sv_path_normalize_temp(ctx, declared_dir);
+    if (eval_should_stop(ctx)) return false;
+
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_tests); i++) {
+        if (!eval_sv_key_eq(commands->known_tests[i].name, name)) continue;
+        if (svu_eq_ci_sv(commands->known_tests[i].declared_dir, declared_dir)) return true;
+    }
+    return false;
+}
+
+bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View declared_dir) {
+    if (!ctx) return false;
+    if (declared_dir.count == 0) declared_dir = eval_current_source_dir_for_paths(ctx);
+    declared_dir = eval_sv_path_normalize_temp(ctx, declared_dir);
+    if (eval_should_stop(ctx)) return false;
+    if (eval_test_known_in_directory(ctx, name, declared_dir)) return true;
+
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    Eval_Test_Record record = {0};
+    record.name = sv_copy_to_arena(commands->known_tests_arena, name);
+    if (name.count > 0 && record.name.count == 0) return ctx_oom(ctx);
+    record.declared_dir = sv_copy_to_arena(commands->known_tests_arena, declared_dir);
+    if (declared_dir.count > 0 && record.declared_dir.count == 0) return ctx_oom(ctx);
+    return EVAL_ARR_PUSH(ctx, commands->known_tests_arena, commands->known_tests, record);
+}
+
 // -----------------------------------------------------------------------------
 // Argument resolution (token flattening + variable expansion + list splitting)
 // -----------------------------------------------------------------------------
@@ -808,6 +848,14 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
         return NULL;
     }
 
+    ctx->command_state.known_tests_arena = arena_create(4096);
+    if (!ctx->command_state.known_tests_arena) return NULL;
+    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.known_tests_arena)) {
+        arena_destroy(ctx->command_state.known_tests_arena);
+        ctx->command_state.known_tests_arena = NULL;
+        return NULL;
+    }
+
     ctx->command_state.user_commands_arena = arena_create(4096);
     if (!ctx->command_state.user_commands_arena) return NULL;
     if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.user_commands_arena)) {
@@ -833,6 +881,7 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return NULL;
+    if (!eval_directory_register_known(ctx, ctx->source_dir)) return NULL;
     {
         String_View cmakefiles_dir = eval_sv_path_join(ctx->event_arena, ctx->binary_dir, nob_sv_from_cstr("CMakeFiles"));
         String_View redirects_dir = eval_sv_path_join(ctx->event_arena, cmakefiles_dir, nob_sv_from_cstr("pkgRedirects"));

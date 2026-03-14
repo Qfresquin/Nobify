@@ -95,6 +95,13 @@ typedef Eval_Target_Record *Eval_Target_Record_List;
 
 typedef struct {
     String_View name;
+    String_View declared_dir;
+} Eval_Test_Record;
+
+typedef Eval_Test_Record *Eval_Test_Record_List;
+
+typedef struct {
+    String_View name;
     Eval_Native_Command_Handler handler;
     Eval_Command_Impl_Level implemented_level;
     Eval_Command_Fallback fallback_behavior;
@@ -339,8 +346,11 @@ typedef Eval_FetchContent_State *Eval_FetchContent_State_List;
 typedef struct {
     Arena *native_commands_arena;
     Arena *known_targets_arena;
+    Arena *known_tests_arena;
     Arena *user_commands_arena;
     Eval_Target_Record_List known_targets;
+    Eval_Test_Record_List known_tests;
+    SV_List known_directories;
     SV_List alias_targets;
     Eval_Native_Command_List native_commands;
     // Case-insensitive lookup index: normalized command name -> native_commands index.
@@ -1781,6 +1791,9 @@ bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_V
 bool eval_target_is_imported(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
+bool eval_test_known(Evaluator_Context *ctx, String_View name);
+bool eval_test_known_in_directory(Evaluator_Context *ctx, String_View name, String_View declared_dir);
+bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View declared_dir);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
 bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name);
 bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Event_Origin origin, String_View target_name);
@@ -1840,6 +1853,11 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name);
 // ---- utilitários compartilhados ----
 bool eval_sv_key_eq(String_View a, String_View b);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
+bool eval_directory_register_known(Evaluator_Context *ctx, String_View dir);
+bool eval_directory_is_known(Evaluator_Context *ctx, String_View dir);
+String_View eval_test_scoped_marker_key_temp(Evaluator_Context *ctx,
+                                             String_View scope_dir,
+                                             String_View test_name);
 String_View eval_normalize_compile_definition_item(String_View item);
 String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx);
 String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name);

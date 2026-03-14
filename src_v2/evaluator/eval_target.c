@@ -8,6 +8,23 @@ static bool define_property_keyword(String_View tok) {
            eval_sv_eq_ci_lit(tok, "INITIALIZE_FROM_VARIABLE");
 }
 
+static bool eval_property_write_current_directory_shadow(Evaluator_Context *ctx,
+                                                         Event_Origin origin,
+                                                         String_View scope_upper,
+                                                         String_View object_name,
+                                                         String_View property_name,
+                                                         String_View value,
+                                                         Cmake_Target_Property_Op op,
+                                                         bool emit_var_event) {
+    if (!ctx) return false;
+    String_View current_dir = eval_current_source_dir_for_paths(ctx);
+    String_View scoped_object =
+        eval_property_scoped_object_id_temp(ctx, "DIRECTORY", current_dir, object_name);
+    if (eval_should_stop(ctx)) return false;
+    return eval_property_write(
+        ctx, origin, scope_upper, scoped_object, property_name, value, op, emit_var_event);
+}
+
 Eval_Result eval_handle_set_directory_properties(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -113,6 +130,16 @@ Eval_Result eval_handle_set_source_files_properties(Evaluator_Context *ctx, cons
                                          a[pi + 1],
                                          EV_PROP_SET,
                                          true)) {
+                    return eval_result_from_ctx(ctx);
+                }
+                if (!eval_property_write_current_directory_shadow(ctx,
+                                                                  o,
+                                                                  scope_upper,
+                                                                  files[fi],
+                                                                  a[pi],
+                                                                  a[pi + 1],
+                                                                  EV_PROP_SET,
+                                                                  true)) {
                     return eval_result_from_ctx(ctx);
                 }
             }
@@ -228,6 +255,17 @@ Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node 
                                      a[pi + 1],
                                      EV_PROP_SET,
                                      true)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (!saw_directory_clause &&
+                !eval_property_write_current_directory_shadow(ctx,
+                                                              o,
+                                                              scope_upper,
+                                                              tests[ti],
+                                                              a[pi],
+                                                              a[pi + 1],
+                                                              EV_PROP_SET,
+                                                              true)) {
                 return eval_result_from_ctx(ctx);
             }
         }
@@ -494,10 +532,24 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
         for (size_t di = 0; di < arena_arr_len(source_dirs); di++) {
             source_dirs[di] = eval_path_resolve_for_cmake_arg(ctx, source_dirs[di], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            if (!eval_directory_is_known(ctx, source_dirs[di])) {
+                property_diag_unknown_directory(ctx,
+                                                node,
+                                                nob_sv_from_cstr("set_property(SOURCE DIRECTORY ...) directory is not known"),
+                                                source_dirs[di]);
+                return eval_result_from_ctx(ctx);
+            }
         }
         for (size_t di = 0; di < arena_arr_len(test_dirs); di++) {
             test_dirs[di] = eval_path_resolve_for_cmake_arg(ctx, test_dirs[di], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            if (!eval_directory_is_known(ctx, test_dirs[di])) {
+                property_diag_unknown_directory(ctx,
+                                                node,
+                                                nob_sv_from_cstr("set_property(TEST DIRECTORY ...) directory is not known"),
+                                                test_dirs[di]);
+                return eval_result_from_ctx(ctx);
+            }
         }
     }
 
@@ -636,6 +688,30 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
             }
             return eval_result_from_ctx(ctx);
         }
+
+        for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
+            if (!eval_property_write(ctx,
+                                     o,
+                                     scope_upper,
+                                     objects[oi],
+                                     key,
+                                     value,
+                                     op,
+                                     true)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (!eval_property_write_current_directory_shadow(ctx,
+                                                              o,
+                                                              scope_upper,
+                                                              objects[oi],
+                                                              key,
+                                                              value,
+                                                              op,
+                                                              true)) {
+                return eval_result_from_ctx(ctx);
+            }
+        }
+        return eval_result_from_ctx(ctx);
     }
 
     if (is_test_scope) {
@@ -668,6 +744,30 @@ Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
             }
             return eval_result_from_ctx(ctx);
         }
+
+        for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
+            if (!eval_property_write(ctx,
+                                     o,
+                                     scope_upper,
+                                     objects[oi],
+                                     key,
+                                     value,
+                                     op,
+                                     true)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (!eval_property_write_current_directory_shadow(ctx,
+                                                              o,
+                                                              scope_upper,
+                                                              objects[oi],
+                                                              key,
+                                                              value,
+                                                              op,
+                                                              true)) {
+                return eval_result_from_ctx(ctx);
+            }
+        }
+        return eval_result_from_ctx(ctx);
     }
 
     if (is_cache_scope) {

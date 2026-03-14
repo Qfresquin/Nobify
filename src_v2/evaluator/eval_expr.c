@@ -621,13 +621,7 @@ static bool parse_unary(Expr *e) {
         expr_next(e);
         if (!expr_has(e)) return false;
         String_View name = expr_next(e);
-        size_t total = strlen("NOBIFY_TEST::") + name.count;
-        char *buf = (char*)arena_alloc(eval_temp_arena(e->ctx), total + 1);
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, buf, false);
-        memcpy(buf, "NOBIFY_TEST::", strlen("NOBIFY_TEST::"));
-        memcpy(buf + strlen("NOBIFY_TEST::"), name.data, name.count);
-        buf[total] = '\0';
-        return eval_var_defined_visible(e->ctx, nob_sv_from_cstr(buf));
+        return eval_test_known(e->ctx, name);
     }
 
     return parse_primary(e);

@@ -33,6 +33,21 @@ static inline bool target_diag_error(Evaluator_Context *ctx,
     return target_diag(ctx, node, EV_DIAG_ERROR, cause, hint);
 }
 
+static inline bool property_diag_unknown_directory(Evaluator_Context *ctx,
+                                                   const Node *node,
+                                                   String_View cause,
+                                                   String_View dir) {
+    if (!ctx || !node) return false;
+    return EVAL_DIAG_BOOL_SEV(ctx,
+                              EV_DIAG_ERROR,
+                              EVAL_DIAG_NOT_FOUND,
+                              nob_sv_from_cstr("dispatcher"),
+                              node->as.cmd.name,
+                              eval_origin_from_node(ctx, node),
+                              cause,
+                              dir);
+}
+
 static inline bool target_usage_validate_target(Evaluator_Context *ctx,
                                                 const Node *node,
                                                 String_View target_name) {

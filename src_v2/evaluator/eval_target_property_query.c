@@ -55,6 +55,13 @@ Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
         if (object_token.count == 0) object_id = cur_src;
         else object_id = eval_path_resolve_for_cmake_arg(ctx, object_token, cur_src, true);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+        if (object_token.count > 0 && !eval_directory_is_known(ctx, object_id)) {
+            property_diag_unknown_directory(ctx,
+                                            node,
+                                            nob_sv_from_cstr("get_property(DIRECTORY ...) directory is not known"),
+                                            object_id);
+            return eval_result_from_ctx(ctx);
+        }
         inherit_dir = object_id;
     } else if (eval_sv_eq_ci_lit(scope_upper, "SOURCE")) {
         String_View cur_src = eval_current_source_dir_for_paths(ctx);
@@ -69,6 +76,14 @@ Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
                 }
                 inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], cur_src, true);
                 if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+                if (!eval_directory_is_known(ctx, inherit_dir)) {
+                    property_diag_unknown_directory(
+                        ctx,
+                        node,
+                        nob_sv_from_cstr("get_property(SOURCE DIRECTORY ...) directory is not known"),
+                        inherit_dir);
+                    return eval_result_from_ctx(ctx);
+                }
                 saw_source_dir_clause = true;
                 i++;
                 continue;
@@ -123,6 +138,14 @@ Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
             }
             inherit_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            if (!eval_directory_is_known(ctx, inherit_dir)) {
+                property_diag_unknown_directory(
+                    ctx,
+                    node,
+                    nob_sv_from_cstr("get_property(TEST DIRECTORY ...) directory is not known"),
+                    inherit_dir);
+                return eval_result_from_ctx(ctx);
+            }
             saw_test_dir_clause = true;
             i++;
         }
@@ -219,6 +242,13 @@ Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Nod
         }
         dir = eval_path_resolve_for_cmake_arg(ctx, a[i + 1], dir, true);
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+        if (!eval_directory_is_known(ctx, dir)) {
+            property_diag_unknown_directory(ctx,
+                                            node,
+                                            nob_sv_from_cstr("get_directory_property(DIRECTORY ...) directory is not known"),
+                                            dir);
+            return eval_result_from_ctx(ctx);
+        }
         i += 2;
     }
     if (i >= arena_arr_len(a)) {

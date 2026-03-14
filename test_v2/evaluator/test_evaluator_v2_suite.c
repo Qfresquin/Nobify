@@ -197,6 +197,33 @@ static bool evaluator_run_system_command(const char *cmd) {
     return system(cmd) == 0;
 }
 
+static bool evaluator_sv_is_decimal(String_View value) {
+    if (value.count == 0) return false;
+    for (size_t i = 0; i < value.count; i++) {
+        if (value.data[i] < '0' || value.data[i] > '9') return false;
+    }
+    return true;
+}
+
+static bool evaluator_sv_is_bool01(String_View value) {
+    return value.count == 1 && (value.data[0] == '0' || value.data[0] == '1');
+}
+
+static bool evaluator_sv_list_contains(String_View list, String_View wanted) {
+    size_t start = 0;
+    while (start <= list.count) {
+        size_t end = start;
+        while (end < list.count && list.data[end] != ';') end++;
+        if (end - start == wanted.count &&
+            memcmp(list.data + start, wanted.data, wanted.count) == 0) {
+            return true;
+        }
+        if (end == list.count) break;
+        start = end + 1;
+    }
+    return false;
+}
+
 static bool evaluator_create_tar_archive(const char *archive_path,
                                          const char *parent_dir,
                                          const char *entry_name) {
@@ -5347,6 +5374,9 @@ TEST(evaluator_set_property_source_test_directory_clauses_parse_and_apply) {
 
     Ast_Root root = parse_cmake(
         temp_arena,
+        "file(MAKE_DIRECTORY src)\n"
+        "file(WRITE src/CMakeLists.txt \"# empty\\n\")\n"
+        "add_subdirectory(src)\n"
         "add_executable(src_t main.c)\n"
         "add_test(NAME smoke COMMAND src_t)\n"
         "set_property(SOURCE foo.c DIRECTORY src PROPERTY LANGUAGE C)\n"
@@ -5717,6 +5747,125 @@ TEST(evaluator_get_property_inherited_target_and_source_queries_follow_declared_
     TEST_PASS();
 }
 
+TEST(evaluator_directory_scoped_property_queries_require_known_directories) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("gp_known_dir"));
+    ASSERT(nob_write_entire_file("gp_known_dir/sub_file.c", "int sub_file;\n", 14));
+    {
+        const char *sub_cmake =
+            "set_property(DIRECTORY PROPERTY SUB_BATCH_PROP from_subdir)\n"
+            "set_property(SOURCE sub_file.c PROPERTY SUB_SRC_PROP from_source)\n"
+            "add_test(NAME sub_batch_test COMMAND cmd)\n"
+            "set_property(TEST sub_batch_test PROPERTY LABELS from_test)\n";
+        ASSERT(nob_write_entire_file("gp_known_dir/CMakeLists.txt", sub_cmake, strlen(sub_cmake)));
+    }
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set_property(DIRECTORY PROPERTY ROOT_BATCH_PROP from_root)\n"
+        "add_subdirectory(gp_known_dir)\n"
+        "get_directory_property(ROOT_PROP ROOT_BATCH_PROP)\n"
+        "get_directory_property(SUB_PROP DIRECTORY gp_known_dir SUB_BATCH_PROP)\n"
+        "get_property(SUB_DIR_PROP DIRECTORY gp_known_dir PROPERTY SUB_BATCH_PROP)\n"
+        "get_property(SUB_SRC SOURCE sub_file.c DIRECTORY gp_known_dir PROPERTY SUB_SRC_PROP)\n"
+        "get_property(SUB_TEST TEST sub_batch_test DIRECTORY gp_known_dir PROPERTY LABELS)\n"
+        "set_property(SOURCE sub_file.c DIRECTORY gp_known_dir PROPERTY SUB_SRC_PROP updated_source)\n"
+        "get_property(SUB_SRC_UPDATED SOURCE sub_file.c DIRECTORY gp_known_dir PROPERTY SUB_SRC_PROP)\n"
+        "set_property(TEST sub_batch_test DIRECTORY gp_known_dir PROPERTY LABELS updated_test)\n"
+        "get_property(SUB_TEST_UPDATED TEST sub_batch_test DIRECTORY gp_known_dir PROPERTY LABELS)\n"
+        "get_directory_property(BAD_DIR DIRECTORY gp_missing_dir ROOT_BATCH_PROP)\n"
+        "get_property(BAD_SCOPE DIRECTORY gp_missing_dir PROPERTY ROOT_BATCH_PROP)\n"
+        "get_property(BAD_SRC SOURCE sub_file.c DIRECTORY gp_missing_dir PROPERTY SUB_SRC_PROP)\n"
+        "get_property(BAD_TEST TEST sub_batch_test DIRECTORY gp_missing_dir PROPERTY LABELS)\n"
+        "set_property(SOURCE sub_file.c DIRECTORY gp_missing_dir PROPERTY SUB_SRC_PROP nope)\n"
+        "set_property(TEST sub_batch_test DIRECTORY gp_missing_dir PROPERTY LABELS nope)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 6);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ROOT_PROP")),
+                     nob_sv_from_cstr("from_root")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SUB_PROP")),
+                     nob_sv_from_cstr("from_subdir")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SUB_DIR_PROP")),
+                     nob_sv_from_cstr("from_subdir")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SUB_SRC")),
+                     nob_sv_from_cstr("from_source")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SUB_TEST")),
+                     nob_sv_from_cstr("from_test")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SUB_SRC_UPDATED")),
+                     nob_sv_from_cstr("updated_source")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SUB_TEST_UPDATED")),
+                     nob_sv_from_cstr("updated_test")));
+
+    bool saw_get_dir_error = false;
+    bool saw_get_scope_error = false;
+    bool saw_get_source_error = false;
+    bool saw_get_test_error = false;
+    bool saw_set_source_error = false;
+    bool saw_set_test_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("get_directory_property(DIRECTORY ...) directory is not known"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("gp_missing_dir")));
+            saw_get_dir_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_property(DIRECTORY ...) directory is not known"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("gp_missing_dir")));
+            saw_get_scope_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_property(SOURCE DIRECTORY ...) directory is not known"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("gp_missing_dir")));
+            saw_get_source_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_property(TEST DIRECTORY ...) directory is not known"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("gp_missing_dir")));
+            saw_get_test_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("set_property(SOURCE DIRECTORY ...) directory is not known"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("gp_missing_dir")));
+            saw_set_source_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("set_property(TEST DIRECTORY ...) directory is not known"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("gp_missing_dir")));
+            saw_set_test_error = true;
+        }
+    }
+
+    ASSERT(saw_get_dir_error);
+    ASSERT(saw_get_scope_error);
+    ASSERT(saw_get_source_error);
+    ASSERT(saw_get_test_error);
+    ASSERT(saw_set_source_error);
+    ASSERT(saw_set_test_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -5998,6 +6147,17 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
+    ASSERT(nob_mkdir_if_not_exists("host_sysroot"));
+    ASSERT(nob_mkdir_if_not_exists("host_sysroot/etc"));
+    {
+        const char *os_release =
+            "ID=nobify\n"
+            "NAME=\"Nobify Linux\"\n"
+            "PRETTY_NAME=\"Nobify Linux 1.0\"\n"
+            "VERSION_ID=1.0\n";
+        ASSERT(nob_write_entire_file("host_sysroot/etc/os-release", os_release, strlen(os_release)));
+    }
+
     char site_cmd[256] = {0};
     ASSERT(evaluator_prepare_site_name_command(site_cmd, sizeof(site_cmd)));
 
@@ -6016,8 +6176,14 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
         temp_arena,
         nob_temp_sprintf(
             "site_name(SITE_FALLBACK)\n"
-            "cmake_host_system_information(RESULT HOST_MULTI QUERY OS_NAME HOSTNAME IS_64BIT)\n"
-            "cmake_host_system_information(RESULT HOST_BAD QUERY OS_NAME FQDN)\n"
+            "set(CMAKE_SYSROOT \"host_sysroot\")\n"
+            "cmake_host_system_information(RESULT HOST_MULTI QUERY OS_NAME HOSTNAME IS_64BIT NUMBER_OF_PHYSICAL_CORES PROCESSOR_NAME PROCESSOR_DESCRIPTION FQDN)\n"
+            "cmake_host_system_information(RESULT HOST_FLAGS QUERY HAS_FPU HAS_MMX HAS_MMX_PLUS HAS_SSE HAS_SSE2 HAS_SSE_FP HAS_SSE_MMX HAS_AMD_3DNOW HAS_AMD_3DNOW_PLUS HAS_IA64 HAS_SERIAL_NUMBER)\n"
+            "cmake_host_system_information(RESULT HOST_SERIAL QUERY PROCESSOR_SERIAL_NUMBER)\n"
+            "cmake_host_system_information(RESULT HOST_MSYS QUERY MSYSTEM_PREFIX)\n"
+            "cmake_host_system_information(RESULT DISTRO QUERY DISTRIB_INFO)\n"
+            "cmake_host_system_information(RESULT DISTRO_PRETTY QUERY DISTRIB_PRETTY_NAME)\n"
+            "cmake_host_system_information(RESULT DISTRO_UNKNOWN QUERY DISTRIB_DOES_NOT_EXIST)\n"
             "set(HOSTNAME \"%s\")\n"
             "site_name(SITE_CMD)\n",
             site_cmd));
@@ -6029,18 +6195,75 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
 
     String_View system_name = eval_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
     String_View host_multi = eval_var_get(ctx, nob_sv_from_cstr("HOST_MULTI"));
-    String_View host_bad = eval_var_get(ctx, nob_sv_from_cstr("HOST_BAD"));
+    String_View host_flags = eval_var_get(ctx, nob_sv_from_cstr("HOST_FLAGS"));
+    String_View host_serial = eval_var_get(ctx, nob_sv_from_cstr("HOST_SERIAL"));
+    String_View host_msys = eval_var_get(ctx, nob_sv_from_cstr("HOST_MSYS"));
+    String_View distro = eval_var_get(ctx, nob_sv_from_cstr("DISTRO"));
+    String_View distro_pretty = eval_var_get(ctx, nob_sv_from_cstr("DISTRO_PRETTY"));
+    String_View distro_unknown = eval_var_get(ctx, nob_sv_from_cstr("DISTRO_UNKNOWN"));
+    String_View distro_id = eval_var_get(ctx, nob_sv_from_cstr("DISTRO_ID"));
+    String_View distro_name = eval_var_get(ctx, nob_sv_from_cstr("DISTRO_NAME"));
+    String_View distro_pretty_var = eval_var_get(ctx, nob_sv_from_cstr("DISTRO_PRETTY_NAME"));
+    String_View distro_version = eval_var_get(ctx, nob_sv_from_cstr("DISTRO_VERSION_ID"));
     String_View site_fallback = eval_var_get(ctx, nob_sv_from_cstr("SITE_FALLBACK"));
     String_View site_cmd_out = eval_var_get(ctx, nob_sv_from_cstr("SITE_CMD"));
 
+    String_View host_multi_items[7] = {0};
+    size_t host_multi_count = 0;
+    {
+        size_t start = 0;
+        while (start <= host_multi.count && host_multi_count < NOB_ARRAY_LEN(host_multi_items)) {
+            size_t end = start;
+            while (end < host_multi.count && host_multi.data[end] != ';') end++;
+            host_multi_items[host_multi_count++] = nob_sv_from_parts(host_multi.data + start, end - start);
+            if (end == host_multi.count) break;
+            start = end + 1;
+        }
+    }
+
+    String_View host_flag_items[11] = {0};
+    size_t host_flag_count = 0;
+    {
+        size_t start = 0;
+        while (start <= host_flags.count && host_flag_count < NOB_ARRAY_LEN(host_flag_items)) {
+            size_t end = start;
+            while (end < host_flags.count && host_flags.data[end] != ';') end++;
+            host_flag_items[host_flag_count++] = nob_sv_from_parts(host_flags.data + start, end - start);
+            if (end == host_flags.count) break;
+            start = end + 1;
+        }
+    }
+
     ASSERT(system_name.count > 0);
     ASSERT(site_fallback.count > 0);
-    ASSERT(host_multi.count > system_name.count);
-    ASSERT(memcmp(host_multi.data, system_name.data, system_name.count) == 0);
-    ASSERT(host_multi.data[system_name.count] == ';');
-    ASSERT(host_bad.count > system_name.count + 1);
-    ASSERT(memcmp(host_bad.data, system_name.data, system_name.count) == 0);
-    ASSERT(host_bad.data[system_name.count] == ';');
+    ASSERT(host_multi_count == NOB_ARRAY_LEN(host_multi_items));
+    ASSERT(nob_sv_eq(host_multi_items[0], system_name));
+    ASSERT(host_multi_items[1].count > 0);
+    ASSERT(evaluator_sv_is_bool01(host_multi_items[2]));
+    ASSERT(evaluator_sv_is_decimal(host_multi_items[3]));
+    ASSERT(host_multi_items[4].count > 0);
+    ASSERT(host_multi_items[5].count > 0);
+    ASSERT(host_multi_items[6].count > 0);
+    ASSERT(host_flag_count == NOB_ARRAY_LEN(host_flag_items));
+    for (size_t i = 0; i < host_flag_count; i++) {
+        ASSERT(evaluator_sv_is_bool01(host_flag_items[i]));
+    }
+    (void)host_serial;
+#if defined(_WIN32)
+    (void)host_msys;
+#else
+    ASSERT(host_msys.count == 0);
+#endif
+    ASSERT(nob_sv_eq(distro_pretty, nob_sv_from_cstr("Nobify Linux 1.0")));
+    ASSERT(nob_sv_eq(distro_unknown, nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(distro_id, nob_sv_from_cstr("nobify")));
+    ASSERT(nob_sv_eq(distro_name, nob_sv_from_cstr("Nobify Linux")));
+    ASSERT(nob_sv_eq(distro_pretty_var, nob_sv_from_cstr("Nobify Linux 1.0")));
+    ASSERT(nob_sv_eq(distro_version, nob_sv_from_cstr("1.0")));
+    ASSERT(evaluator_sv_list_contains(distro, nob_sv_from_cstr("DISTRO_ID")));
+    ASSERT(evaluator_sv_list_contains(distro, nob_sv_from_cstr("DISTRO_NAME")));
+    ASSERT(evaluator_sv_list_contains(distro, nob_sv_from_cstr("DISTRO_PRETTY_NAME")));
+    ASSERT(evaluator_sv_list_contains(distro, nob_sv_from_cstr("DISTRO_VERSION_ID")));
 #if defined(_WIN32)
     ASSERT(site_cmd_out.count > 0);
 #else
@@ -9129,7 +9352,7 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
         "math()\n"
         "message(WARNING warn-msg)\n"
         "message(SEND_ERROR err-msg)\n"
-        "cmake_host_system_information(RESULT HOST_INFO QUERY NUMBER_OF_PHYSICAL_CORES)\n");
+        "cmake_host_system_information(RESULT HOST_INFO QUERY WINDOWS_REGISTRY HKLM)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
@@ -9184,11 +9407,11 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
             ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_SCRIPT_ERROR")));
             ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
             saw_message_error = true;
-        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"))) {
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY ...) is not implemented yet"))) {
             ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
             ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_NOT_IMPLEMENTED")));
             ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("ENGINE_LIMITATION")));
-            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("NUMBER_OF_PHYSICAL_CORES")));
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("HKLM")));
             saw_host_not_implemented = true;
         }
     }
@@ -10355,6 +10578,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists(passed, failed);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
+    test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed);
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);

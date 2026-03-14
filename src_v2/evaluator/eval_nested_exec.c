@@ -183,6 +183,10 @@ Eval_Result eval_execute_file(Evaluator_Context *ctx,
     if (is_add_subdirectory) {
         String_View current_src_dir = eval_current_source_dir(ctx);
         String_View current_bin_dir = eval_current_binary_dir(ctx);
+        if (!eval_directory_register_known(ctx, current_src_dir)) {
+            eval_pop_external_context(ctx, &state);
+            goto cleanup;
+        }
         if (!eval_defer_push_directory(ctx, current_src_dir, current_bin_dir)) {
             eval_pop_external_context(ctx, &state);
             goto cleanup;

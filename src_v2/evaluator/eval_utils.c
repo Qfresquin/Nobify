@@ -86,6 +86,37 @@ String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx) {
     return eval_current_source_dir(ctx);
 }
 
+bool eval_directory_register_known(Evaluator_Context *ctx, String_View dir) {
+    if (!ctx || dir.count == 0) return false;
+
+    String_View normalized = eval_sv_path_normalize_temp(ctx, dir);
+    if (eval_should_stop(ctx)) return false;
+    if (normalized.count == 0) return false;
+
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_directories); i++) {
+        if (svu_eq_ci_sv(commands->known_directories[i], normalized)) return true;
+    }
+
+    String_View stable = sv_copy_to_event_arena(ctx, normalized);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, commands->known_directories, stable);
+}
+
+bool eval_directory_is_known(Evaluator_Context *ctx, String_View dir) {
+    if (!ctx || dir.count == 0) return false;
+
+    String_View normalized = eval_sv_path_normalize_temp(ctx, dir);
+    if (eval_should_stop(ctx)) return false;
+    if (normalized.count == 0) return false;
+
+    const Eval_Command_State *commands = eval_command_slice_const(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->known_directories); i++) {
+        if (svu_eq_ci_sv(commands->known_directories[i], normalized)) return true;
+    }
+    return false;
+}
+
 String_View eval_detect_host_system_name(void) {
 #if defined(_WIN32)
     return nob_sv_from_cstr("Windows");
@@ -475,11 +506,13 @@ static String_View eval_test_global_marker_key_temp(Evaluator_Context *ctx, Stri
     return nob_sv_from_cstr(buf);
 }
 
-static String_View eval_test_scoped_marker_key_temp(Evaluator_Context *ctx,
-                                                    String_View scope_dir,
-                                                    String_View test_name) {
+String_View eval_test_scoped_marker_key_temp(Evaluator_Context *ctx,
+                                             String_View scope_dir,
+                                             String_View test_name) {
     if (!ctx || test_name.count == 0) return nob_sv_from_cstr("");
     if (scope_dir.count == 0) scope_dir = eval_current_source_dir_for_paths(ctx);
+    scope_dir = eval_sv_path_normalize_temp(ctx, scope_dir);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
 
     size_t prefix_len = strlen("NOBIFY_TEST::DIRECTORY::");
     size_t total = prefix_len + scope_dir.count + 2 + test_name.count;
@@ -505,6 +538,9 @@ bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View tes
     if (!ctx || test_name.count == 0) return false;
 
     if (scope_dir.count == 0) scope_dir = eval_current_source_dir_for_paths(ctx);
+    scope_dir = eval_sv_path_normalize_temp(ctx, scope_dir);
+    if (eval_should_stop(ctx)) return false;
+    if (eval_test_known_in_directory(ctx, test_name, scope_dir)) return true;
 
     String_View scoped_key = eval_test_scoped_marker_key_temp(ctx, scope_dir, test_name);
     if (eval_should_stop(ctx)) return false;
@@ -515,6 +551,8 @@ bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View tes
     if (!eval_var_defined_visible(ctx, global_key)) return false;
 
     String_View current_dir = eval_current_source_dir_for_paths(ctx);
+    current_dir = eval_sv_path_normalize_temp(ctx, current_dir);
+    if (eval_should_stop(ctx)) return false;
     return svu_eq_ci_sv(scope_dir, current_dir);
 }
 
