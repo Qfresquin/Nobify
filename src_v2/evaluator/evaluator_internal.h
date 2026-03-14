@@ -370,6 +370,7 @@ typedef struct {
     SV_List active_fetchcontent_makeavailable;
     SV_List watched_variables;
     SV_List watched_variable_commands;
+    SV_List install_components;
 } Eval_Command_State;
 
 typedef struct {
@@ -1794,6 +1795,8 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name);
 bool eval_test_known(Evaluator_Context *ctx, String_View name);
 bool eval_test_known_in_directory(Evaluator_Context *ctx, String_View name, String_View declared_dir);
 bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View declared_dir);
+bool eval_install_component_known(Evaluator_Context *ctx, String_View name);
+bool eval_install_component_register(Evaluator_Context *ctx, String_View name);
 bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition);
 bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name);
 bool eval_target_apply_defined_initializers(Evaluator_Context *ctx, Event_Origin origin, String_View target_name);

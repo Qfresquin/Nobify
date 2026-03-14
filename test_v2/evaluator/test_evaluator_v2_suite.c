@@ -5648,7 +5648,7 @@ TEST(evaluator_get_property_target_source_and_test_wrappers) {
     TEST_PASS();
 }
 
-TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists) {
+TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -5669,17 +5669,32 @@ TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists
 
     Ast_Root root = parse_cmake(
         temp_arena,
+        "function(BatchFunction)\n"
+        "endfunction()\n"
         "macro(batch_macro)\n"
         "endmacro()\n"
         "set(NORMAL_A one)\n"
         "set(CACHED_A two CACHE STRING \"doc\")\n"
+        "set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME Toolkit)\n"
+        "add_library(meta_shared SHARED main.c)\n"
+        "install(TARGETS meta_shared LIBRARY DESTINATION lib NAMELINK_COMPONENT Development)\n"
+        "install(FILES payload.txt DESTINATION share COMPONENT Runtime)\n"
         "set_source_files_properties(main.c DIRECTORY . PROPERTIES SCOPED_SRC local)\n"
         "get_property(SRC_SCOPED SOURCE main.c DIRECTORY . PROPERTY SCOPED_SRC)\n"
         "get_cmake_property(ALL_VARS VARIABLES)\n"
         "get_cmake_property(CACHE_VARS CACHE_VARIABLES)\n"
+        "get_cmake_property(ALL_COMMANDS COMMANDS)\n"
+        "get_cmake_property(ALL_COMPONENTS COMPONENTS)\n"
         "get_cmake_property(ALL_MACROS MACROS)\n"
+        "get_cmake_property(MISSING_PROP DOES_NOT_EXIST)\n"
         "list(FIND ALL_VARS NORMAL_A IDX_VAR)\n"
         "list(FIND CACHE_VARS CACHED_A IDX_CACHE)\n"
+        "list(FIND ALL_COMMANDS install IDX_COMMAND_INSTALL)\n"
+        "list(FIND ALL_COMMANDS batchfunction IDX_COMMAND_FUNCTION)\n"
+        "list(FIND ALL_COMMANDS batch_macro IDX_COMMAND_MACRO)\n"
+        "list(FIND ALL_COMPONENTS Toolkit IDX_COMPONENT_DEFAULT)\n"
+        "list(FIND ALL_COMPONENTS Development IDX_COMPONENT_DEV)\n"
+        "list(FIND ALL_COMPONENTS Runtime IDX_COMPONENT_RUNTIME)\n"
         "list(FIND ALL_MACROS batch_macro IDX_MACRO)\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
@@ -5690,7 +5705,14 @@ TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SRC_SCOPED")), nob_sv_from_cstr("local")));
     ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_VAR")), nob_sv_from_cstr("-1")));
     ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_CACHE")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_COMMAND_INSTALL")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_COMMAND_FUNCTION")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_COMMAND_MACRO")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_COMPONENT_DEFAULT")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_COMPONENT_DEV")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_COMPONENT_RUNTIME")), nob_sv_from_cstr("-1")));
     ASSERT(!nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDX_MACRO")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("MISSING_PROP")), nob_sv_from_cstr("NOTFOUND")));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -10886,7 +10908,7 @@ void run_evaluator_v2_tests(int *passed, int *failed) {
     test_evaluator_set_property_allows_zero_objects_and_validates_test_lookup(passed, failed);
     test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed);
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
-    test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists(passed, failed);
+    test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
     test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed);
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);

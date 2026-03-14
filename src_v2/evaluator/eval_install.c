@@ -126,6 +126,42 @@ static String_View install_tagged_item_temp(Evaluator_Context *ctx, const char *
     return nob_sv_from_cstr(buf);
 }
 
+static String_View install_default_component_name(Evaluator_Context *ctx) {
+    if (!ctx) return nob_sv_from_cstr("Unspecified");
+    String_View configured =
+        eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_INSTALL_DEFAULT_COMPONENT_NAME"));
+    return configured.count > 0 ? configured : nob_sv_from_cstr("Unspecified");
+}
+
+static bool install_register_component_if_present(Evaluator_Context *ctx, String_View component) {
+    if (!ctx || component.count == 0) return true;
+    return eval_install_component_register(ctx, component);
+}
+
+static bool install_register_declared_components(Evaluator_Context *ctx,
+                                                 SV_List args,
+                                                 bool allow_namelink_component) {
+    if (!ctx) return false;
+
+    bool saw_component = false;
+    for (size_t i = 0; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "COMPONENT")) {
+            if (i + 1 >= arena_arr_len(args)) continue;
+            saw_component = true;
+            if (!install_register_component_if_present(ctx, args[++i])) return false;
+            continue;
+        }
+
+        if (allow_namelink_component && eval_sv_eq_ci_lit(args[i], "NAMELINK_COMPONENT")) {
+            if (i + 1 >= arena_arr_len(args)) continue;
+            if (!install_register_component_if_present(ctx, args[++i])) return false;
+        }
+    }
+
+    if (saw_component) return true;
+    return install_register_component_if_present(ctx, install_default_component_name(ctx));
+}
+
 static bool install_handle_files_like(Evaluator_Context *ctx,
                                       const Node *node,
                                       Cmake_Event_Origin o,
@@ -440,8 +476,11 @@ Eval_Result eval_handle_install(Evaluator_Context *ctx, const Node *node) {
         return eval_result_from_ctx(ctx);
     }
 
+    size_t errors_before = ctx->runtime_state.run_report.error_count;
     bool ok = true;
+    bool allow_namelink_component = false;
     if (eval_sv_eq_ci_lit(a[0], "TARGETS")) {
+        allow_namelink_component = true;
         ok = install_handle_targets_like(ctx, node, o, a, false);
     } else if (eval_sv_eq_ci_lit(a[0], "FILES")) {
         ok = install_handle_files_like(ctx, node, o, a, EV_INSTALL_RULE_FILE);
@@ -467,6 +506,10 @@ Eval_Result eval_handle_install(Evaluator_Context *ctx, const Node *node) {
                           EV_DIAG_ERROR,
                           nob_sv_from_cstr("install() unsupported rule type"),
                           a[0]);
+    }
+
+    if (ok && !ctx->oom && ctx->runtime_state.run_report.error_count == errors_before) {
+        ok = install_register_declared_components(ctx, a, allow_namelink_component);
     }
 
     if (!ok && !ctx->oom) {

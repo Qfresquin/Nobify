@@ -59,6 +59,21 @@ static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var)
     return eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
 }
 
+static bool set_output_var_literal_notfound(Evaluator_Context *ctx, String_View out_var) {
+    return eval_var_set_current(ctx, out_var, nob_sv_from_cstr("NOTFOUND"));
+}
+
+static String_View property_ascii_lower_temp(Evaluator_Context *ctx, String_View value) {
+    if (!ctx || value.count == 0) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), value.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < value.count; i++) {
+        buf[i] = (char)tolower((unsigned char)value.data[i]);
+    }
+    buf[value.count] = '\0';
+    return nob_sv_from_cstr(buf);
+}
+
 static Event_Property_Mutate_Op property_mutate_op_from_legacy(Cmake_Target_Property_Op op) {
     switch (op) {
         case EV_PROP_SET: return EVENT_PROPERTY_MUTATE_SET;
@@ -706,7 +721,28 @@ bool eval_property_query_cmake(Evaluator_Context *ctx,
                                     eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
     }
 
+    if (eval_sv_eq_ci_lit(property_name, "COMMANDS")) {
+        Eval_Command_State *commands = eval_command_slice(ctx);
+        for (size_t i = 0; i < arena_arr_len(commands->native_commands); i++) {
+            String_View lowered = property_ascii_lower_temp(ctx, commands->native_commands[i].name);
+            if (eval_should_stop(ctx)) return false;
+            if (!property_append_unique_temp(ctx, &values, lowered)) return false;
+        }
+        for (size_t i = 0; i < arena_arr_len(commands->user_commands); i++) {
+            String_View lowered = property_ascii_lower_temp(ctx, commands->user_commands[i].name);
+            if (eval_should_stop(ctx)) return false;
+            if (!property_append_unique_temp(ctx, &values, lowered)) return false;
+        }
+        return set_output_var_value(ctx,
+                                    out_var,
+                                    eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
+    }
+
     if (eval_sv_eq_ci_lit(property_name, "COMPONENTS")) {
+        Eval_Command_State *commands = eval_command_slice(ctx);
+        for (size_t i = 0; i < arena_arr_len(commands->install_components); i++) {
+            if (!property_append_unique_temp(ctx, &values, commands->install_components[i])) return false;
+        }
         return set_output_var_value(ctx,
                                     out_var,
                                     eval_sv_join_semi_temp(ctx, values, arena_arr_len(values)));
@@ -726,6 +762,6 @@ bool eval_property_query_cmake(Evaluator_Context *ctx,
                              false)) {
         return false;
     }
-    if (!eval_var_defined_visible(ctx, out_var)) return set_output_var_notfound(ctx, out_var);
+    if (!eval_var_defined_visible(ctx, out_var)) return set_output_var_literal_notfound(ctx, out_var);
     return true;
 }

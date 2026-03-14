@@ -497,6 +497,23 @@ bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View de
     return EVAL_ARR_PUSH(ctx, commands->known_tests_arena, commands->known_tests, record);
 }
 
+bool eval_install_component_known(Evaluator_Context *ctx, String_View name) {
+    if (!ctx || name.count == 0) return false;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->install_components); i++) {
+        if (eval_sv_key_eq(commands->install_components[i], name)) return true;
+    }
+    return false;
+}
+
+bool eval_install_component_register(Evaluator_Context *ctx, String_View name) {
+    if (!ctx || name.count == 0 || eval_install_component_known(ctx, name)) return true;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    name = sv_copy_to_event_arena(ctx, name);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, commands->install_components, name);
+}
+
 // -----------------------------------------------------------------------------
 // Argument resolution (token flattening + variable expansion + list splitting)
 // -----------------------------------------------------------------------------
