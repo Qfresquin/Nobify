@@ -723,10 +723,12 @@ bool eval_property_query_cmake(Evaluator_Context *ctx,
 
     if (eval_sv_eq_ci_lit(property_name, "COMMANDS")) {
         Eval_Command_State *commands = eval_command_slice(ctx);
-        for (size_t i = 0; i < arena_arr_len(commands->native_commands); i++) {
-            String_View lowered = property_ascii_lower_temp(ctx, commands->native_commands[i].name);
-            if (eval_should_stop(ctx)) return false;
-            if (!property_append_unique_temp(ctx, &values, lowered)) return false;
+        if (ctx->registry) {
+            for (size_t i = 0; i < arena_arr_len(ctx->registry->native_commands); i++) {
+                String_View lowered = property_ascii_lower_temp(ctx, ctx->registry->native_commands[i].name);
+                if (eval_should_stop(ctx)) return false;
+                if (!property_append_unique_temp(ctx, &values, lowered)) return false;
+            }
         }
         for (size_t i = 0; i < arena_arr_len(commands->user_commands); i++) {
             String_View lowered = property_ascii_lower_temp(ctx, commands->user_commands[i].name);

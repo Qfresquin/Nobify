@@ -330,7 +330,7 @@ Eval_Result eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires index, prefix and three keyword lists"), nob_sv_from_cstr("Usage: cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one_value_keywords> <multi_value_keywords>)"));
             return eval_result_from_ctx(ctx);
         }
-        if (ctx->function_eval_depth == 0 || arena_arr_len(ctx->scope_state.macro_frames) > 0) {
+        if (ctx->function_eval_depth == 0 || eval_exec_has_active_kind(ctx, EVAL_EXEC_CTX_MACRO)) {
             (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "cmake_parse_arguments", nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) may only be used in function() scope"), nob_sv_from_cstr("Use the direct signature in macro() or top-level scope"));
             return eval_result_from_ctx(ctx);
         }

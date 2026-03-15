@@ -75,6 +75,79 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     TEST_PASS();
 }
 
+TEST(evaluator_defer_replay_in_subdirectory_uses_child_execution_context) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("subdir"));
+    ASSERT(nob_write_entire_file("root_phase_c_main.c", "int main(void){return 0;}\n", strlen("int main(void){return 0;}\n")));
+    ASSERT(nob_write_entire_file("subdir/main.c", "int main(void){return 0;}\n", strlen("int main(void){return 0;}\n")));
+    ASSERT(nob_write_entire_file("subdir/CMakeLists.txt",
+                                 "add_executable(ctx_phase_c_probe main.c)\n"
+                                 "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_SRC=${CMAKE_CURRENT_SOURCE_DIR})\n"
+                                 "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_BIN=${CMAKE_CURRENT_BINARY_DIR})\n"
+                                 "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_LIST_DIR=${CMAKE_CURRENT_LIST_DIR})\n"
+                                 "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_FILE=${CMAKE_CURRENT_LIST_FILE})\n",
+                                 strlen("add_executable(ctx_phase_c_probe main.c)\n"
+                                        "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_SRC=${CMAKE_CURRENT_SOURCE_DIR})\n"
+                                        "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_BIN=${CMAKE_CURRENT_BINARY_DIR})\n"
+                                        "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_LIST_DIR=${CMAKE_CURRENT_LIST_DIR})\n"
+                                        "cmake_language(DEFER CALL target_compile_definitions ctx_phase_c_probe PRIVATE DEFER_FILE=${CMAKE_CURRENT_LIST_FILE})\n")));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_subdirectory(subdir)\n"
+        "add_executable(root_phase_c_probe root_phase_c_main.c)\n"
+        "target_compile_definitions(root_phase_c_probe PRIVATE ROOT_FILE=${CMAKE_CURRENT_LIST_FILE})\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    bool saw_defer_src = false;
+    bool saw_defer_bin = false;
+    bool saw_defer_list_dir = false;
+    bool saw_defer_file = false;
+    bool saw_root_file = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ctx_phase_c_probe"))) {
+            if (sv_contains_sv(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DEFER_SRC=subdir"))) saw_defer_src = true;
+            if (sv_contains_sv(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DEFER_BIN=subdir"))) saw_defer_bin = true;
+            if (sv_contains_sv(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DEFER_LIST_DIR=subdir"))) saw_defer_list_dir = true;
+            if (sv_contains_sv(ev->as.target_compile_definitions.item, nob_sv_from_cstr("DEFER_FILE=subdir/CMakeLists.txt"))) saw_defer_file = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("root_phase_c_probe")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("ROOT_FILE=CMakeLists.txt"))) {
+            saw_root_file = true;
+        }
+    }
+
+    ASSERT(saw_defer_src);
+    ASSERT(saw_defer_bin);
+    ASSERT(saw_defer_list_dir);
+    ASSERT(saw_defer_file);
+    ASSERT(saw_root_file);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1769,6 +1842,7 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
 
 void run_evaluator_v2_batch2(int *passed, int *failed) {
     test_evaluator_cmake_language_core_subcommands_work(passed, failed);
+    test_evaluator_defer_replay_in_subdirectory_uses_child_execution_context(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed);
     test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed);

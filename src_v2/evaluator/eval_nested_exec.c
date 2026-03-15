@@ -21,15 +21,14 @@ static bool nested_exec_token_list_append(Arena *arena, Token_List *list, Token 
 }
 
 typedef struct {
-    const char *old_file;
-    String_View old_list_file;
-    String_View old_list_dir;
-    String_View old_src_dir;
-    String_View old_bin_dir;
     bool is_add_subdirectory;
     bool scope_pushed;
-    bool restore_needed;
+    bool defer_pushed;
 } External_Eval_State;
+
+static bool nested_exec_publish_current_vars(Evaluator_Context *ctx) {
+    return eval_exec_publish_current_vars(ctx);
+}
 
 static bool eval_read_external_source(Evaluator_Context *ctx,
                                       String_View file_path,
@@ -110,51 +109,53 @@ static bool eval_push_external_context(Evaluator_Context *ctx,
     if (!ctx || !path_c || !state) return false;
     memset(state, 0, sizeof(*state));
 
-    state->old_file = ctx->current_file;
-    state->old_list_file = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
-    state->old_list_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
-    state->old_src_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
-    state->old_bin_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
     state->is_add_subdirectory = is_add_subdirectory;
-    state->restore_needed = true;
 
     String_View new_list_dir = nested_exec_dir_from_path(file_path);
-    const char *new_current_file = arena_strndup(ctx->event_arena, path_c, strlen(path_c));
-    EVAL_OOM_RETURN_IF_NULL(ctx, new_current_file, false);
-    ctx->current_file = new_current_file;
+    String_View current_source_dir = eval_current_source_dir(ctx);
+    String_View current_binary_dir = eval_current_binary_dir(ctx);
 
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), file_path)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), new_list_dir)) return false;
+    if (is_add_subdirectory) {
+        if (!eval_scope_push(ctx)) return false;
+        state->scope_pushed = true;
+    }
 
-    if (!is_add_subdirectory) return true;
+    Eval_Exec_Context exec = {0};
+    exec.kind = is_add_subdirectory ? EVAL_EXEC_CTX_SUBDIRECTORY : EVAL_EXEC_CTX_INCLUDE;
+    exec.return_context = EVAL_RETURN_CTX_INCLUDE;
+    exec.source_dir = sv_copy_to_event_arena(ctx, is_add_subdirectory ? new_list_dir : current_source_dir);
+    if ((is_add_subdirectory ? new_list_dir.count : current_source_dir.count) > 0 && exec.source_dir.count == 0) return false;
+    exec.binary_dir = sv_copy_to_event_arena(ctx,
+                                             is_add_subdirectory
+                                                 ? (explicit_bin_dir.count > 0 ? explicit_bin_dir : new_list_dir)
+                                                 : current_binary_dir);
+    if ((is_add_subdirectory
+             ? (explicit_bin_dir.count > 0 ? explicit_bin_dir.count : new_list_dir.count)
+             : current_binary_dir.count) > 0 &&
+        exec.binary_dir.count == 0) {
+        return false;
+    }
+    exec.list_dir = sv_copy_to_event_arena(ctx, new_list_dir);
+    if (new_list_dir.count > 0 && exec.list_dir.count == 0) return false;
+    exec.current_file = arena_strndup(ctx->event_arena, path_c, strlen(path_c));
+    EVAL_OOM_RETURN_IF_NULL(ctx, exec.current_file, false);
 
-    if (!eval_scope_push(ctx)) return false;
-    state->scope_pushed = true;
-
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), new_list_dir)) return false;
-    if (explicit_bin_dir.count > 0) {
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), explicit_bin_dir)) return false;
-    } else {
-        String_View bin_path = sv_copy_to_event_arena(ctx, new_list_dir);
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), bin_path)) return false;
+    if (!eval_exec_push(ctx, exec)) return false;
+    if (!nested_exec_publish_current_vars(ctx)) {
+        eval_exec_pop(ctx);
+        return false;
     }
     return true;
 }
 
-static void eval_pop_external_context(Evaluator_Context *ctx, const External_Eval_State *state) {
-    if (!ctx || !state || !state->restore_needed) return;
-
+static bool eval_pop_external_context(Evaluator_Context *ctx, External_Eval_State *state) {
+    if (!ctx || !state) return false;
     if (state->scope_pushed) {
         eval_scope_pop(ctx);
+        state->scope_pushed = false;
     }
-
-    ctx->current_file = state->old_file;
-    (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), state->old_list_file);
-    (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), state->old_list_dir);
-    if (state->is_add_subdirectory) {
-        (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), state->old_src_dir);
-        (void)eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), state->old_bin_dir);
-    }
+    eval_exec_pop(ctx);
+    return nested_exec_publish_current_vars(ctx);
 }
 
 Eval_Result eval_execute_file(Evaluator_Context *ctx,
@@ -162,11 +163,9 @@ Eval_Result eval_execute_file(Evaluator_Context *ctx,
                               bool is_add_subdirectory,
                               String_View explicit_bin_dir) {
     if (eval_should_stop(ctx)) return eval_result_fatal();
-    size_t entered_file_depth = ++ctx->file_eval_depth;
-    Eval_Return_Context saved_return_ctx = ctx->return_context;
-    ctx->return_context = EVAL_RETURN_CTX_INCLUDE;
     Arena_Mark temp_mark = arena_mark(ctx->arena);
     Eval_Result result = eval_result_fatal();
+    size_t entered_file_depth = 0;
     char *path_c = NULL;
     String_View source_code = {0};
     Token_List tokens = NULL;
@@ -176,21 +175,14 @@ Eval_Result eval_execute_file(Evaluator_Context *ctx,
     if (!eval_read_external_source(ctx, file_path, &path_c, &source_code)) goto cleanup;
     if (!eval_lex_external_tokens(ctx, path_c, source_code, &tokens)) goto cleanup;
     if (!eval_parse_external_ast(ctx, &tokens, &new_ast)) goto cleanup;
-    if (!eval_push_external_context(ctx, file_path, path_c, is_add_subdirectory, explicit_bin_dir, &state)) {
-        eval_pop_external_context(ctx, &state);
-        goto cleanup;
-    }
+    if (!eval_push_external_context(ctx, file_path, path_c, is_add_subdirectory, explicit_bin_dir, &state)) goto cleanup;
+    entered_file_depth = ctx->file_eval_depth;
     if (is_add_subdirectory) {
         String_View current_src_dir = eval_current_source_dir(ctx);
         String_View current_bin_dir = eval_current_binary_dir(ctx);
-        if (!eval_directory_register_known(ctx, current_src_dir)) {
-            eval_pop_external_context(ctx, &state);
-            goto cleanup;
-        }
-        if (!eval_defer_push_directory(ctx, current_src_dir, current_bin_dir)) {
-            eval_pop_external_context(ctx, &state);
-            goto cleanup;
-        }
+        if (!eval_directory_register_known(ctx, current_src_dir)) goto cleanup;
+        if (!eval_defer_push_directory(ctx, current_src_dir, current_bin_dir)) goto cleanup;
+        state.defer_pushed = true;
     }
 
     result = eval_execute_node_list(ctx, &new_ast);
@@ -200,13 +192,24 @@ Eval_Result eval_execute_file(Evaluator_Context *ctx,
     eval_clear_return_state(ctx);
     if (is_add_subdirectory) {
         if (!eval_defer_pop_directory(ctx)) result = eval_result_fatal();
+        state.defer_pushed = false;
     }
-    eval_pop_external_context(ctx, &state);
+    if (!eval_pop_external_context(ctx, &state)) result = eval_result_fatal();
 
 cleanup:
-    eval_file_lock_release_file_scope(ctx, entered_file_depth);
-    if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
-    ctx->return_context = saved_return_ctx;
+    if (entered_file_depth > 0) {
+        eval_file_lock_release_file_scope(ctx, entered_file_depth);
+    }
+    if (eval_exec_current(ctx) &&
+        (eval_exec_current(ctx)->kind == EVAL_EXEC_CTX_INCLUDE ||
+         eval_exec_current(ctx)->kind == EVAL_EXEC_CTX_SUBDIRECTORY)) {
+        if (state.defer_pushed) {
+            (void)eval_defer_pop_directory(ctx);
+        }
+        (void)eval_pop_external_context(ctx, &state);
+    } else if (state.scope_pushed) {
+        eval_scope_pop(ctx);
+    }
     arena_rewind(ctx->arena, temp_mark);
     return eval_result_merge(result, eval_result_ok_if_running(ctx));
 }

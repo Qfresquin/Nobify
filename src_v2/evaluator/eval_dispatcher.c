@@ -25,8 +25,9 @@
 #include "eval_command_caps.h"
 #include "eval_command_registry.h"
 
-bool eval_dispatcher_seed_builtin_commands(Evaluator_Context *ctx) {
-    if (!ctx) return false;
+bool eval_dispatcher_seed_builtin_commands(EvalRegistry *registry) {
+    if (!registry) return false;
+    if (registry->builtins_seeded) return true;
 #define SEED_BUILTIN(cmd_name, cmd_handler, cmd_level, cmd_fallback)                                  \
     do {                                                                                               \
         Evaluator_Native_Command_Def def = {0};                                                       \
@@ -34,10 +35,11 @@ bool eval_dispatcher_seed_builtin_commands(Evaluator_Context *ctx) {
         def.handler = (cmd_handler);                                                                   \
         def.implemented_level = (cmd_level);                                                           \
         def.fallback_behavior = (cmd_fallback);                                                        \
-        if (!eval_native_cmd_register_internal(ctx, &def, true, true)) return false;                  \
+        if (!eval_registry_register_internal(registry, &def, true)) return false;                     \
     } while (0);
     EVAL_COMMAND_REGISTRY(SEED_BUILTIN);
 #undef SEED_BUILTIN
+    registry->builtins_seeded = true;
     return true;
 }
 

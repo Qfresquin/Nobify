@@ -134,7 +134,21 @@ bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
 
         Ast_Root ast = NULL;
         if (!EVAL_ARR_PUSH(ctx, ctx->arena, ast, deferred)) return false;
+        Eval_Exec_Context exec = {0};
+        exec.kind = EVAL_EXEC_CTX_DEFERRED;
+        exec.return_context = ctx->return_context;
+        exec.source_dir = eval_current_source_dir(ctx);
+        exec.binary_dir = eval_current_binary_dir(ctx);
+        exec.list_dir = eval_current_list_dir(ctx);
+        exec.current_file = ctx->current_file;
+        if (!eval_exec_push(ctx, exec)) return false;
+        if (!eval_exec_publish_current_vars(ctx)) {
+            eval_exec_pop(ctx);
+            return false;
+        }
         Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
+        eval_exec_pop(ctx);
+        if (!eval_exec_publish_current_vars(ctx)) return false;
         if (eval_result_is_fatal(inline_result)) return false;
 
         eval_clear_return_state(ctx);
@@ -208,10 +222,7 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
 }
 
 static bool flow_cmake_language_is_file_scope(Evaluator_Context *ctx) {
-    if (!ctx) return false;
-    return ctx->function_eval_depth == 0 &&
-           arena_arr_len(ctx->scope_state.block_frames) == 0 &&
-           arena_arr_len(ctx->scope_state.macro_frames) == 0;
+    return eval_exec_is_file_scope(ctx);
 }
 
 static bool flow_cmake_language_provider_command_exists(Evaluator_Context *ctx, String_View command_name) {

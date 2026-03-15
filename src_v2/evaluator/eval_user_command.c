@@ -155,28 +155,42 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     bool is_function = (cmd->kind == USER_CMD_FUNCTION);
     bool is_macro = (cmd->kind == USER_CMD_MACRO);
     size_t arg_count = args ? arena_arr_len(*args) : 0;
-    Eval_Return_Context saved_return_ctx = ctx->return_context;
     size_t entered_function_depth = 0;
     bool scope_pushed = false;
     bool macro_pushed = false;
+    bool exec_pushed = false;
+    Eval_Exec_Context exec = {0};
+    exec.kind = is_function ? EVAL_EXEC_CTX_FUNCTION : EVAL_EXEC_CTX_MACRO;
+    exec.return_context = is_function ? EVAL_RETURN_CTX_FUNCTION : EVAL_RETURN_CTX_MACRO;
+    exec.source_dir = eval_current_source_dir(ctx);
+    exec.binary_dir = eval_current_binary_dir(ctx);
+    exec.list_dir = eval_current_list_dir(ctx);
+    exec.current_file = ctx->current_file;
     if (is_function) {
         if (!eval_scope_push(ctx)) return false;
-        entered_function_depth = ++ctx->function_eval_depth;
-        ctx->return_context = EVAL_RETURN_CTX_FUNCTION;
         scope_pushed = true;
-        if (!eval_emit_flow_function_begin(ctx, origin, name, (uint32_t)arg_count)) {
+        if (!eval_exec_push(ctx, exec)) {
             eval_scope_pop(ctx);
-            if (ctx->function_eval_depth > 0) ctx->function_eval_depth--;
-            ctx->return_context = saved_return_ctx;
+            return false;
+        }
+        exec_pushed = true;
+        entered_function_depth = ctx->function_eval_depth;
+        if (!eval_emit_flow_function_begin(ctx, origin, name, (uint32_t)arg_count)) {
+            eval_exec_pop(ctx);
+            eval_scope_pop(ctx);
             return false;
         }
     } else if (is_macro) {
         if (!eval_macro_frame_push(ctx)) return false;
-        ctx->return_context = EVAL_RETURN_CTX_MACRO;
         macro_pushed = true;
-        if (!eval_emit_flow_macro_begin(ctx, origin, name, (uint32_t)arg_count)) {
+        if (!eval_exec_push(ctx, exec)) {
             eval_macro_frame_pop(ctx);
-            ctx->return_context = saved_return_ctx;
+            return false;
+        }
+        exec_pushed = true;
+        if (!eval_emit_flow_macro_begin(ctx, origin, name, (uint32_t)arg_count)) {
+            eval_exec_pop(ctx);
+            eval_macro_frame_pop(ctx);
             return false;
         }
     }
@@ -260,11 +274,10 @@ cleanup:
         }
     }
     eval_clear_return_state(ctx);
-    ctx->return_context = saved_return_ctx;
     if (entered_function_depth > 0) {
         eval_file_lock_release_function_scope(ctx, entered_function_depth);
-        if (ctx->function_eval_depth > 0) ctx->function_eval_depth--;
     }
+    if (exec_pushed) eval_exec_pop(ctx);
     if (scope_pushed) {
         eval_scope_pop(ctx);
     } else if (macro_pushed) {

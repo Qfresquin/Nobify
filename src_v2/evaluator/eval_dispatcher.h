@@ -18,6 +18,6 @@ bool eval_dispatcher_get_command_capability(const struct Evaluator_Context *ctx,
                                             Command_Capability *out_capability);
 
 // Semeia os comandos nativos built-in no contexto recém-criado.
-bool eval_dispatcher_seed_builtin_commands(struct Evaluator_Context *ctx);
+bool eval_dispatcher_seed_builtin_commands(EvalRegistry *registry);
 
 #endif // EVAL_DISPATCHER_H_

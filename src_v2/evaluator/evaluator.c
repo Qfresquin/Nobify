@@ -43,12 +43,105 @@ String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv) {
 
 Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node) {
     Event_Origin o = {0};
-    o.file_path = (ctx && ctx->current_file) ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr("<input>");
+    const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
+    const char *current_file = exec && exec->current_file ? exec->current_file : (ctx ? ctx->current_file : NULL);
+    o.file_path = current_file ? nob_sv_from_cstr(current_file) : nob_sv_from_cstr("<input>");
     if (node) {
         o.line = node->line;
         o.col = node->col;
     }
     return o;
+}
+
+static bool eval_exec_counts_as_file_depth(Eval_Exec_Context_Kind kind) {
+    return kind == EVAL_EXEC_CTX_ROOT ||
+           kind == EVAL_EXEC_CTX_INCLUDE ||
+           kind == EVAL_EXEC_CTX_SUBDIRECTORY;
+}
+
+static void eval_exec_refresh_cached_state(Evaluator_Context *ctx) {
+    if (!ctx) return;
+
+    size_t file_depth = 0;
+    size_t function_depth = 0;
+    for (size_t i = 0; i < arena_arr_len(ctx->exec_contexts); i++) {
+        Eval_Exec_Context_Kind kind = ctx->exec_contexts[i].kind;
+        if (eval_exec_counts_as_file_depth(kind)) file_depth++;
+        if (kind == EVAL_EXEC_CTX_FUNCTION) function_depth++;
+    }
+
+    ctx->file_eval_depth = file_depth;
+    ctx->function_eval_depth = function_depth;
+
+    const Eval_Exec_Context *current = eval_exec_current_const(ctx);
+    if (current) {
+        ctx->current_file = current->current_file;
+        ctx->return_context = current->return_context;
+    } else {
+        ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    }
+}
+
+Eval_Exec_Context *eval_exec_current(Evaluator_Context *ctx) {
+    if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return NULL;
+    return &ctx->exec_contexts[arena_arr_len(ctx->exec_contexts) - 1];
+}
+
+const Eval_Exec_Context *eval_exec_current_const(const Evaluator_Context *ctx) {
+    if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return NULL;
+    return &ctx->exec_contexts[arena_arr_len(ctx->exec_contexts) - 1];
+}
+
+bool eval_exec_push(Evaluator_Context *ctx, Eval_Exec_Context frame) {
+    if (!ctx) return false;
+    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->exec_contexts, frame)) return false;
+    eval_exec_refresh_cached_state(ctx);
+    return true;
+}
+
+void eval_exec_pop(Evaluator_Context *ctx) {
+    if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return;
+    arena_arr_set_len(ctx->exec_contexts, arena_arr_len(ctx->exec_contexts) - 1);
+    eval_exec_refresh_cached_state(ctx);
+}
+
+bool eval_exec_has_active_kind(const Evaluator_Context *ctx, Eval_Exec_Context_Kind kind) {
+    if (!ctx) return false;
+    for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
+        if (ctx->exec_contexts[i].kind == kind) return true;
+    }
+    return false;
+}
+
+bool eval_exec_is_file_scope(const Evaluator_Context *ctx) {
+    if (!ctx) return false;
+    for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
+        Eval_Exec_Context_Kind kind = ctx->exec_contexts[i].kind;
+        if (kind == EVAL_EXEC_CTX_FUNCTION ||
+            kind == EVAL_EXEC_CTX_MACRO ||
+            kind == EVAL_EXEC_CTX_BLOCK) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool eval_exec_publish_current_vars(Evaluator_Context *ctx) {
+    if (!ctx) return false;
+
+    const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
+    String_View current_source_dir = exec && exec->source_dir.count > 0 ? exec->source_dir : ctx->source_dir;
+    String_View current_binary_dir = exec && exec->binary_dir.count > 0 ? exec->binary_dir : ctx->binary_dir;
+    String_View current_list_dir = exec && exec->list_dir.count > 0 ? exec->list_dir : ctx->source_dir;
+    String_View current_list_file =
+        exec && exec->current_file ? nob_sv_from_cstr(exec->current_file)
+                                   : (ctx->current_file ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr(""));
+
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), current_source_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), current_binary_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), current_list_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), current_list_file)) return false;
+    return true;
 }
 
 bool ctx_oom(Evaluator_Context *ctx) {
@@ -662,52 +755,111 @@ SV_List eval_resolve_args_literal(Evaluator_Context *ctx, const Args *raw_args) 
 // Native command registration/lookup
 // -----------------------------------------------------------------------------
 
-static bool eval_native_cmd_index_rebuild(Evaluator_Context *ctx) {
-    if (!ctx) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
+static bool eval_registry_index_rebuild(EvalRegistry *registry) {
+    if (!registry) return false;
 
-    if (commands->native_command_index) {
-        stbds_shfree(commands->native_command_index);
-        commands->native_command_index = NULL;
+    if (registry->native_command_index) {
+        stbds_shfree(registry->native_command_index);
+        registry->native_command_index = NULL;
     }
 
-    size_t count = arena_arr_len(commands->native_commands);
+    size_t count = arena_arr_len(registry->native_commands);
     for (size_t i = 0; i < count; i++) {
-        Eval_Native_Command *cmd = &commands->native_commands[i];
+        Eval_Native_Command *cmd = &registry->native_commands[i];
         if (!cmd->normalized_name) {
-            Arena *registry_arena = commands->native_commands_arena ? commands->native_commands_arena : ctx->event_arena;
-            cmd->normalized_name = sv_ascii_upper_copy(registry_arena, cmd->name);
-            EVAL_OOM_RETURN_IF_NULL(ctx, cmd->normalized_name, false);
+            cmd->normalized_name = sv_ascii_upper_copy(registry->arena, cmd->name);
+            if (!cmd->normalized_name) return false;
         }
-        stbds_shput(commands->native_command_index, cmd->normalized_name, i);
+        stbds_shput(registry->native_command_index, cmd->normalized_name, i);
     }
 
     return true;
 }
 
-const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name) {
-    if (!ctx || !name.data || name.count == 0) return NULL;
+const Eval_Native_Command *eval_registry_find_const(const EvalRegistry *registry, String_View name) {
+    if (!registry || !name.data || name.count == 0) return NULL;
 
-    Evaluator_Context *mutable_ctx = (Evaluator_Context*)ctx;
-    Eval_Command_State *commands = eval_command_slice(mutable_ctx);
     char *lookup_key = sv_ascii_upper_heap(name);
-    if (!lookup_key) {
-        (void)ctx_oom(mutable_ctx);
-        return NULL;
-    }
+    if (!lookup_key) return NULL;
 
-    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(commands->native_command_index, lookup_key);
+    Eval_Native_Command_Index_Entry *index = registry->native_command_index;
+    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(index, lookup_key);
     if (!entry) {
         free(lookup_key);
         return NULL;
     }
-    if (entry->value >= arena_arr_len(commands->native_commands)) {
+    if (entry->value >= arena_arr_len(registry->native_commands)) {
         free(lookup_key);
         return NULL;
     }
-    const Eval_Native_Command *out = &commands->native_commands[entry->value];
+
+    const Eval_Native_Command *out = &registry->native_commands[entry->value];
     free(lookup_key);
     return out;
+}
+
+static Eval_Native_Command *eval_registry_find(EvalRegistry *registry, String_View name) {
+    return (Eval_Native_Command*)eval_registry_find_const(registry, name);
+}
+
+bool eval_registry_register_internal(EvalRegistry *registry,
+                                     const Evaluator_Native_Command_Def *def,
+                                     bool is_builtin) {
+    if (!registry || !registry->arena || !def || !def->handler || def->name.count == 0 || !def->name.data) {
+        return false;
+    }
+    if (eval_registry_find(registry, def->name)) return false;
+
+    Eval_Native_Command cmd = {0};
+    cmd.name = sv_copy_to_arena(registry->arena, def->name);
+    if (def->name.count > 0 && cmd.name.count == 0) return false;
+    cmd.normalized_name = sv_ascii_upper_copy(registry->arena, def->name);
+    if (!cmd.normalized_name) return false;
+    cmd.handler = def->handler;
+    cmd.implemented_level = def->implemented_level;
+    cmd.fallback_behavior = def->fallback_behavior;
+    cmd.is_builtin = is_builtin;
+
+    if (!arena_arr_push(registry->arena, registry->native_commands, cmd)) return false;
+    return eval_registry_index_rebuild(registry);
+}
+
+bool eval_registry_unregister_internal(EvalRegistry *registry,
+                                       String_View name,
+                                       bool allow_builtin_remove) {
+    if (!registry || name.count == 0 || !name.data) return false;
+
+    char *lookup_key = sv_ascii_upper_heap(name);
+    if (!lookup_key) return false;
+
+    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(registry->native_command_index, lookup_key);
+    if (!entry) {
+        free(lookup_key);
+        return false;
+    }
+
+    size_t idx = entry->value;
+    size_t count = arena_arr_len(registry->native_commands);
+    if (idx >= count) {
+        free(lookup_key);
+        return false;
+    }
+    if (registry->native_commands[idx].is_builtin && !allow_builtin_remove) {
+        free(lookup_key);
+        return false;
+    }
+
+    for (size_t j = idx + 1; j < count; j++) {
+        registry->native_commands[j - 1] = registry->native_commands[j];
+    }
+    arena_arr_set_len(registry->native_commands, count - 1);
+    free(lookup_key);
+    return eval_registry_index_rebuild(registry);
+}
+
+const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name) {
+    if (!ctx || !ctx->registry) return NULL;
+    return eval_registry_find_const(ctx->registry, name);
 }
 
 Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name) {
@@ -718,62 +870,19 @@ bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
                                        const Evaluator_Native_Command_Def *def,
                                        bool is_builtin,
                                        bool allow_during_run) {
-    if (!ctx || !def || !def->handler || def->name.count == 0 || !def->name.data) return false;
+    if (!ctx || !ctx->registry || !def || !def->handler || def->name.count == 0 || !def->name.data) return false;
     if (!allow_during_run && ctx->file_eval_depth > 0) return false;
-    if (eval_native_cmd_find(ctx, def->name)) return false;
     if (eval_user_cmd_find(ctx, def->name)) return false;
-
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    Arena *registry_arena = commands->native_commands_arena ? commands->native_commands_arena : ctx->event_arena;
-
-    Eval_Native_Command cmd = {0};
-    cmd.name = sv_copy_to_event_arena(ctx, def->name);
-    if (eval_should_stop(ctx)) return false;
-    cmd.normalized_name = sv_ascii_upper_copy(registry_arena, def->name);
-    EVAL_OOM_RETURN_IF_NULL(ctx, cmd.normalized_name, false);
-    cmd.handler = def->handler;
-    cmd.implemented_level = def->implemented_level;
-    cmd.fallback_behavior = def->fallback_behavior;
-    cmd.is_builtin = is_builtin;
-
-    if (!EVAL_ARR_PUSH(ctx, registry_arena, commands->native_commands, cmd)) return false;
-    return eval_native_cmd_index_rebuild(ctx);
+    return eval_registry_register_internal(ctx->registry, def, is_builtin);
 }
 
 bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
                                          String_View name,
                                          bool allow_builtin_remove,
                                          bool allow_during_run) {
-    if (!ctx || name.count == 0 || !name.data) return false;
+    if (!ctx || !ctx->registry || name.count == 0 || !name.data) return false;
     if (!allow_during_run && ctx->file_eval_depth > 0) return false;
-
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    char *lookup_key = sv_ascii_upper_heap(name);
-    EVAL_OOM_RETURN_IF_NULL(ctx, lookup_key, false);
-
-    Eval_Native_Command_Index_Entry *entry = stbds_shgetp_null(commands->native_command_index, lookup_key);
-    if (!entry) {
-        free(lookup_key);
-        return false;
-    }
-
-    size_t idx = entry->value;
-    size_t count = arena_arr_len(commands->native_commands);
-    if (idx >= count) {
-        free(lookup_key);
-        return false;
-    }
-    if (commands->native_commands[idx].is_builtin && !allow_builtin_remove) {
-        free(lookup_key);
-        return false;
-    }
-
-    for (size_t j = idx + 1; j < count; j++) {
-        commands->native_commands[j - 1] = commands->native_commands[j];
-    }
-    arena_arr_set_len(commands->native_commands, count - 1);
-    free(lookup_key);
-    return eval_native_cmd_index_rebuild(ctx);
+    return eval_registry_unregister_internal(ctx->registry, name, allow_builtin_remove);
 }
 
 // -----------------------------------------------------------------------------
@@ -827,72 +936,192 @@ static String_View detect_compiler_id(void) {
 // Public API
 // -----------------------------------------------------------------------------
 
-Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
-    if (!init || !init->arena || !init->event_arena || !init->stream) return NULL;
-
-    Evaluator_Context *ctx = arena_alloc_zero(init->event_arena, sizeof(Evaluator_Context));
-    if (!ctx) return NULL;
-
-    ctx->arena = init->arena;
-    ctx->event_arena = init->event_arena;
-    ctx->stream = init->stream;
-    ctx->source_dir = init->source_dir;
-    ctx->binary_dir = init->binary_dir;
-    ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
-    eval_clear_return_state(ctx);
-    ctx->runtime_state.compat_profile = EVAL_PROFILE_PERMISSIVE;
-    if (init->compat_profile == EVAL_PROFILE_STRICT || init->compat_profile == EVAL_PROFILE_CI_STRICT) {
-        ctx->runtime_state.compat_profile = init->compat_profile;
+static bool eval_attach_sub_arena(Arena *owner, Arena **out_arena) {
+    if (!owner || !out_arena) return false;
+    *out_arena = arena_create(4096);
+    if (!*out_arena) return false;
+    if (!arena_on_destroy(owner, destroy_sub_arena_cb, *out_arena)) {
+        arena_destroy(*out_arena);
+        *out_arena = NULL;
+        return false;
     }
-    ctx->runtime_state.unsupported_policy = EVAL_UNSUPPORTED_WARN;
-    ctx->runtime_state.error_budget = 0; // 0 == unlimited in permissive profile
-    ctx->runtime_state.continue_on_error_snapshot = (ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
-    eval_report_reset(ctx);
+    return true;
+}
 
-    ctx->command_state.native_commands_arena = arena_create(4096);
-    if (!ctx->command_state.native_commands_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.native_commands_arena)) {
-        arena_destroy(ctx->command_state.native_commands_arena);
-        ctx->command_state.native_commands_arena = NULL;
-        return NULL;
-    }
+static const char *eval_copy_cstr_to_arena(Arena *arena, const char *src) {
+    if (!arena || !src) return NULL;
+    return arena_strndup(arena, src, strlen(src));
+}
 
-    ctx->command_state.known_targets_arena = arena_create(4096);
-    if (!ctx->command_state.known_targets_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.known_targets_arena)) {
-        arena_destroy(ctx->command_state.known_targets_arena);
-        ctx->command_state.known_targets_arena = NULL;
-        return NULL;
-    }
+static bool eval_push_root_exec_context(Evaluator_Context *ctx) {
+    if (!ctx) return false;
 
-    ctx->command_state.known_tests_arena = arena_create(4096);
-    if (!ctx->command_state.known_tests_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.known_tests_arena)) {
-        arena_destroy(ctx->command_state.known_tests_arena);
-        ctx->command_state.known_tests_arena = NULL;
-        return NULL;
-    }
+    Eval_Exec_Context root = {0};
+    root.kind = EVAL_EXEC_CTX_ROOT;
+    root.return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    root.source_dir = ctx->source_dir;
+    root.binary_dir = ctx->binary_dir;
+    root.list_dir = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
+    if (root.list_dir.count == 0) root.list_dir = ctx->source_dir;
+    root.current_file = ctx->current_file;
+    return eval_exec_push(ctx, root);
+}
 
-    ctx->command_state.user_commands_arena = arena_create(4096);
-    if (!ctx->command_state.user_commands_arena) return NULL;
-    if (!arena_on_destroy(init->event_arena, destroy_sub_arena_cb, ctx->command_state.user_commands_arena)) {
-        arena_destroy(ctx->command_state.user_commands_arena);
-        ctx->command_state.user_commands_arena = NULL;
-        return NULL;
-    }
+static bool eval_context_bind_request(EvalSession *session,
+                                      Arena *scratch_arena,
+                                      Event_Stream *stream,
+                                      String_View source_dir,
+                                      String_View binary_dir,
+                                      const char *list_file) {
+    if (!session || !scratch_arena || !stream) return false;
 
-    if (init->current_file) {
-        ctx->current_file = arena_strndup(init->event_arena, init->current_file, strlen(init->current_file));
-        if (!ctx->current_file) return NULL;
+    Evaluator_Context *ctx = &session->ctx;
+    String_View requested_source = source_dir.count > 0 ? source_dir : session->source_root;
+    String_View requested_binary = binary_dir.count > 0 ? binary_dir : session->binary_root;
+    if (requested_source.count == 0) requested_source = nob_sv_from_cstr(".");
+    if (requested_binary.count == 0) requested_binary = requested_source;
+
+    ctx->arena = scratch_arena;
+    ctx->stream = stream;
+    ctx->source_dir = sv_copy_to_event_arena(ctx, requested_source);
+    if (requested_source.count > 0 && ctx->source_dir.count == 0) return false;
+    ctx->binary_dir = sv_copy_to_event_arena(ctx, requested_binary);
+    if (requested_binary.count > 0 && ctx->binary_dir.count == 0) return false;
+    if (list_file) {
+        ctx->current_file = eval_copy_cstr_to_arena(ctx->event_arena, list_file);
+        if (!ctx->current_file) return false;
     } else {
         ctx->current_file = NULL;
     }
 
-    // Global scope always exists at visible depth 1.
+    ctx->scope_state.visible_scope_depth = 1;
+    ctx->scope_state.macro_frames = NULL;
+    ctx->scope_state.block_frames = NULL;
+    ctx->scope_state.return_propagate_vars = NULL;
+    ctx->message_check_stack = NULL;
+    if (ctx->exec_contexts) {
+        arena_arr_set_len(ctx->exec_contexts, 0);
+    } else {
+        ctx->exec_contexts = NULL;
+    }
+    ctx->visible_policy_depth = 0;
+    ctx->file_eval_depth = 0;
+    ctx->function_eval_depth = 0;
+    ctx->loop_depth = 0;
+    ctx->break_requested = false;
+    ctx->continue_requested = false;
+    ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    eval_clear_return_state(ctx);
+    eval_clear_stop_if_not_oom(ctx);
+
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return false;
+    if (!eval_directory_register_known(ctx, ctx->source_dir)) return false;
+    {
+        String_View cmakefiles_dir = eval_sv_path_join(ctx->event_arena, ctx->binary_dir, nob_sv_from_cstr("CMakeFiles"));
+        String_View redirects_dir = eval_sv_path_join(ctx->event_arena, cmakefiles_dir, nob_sv_from_cstr("pkgRedirects"));
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"), redirects_dir)) return false;
+    }
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE),
+                              ctx->current_file ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr(""))) {
+        return false;
+    }
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr("1"))) return false;
+
+    if (ctx->file_state.deferred_dirs) {
+        arena_arr_set_len(ctx->file_state.deferred_dirs, 0);
+    }
+    return true;
+}
+
+static Eval_Result eval_context_run_prepared(Evaluator_Context *ctx, Ast_Root ast) {
+    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
+    if (!eval_push_root_exec_context(ctx)) return eval_result_fatal();
+    if (!eval_exec_publish_current_vars(ctx)) {
+        eval_exec_pop(ctx);
+        return eval_result_fatal();
+    }
+    if (!eval_defer_push_directory(ctx, eval_current_source_dir(ctx), eval_current_binary_dir(ctx))) {
+        eval_exec_pop(ctx);
+        return eval_result_fatal();
+    }
+    size_t entered_file_depth = ctx->file_eval_depth;
+    eval_report_reset(ctx);
+    Eval_Result result = eval_execute_node_list(ctx, &ast);
+    if (!eval_result_is_fatal(result) && !eval_should_stop(ctx)) {
+        if (!eval_defer_flush_current_directory(ctx)) result = eval_result_fatal();
+    }
+    if (!eval_result_is_fatal(result) && !eval_should_stop(ctx)) {
+        if (!eval_file_generate_flush(ctx)) result = eval_result_fatal();
+    }
+    eval_clear_return_state(ctx);
+    if (!eval_defer_pop_directory(ctx)) result = eval_result_fatal();
+    eval_file_lock_release_file_scope(ctx, entered_file_depth);
+    eval_exec_pop(ctx);
+    eval_report_finalize(ctx);
+    result = eval_result_merge(result, eval_result_ok_if_running(ctx));
+    if (!eval_result_is_fatal(result) && ctx->runtime_state.run_report.error_count > 0) {
+        result = eval_result_merge(result, eval_result_soft_error());
+    }
+    return result;
+}
+
+static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg, Event_Stream *bootstrap_stream) {
+    if (!cfg || !cfg->persistent_arena) return NULL;
+
+    EvalSession *session = arena_alloc_zero(cfg->persistent_arena, sizeof(EvalSession));
+    if (!session) return NULL;
+
+    String_View source_root = cfg->source_root.count > 0 ? cfg->source_root : nob_sv_from_cstr(".");
+    String_View binary_root = cfg->binary_root.count > 0 ? cfg->binary_root : source_root;
+    session->persistent_arena = cfg->persistent_arena;
+    session->source_root = sv_copy_to_arena(cfg->persistent_arena, source_root);
+    session->binary_root = sv_copy_to_arena(cfg->persistent_arena, binary_root);
+    if (source_root.count > 0 && session->source_root.count == 0) return NULL;
+    if (binary_root.count > 0 && session->binary_root.count == 0) return NULL;
+
+    Evaluator_Context *ctx = &session->ctx;
+    ctx->arena = cfg->persistent_arena;
+    ctx->event_arena = cfg->persistent_arena;
+    ctx->stream = bootstrap_stream ? bootstrap_stream : event_stream_create(cfg->persistent_arena);
+    if (!ctx->stream) return NULL;
+
+    ctx->services = cfg->services;
+    ctx->registry = cfg->registry;
+    if (!ctx->registry) {
+        ctx->registry = eval_registry_create(cfg->persistent_arena);
+        if (!ctx->registry) return NULL;
+        session->owns_registry = true;
+    }
+    if (!eval_dispatcher_seed_builtin_commands(ctx->registry)) return NULL;
+
+    ctx->source_dir = session->source_root;
+    ctx->binary_dir = session->binary_root;
+    ctx->current_file = NULL;
+    ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    eval_clear_return_state(ctx);
+    ctx->runtime_state.compat_profile = EVAL_PROFILE_PERMISSIVE;
+    if (cfg->compat_profile == EVAL_PROFILE_STRICT || cfg->compat_profile == EVAL_PROFILE_CI_STRICT) {
+        ctx->runtime_state.compat_profile = cfg->compat_profile;
+    }
+    ctx->runtime_state.unsupported_policy = EVAL_UNSUPPORTED_WARN;
+    ctx->runtime_state.error_budget = 0;
+    ctx->runtime_state.continue_on_error_snapshot = (ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
+    eval_report_reset(ctx);
+
+    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.known_targets_arena)) return NULL;
+    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.known_tests_arena)) return NULL;
+    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.user_commands_arena)) return NULL;
+
     if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.scopes, ((Var_Scope){0}))) return NULL;
     ctx->scope_state.visible_scope_depth = 1;
 
-    // Bootstrap canonical CMAKE_* variables.
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
@@ -905,17 +1134,11 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
         if (eval_should_stop(ctx)) return NULL;
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"), redirects_dir)) return NULL;
     }
-    if (ctx->current_file) {
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(ctx->current_file))) return NULL;
-    } else {
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(""))) return NULL;
-    }
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr("1"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_defer_push_directory(ctx, ctx->source_dir, ctx->binary_dir)) return NULL;
 
-    // Inject host/platform built-ins commonly used by scripts in if() conditions.
 #if defined(_WIN32)
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("1"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("0"))) return NULL;
@@ -942,30 +1165,39 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("0"))) return NULL;
 #endif
 
-    // Project and toolchain built-ins.
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_VERSION"), nob_sv_from_cstr("3.28.0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MAJOR_VERSION"), nob_sv_from_cstr("3"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MINOR_VERSION"), nob_sv_from_cstr("28"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PATCH_VERSION"), nob_sv_from_cstr("0"))) return NULL;
-    String_View host_system_name = eval_detect_host_system_name();
-    String_View host_processor = eval_detect_host_processor();
-    String_View host_system_version = eval_host_os_version_temp(ctx);
-    if (eval_should_stop(ctx)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), host_system_name)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), host_processor)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), host_system_name)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
+    {
+        String_View host_system_name = eval_detect_host_system_name();
+        String_View host_processor = eval_detect_host_processor();
+        String_View host_system_version = eval_host_os_version_temp(ctx);
+        if (eval_should_stop(ctx)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), host_system_name)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), host_processor)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), host_system_name)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
+    }
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake"))) return NULL;
 
-    // Project built-ins default to empty and are updated by project().
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
-                      ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE), eval_compat_profile_to_sv(ctx->runtime_state.compat_profile))) return NULL;
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr(EVAL_VAR_NOBIFY_CONTINUE_ON_ERROR),
+                              ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE
+                                  ? nob_sv_from_cstr("1")
+                                  : nob_sv_from_cstr("0"))) {
+        return NULL;
+    }
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr(EVAL_VAR_NOBIFY_COMPAT_PROFILE),
+                              eval_compat_profile_to_sv(ctx->runtime_state.compat_profile))) {
+        return NULL;
+    }
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_ERROR_BUDGET), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_UNSUPPORTED_POLICY), nob_sv_from_cstr("WARN"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
@@ -984,29 +1216,78 @@ Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
 
     {
         const char *cc = eval_getenv_temp(ctx, "CC");
-        if (!cc || cc[0] == '\0') cc = "cc";
         const char *cxx = eval_getenv_temp(ctx, "CXX");
+        if (!cc || cc[0] == '\0') cc = "cc";
         if (!cxx || cxx[0] == '\0') cxx = "c++";
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), nob_sv_from_cstr(cc))) return NULL;
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), nob_sv_from_cstr(cxx))) return NULL;
     }
 
-    // Compiler ID can be fixed for compatibility scripts.
-    String_View compiler_id = detect_compiler_id();
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
-    if (!eval_dispatcher_seed_builtin_commands(ctx)) return NULL;
+    {
+        String_View compiler_id = detect_compiler_id();
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
+    }
 
-    return ctx;
+    return session;
 }
 
-void evaluator_destroy(Evaluator_Context *ctx) {
-    if (!ctx) return;
-    eval_file_lock_cleanup(ctx);
-    if (ctx->command_state.native_command_index) {
-        stbds_shfree(ctx->command_state.native_command_index);
-        ctx->command_state.native_command_index = NULL;
+EvalRegistry *eval_registry_create(Arena *arena) {
+    if (!arena) return NULL;
+    EvalRegistry *registry = arena_alloc_zero(arena, sizeof(EvalRegistry));
+    if (!registry) return NULL;
+    registry->arena = arena;
+    if (!eval_dispatcher_seed_builtin_commands(registry)) {
+        eval_registry_destroy(registry);
+        return NULL;
     }
+    return registry;
+}
+
+void eval_registry_destroy(EvalRegistry *registry) {
+    if (!registry) return;
+    if (registry->native_command_index) {
+        stbds_shfree(registry->native_command_index);
+        registry->native_command_index = NULL;
+    }
+    registry->builtins_seeded = false;
+}
+
+bool eval_registry_register_native_command(EvalRegistry *registry,
+                                           const EvalNativeCommandDef *def) {
+    return eval_registry_register_internal(registry, def, false);
+}
+
+bool eval_registry_unregister_native_command(EvalRegistry *registry,
+                                             String_View command_name) {
+    return eval_registry_unregister_internal(registry, command_name, false);
+}
+
+bool eval_registry_get_command_capability(const EvalRegistry *registry,
+                                          String_View command_name,
+                                          Command_Capability *out_capability) {
+    if (!out_capability) return false;
+    const Eval_Native_Command *cmd = eval_registry_find_const(registry, command_name);
+    out_capability->command_name = command_name;
+    if (!cmd) {
+        out_capability->implemented_level = EVAL_CMD_IMPL_MISSING;
+        out_capability->fallback_behavior = EVAL_FALLBACK_NOOP_WARN;
+        return false;
+    }
+    out_capability->implemented_level = cmd->implemented_level;
+    out_capability->fallback_behavior = cmd->fallback_behavior;
+    return true;
+}
+
+EvalSession *eval_session_create(const EvalSession_Config *cfg) {
+    return eval_session_create_impl(cfg, NULL);
+}
+
+void eval_session_destroy(EvalSession *session) {
+    if (!session) return;
+
+    Evaluator_Context *ctx = &session->ctx;
+    eval_file_lock_cleanup(ctx);
     if (ctx->command_state.property_store) {
         stbds_shfree(ctx->command_state.property_store);
         ctx->command_state.property_store = NULL;
@@ -1025,28 +1306,97 @@ void evaluator_destroy(Evaluator_Context *ctx) {
             ctx->scope_state.scopes[i].vars = NULL;
         }
     }
+    if (session->owns_registry && ctx->registry) {
+        eval_registry_destroy(ctx->registry);
+        ctx->registry = NULL;
+    }
+}
+
+EvalRunResult eval_session_run(EvalSession *session,
+                               const EvalExec_Request *request,
+                               Ast_Root ast) {
+    EvalRunResult out = {0};
+    out.result = eval_result_fatal();
+    if (!session || !request || !request->scratch_arena) return out;
+
+    Event_Stream *effective_stream = request->stream ? request->stream : event_stream_create(request->scratch_arena);
+    if (!effective_stream) return out;
+
+    size_t emitted_before = request->stream ? request->stream->count : 0;
+    if (!eval_context_bind_request(session,
+                                   request->scratch_arena,
+                                   effective_stream,
+                                   request->source_dir,
+                                   request->binary_dir,
+                                   request->list_file)) {
+        return out;
+    }
+
+    out.result = eval_context_run_prepared(&session->ctx, ast);
+    out.report = session->ctx.runtime_state.run_report;
+    out.emitted_event_count = request->stream ? (request->stream->count - emitted_before) : 0;
+    return out;
+}
+
+bool eval_session_set_compat_profile(EvalSession *session, Eval_Compat_Profile profile) {
+    return session ? eval_compat_set_profile(&session->ctx, profile) : false;
+}
+
+bool eval_session_command_exists(const EvalSession *session, String_View command_name) {
+    if (!session) return false;
+    if (eval_registry_find_const(session->ctx.registry, command_name)) return true;
+    return eval_user_cmd_find((Evaluator_Context*)&session->ctx, command_name) != NULL;
+}
+
+Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
+    if (!init || !init->arena || !init->event_arena || !init->stream) return NULL;
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = init->event_arena;
+    cfg.compat_profile = init->compat_profile;
+    cfg.source_root = init->source_dir;
+    cfg.binary_root = init->binary_dir;
+
+    EvalSession *session = eval_session_create_impl(&cfg, init->stream);
+    if (!session) return NULL;
+
+    session->compat_scratch_arena = init->arena;
+    session->compat_stream = init->stream;
+    session->compat_source_dir = init->source_dir.count > 0 ? init->source_dir : session->source_root;
+    session->compat_binary_dir = init->binary_dir.count > 0 ? init->binary_dir : session->binary_root;
+    session->compat_list_file = init->current_file;
+
+    if (!eval_context_bind_request(session,
+                                   session->compat_scratch_arena,
+                                   session->compat_stream,
+                                   session->compat_source_dir,
+                                   session->compat_binary_dir,
+                                   session->compat_list_file)) {
+        eval_session_destroy(session);
+        return NULL;
+    }
+
+    session->compat_source_dir = session->ctx.source_dir;
+    session->compat_binary_dir = session->ctx.binary_dir;
+    session->compat_list_file = session->ctx.current_file;
+    return &session->ctx;
+}
+
+void evaluator_destroy(Evaluator_Context *ctx) {
+    eval_session_destroy(eval_session_from_ctx(ctx));
 }
 
 Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
-    if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
-    size_t entered_file_depth = ++ctx->file_eval_depth;
-    eval_report_reset(ctx);
-    Eval_Result result = eval_execute_node_list(ctx, &ast);
-    if (!eval_result_is_fatal(result) && !eval_should_stop(ctx)) {
-        if (!eval_defer_flush_current_directory(ctx)) result = eval_result_fatal();
-    }
-    if (!eval_result_is_fatal(result) && !eval_should_stop(ctx)) {
-        if (!eval_file_generate_flush(ctx)) result = eval_result_fatal();
-    }
-    eval_clear_return_state(ctx);
-    eval_file_lock_release_file_scope(ctx, entered_file_depth);
-    if (ctx->file_eval_depth > 0) ctx->file_eval_depth--;
-    eval_report_finalize(ctx);
-    result = eval_result_merge(result, eval_result_ok_if_running(ctx));
-    if (!eval_result_is_fatal(result) && ctx->runtime_state.run_report.error_count > 0) {
-        result = eval_result_merge(result, eval_result_soft_error());
-    }
-    return result;
+    EvalSession *session = eval_session_from_ctx(ctx);
+    if (!session || !session->compat_scratch_arena || !session->compat_stream) return eval_result_fatal();
+
+    EvalExec_Request request = {0};
+    request.scratch_arena = session->compat_scratch_arena;
+    request.source_dir = session->compat_source_dir;
+    request.binary_dir = session->compat_binary_dir;
+    request.list_file = session->compat_list_file;
+    request.stream = session->compat_stream;
+    return eval_session_run(session, &request, ast).result;
 }
 
 Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast) {
@@ -1064,7 +1414,7 @@ const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context
 }
 
 bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile) {
-    return eval_compat_set_profile(ctx, profile);
+    return eval_session_set_compat_profile(eval_session_from_ctx(ctx), profile);
 }
 
 bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def) {

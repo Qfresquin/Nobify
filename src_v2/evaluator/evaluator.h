@@ -20,6 +20,9 @@
 // -----------------------------------------------------------------------------
 
 typedef struct Evaluator_Context Evaluator_Context;
+typedef struct EvalSession EvalSession;
+typedef struct EvalRegistry EvalRegistry;
+typedef struct EvalServices EvalServices;
 
 typedef enum {
     EVAL_RESULT_OK = 0,
@@ -94,6 +97,8 @@ typedef struct {
     Eval_Command_Fallback fallback_behavior;
 } Evaluator_Native_Command_Def;
 
+typedef Evaluator_Native_Command_Def EvalNativeCommandDef;
+
 typedef enum {
     EVAL_RUN_OK = 0,
     EVAL_RUN_OK_WITH_WARNINGS,
@@ -112,6 +117,52 @@ typedef struct {
     Eval_Run_Overall_Status overall_status;
 } Eval_Run_Report;
 
+typedef struct {
+    Arena *persistent_arena;
+    const EvalServices *services;
+    EvalRegistry *registry; /* optional; default registry if NULL */
+    Eval_Compat_Profile compat_profile;
+    String_View source_root;
+    String_View binary_root;
+} EvalSession_Config;
+
+typedef struct {
+    Arena *scratch_arena;
+    String_View source_dir;
+    String_View binary_dir;
+    const char *list_file;
+    Event_Stream *stream; /* optional */
+} EvalExec_Request;
+
+typedef struct {
+    Eval_Result result;
+    Eval_Run_Report report;
+    size_t emitted_event_count;
+} EvalRunResult;
+
+EvalSession *eval_session_create(const EvalSession_Config *cfg);
+void eval_session_destroy(EvalSession *session);
+
+EvalRunResult eval_session_run(EvalSession *session,
+                               const EvalExec_Request *request,
+                               Ast_Root ast);
+
+bool eval_session_set_compat_profile(EvalSession *session, Eval_Compat_Profile profile);
+bool eval_session_command_exists(const EvalSession *session, String_View command_name);
+
+EvalRegistry *eval_registry_create(Arena *arena);
+void eval_registry_destroy(EvalRegistry *registry);
+
+bool eval_registry_register_native_command(EvalRegistry *registry,
+                                           const EvalNativeCommandDef *def);
+bool eval_registry_unregister_native_command(EvalRegistry *registry,
+                                             String_View command_name);
+bool eval_registry_get_command_capability(const EvalRegistry *registry,
+                                          String_View command_name,
+                                          Command_Capability *out_capability);
+
+// Legacy compatibility shim API.
+// New code should prefer EvalSession/EvalExec_Request/EvalRunResult.
 typedef struct {
     Arena *arena;        // temporary expansions (rewound frequently)
     Arena *event_arena;  // persistent strings + event stream storage

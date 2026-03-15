@@ -268,6 +268,27 @@ typedef enum {
     EVAL_RETURN_CTX_MACRO,
 } Eval_Return_Context;
 
+typedef enum {
+    EVAL_EXEC_CTX_ROOT = 0,
+    EVAL_EXEC_CTX_INCLUDE,
+    EVAL_EXEC_CTX_SUBDIRECTORY,
+    EVAL_EXEC_CTX_FUNCTION,
+    EVAL_EXEC_CTX_MACRO,
+    EVAL_EXEC_CTX_BLOCK,
+    EVAL_EXEC_CTX_DEFERRED,
+} Eval_Exec_Context_Kind;
+
+typedef struct {
+    Eval_Exec_Context_Kind kind;
+    Eval_Return_Context return_context;
+    String_View source_dir;
+    String_View binary_dir;
+    String_View list_dir;
+    const char *current_file;
+} Eval_Exec_Context;
+
+typedef Eval_Exec_Context *Eval_Exec_Context_Stack;
+
 typedef struct {
     Var_Scope *scopes;
     // Invariant: visible_scope_depth <= arena_arr_len(scopes)
@@ -344,7 +365,6 @@ typedef struct {
 typedef Eval_FetchContent_State *Eval_FetchContent_State_List;
 
 typedef struct {
-    Arena *native_commands_arena;
     Arena *known_targets_arena;
     Arena *known_tests_arena;
     Arena *user_commands_arena;
@@ -352,9 +372,6 @@ typedef struct {
     Eval_Test_Record_List known_tests;
     SV_List known_directories;
     SV_List alias_targets;
-    Eval_Native_Command_List native_commands;
-    // Case-insensitive lookup index: normalized command name -> native_commands index.
-    Eval_Native_Command_Index_Entry *native_command_index;
     Eval_Var_Entry *property_store;
     User_Command_List user_commands;
     struct {
@@ -388,6 +405,8 @@ struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: storage interno do evaluator; Event_Stream owna payloads só no push
     Cmake_Event_Stream *stream;
+    EvalRegistry *registry;
+    const EvalServices *services;
 
     String_View source_dir;
     String_View binary_dir;
@@ -402,6 +421,7 @@ struct Evaluator_Context {
     Eval_Process_State process_state;
     Eval_Property_Definition_List property_definitions;
     Eval_Policy_Level *policy_levels;
+    Eval_Exec_Context_Stack exec_contexts;
     // Invariant: visible_policy_depth <= arena_arr_len(policy_levels)
     size_t visible_policy_depth;
     bool cpack_component_module_loaded;
@@ -419,6 +439,35 @@ struct Evaluator_Context {
     bool oom;
     bool stop_requested;
 };
+
+struct EvalRegistry {
+    Arena *arena;
+    Eval_Native_Command_List native_commands;
+    Eval_Native_Command_Index_Entry *native_command_index;
+    bool builtins_seeded;
+};
+
+struct EvalSession {
+    Evaluator_Context ctx;
+    Arena *persistent_arena;
+    String_View source_root;
+    String_View binary_root;
+    bool owns_registry;
+
+    Arena *compat_scratch_arena;
+    Event_Stream *compat_stream;
+    String_View compat_source_dir;
+    String_View compat_binary_dir;
+    const char *compat_list_file;
+};
+
+static inline EvalSession *eval_session_from_ctx(Evaluator_Context *ctx) {
+    return ctx ? (EvalSession*)ctx : NULL;
+}
+
+static inline const EvalSession *eval_session_from_ctx_const(const Evaluator_Context *ctx) {
+    return ctx ? (const EvalSession*)ctx : NULL;
+}
 
 // ---- controle e memória ----
 bool eval_should_stop(Evaluator_Context *ctx);
@@ -723,6 +772,14 @@ static inline bool eval_sv_arr_push_event(Evaluator_Context *ctx, String_View **
 
 // ---- rastreio de origem (NOVO) ----
 Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node);
+
+Eval_Exec_Context *eval_exec_current(Evaluator_Context *ctx);
+const Eval_Exec_Context *eval_exec_current_const(const Evaluator_Context *ctx);
+bool eval_exec_push(Evaluator_Context *ctx, Eval_Exec_Context frame);
+void eval_exec_pop(Evaluator_Context *ctx);
+bool eval_exec_has_active_kind(const Evaluator_Context *ctx, Eval_Exec_Context_Kind kind);
+bool eval_exec_is_file_scope(const Evaluator_Context *ctx);
+bool eval_exec_publish_current_vars(Evaluator_Context *ctx);
 
 // ---- args e expansão (NOVO COMPORTAMENTO) ----
 // Retorna a lista expandida e dividida por ';' (alocada na TEMP ARENA)
@@ -1762,24 +1819,32 @@ bool eval_cache_set(Evaluator_Context *ctx,
 
 static inline String_View eval_current_source_dir(Evaluator_Context *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR));
+    const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
+    if (v.count == 0 && exec && exec->source_dir.count > 0) v = exec->source_dir;
     if (v.count == 0 && ctx) v = ctx->source_dir;
     return v;
 }
 
 static inline String_View eval_current_binary_dir(Evaluator_Context *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR));
+    const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
+    if (v.count == 0 && exec && exec->binary_dir.count > 0) v = exec->binary_dir;
     if (v.count == 0 && ctx) v = ctx->binary_dir;
     return v;
 }
 
 static inline String_View eval_current_list_dir(Evaluator_Context *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR));
+    const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
+    if (v.count == 0 && exec && exec->list_dir.count > 0) v = exec->list_dir;
     if (v.count == 0 && ctx) v = ctx->source_dir;
     return v;
 }
 
 static inline String_View eval_current_list_file(Evaluator_Context *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
+    const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
+    if (v.count == 0 && exec && exec->current_file) v = nob_sv_from_cstr(exec->current_file);
     if (v.count == 0 && ctx && ctx->current_file) v = nob_sv_from_cstr(ctx->current_file);
     return v;
 }
@@ -1839,6 +1904,13 @@ bool eval_property_store_get_key(Evaluator_Context *ctx,
 // ---- native commands ----
 Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name);
 const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name);
+const Eval_Native_Command *eval_registry_find_const(const EvalRegistry *registry, String_View name);
+bool eval_registry_register_internal(EvalRegistry *registry,
+                                     const Evaluator_Native_Command_Def *def,
+                                     bool is_builtin);
+bool eval_registry_unregister_internal(EvalRegistry *registry,
+                                       String_View name,
+                                       bool allow_builtin_remove);
 bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
                                        const Evaluator_Native_Command_Def *def,
                                        bool is_builtin,

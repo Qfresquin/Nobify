@@ -73,6 +73,103 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     TEST_PASS();
 }
 
+TEST(evaluator_session_api_runs_with_explicit_request_and_stream) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = event_arena;
+    cfg.compat_profile = EVAL_PROFILE_STRICT;
+    cfg.source_root = nob_sv_from_cstr(".");
+    cfg.binary_root = nob_sv_from_cstr(".");
+
+    EvalSession *session = eval_session_create(&cfg);
+    ASSERT(session != NULL);
+
+    Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    EvalExec_Request request = {0};
+    request.scratch_arena = temp_arena;
+    request.source_dir = nob_sv_from_cstr(".");
+    request.binary_dir = nob_sv_from_cstr(".");
+    request.list_file = "CMakeLists.txt";
+    request.stream = stream;
+
+    Ast_Root root = parse_cmake(temp_arena, "set(SESSION_API_HIT 1)\n");
+    EvalRunResult run = eval_session_run(session, &request, root);
+    ASSERT(!eval_result_is_fatal(run.result));
+    ASSERT(run.report.error_count == 0);
+    ASSERT(run.emitted_event_count > 0);
+    ASSERT(eval_session_command_exists(session, nob_sv_from_cstr("set")));
+    ASSERT(!eval_session_command_exists(session, nob_sv_from_cstr("definitely_missing_cmd")));
+    ASSERT(nob_sv_eq(eval_var_get(&session->ctx, nob_sv_from_cstr("SESSION_API_HIT")), nob_sv_from_cstr("1")));
+
+    eval_session_destroy(session);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_registry_api_supports_custom_commands_and_null_stream_runs) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    EvalRegistry *registry = eval_registry_create(event_arena);
+    ASSERT(registry != NULL);
+
+    EvalNativeCommandDef def = {
+        .name = nob_sv_from_cstr("registry_ext_cmd"),
+        .handler = native_test_handler_set_hit,
+        .implemented_level = EVAL_CMD_IMPL_PARTIAL,
+        .fallback_behavior = EVAL_FALLBACK_ERROR_CONTINUE,
+    };
+    ASSERT(eval_registry_register_native_command(registry, &def));
+
+    Command_Capability cap = {0};
+    ASSERT(eval_registry_get_command_capability(registry, nob_sv_from_cstr("registry_ext_cmd"), &cap));
+    ASSERT(cap.implemented_level == EVAL_CMD_IMPL_PARTIAL);
+    ASSERT(cap.fallback_behavior == EVAL_FALLBACK_ERROR_CONTINUE);
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = event_arena;
+    cfg.registry = registry;
+    cfg.source_root = nob_sv_from_cstr(".");
+    cfg.binary_root = nob_sv_from_cstr(".");
+
+    EvalSession *session = eval_session_create(&cfg);
+    ASSERT(session != NULL);
+    ASSERT(eval_session_command_exists(session, nob_sv_from_cstr("registry_ext_cmd")));
+
+    EvalExec_Request request = {0};
+    request.scratch_arena = temp_arena;
+    request.source_dir = nob_sv_from_cstr(".");
+    request.binary_dir = nob_sv_from_cstr(".");
+    request.list_file = "CMakeLists.txt";
+    request.stream = NULL;
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "if(COMMAND registry_ext_cmd)\n"
+        "  set(REGISTRY_KNOWN 1)\n"
+        "endif()\n"
+        "registry_ext_cmd()\n");
+    EvalRunResult run = eval_session_run(session, &request, root);
+    ASSERT(!eval_result_is_fatal(run.result));
+    ASSERT(run.report.error_count == 0);
+    ASSERT(run.emitted_event_count == 0);
+    ASSERT(nob_sv_eq(eval_var_get(&session->ctx, nob_sv_from_cstr("REGISTRY_KNOWN")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_var_get(&session->ctx, nob_sv_from_cstr("NATIVE_HIT")), nob_sv_from_cstr("1")));
+
+    eval_session_destroy(session);
+    eval_registry_destroy(registry);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_g5_legacy_wrapper_capabilities_promoted_to_full) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1891,6 +1988,8 @@ TEST(evaluator_execute_process_captures_output_and_models_3_28_fatal_mode) {
 void run_evaluator_v2_batch1(int *passed, int *failed) {
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
+    test_evaluator_session_api_runs_with_explicit_request_and_stream(passed, failed);
+    test_evaluator_registry_api_supports_custom_commands_and_null_stream_runs(passed, failed);
     test_evaluator_g5_legacy_wrapper_capabilities_promoted_to_full(passed, failed);
     test_evaluator_native_command_registry_runtime_extension(passed, failed);
     test_evaluator_command_capability_remains_native_only_introspection(passed, failed);

@@ -214,33 +214,37 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    Evaluator_Init eval_init = {0};
-    eval_init.arena = eval_arena;
-    eval_init.event_arena = event_arena;
-    eval_init.stream = stream;
-    eval_init.source_dir = sv_from_cstr(input_dir);
-    eval_init.binary_dir = sv_from_cstr(input_dir);
-    eval_init.current_file = input_path;
+    EvalSession_Config session_cfg = {0};
+    session_cfg.persistent_arena = event_arena;
+    session_cfg.source_root = sv_from_cstr(input_dir);
+    session_cfg.binary_root = sv_from_cstr(input_dir);
 
-    Evaluator_Context *eval_ctx = evaluator_create(&eval_init);
-    if (!eval_ctx) {
-        nob_log(NOB_ERROR, "Failed to create evaluator context");
+    EvalSession *session = eval_session_create(&session_cfg);
+    if (!session) {
+        nob_log(NOB_ERROR, "Failed to create evaluator session");
         arena_destroy(event_arena);
         arena_destroy(eval_arena);
         arena_destroy(arena);
         return 1;
     }
 
-    Eval_Result run_result = evaluator_run(eval_ctx, ast);
-    if (eval_result_is_fatal(run_result)) {
+    EvalExec_Request eval_request = {0};
+    eval_request.scratch_arena = eval_arena;
+    eval_request.source_dir = sv_from_cstr(input_dir);
+    eval_request.binary_dir = sv_from_cstr(input_dir);
+    eval_request.list_file = input_path;
+    eval_request.stream = stream;
+
+    EvalRunResult run_result = eval_session_run(session, &eval_request, ast);
+    if (eval_result_is_fatal(run_result.result)) {
         nob_log(NOB_ERROR, "Evaluator failed while processing AST");
-        evaluator_destroy(eval_ctx);
+        eval_session_destroy(session);
         arena_destroy(event_arena);
         arena_destroy(eval_arena);
         arena_destroy(arena);
         return 1;
     }
-    evaluator_destroy(eval_ctx);
+    eval_session_destroy(session);
 
     if (print_events) {
         event_stream_dump(stream);
@@ -297,8 +301,8 @@ int main(int argc, char **argv) {
     build_stream = nobify_wrap_stream_with_root(event_arena,
                                                 stream,
                                                 input_path,
-                                                eval_init.source_dir,
-                                                eval_init.binary_dir);
+                                                eval_request.source_dir,
+                                                eval_request.binary_dir);
     if (!build_stream) {
         nob_log(NOB_ERROR, "Failed to wrap semantic events with root directory context");
         arena_destroy(build_model_freeze_arena);

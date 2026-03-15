@@ -5,6 +5,16 @@ static bool block_frame_push(Evaluator_Context *ctx, Block_Frame frame) {
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.block_frames, frame);
 }
 
+static size_t block_active_exec_depth(Evaluator_Context *ctx) {
+    if (!ctx) return 0;
+    size_t depth = 0;
+    for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
+        if (ctx->exec_contexts[i].kind != EVAL_EXEC_CTX_BLOCK) break;
+        depth++;
+    }
+    return depth;
+}
+
 static bool block_parse_options(Evaluator_Context *ctx,
                                 const Node *node,
                                 SV_List args,
@@ -98,6 +108,17 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
 
 static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return, Block_Frame *out_frame) {
     if (!ctx || arena_arr_len(ctx->scope_state.block_frames) == 0) return true;
+    if (!eval_exec_current(ctx) || eval_exec_current(ctx)->kind != EVAL_EXEC_CTX_BLOCK) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_INVALID_CONTEXT,
+                                 nob_sv_from_cstr("flow"),
+                                 node ? node->as.cmd.name : nob_sv_from_cstr("return"),
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("block() frame mismatch across execution contexts"),
+                                 nob_sv_from_cstr("Ensure endblock() and return() only unwind blocks in the active execution context"));
+        return false;
+    }
 
     Block_Frame frame = ctx->scope_state.block_frames[arena_arr_len(ctx->scope_state.block_frames) - 1];
     arena_arr_set_len(ctx->scope_state.block_frames, arena_arr_len(ctx->scope_state.block_frames) - 1);
@@ -119,12 +140,15 @@ static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_r
         return false;
     }
     if (frame.variable_scope_pushed) eval_scope_pop(ctx);
+    if (eval_exec_current(ctx) && eval_exec_current(ctx)->kind == EVAL_EXEC_CTX_BLOCK) {
+        eval_exec_pop(ctx);
+    }
     return true;
 }
 
 bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     if (!ctx) return false;
-    while (arena_arr_len(ctx->scope_state.block_frames) > 0) {
+    while (block_active_exec_depth(ctx) > 0) {
         Block_Frame ended = {0};
         if (!block_pop_frame(ctx, NULL, true, &ended)) return false;
         if (!eval_emit_flow_block_end(ctx,
@@ -193,7 +217,10 @@ Eval_Result eval_handle_return(Evaluator_Context *ctx, const Node *node) {
     }
 
     if (arena_arr_len(ctx->scope_state.return_propagate_vars) > 0) {
-        for (size_t bi = arena_arr_len(ctx->scope_state.block_frames); bi-- > 0;) {
+        size_t active_block_count = block_active_exec_depth(ctx);
+        size_t total_blocks = arena_arr_len(ctx->scope_state.block_frames);
+        size_t begin = active_block_count <= total_blocks ? (total_blocks - active_block_count) : 0;
+        for (size_t bi = total_blocks; bi-- > begin;) {
             ctx->scope_state.block_frames[bi].propagate_on_return = true;
         }
     }
@@ -220,11 +247,28 @@ Eval_Result eval_handle_block(Evaluator_Context *ctx, const Node *node) {
         if (frame.variable_scope_pushed) eval_scope_pop(ctx);
         return eval_result_from_ctx(ctx);
     }
+    Eval_Exec_Context exec = {0};
+    exec.kind = EVAL_EXEC_CTX_BLOCK;
+    exec.return_context = ctx->return_context;
+    exec.source_dir = eval_current_source_dir(ctx);
+    exec.binary_dir = eval_current_binary_dir(ctx);
+    exec.list_dir = eval_current_list_dir(ctx);
+    exec.current_file = ctx->current_file;
+    if (!eval_exec_push(ctx, exec)) {
+        arena_arr_set_len(ctx->scope_state.block_frames, arena_arr_len(ctx->scope_state.block_frames) - 1);
+        if (frame.policy_scope_pushed) (void)eval_policy_pop(ctx);
+        if (frame.variable_scope_pushed) eval_scope_pop(ctx);
+        return eval_result_from_ctx(ctx);
+    }
     if (!eval_emit_flow_block_begin(ctx,
                                     eval_origin_from_node(ctx, node),
                                     frame.variable_scope_pushed,
                                     frame.policy_scope_pushed,
                                     arena_arr_len(frame.propagate_vars) > 0)) {
+        eval_exec_pop(ctx);
+        arena_arr_set_len(ctx->scope_state.block_frames, arena_arr_len(ctx->scope_state.block_frames) - 1);
+        if (frame.policy_scope_pushed) (void)eval_policy_pop(ctx);
+        if (frame.variable_scope_pushed) eval_scope_pop(ctx);
         return eval_result_from_ctx(ctx);
     }
 
