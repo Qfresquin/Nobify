@@ -63,6 +63,14 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("try_compile"), &try_compile_cap));
     ASSERT(try_compile_cap.implemented_level == EVAL_CMD_IMPL_FULL);
 
+    Command_Capability load_cache_cap = {0};
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("load_cache"), &load_cache_cap));
+    ASSERT(load_cache_cap.implemented_level == EVAL_CMD_IMPL_FULL);
+
+    Command_Capability remove_defs_cap = {0};
+    ASSERT(evaluator_get_command_capability(ctx, nob_sv_from_cstr("remove_definitions"), &remove_defs_cap));
+    ASSERT(remove_defs_cap.implemented_level == EVAL_CMD_IMPL_FULL);
+
     Command_Capability missing = {0};
     ASSERT(!evaluator_get_command_capability(ctx, nob_sv_from_cstr("unknown_public_api_command"), &missing));
     ASSERT(missing.implemented_level == EVAL_CMD_IMPL_MISSING);

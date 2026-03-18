@@ -24,6 +24,20 @@ static bool load_cache_parse_line(String_View line,
                                   String_View *out_type,
                                   String_View *out_value);
 
+typedef enum {
+    LOAD_CACHE_MODE_LEGACY = 0,
+    LOAD_CACHE_MODE_READ_WITH_PREFIX,
+} Load_Cache_Mode;
+
+typedef struct {
+    Load_Cache_Mode mode;
+    String_View prefix;
+    SV_List requested;
+    SV_List excludes;
+    SV_List include_internals;
+    SV_List cache_inputs;
+} Load_Cache_Request;
+
 static bool load_cache_name_in_list(String_View name, const SV_List *list) {
     if (!list) return false;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
@@ -150,6 +164,127 @@ static bool load_cache_resolve_path(Evaluator_Context *ctx, String_View raw_path
         if (eval_should_stop(ctx)) return false;
     }
     *out_path = path;
+    return true;
+}
+
+static bool load_cache_parse_read_with_prefix_request(Evaluator_Context *ctx,
+                                                      const Node *node,
+                                                      SV_List args,
+                                                      Load_Cache_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+
+    if (arena_arr_len(args) < 4) {
+        (void)load_cache_emit_diag(
+            ctx,
+            node,
+            EV_DIAG_ERROR,
+            nob_sv_from_cstr("load_cache(READ_WITH_PREFIX ...) requires a prefix and at least one entry"),
+            nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
+        return false;
+    }
+
+    out_req->mode = LOAD_CACHE_MODE_READ_WITH_PREFIX;
+    out_req->prefix = args[2];
+    if (!load_cache_push_temp(ctx, &out_req->cache_inputs, args[0])) return false;
+
+    for (size_t i = 3; i < arena_arr_len(args); i++) {
+        if (!load_cache_push_temp(ctx, &out_req->requested, args[i])) return false;
+    }
+
+    return true;
+}
+
+static bool load_cache_parse_legacy_request(Evaluator_Context *ctx,
+                                            const Node *node,
+                                            SV_List args,
+                                            Load_Cache_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+
+    out_req->mode = LOAD_CACHE_MODE_LEGACY;
+    if (!load_cache_push_temp(ctx, &out_req->cache_inputs, args[0])) return false;
+
+    size_t i = 1;
+    if (!load_cache_collect_until_keyword(ctx, args, &i, &out_req->cache_inputs)) return false;
+
+    while (i < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(args[i], "EXCLUDE")) {
+            i++;
+            if (!load_cache_collect_until_keyword(ctx, args, &i, &out_req->excludes)) return false;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[i], "INCLUDE_INTERNALS")) {
+            i++;
+            if (!load_cache_collect_until_keyword(ctx, args, &i, &out_req->include_internals)) return false;
+            continue;
+        }
+
+        (void)load_cache_emit_diag(ctx,
+                                   node,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("load_cache() received an unsupported argument"),
+                                   args[i]);
+        return false;
+    }
+
+    return true;
+}
+
+static bool load_cache_parse_request(Evaluator_Context *ctx,
+                                     const Node *node,
+                                     SV_List args,
+                                     Load_Cache_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+
+    if (arena_arr_len(args) < 2) {
+        (void)load_cache_emit_diag(ctx,
+                                   node,
+                                   EV_DIAG_ERROR,
+                                   nob_sv_from_cstr("load_cache() requires a path and a supported mode"),
+                                   nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
+        return false;
+    }
+
+    *out_req = (Load_Cache_Request){0};
+    if (eval_sv_eq_ci_lit(args[1], "READ_WITH_PREFIX")) {
+        return load_cache_parse_read_with_prefix_request(ctx, node, args, out_req);
+    }
+    return load_cache_parse_legacy_request(ctx, node, args, out_req);
+}
+
+static bool load_cache_execute_request(Evaluator_Context *ctx,
+                                       const Node *node,
+                                       const Load_Cache_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    bool read_with_prefix = req->mode == LOAD_CACHE_MODE_READ_WITH_PREFIX;
+    for (size_t path_i = 0; path_i < arena_arr_len(req->cache_inputs); path_i++) {
+        String_View cache_path = nob_sv_from_cstr("");
+        if (!load_cache_resolve_path(ctx, req->cache_inputs[path_i], &cache_path)) return false;
+        char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
+        EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, false);
+
+        Nob_String_Builder sb = {0};
+        if (!nob_read_entire_file(cache_path_c, &sb)) {
+            (void)load_cache_emit_diag(ctx,
+                                       node,
+                                       EV_DIAG_ERROR,
+                                       nob_sv_from_cstr("load_cache() failed to read CMakeCache.txt"),
+                                       cache_path);
+            return false;
+        }
+
+        bool ok = load_cache_process_contents(ctx,
+                                              node,
+                                              read_with_prefix,
+                                              req->prefix,
+                                              &req->requested,
+                                              &req->excludes,
+                                              &req->include_internals,
+                                              &sb);
+        nob_sb_free(sb);
+        if (!ok) return false;
+    }
+
     return true;
 }
 
@@ -627,92 +762,9 @@ Eval_Result eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 2) {
-        (void)load_cache_emit_diag(ctx,
-                                   node,
-                                   EV_DIAG_ERROR,
-                                   nob_sv_from_cstr("load_cache() requires a path and a supported mode"),
-                                   nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
-        return eval_result_from_ctx(ctx);
-    }
-
-    bool read_with_prefix = false;
-    String_View prefix = nob_sv_from_cstr("");
-    SV_List requested = NULL;
-    SV_List excludes = NULL;
-    SV_List include_internals = NULL;
-    SV_List cache_inputs = NULL;
-
-    size_t i = 1;
-    if (eval_sv_eq_ci_lit(a[i], "READ_WITH_PREFIX")) {
-        read_with_prefix = true;
-        if (i + 2 >= arena_arr_len(a)) {
-            (void)load_cache_emit_diag(ctx,
-                                       node,
-                                       EV_DIAG_ERROR,
-                                       nob_sv_from_cstr("load_cache(READ_WITH_PREFIX ...) requires a prefix and at least one entry"),
-                                       nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
-            return eval_result_from_ctx(ctx);
-        }
-        prefix = a[i + 1];
-        i += 2;
-        for (; i < arena_arr_len(a); i++) {
-            if (!eval_sv_arr_push_temp(ctx, &requested, a[i])) {
-                return eval_result_from_ctx(ctx);
-            }
-        }
-        if (!load_cache_push_temp(ctx, &cache_inputs, a[0])) return eval_result_from_ctx(ctx);
-    } else {
-        if (!load_cache_push_temp(ctx, &cache_inputs, a[0])) return eval_result_from_ctx(ctx);
-        if (!load_cache_collect_until_keyword(ctx, a, &i, &cache_inputs)) return eval_result_from_ctx(ctx);
-
-        while (i < arena_arr_len(a)) {
-            if (eval_sv_eq_ci_lit(a[i], "EXCLUDE")) {
-                i++;
-                if (!load_cache_collect_until_keyword(ctx, a, &i, &excludes)) return eval_result_from_ctx(ctx);
-                continue;
-            }
-            if (eval_sv_eq_ci_lit(a[i], "INCLUDE_INTERNALS")) {
-                i++;
-                if (!load_cache_collect_until_keyword(ctx, a, &i, &include_internals)) return eval_result_from_ctx(ctx);
-                continue;
-            }
-            (void)load_cache_emit_diag(ctx,
-                                       node,
-                                       EV_DIAG_ERROR,
-                                       nob_sv_from_cstr("load_cache() received an unsupported argument"),
-                                       a[i]);
-            return eval_result_from_ctx(ctx);
-        }
-    }
-
-    for (size_t path_i = 0; path_i < arena_arr_len(cache_inputs); path_i++) {
-        String_View cache_path = nob_sv_from_cstr("");
-        if (!load_cache_resolve_path(ctx, cache_inputs[path_i], &cache_path)) return eval_result_from_ctx(ctx);
-        char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, eval_result_fatal());
-
-        Nob_String_Builder sb = {0};
-        if (!nob_read_entire_file(cache_path_c, &sb)) {
-            (void)load_cache_emit_diag(ctx,
-                                       node,
-                                       EV_DIAG_ERROR,
-                                       nob_sv_from_cstr("load_cache() failed to read CMakeCache.txt"),
-                                       cache_path);
-            return eval_result_from_ctx(ctx);
-        }
-
-        bool ok = load_cache_process_contents(ctx,
-                                              node,
-                                              read_with_prefix,
-                                              prefix,
-                                              &requested,
-                                              &excludes,
-                                              &include_internals,
-                                              &sb);
-        nob_sb_free(sb);
-        if (!ok) return eval_result_from_ctx(ctx);
-    }
+    Load_Cache_Request req = {0};
+    if (!load_cache_parse_request(ctx, node, a, &req)) return eval_result_from_ctx(ctx);
+    if (!load_cache_execute_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
 
     return eval_result_from_ctx(ctx);
 }

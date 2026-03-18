@@ -11,6 +11,18 @@ static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_link_opts_var = "NOBIFY_GLOBAL_LINK_OPTIONS";
 
+typedef struct {
+    SV_List definitions;
+    SV_List options;
+} Remove_Definitions_Request;
+
+static bool sync_directory_property_mutation(Evaluator_Context *ctx,
+                                             Event_Origin origin,
+                                             const char *property_name,
+                                             Event_Property_Mutate_Op op,
+                                             uint32_t modifier_flags,
+                                             const SV_List *items);
+
 static bool sv_eq_exact(String_View a, String_View b) {
     if (a.count != b.count) return false;
     if (a.count == 0) return true;
@@ -123,6 +135,15 @@ static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, Strin
     return eval_var_set_current(ctx, var, nob_sv_from_parts(buf, off));
 }
 
+static bool current_list_var_items_temp(Evaluator_Context *ctx, String_View var, SV_List *out_items) {
+    if (!ctx || !out_items) return false;
+    *out_items = NULL;
+
+    String_View current = eval_var_get_visible(ctx, var);
+    if (current.count == 0) return true;
+    return eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current, out_items);
+}
+
 static bool split_definition_flag_body(String_View item, String_View *out_body) {
     if (!out_body) return false;
     *out_body = nob_sv_from_cstr("");
@@ -153,6 +174,82 @@ static bool split_valid_definition_flag(String_View item, String_View *out_defin
     }
 
     *out_definition = body;
+    return true;
+}
+
+static bool remove_definitions_parse_request(Evaluator_Context *ctx,
+                                             SV_List args,
+                                             Remove_Definitions_Request *out_req) {
+    if (!ctx || !out_req) return false;
+
+    *out_req = (Remove_Definitions_Request){0};
+    for (size_t i = 0; i < arena_arr_len(args); i++) {
+        if (args[i].count == 0) continue;
+
+        String_View definition = nob_sv_from_cstr("");
+        if (split_valid_definition_flag(args[i], &definition)) {
+            if (!eval_sv_arr_push_temp(ctx, &out_req->definitions, definition)) return false;
+            continue;
+        }
+        if (!eval_sv_arr_push_temp(ctx, &out_req->options, args[i])) return false;
+    }
+
+    return true;
+}
+
+static bool remove_definitions_execute_request(Evaluator_Context *ctx,
+                                               Event_Origin origin,
+                                               const Remove_Definitions_Request *req) {
+    if (!ctx || !req) return false;
+
+    bool removed_any_definition = false;
+    for (size_t i = 0; i < arena_arr_len(req->definitions); i++) {
+        bool removed = false;
+        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), req->definitions[i], &removed)) {
+            return false;
+        }
+        removed_any_definition = removed_any_definition || removed;
+    }
+
+    bool removed_any_option = false;
+    for (size_t i = 0; i < arena_arr_len(req->options); i++) {
+        bool removed = false;
+        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_opts_var), req->options[i], &removed)) {
+            return false;
+        }
+        removed_any_option = removed_any_option || removed;
+    }
+
+    if (removed_any_definition) {
+        SV_List remaining_definitions = NULL;
+        if (!current_list_var_items_temp(ctx, nob_sv_from_cstr(k_global_defs_var), &remaining_definitions)) {
+            return false;
+        }
+        if (!sync_directory_property_mutation(ctx,
+                                              origin,
+                                              "COMPILE_DEFINITIONS",
+                                              EVENT_PROPERTY_MUTATE_SET,
+                                              EVENT_PROPERTY_MODIFIER_NONE,
+                                              &remaining_definitions)) {
+            return false;
+        }
+    }
+
+    if (removed_any_option) {
+        SV_List remaining_options = NULL;
+        if (!current_list_var_items_temp(ctx, nob_sv_from_cstr(k_global_opts_var), &remaining_options)) {
+            return false;
+        }
+        if (!sync_directory_property_mutation(ctx,
+                                              origin,
+                                              "COMPILE_OPTIONS",
+                                              EVENT_PROPERTY_MUTATE_SET,
+                                              EVENT_PROPERTY_MODIFIER_NONE,
+                                              &remaining_options)) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -610,59 +707,9 @@ Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *n
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    bool removed_any = false;
-    bool removed_any_option = false;
-    for (size_t i = 0; i < arena_arr_len(a); i++) {
-        String_View definition = nob_sv_from_cstr("");
-        if (split_valid_definition_flag(a[i], &definition)) {
-            bool removed = false;
-            if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), definition, &removed)) {
-                return eval_result_from_ctx(ctx);
-            }
-            removed_any = removed_any || removed;
-            continue;
-        }
-
-        bool removed = false;
-        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_opts_var), a[i], &removed)) {
-            return eval_result_from_ctx(ctx);
-        }
-        removed_any_option = removed_any_option || removed;
-    }
-
-    if (removed_any) {
-        String_View current_defs = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_defs_var));
-        SV_List remaining = {0};
-        if (current_defs.count > 0 &&
-            !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current_defs, &remaining)) {
-            return eval_result_fatal();
-        }
-        if (!sync_directory_property_mutation(ctx,
-                                              o,
-                                              "COMPILE_DEFINITIONS",
-                                              EVENT_PROPERTY_MUTATE_SET,
-                                              EVENT_PROPERTY_MODIFIER_NONE,
-                                              &remaining)) {
-            return eval_result_fatal();
-        }
-    }
-
-    if (removed_any_option) {
-        String_View current_opts = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_opts_var));
-        SV_List remaining = {0};
-        if (current_opts.count > 0 &&
-            !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current_opts, &remaining)) {
-            return eval_result_fatal();
-        }
-        if (!sync_directory_property_mutation(ctx,
-                                              o,
-                                              "COMPILE_OPTIONS",
-                                              EVENT_PROPERTY_MUTATE_SET,
-                                              EVENT_PROPERTY_MODIFIER_NONE,
-                                              &remaining)) {
-            return eval_result_fatal();
-        }
-    }
+    Remove_Definitions_Request req = {0};
+    if (!remove_definitions_parse_request(ctx, a, &req)) return eval_result_from_ctx(ctx);
+    if (!remove_definitions_execute_request(ctx, o, &req)) return eval_result_from_ctx(ctx);
 
     return eval_result_from_ctx(ctx);
 }

@@ -550,6 +550,103 @@ TEST(evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_packag
     TEST_PASS();
 }
 
+TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("fc_provider_parse"));
+    ASSERT(nob_write_entire_file("fc_provider_parse/CMakeLists.txt",
+                                 "add_library(fc_provider_parse_lib INTERFACE)\n",
+                                 strlen("add_library(fc_provider_parse_lib INTERFACE)\n")));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "macro(fc_bad_provider method)\n"
+        "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
+        "    if(ARGV1 STREQUAL \"ParseProvider\")\n"
+        "      FetchContent_SetPopulated(${ARGV1} SOURCE_DIR)\n"
+        "    endif()\n"
+        "  endif()\n"
+        "endmacro()\n"
+        "include(FetchContent)\n"
+        "FetchContent_Declare(ParseProvider SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_provider_parse\")\n"
+        "FetchContent_MakeAvailable()\n"
+        "FetchContent_GetProperties()\n"
+        "FetchContent_GetProperties(ParseProvider SOURCE_DIR)\n"
+        "FetchContent_Populate()\n"
+        "FetchContent_Populate(MissingDecl)\n"
+        "FetchContent_SetPopulated(ParseProvider)\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER fc_bad_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n"
+        "FetchContent_MakeAvailable(ParseProvider)\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 7);
+
+    bool saw_makeavailable_arity = false;
+    bool saw_getprops_name = false;
+    bool saw_getprops_source_dir = false;
+    bool saw_populate_name = false;
+    bool saw_populate_missing_decl = false;
+    bool saw_setpopulated_context = false;
+    bool saw_setpopulated_source_dir = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("FetchContent_MakeAvailable() requires at least one dependency name"))) {
+            saw_makeavailable_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("FetchContent_GetProperties() requires a dependency name"))) {
+            saw_getprops_name = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("FetchContent_GetProperties(SOURCE_DIR) requires an output variable"))) {
+            saw_getprops_source_dir = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("FetchContent_Populate() requires a dependency name"))) {
+            saw_populate_name = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("FetchContent_Populate() requires a prior FetchContent_Declare() when called without content options"))) {
+            saw_populate_missing_decl = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("FetchContent_SetPopulated() may only be used from inside a dependency provider"))) {
+            saw_setpopulated_context = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("FetchContent_SetPopulated(SOURCE_DIR) requires a directory value"))) {
+            saw_setpopulated_source_dir = true;
+        }
+    }
+
+    ASSERT(saw_makeavailable_arity);
+    ASSERT(saw_getprops_name);
+    ASSERT(saw_getprops_source_dir);
+    ASSERT(saw_populate_name);
+    ASSERT(saw_populate_missing_decl);
+    ASSERT(saw_setpopulated_context);
+    ASSERT(saw_setpopulated_source_dir);
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -675,6 +772,79 @@ TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
     ASSERT(ctx->current_file != NULL);
     ASSERT(strcmp(ctx->current_file, "CMakeLists.txt") == 0);
     ASSERT(nob_sv_eq(eval_current_list_file(ctx), nob_sv_from_cstr("CMakeLists.txt")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_language_rejects_incomplete_and_unknown_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_language()\n"
+        "cmake_language(CALL)\n"
+        "cmake_language(EVAL)\n"
+        "cmake_language(EVAL CODE)\n"
+        "cmake_language(GET_MESSAGE_LOG_LEVEL)\n"
+        "cmake_language(UNKNOWN_SUBCOMMAND value)\n");
+
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 6);
+
+    bool saw_missing_subcommand = false;
+    bool saw_missing_call_name = false;
+    bool saw_missing_eval_code_keyword = false;
+    bool saw_missing_eval_code_text = false;
+    bool saw_missing_log_var = false;
+    bool saw_unknown_subcommand = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language() requires a subcommand"))) {
+            saw_missing_subcommand = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(CALL) requires a command name"))) {
+            saw_missing_call_name = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(EVAL) requires CODE"))) {
+            saw_missing_eval_code_keyword = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(EVAL CODE ...) requires code text"))) {
+            saw_missing_eval_code_text = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(GET_MESSAGE_LOG_LEVEL) expects one output variable"))) {
+            saw_missing_log_var = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("Unsupported cmake_language() subcommand"))) {
+            saw_unknown_subcommand = true;
+        }
+    }
+
+    ASSERT(saw_missing_subcommand);
+    ASSERT(saw_missing_call_name);
+    ASSERT(saw_missing_eval_code_keyword);
+    ASSERT(saw_missing_eval_code_text);
+    ASSERT(saw_missing_log_var);
+    ASSERT(saw_unknown_subcommand);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1849,8 +2019,10 @@ void run_evaluator_v2_batch2(int *passed, int *failed) {
     test_evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory(passed, failed);
     test_evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory(passed, failed);
     test_evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_package_resolution(passed, failed);
+    test_evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes(passed, failed);
     test_evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags(passed, failed);
     test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);
+    test_evaluator_cmake_language_rejects_incomplete_and_unknown_forms(passed, failed);
     test_evaluator_cmake_language_dependency_provider_rejects_invalid_forms(passed, failed);
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);

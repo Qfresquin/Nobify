@@ -14,6 +14,37 @@ typedef struct {
     String_View populated_var;
 } FetchContent_GetProperties_Options;
 
+typedef struct {
+    String_View dependency_name;
+    String_View canonical_name;
+    bool skip_existing;
+    Eval_FetchContent_Declaration parsed_decl;
+} FetchContent_Declare_Request;
+
+typedef struct {
+    SV_List dependency_names;
+} FetchContent_MakeAvailable_Request;
+
+typedef struct {
+    String_View dependency_name;
+    String_View canonical_name;
+    FetchContent_GetProperties_Options outputs;
+} FetchContent_GetProperties_Request;
+
+typedef struct {
+    String_View dependency_name;
+    String_View canonical_name;
+    bool use_saved_declaration;
+    Eval_FetchContent_Declaration direct_decl;
+} FetchContent_Populate_Request;
+
+typedef struct {
+    String_View dependency_name;
+    String_View canonical_name;
+    String_View source_dir;
+    String_View binary_dir;
+} FetchContent_SetPopulated_Request;
+
 static bool fetchcontent_require_module(Evaluator_Context *ctx,
                                         String_View command,
                                         Cmake_Event_Origin origin) {
@@ -273,6 +304,18 @@ static bool fetchcontent_append_list_to_temp(Evaluator_Context *ctx, SV_List *ou
     if (!ctx || !out) return false;
     for (size_t i = 0; i < arena_arr_len(src); i++) {
         if (!eval_sv_arr_push_temp(ctx, out, src[i])) return false;
+    }
+    return true;
+}
+
+static bool fetchcontent_collect_tail_args_temp(Evaluator_Context *ctx,
+                                                SV_List args,
+                                                size_t start,
+                                                SV_List *out) {
+    if (!ctx || !out) return false;
+    *out = NULL;
+    for (size_t i = start; i < arena_arr_len(args); i++) {
+        if (!eval_sv_arr_push_temp(ctx, out, args[i])) return false;
     }
     return true;
 }
@@ -1234,13 +1277,13 @@ static bool fetchcontent_makeavailable_one(Evaluator_Context *ctx,
     return ok;
 }
 
-Eval_Result eval_handle_fetchcontent_declare(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
-
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
+static bool fetchcontent_parse_declare_request(Evaluator_Context *ctx,
+                                               const Node *node,
+                                               Cmake_Event_Origin origin,
+                                               SV_List args,
+                                               FetchContent_Declare_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 1) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1249,41 +1292,51 @@ Eval_Result eval_handle_fetchcontent_declare(Evaluator_Context *ctx, const Node 
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_Declare() requires a dependency name"),
                                        nob_sv_from_cstr("Usage: FetchContent_Declare(<name> <content options>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    String_View dependency_name = a[0];
-    String_View canonical_name = fetchcontent_lower_event(ctx, dependency_name);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (fetchcontent_find_declaration(ctx, canonical_name) != NULL) return eval_result_from_ctx(ctx);
+    out_req->dependency_name = args[0];
+    out_req->canonical_name = fetchcontent_lower_event(ctx, out_req->dependency_name);
+    if (eval_should_stop(ctx)) return false;
+
+    out_req->skip_existing = fetchcontent_find_declaration(ctx, out_req->canonical_name) != NULL;
+    if (out_req->skip_existing) return true;
 
     SV_List decl_args = NULL;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (!eval_sv_arr_push_temp(ctx, &decl_args, a[i])) return eval_result_fatal();
-    }
-    Eval_FetchContent_Declaration parsed = {0};
-    if (!fetchcontent_parse_declaration(ctx, node, dependency_name, decl_args, true, &parsed)) {
-        return eval_result_from_ctx(ctx);
-    }
-
-    Eval_FetchContent_Declaration decl = {0};
-    if (!fetchcontent_clone_declaration_to_event(ctx, &decl, &parsed)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.fetchcontent.declarations, decl)) {
-        return eval_result_fatal();
-    }
-    if (!fetchcontent_upsert_state(ctx, decl.name, decl.canonical_name, false, decl.source_dir, decl.binary_dir)) {
-        return eval_result_fatal();
-    }
-    return eval_result_from_ctx(ctx);
+    if (!fetchcontent_collect_tail_args_temp(ctx, args, 1, &decl_args)) return false;
+    return fetchcontent_parse_declaration(ctx,
+                                          node,
+                                          out_req->dependency_name,
+                                          decl_args,
+                                          true,
+                                          &out_req->parsed_decl);
 }
 
-Eval_Result eval_handle_fetchcontent_makeavailable(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+static bool fetchcontent_execute_declare_request(Evaluator_Context *ctx,
+                                                 const FetchContent_Declare_Request *req) {
+    if (!ctx || !req) return false;
+    if (req->skip_existing) return true;
 
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) == 0) {
+    Eval_FetchContent_Declaration decl = {0};
+    if (!fetchcontent_clone_declaration_to_event(ctx, &decl, &req->parsed_decl)) return false;
+    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.fetchcontent.declarations, decl)) {
+        return false;
+    }
+    return fetchcontent_upsert_state(ctx,
+                                     decl.name,
+                                     decl.canonical_name,
+                                     false,
+                                     decl.source_dir,
+                                     decl.binary_dir);
+}
+
+static bool fetchcontent_parse_makeavailable_request(Evaluator_Context *ctx,
+                                                     const Node *node,
+                                                     Cmake_Event_Origin origin,
+                                                     SV_List args,
+                                                     FetchContent_MakeAvailable_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) == 0) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1292,23 +1345,31 @@ Eval_Result eval_handle_fetchcontent_makeavailable(Evaluator_Context *ctx, const
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_MakeAvailable() requires at least one dependency name"),
                                        nob_sv_from_cstr("Usage: FetchContent_MakeAvailable(<name>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    for (size_t i = 0; i < arena_arr_len(a); i++) {
-        if (!fetchcontent_makeavailable_one(ctx, node, a[i])) return eval_result_from_ctx(ctx);
-        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    }
-    return eval_result_from_ctx(ctx);
+    out_req->dependency_names = args;
+    return true;
 }
 
-Eval_Result eval_handle_fetchcontent_getproperties(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+static bool fetchcontent_execute_makeavailable_request(Evaluator_Context *ctx,
+                                                       const Node *node,
+                                                       const FetchContent_MakeAvailable_Request *req) {
+    if (!ctx || !node || !req) return false;
+    for (size_t i = 0; i < arena_arr_len(req->dependency_names); i++) {
+        if (!fetchcontent_makeavailable_one(ctx, node, req->dependency_names[i])) return false;
+        if (eval_should_stop(ctx)) return false;
+    }
+    return true;
+}
 
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
+static bool fetchcontent_parse_getproperties_request(Evaluator_Context *ctx,
+                                                     const Node *node,
+                                                     Cmake_Event_Origin origin,
+                                                     SV_List args,
+                                                     FetchContent_GetProperties_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 1) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1317,37 +1378,36 @@ Eval_Result eval_handle_fetchcontent_getproperties(Evaluator_Context *ctx, const
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_GetProperties() requires a dependency name"),
                                        nob_sv_from_cstr("Usage: FetchContent_GetProperties(<name> [SOURCE_DIR <out>] [BINARY_DIR <out>] [POPULATED <out>])"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    String_View dependency_name = a[0];
-    String_View canonical_name = fetchcontent_lower_temp(ctx, dependency_name);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    out_req->dependency_name = args[0];
+    out_req->canonical_name = fetchcontent_lower_temp(ctx, out_req->dependency_name);
+    if (eval_should_stop(ctx)) return false;
 
-    FetchContent_GetProperties_Options opt = {0};
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "SOURCE_DIR")) {
-            if (i + 1 >= arena_arr_len(a)) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "SOURCE_DIR")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("FetchContent_GetProperties(SOURCE_DIR) requires an output variable"), nob_sv_from_cstr("Usage: FetchContent_GetProperties(<name> SOURCE_DIR <out>)"));
-                return eval_result_from_ctx(ctx);
+                return false;
             }
-            opt.source_dir_var = a[++i];
+            out_req->outputs.source_dir_var = args[++i];
             continue;
         }
-        if (eval_sv_eq_ci_lit(a[i], "BINARY_DIR")) {
-            if (i + 1 >= arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(args[i], "BINARY_DIR")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("FetchContent_GetProperties(BINARY_DIR) requires an output variable"), nob_sv_from_cstr("Usage: FetchContent_GetProperties(<name> BINARY_DIR <out>)"));
-                return eval_result_from_ctx(ctx);
+                return false;
             }
-            opt.binary_dir_var = a[++i];
+            out_req->outputs.binary_dir_var = args[++i];
             continue;
         }
-        if (eval_sv_eq_ci_lit(a[i], "POPULATED")) {
-            if (i + 1 >= arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(args[i], "POPULATED")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("FetchContent_GetProperties(POPULATED) requires an output variable"), nob_sv_from_cstr("Usage: FetchContent_GetProperties(<name> POPULATED <out>)"));
-                return eval_result_from_ctx(ctx);
+                return false;
             }
-            opt.populated_var = a[++i];
+            out_req->outputs.populated_var = args[++i];
             continue;
         }
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
@@ -1357,36 +1417,62 @@ Eval_Result eval_handle_fetchcontent_getproperties(Evaluator_Context *ctx, const
                                        EVAL_DIAG_UNEXPECTED_ARGUMENT,
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_GetProperties() received an unexpected argument"),
-                                       a[i]);
-        return eval_result_from_ctx(ctx);
+                                       args[i]);
+        return false;
     }
 
-    Eval_FetchContent_State *state = fetchcontent_find_state(ctx, canonical_name);
+    return true;
+}
+
+static bool fetchcontent_getproperties_has_explicit_outputs(const FetchContent_GetProperties_Request *req) {
+    if (!req) return false;
+    return req->outputs.source_dir_var.count > 0 ||
+           req->outputs.binary_dir_var.count > 0 ||
+           req->outputs.populated_var.count > 0;
+}
+
+static bool fetchcontent_execute_getproperties_request(Evaluator_Context *ctx,
+                                                       const FetchContent_GetProperties_Request *req) {
+    if (!ctx || !req) return false;
+
+    Eval_FetchContent_State *state = fetchcontent_find_state(ctx, req->canonical_name);
     String_View source_dir = state ? state->source_dir : nob_sv_from_cstr("");
     String_View binary_dir = state ? state->binary_dir : nob_sv_from_cstr("");
     bool populated = state ? state->populated : false;
 
-    if (opt.source_dir_var.count == 0 && opt.binary_dir_var.count == 0 && opt.populated_var.count == 0) {
-        if (!fetchcontent_publish_default_vars(ctx, dependency_name, populated, source_dir, binary_dir)) return eval_result_fatal();
-        return eval_result_from_ctx(ctx);
+    if (!fetchcontent_getproperties_has_explicit_outputs(req)) {
+        return fetchcontent_publish_default_vars(ctx,
+                                                req->dependency_name,
+                                                populated,
+                                                source_dir,
+                                                binary_dir);
     }
 
-    if (opt.source_dir_var.count > 0 && !eval_var_set_current(ctx, opt.source_dir_var, source_dir)) return eval_result_fatal();
-    if (opt.binary_dir_var.count > 0 && !eval_var_set_current(ctx, opt.binary_dir_var, binary_dir)) return eval_result_fatal();
-    if (opt.populated_var.count > 0 &&
-        !eval_var_set_current(ctx, opt.populated_var, populated ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
-        return eval_result_fatal();
+    if (req->outputs.source_dir_var.count > 0 &&
+        !eval_var_set_current(ctx, req->outputs.source_dir_var, source_dir)) {
+        return false;
     }
-    return eval_result_from_ctx(ctx);
+    if (req->outputs.binary_dir_var.count > 0 &&
+        !eval_var_set_current(ctx, req->outputs.binary_dir_var, binary_dir)) {
+        return false;
+    }
+    if (req->outputs.populated_var.count > 0 &&
+        !eval_var_set_current(ctx,
+                              req->outputs.populated_var,
+                              populated ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
+        return false;
+    }
+
+    return true;
 }
 
-Eval_Result eval_handle_fetchcontent_populate(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
-
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
+static bool fetchcontent_parse_populate_request(Evaluator_Context *ctx,
+                                                const Node *node,
+                                                Cmake_Event_Origin origin,
+                                                SV_List args,
+                                                FetchContent_Populate_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 1) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1395,17 +1481,35 @@ Eval_Result eval_handle_fetchcontent_populate(Evaluator_Context *ctx, const Node
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_Populate() requires a dependency name"),
                                        nob_sv_from_cstr("Usage: FetchContent_Populate(<name> [<content options>...])"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    String_View dependency_name = a[0];
-    String_View canonical_name = fetchcontent_lower_temp(ctx, dependency_name);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    out_req->dependency_name = args[0];
+    out_req->canonical_name = fetchcontent_lower_temp(ctx, out_req->dependency_name);
+    if (eval_should_stop(ctx)) return false;
 
-    Eval_FetchContent_Declaration direct_decl = {0};
+    out_req->use_saved_declaration = arena_arr_len(args) == 1;
+    if (out_req->use_saved_declaration) return true;
+
+    SV_List decl_args = NULL;
+    if (!fetchcontent_collect_tail_args_temp(ctx, args, 1, &decl_args)) return false;
+    return fetchcontent_parse_declaration(ctx,
+                                          node,
+                                          out_req->dependency_name,
+                                          decl_args,
+                                          false,
+                                          &out_req->direct_decl);
+}
+
+static bool fetchcontent_execute_populate_request(Evaluator_Context *ctx,
+                                                  const Node *node,
+                                                  Cmake_Event_Origin origin,
+                                                  const FetchContent_Populate_Request *req) {
+    if (!ctx || !node || !req) return false;
+
     const Eval_FetchContent_Declaration *decl = NULL;
-    if (arena_arr_len(a) == 1) {
-        decl = fetchcontent_find_declaration(ctx, canonical_name);
+    if (req->use_saved_declaration) {
+        decl = fetchcontent_find_declaration(ctx, req->canonical_name);
         if (!decl) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                            node,
@@ -1414,33 +1518,23 @@ Eval_Result eval_handle_fetchcontent_populate(Evaluator_Context *ctx, const Node
                                            EVAL_DIAG_MISSING_REQUIRED,
                                            "dispatcher",
                                            nob_sv_from_cstr("FetchContent_Populate() requires a prior FetchContent_Declare() when called without content options"),
-                                           dependency_name);
-            return eval_result_from_ctx(ctx);
+                                           req->dependency_name);
+            return false;
         }
     } else {
-        SV_List decl_args = NULL;
-        for (size_t i = 1; i < arena_arr_len(a); i++) {
-            if (!eval_sv_arr_push_temp(ctx, &decl_args, a[i])) return eval_result_fatal();
-        }
-        if (!fetchcontent_parse_declaration(ctx, node, dependency_name, decl_args, false, &direct_decl)) {
-            return eval_result_from_ctx(ctx);
-        }
-        decl = &direct_decl;
+        decl = &req->direct_decl;
     }
 
-    if (!fetchcontent_populate_content(ctx, node, dependency_name, decl, false)) {
-        return eval_result_from_ctx(ctx);
-    }
-    return eval_result_from_ctx(ctx);
+    return fetchcontent_populate_content(ctx, node, req->dependency_name, decl, false);
 }
 
-Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
-    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
-
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
+static bool fetchcontent_parse_setpopulated_request(Evaluator_Context *ctx,
+                                                    const Node *node,
+                                                    Cmake_Event_Origin origin,
+                                                    SV_List args,
+                                                    FetchContent_SetPopulated_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 1) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1449,7 +1543,7 @@ Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const 
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_SetPopulated() requires a dependency name"),
                                        nob_sv_from_cstr("Usage: FetchContent_SetPopulated(<name> [SOURCE_DIR <dir>] [BINARY_DIR <dir>])"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
     if (ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth == 0 ||
         arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) == 0) {
@@ -1461,15 +1555,16 @@ Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const 
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_SetPopulated() may only be used from inside a dependency provider"),
                                        nob_sv_from_cstr("Call it only while handling FETCHCONTENT_MAKEAVAILABLE_SERIAL"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    String_View dependency_name = a[0];
-    String_View canonical_name = fetchcontent_lower_temp(ctx, dependency_name);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    out_req->dependency_name = args[0];
+    out_req->canonical_name = fetchcontent_lower_temp(ctx, out_req->dependency_name);
+    if (eval_should_stop(ctx)) return false;
+
     String_View active_name =
         ctx->semantic_state.fetchcontent.active_makeavailable[arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) - 1];
-    if (!eval_sv_key_eq(active_name, canonical_name)) {
+    if (!eval_sv_key_eq(active_name, out_req->canonical_name)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1477,29 +1572,27 @@ Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const 
                                        EVAL_DIAG_INVALID_CONTEXT,
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_SetPopulated() must match the active dependency provider request"),
-                                       dependency_name);
-        return eval_result_from_ctx(ctx);
+                                       out_req->dependency_name);
+        return false;
     }
 
-    String_View source_dir = nob_sv_from_cstr("");
-    String_View binary_dir = nob_sv_from_cstr("");
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "SOURCE_DIR")) {
-            if (i + 1 >= arena_arr_len(a)) {
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (eval_sv_eq_ci_lit(args[i], "SOURCE_DIR")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("FetchContent_SetPopulated(SOURCE_DIR) requires a directory value"), nob_sv_from_cstr("Usage: FetchContent_SetPopulated(<name> SOURCE_DIR <dir>)"));
-                return eval_result_from_ctx(ctx);
+                return false;
             }
-            source_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], fetchcontent_current_source_dir(ctx), false);
-            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            out_req->source_dir = eval_path_resolve_for_cmake_arg(ctx, args[++i], fetchcontent_current_source_dir(ctx), false);
+            if (eval_should_stop(ctx)) return false;
             continue;
         }
-        if (eval_sv_eq_ci_lit(a[i], "BINARY_DIR")) {
-            if (i + 1 >= arena_arr_len(a)) {
+        if (eval_sv_eq_ci_lit(args[i], "BINARY_DIR")) {
+            if (i + 1 >= arena_arr_len(args)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("FetchContent_SetPopulated(BINARY_DIR) requires a directory value"), nob_sv_from_cstr("Usage: FetchContent_SetPopulated(<name> BINARY_DIR <dir>)"));
-                return eval_result_from_ctx(ctx);
+                return false;
             }
-            binary_dir = eval_path_resolve_for_cmake_arg(ctx, a[++i], fetchcontent_current_binary_dir(ctx), false);
-            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            out_req->binary_dir = eval_path_resolve_for_cmake_arg(ctx, args[++i], fetchcontent_current_binary_dir(ctx), false);
+            if (eval_should_stop(ctx)) return false;
             continue;
         }
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
@@ -1509,21 +1602,101 @@ Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const 
                                        EVAL_DIAG_UNEXPECTED_ARGUMENT,
                                        "dispatcher",
                                        nob_sv_from_cstr("FetchContent_SetPopulated() received an unexpected argument"),
-                                       a[i]);
-        return eval_result_from_ctx(ctx);
+                                       args[i]);
+        return false;
     }
 
-    Eval_FetchContent_Declaration *decl = fetchcontent_find_declaration(ctx, canonical_name);
+    return true;
+}
+
+static bool fetchcontent_execute_setpopulated_request(Evaluator_Context *ctx,
+                                                      const FetchContent_SetPopulated_Request *req) {
+    if (!ctx || !req) return false;
+
+    String_View source_dir = req->source_dir;
+    String_View binary_dir = req->binary_dir;
+
+    Eval_FetchContent_Declaration *decl = fetchcontent_find_declaration(ctx, req->canonical_name);
     if (decl) {
         if (source_dir.count == 0) source_dir = decl->source_dir;
         if (binary_dir.count == 0) binary_dir = decl->binary_dir;
     } else {
-        if (source_dir.count == 0) source_dir = fetchcontent_saved_default_source_dir(ctx, canonical_name);
-        if (binary_dir.count == 0) binary_dir = fetchcontent_saved_default_binary_dir(ctx, canonical_name);
+        if (source_dir.count == 0) source_dir = fetchcontent_saved_default_source_dir(ctx, req->canonical_name);
+        if (binary_dir.count == 0) binary_dir = fetchcontent_saved_default_binary_dir(ctx, req->canonical_name);
     }
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    if (eval_should_stop(ctx)) return false;
 
-    if (!fetchcontent_upsert_state(ctx, dependency_name, canonical_name, true, source_dir, binary_dir)) return eval_result_fatal();
-    if (!fetchcontent_publish_default_vars(ctx, dependency_name, true, source_dir, binary_dir)) return eval_result_fatal();
+    if (!fetchcontent_upsert_state(ctx,
+                                   req->dependency_name,
+                                   req->canonical_name,
+                                   true,
+                                   source_dir,
+                                   binary_dir)) {
+        return false;
+    }
+    return fetchcontent_publish_default_vars(ctx,
+                                             req->dependency_name,
+                                             true,
+                                             source_dir,
+                                             binary_dir);
+}
+
+Eval_Result eval_handle_fetchcontent_declare(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    FetchContent_Declare_Request req = {0};
+    if (!fetchcontent_parse_declare_request(ctx, node, origin, a, &req)) return eval_result_from_ctx(ctx);
+    if (!fetchcontent_execute_declare_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_fetchcontent_makeavailable(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    FetchContent_MakeAvailable_Request req = {0};
+    if (!fetchcontent_parse_makeavailable_request(ctx, node, origin, a, &req)) return eval_result_from_ctx(ctx);
+    if (!fetchcontent_execute_makeavailable_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_fetchcontent_getproperties(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    FetchContent_GetProperties_Request req = {0};
+    if (!fetchcontent_parse_getproperties_request(ctx, node, origin, a, &req)) return eval_result_from_ctx(ctx);
+    if (!fetchcontent_execute_getproperties_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_fetchcontent_populate(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    FetchContent_Populate_Request req = {0};
+    if (!fetchcontent_parse_populate_request(ctx, node, origin, a, &req)) return eval_result_from_ctx(ctx);
+    if (!fetchcontent_execute_populate_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const Node *node) {
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
+
+    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    FetchContent_SetPopulated_Request req = {0};
+    if (!fetchcontent_parse_setpopulated_request(ctx, node, origin, a, &req)) return eval_result_from_ctx(ctx);
+    if (!fetchcontent_execute_setpopulated_request(ctx, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }

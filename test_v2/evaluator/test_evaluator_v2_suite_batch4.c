@@ -488,6 +488,88 @@ TEST(evaluator_ctest_family_rejects_invalid_and_unsupported_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_ctest_entrypoints_reject_incomplete_argument_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "ctest_empty_binary_directory()\n"
+        "ctest_read_custom_files()\n"
+        "ctest_run_script(RETURN_VALUE)\n"
+        "ctest_sleep(alpha)\n"
+        "ctest_start()\n"
+        "ctest_submit(FILES)\n"
+        "ctest_upload()\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 7);
+
+    bool saw_empty_dir_arity = false;
+    bool saw_custom_dirs_arity = false;
+    bool saw_run_script_return = false;
+    bool saw_sleep_numeric = false;
+    bool saw_start_positionals = false;
+    bool saw_submit_files_values = false;
+    bool saw_upload_files_required = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("ctest_empty_binary_directory() requires exactly one directory argument"))) {
+            saw_empty_dir_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_read_custom_files() requires one or more directories"))) {
+            saw_custom_dirs_arity = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_run_script(RETURN_VALUE ...) requires a variable"))) {
+            saw_run_script_return = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_sleep() requires numeric arguments"))) {
+            saw_sleep_numeric = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest command received an invalid number of positional arguments"))) {
+            saw_start_positionals = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest command list keyword requires one or more values"))) {
+            saw_submit_files_values = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest command requires FILES"))) {
+            saw_upload_files_required = true;
+        }
+    }
+
+    ASSERT(saw_empty_dir_arity);
+    ASSERT(saw_custom_dirs_arity);
+    ASSERT(saw_run_script_return);
+    ASSERT(saw_sleep_numeric);
+    ASSERT(saw_start_positionals);
+    ASSERT(saw_submit_files_values);
+    ASSERT(saw_upload_files_required);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_batch8_legacy_commands_register_and_model_compat_paths) {
     Arena *temp_arena = arena_create(3 * 1024 * 1024);
     Arena *event_arena = arena_create(3 * 1024 * 1024);
@@ -1734,6 +1816,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
     test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
+    test_evaluator_ctest_entrypoints_reject_incomplete_argument_shapes(passed, failed);
     test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed);
     test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);

@@ -84,7 +84,7 @@
     X("link_libraries", eval_handle_link_libraries, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("list", eval_handle_list, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("load_command", eval_handle_load_command, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("load_cache", eval_handle_load_cache, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("load_cache", eval_handle_load_cache, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("make_directory", eval_handle_make_directory, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("mark_as_advanced", eval_handle_mark_as_advanced, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("math", eval_handle_math, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
@@ -95,7 +95,7 @@
     X("qt_wrap_cpp", eval_handle_qt_wrap_cpp, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("qt_wrap_ui", eval_handle_qt_wrap_ui, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("remove", eval_handle_remove, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("remove_definitions", eval_handle_remove_definitions, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("remove_definitions", eval_handle_remove_definitions, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("return", eval_handle_return, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("separate_arguments", eval_handle_separate_arguments, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("set", eval_handle_set, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \

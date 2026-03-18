@@ -1437,6 +1437,57 @@ TEST(evaluator_remove_definitions_updates_directory_definition_and_option_state)
     TEST_PASS();
 }
 
+TEST(evaluator_load_cache_rejects_missing_mode_and_incomplete_read_with_prefix) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "load_cache(cache_in)\n"
+        "load_cache(cache_in READ_WITH_PREFIX LC_ONLY)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_missing_mode = false;
+    bool saw_incomplete_prefixed = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("load_cache() requires a path and a supported mode"))) {
+            saw_missing_mode = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("load_cache(READ_WITH_PREFIX ...) requires a prefix and at least one entry"))) {
+            saw_incomplete_prefixed = true;
+        }
+    }
+    ASSERT(saw_missing_mode);
+    ASSERT(saw_incomplete_prefixed);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1567,6 +1618,60 @@ TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
 #else
     ASSERT(nob_sv_eq(site_cmd_out, nob_sv_from_cstr("mock-site")));
 #endif
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_host_system_information_rejects_incomplete_and_unknown_queries) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_host_system_information(RESULT_ONLY)\n"
+        "cmake_host_system_information(RESULT HOST_UNKNOWN QUERY NOT_A_REAL_QUERY)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 2);
+
+    bool saw_missing_clauses = false;
+    bool saw_unknown_query = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("cmake_host_system_information() requires RESULT and QUERY clauses"))) {
+            saw_missing_clauses = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"))) {
+            saw_unknown_query = true;
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("NOT_A_REAL_QUERY")));
+        }
+    }
+
+    ASSERT(saw_missing_clauses);
+    ASSERT(saw_unknown_query);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("HOST_UNKNOWN")), nob_sv_from_cstr("")));
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1888,6 +1993,75 @@ TEST(evaluator_try_run_uses_crosscompiling_emulator_when_available) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_run_rejects_incomplete_argument_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_run()\n"
+        "try_run(RUN_BAD COMPILE_BAD\n"
+        "  SOURCE_FROM_CONTENT probe_bad1.c \"int main(void){return 0;}\"\n"
+        "  OUTPUT_VARIABLE BAD_LEGACY_OUT)\n"
+        "try_run(RUN_BAD2 COMPILE_BAD2\n"
+        "  SOURCE_FROM_CONTENT probe_bad2.c \"int main(void){return 0;}\"\n"
+        "  RUN_OUTPUT_VARIABLE)\n"
+        "try_run(RUN_BAD3 COMPILE_BAD3 PROJECT Demo\n"
+        "  BINARY_DIR tc_try_run_missing_source)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    bool saw_missing_inputs = false;
+    bool saw_legacy_output_restriction = false;
+    bool saw_run_output_missing_value = false;
+    bool saw_project_source_dir_required = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("try_run() requires run result, compile result and try_compile-style inputs"))) {
+            saw_missing_inputs = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("try_run(OUTPUT_VARIABLE) is supported only by the legacy signature with an explicit binary directory"))) {
+            saw_legacy_output_restriction = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) requires an output variable"))) {
+            saw_run_output_missing_value = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("try_compile(PROJECT ...) requires SOURCE_DIR"))) {
+            saw_project_source_dir_required = true;
+        }
+    }
+
+    ASSERT(saw_missing_inputs);
+    ASSERT(saw_legacy_output_restriction);
+    ASSERT(saw_run_output_missing_value);
+    ASSERT(saw_project_source_dir_required);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface) {
     Arena *temp_arena = arena_create(3 * 1024 * 1024);
     Arena *event_arena = arena_create(3 * 1024 * 1024);
@@ -2160,6 +2334,70 @@ TEST(evaluator_batch6_metadata_commands_reject_unsupported_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_batch6_metadata_commands_reject_incomplete_option_values) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include_external_msproject(ext_proj external.vcxproj TYPE)\n"
+        "include_external_msproject(ext_proj2 external.vcxproj PLATFORM)\n"
+        "cmake_file_api(QUERY API_VERSION 1 CODEMODEL)\n"
+        "export(EXPORT DemoExport NAMESPACE)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 4);
+
+    bool saw_msproject_type_error = false;
+    bool saw_msproject_platform_error = false;
+    bool saw_file_api_version_error = false;
+    bool saw_export_namespace_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("include_external_msproject(TYPE ...) requires a GUID value"))) {
+            saw_msproject_type_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("include_external_msproject(PLATFORM ...) requires a value"))) {
+            saw_msproject_platform_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("cmake_file_api() requires at least one version for each object kind"))) {
+            saw_file_api_version_error = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("export(EXPORT ... NAMESPACE ...) requires a value"))) {
+            saw_export_namespace_error = true;
+        }
+    }
+
+    ASSERT(saw_msproject_type_error);
+    ASSERT(saw_msproject_platform_error);
+    ASSERT(saw_file_api_version_error);
+    ASSERT(saw_export_namespace_error);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 
 void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);
@@ -2184,12 +2422,16 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);
     test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed);
+    test_evaluator_load_cache_rejects_missing_mode_and_incomplete_read_with_prefix(passed, failed);
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
+    test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
     test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed);
     test_evaluator_try_run_executes_native_artifacts_and_reports_partial_limits(passed, failed);
     test_evaluator_try_run_uses_crosscompiling_emulator_when_available(passed, failed);
+    test_evaluator_try_run_rejects_incomplete_argument_shapes(passed, failed);
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
     test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);
     test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);
+    test_evaluator_batch6_metadata_commands_reject_incomplete_option_values(passed, failed);
 }

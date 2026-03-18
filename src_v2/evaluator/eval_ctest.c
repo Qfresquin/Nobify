@@ -56,6 +56,200 @@ typedef struct {
     bool scope_pushed;
 } Ctest_New_Process_State;
 
+typedef struct {
+    String_View command_name;
+    String_View status;
+    const Ctest_Parse_Spec *spec;
+    bool needs_source;
+    bool needs_build;
+    SV_List argv;
+    Ctest_Parse_Result parsed;
+} Ctest_Metadata_Request;
+
+typedef struct {
+    SV_List argv;
+    String_View root;
+    String_View target;
+} Ctest_Empty_Binary_Directory_Request;
+
+typedef struct {
+    SV_List argv;
+    SV_List loaded_files;
+} Ctest_Read_Custom_Files_Request;
+
+typedef struct {
+    SV_List argv;
+    bool new_process;
+    String_View return_var;
+    SV_List scripts;
+    SV_List resolved_scripts;
+} Ctest_Run_Script_Request;
+
+typedef struct {
+    SV_List argv;
+    String_View duration;
+} Ctest_Sleep_Request;
+
+typedef struct {
+    SV_List argv;
+    Ctest_Parse_Result parsed;
+    String_View model;
+    String_View track;
+    bool append_mode;
+    String_View resolved_source;
+    String_View resolved_build;
+} Ctest_Start_Request;
+
+typedef struct {
+    SV_List argv;
+    Ctest_Parse_Result parsed;
+    String_View model;
+    String_View build_dir;
+    String_View parts;
+    String_View files;
+} Ctest_Submit_Request;
+
+typedef struct {
+    SV_List argv;
+    Ctest_Parse_Result parsed;
+    String_View model;
+    String_View build_dir;
+    String_View files;
+} Ctest_Upload_Request;
+
+static const char *const s_ctest_build_single_keywords[] = {
+    "BUILD", "CONFIGURATION", "PARALLEL_LEVEL", "FLAGS", "PROJECT_NAME", "TARGET",
+    "NUMBER_ERRORS", "NUMBER_WARNINGS", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
+};
+static const char *const s_ctest_build_flag_keywords[] = {"APPEND", "QUIET"};
+static const Ctest_Parse_Spec s_ctest_build_parse_spec = {
+    s_ctest_build_single_keywords,
+    sizeof(s_ctest_build_single_keywords) / sizeof(s_ctest_build_single_keywords[0]),
+    NULL,
+    0,
+    s_ctest_build_flag_keywords,
+    sizeof(s_ctest_build_flag_keywords) / sizeof(s_ctest_build_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_configure_single_keywords[] = {
+    "BUILD", "SOURCE", "OPTIONS", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
+};
+static const char *const s_ctest_configure_flag_keywords[] = {"QUIET"};
+static const Ctest_Parse_Spec s_ctest_configure_parse_spec = {
+    s_ctest_configure_single_keywords,
+    sizeof(s_ctest_configure_single_keywords) / sizeof(s_ctest_configure_single_keywords[0]),
+    NULL,
+    0,
+    s_ctest_configure_flag_keywords,
+    sizeof(s_ctest_configure_flag_keywords) / sizeof(s_ctest_configure_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_coverage_single_keywords[] = {
+    "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
+};
+static const char *const s_ctest_coverage_multi_keywords[] = {"LABELS"};
+static const char *const s_ctest_coverage_flag_keywords[] = {"QUIET"};
+static const Ctest_Parse_Spec s_ctest_coverage_parse_spec = {
+    s_ctest_coverage_single_keywords,
+    sizeof(s_ctest_coverage_single_keywords) / sizeof(s_ctest_coverage_single_keywords[0]),
+    s_ctest_coverage_multi_keywords,
+    sizeof(s_ctest_coverage_multi_keywords) / sizeof(s_ctest_coverage_multi_keywords[0]),
+    s_ctest_coverage_flag_keywords,
+    sizeof(s_ctest_coverage_flag_keywords) / sizeof(s_ctest_coverage_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_memcheck_single_keywords[] = {
+    "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR", "DEFECT_COUNT", "PARALLEL_LEVEL"
+};
+static const char *const s_ctest_memcheck_flag_keywords[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
+static const Ctest_Parse_Spec s_ctest_memcheck_parse_spec = {
+    s_ctest_memcheck_single_keywords,
+    sizeof(s_ctest_memcheck_single_keywords) / sizeof(s_ctest_memcheck_single_keywords[0]),
+    NULL,
+    0,
+    s_ctest_memcheck_flag_keywords,
+    sizeof(s_ctest_memcheck_flag_keywords) / sizeof(s_ctest_memcheck_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_start_single_keywords[] = {"TRACK"};
+static const char *const s_ctest_start_flag_keywords[] = {"APPEND"};
+static const Ctest_Parse_Spec s_ctest_start_parse_spec = {
+    s_ctest_start_single_keywords,
+    sizeof(s_ctest_start_single_keywords) / sizeof(s_ctest_start_single_keywords[0]),
+    NULL,
+    0,
+    s_ctest_start_flag_keywords,
+    sizeof(s_ctest_start_flag_keywords) / sizeof(s_ctest_start_flag_keywords[0]),
+    1,
+    3,
+};
+
+static const char *const s_ctest_submit_single_keywords[] = {
+    "RETRY_COUNT", "RETRY_DELAY", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
+};
+static const char *const s_ctest_submit_multi_keywords[] = {"PARTS", "FILES"};
+static const char *const s_ctest_submit_flag_keywords[] = {"QUIET"};
+static const Ctest_Parse_Spec s_ctest_submit_parse_spec = {
+    s_ctest_submit_single_keywords,
+    sizeof(s_ctest_submit_single_keywords) / sizeof(s_ctest_submit_single_keywords[0]),
+    s_ctest_submit_multi_keywords,
+    sizeof(s_ctest_submit_multi_keywords) / sizeof(s_ctest_submit_multi_keywords[0]),
+    s_ctest_submit_flag_keywords,
+    sizeof(s_ctest_submit_flag_keywords) / sizeof(s_ctest_submit_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_test_single_keywords[] = {
+    "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR", "PARALLEL_LEVEL",
+    "STOP_TIME", "TEST_LOAD", "OUTPUT_JUNIT"
+};
+static const char *const s_ctest_test_flag_keywords[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
+static const Ctest_Parse_Spec s_ctest_test_parse_spec = {
+    s_ctest_test_single_keywords,
+    sizeof(s_ctest_test_single_keywords) / sizeof(s_ctest_test_single_keywords[0]),
+    NULL,
+    0,
+    s_ctest_test_flag_keywords,
+    sizeof(s_ctest_test_flag_keywords) / sizeof(s_ctest_test_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_update_single_keywords[] = {"SOURCE", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"};
+static const char *const s_ctest_update_flag_keywords[] = {"QUIET"};
+static const Ctest_Parse_Spec s_ctest_update_parse_spec = {
+    s_ctest_update_single_keywords,
+    sizeof(s_ctest_update_single_keywords) / sizeof(s_ctest_update_single_keywords[0]),
+    NULL,
+    0,
+    s_ctest_update_flag_keywords,
+    sizeof(s_ctest_update_flag_keywords) / sizeof(s_ctest_update_flag_keywords[0]),
+    0,
+    0,
+};
+
+static const char *const s_ctest_upload_single_keywords[] = {"CAPTURE_CMAKE_ERROR"};
+static const char *const s_ctest_upload_multi_keywords[] = {"FILES"};
+static const Ctest_Parse_Spec s_ctest_upload_parse_spec = {
+    s_ctest_upload_single_keywords,
+    sizeof(s_ctest_upload_single_keywords) / sizeof(s_ctest_upload_single_keywords[0]),
+    s_ctest_upload_multi_keywords,
+    sizeof(s_ctest_upload_multi_keywords) / sizeof(s_ctest_upload_multi_keywords[0]),
+    NULL,
+    0,
+    0,
+    0,
+};
+
 static String_View ctest_current_binary_dir(Evaluator_Context *ctx);
 static String_View ctest_binary_root(Evaluator_Context *ctx);
 static size_t s_ctest_session_tag_counter = 0;
@@ -633,81 +827,96 @@ static bool ctest_remove_tree(const char *path) {
     return state.ok;
 }
 
-static bool ctest_handle_metadata_with_context(Evaluator_Context *ctx,
-                                               const Node *node,
-                                               String_View command_name,
-                                               const Ctest_Parse_Spec *spec,
-                                               bool needs_source,
-                                               bool needs_build) {
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+static bool ctest_parse_metadata_request(Evaluator_Context *ctx,
+                                         const Node *node,
+                                         String_View command_name,
+                                         const Ctest_Parse_Spec *spec,
+                                         bool needs_source,
+                                         bool needs_build,
+                                         String_View status,
+                                         Ctest_Metadata_Request *out_req) {
+    if (!ctx || !node || !spec || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
 
-    Ctest_Parse_Result parsed = {0};
-    if (!ctest_parse_generic(ctx, node, command_name, &args, spec, &parsed)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
-    if (!ctest_apply_resolved_context(ctx, command_name, &parsed, needs_source, needs_build)) {
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    out_req->command_name = command_name;
+    out_req->status = status;
+    out_req->spec = spec;
+    out_req->needs_source = needs_source;
+    out_req->needs_build = needs_build;
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    return ctest_parse_generic(ctx, node, command_name, &out_req->argv, spec, &out_req->parsed);
+}
+
+static bool ctest_execute_metadata_request(Evaluator_Context *ctx, const Ctest_Metadata_Request *req) {
+    if (!ctx || !req) return false;
+    if (!ctest_apply_resolved_context(ctx,
+                                      req->command_name,
+                                      &req->parsed,
+                                      req->needs_source,
+                                      req->needs_build)) {
+        return false;
     }
-    return eval_ctest_publish_metadata(ctx, command_name, &args, nob_sv_from_cstr("MODELED"));
+    return eval_ctest_publish_metadata(ctx, req->command_name, &req->argv, req->status);
 }
 
-Eval_Result eval_handle_ctest_build(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {
-        "BUILD", "CONFIGURATION", "PARALLEL_LEVEL", "FLAGS", "PROJECT_NAME", "TARGET",
-        "NUMBER_ERRORS", "NUMBER_WARNINGS", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
-    };
-    static const char *const flags[] = {"APPEND", "QUIET"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_build"), &spec, false, true));
-}
-
-Eval_Result eval_handle_ctest_configure(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {
-        "BUILD", "SOURCE", "OPTIONS", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
-    };
-    static const char *const flags[] = {"QUIET"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_configure"), &spec, true, true));
-}
-
-Eval_Result eval_handle_ctest_coverage(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {
-        "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
-    };
-    static const char *const multi[] = {"LABELS"};
-    static const char *const flags[] = {"QUIET"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), multi, sizeof(multi)/sizeof(multi[0]), flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_coverage"), &spec, false, true));
-}
-
-Eval_Result eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result ctest_handle_metadata_request(Evaluator_Context *ctx,
+                                                 const Node *node,
+                                                 String_View command_name,
+                                                 const Ctest_Parse_Spec *spec,
+                                                 bool needs_source,
+                                                 bool needs_build,
+                                                 String_View status) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(args) != 1) {
+    Ctest_Metadata_Request req = {0};
+    if (!ctest_parse_metadata_request(ctx, node, command_name, spec, needs_source, needs_build, status, &req)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!ctest_execute_metadata_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+static bool ctest_parse_empty_binary_directory_request(Evaluator_Context *ctx,
+                                                       const Node *node,
+                                                       Ctest_Empty_Binary_Directory_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (arena_arr_len(out_req->argv) != 1) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("ctest_empty_binary_directory() requires exactly one directory argument"),
                               nob_sv_from_cstr("Usage: ctest_empty_binary_directory(<dir>)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    String_View root = eval_sv_path_normalize_temp(ctx, ctest_binary_root(ctx));
-    String_View target = eval_path_resolve_for_cmake_arg(ctx, args[0], ctest_current_binary_dir(ctx), false);
-    target = eval_sv_path_normalize_temp(ctx, target);
-    if (eval_should_stop(ctx)) return eval_result_fatal();
+    out_req->root = eval_sv_path_normalize_temp(ctx, ctest_binary_root(ctx));
+    out_req->target = eval_path_resolve_for_cmake_arg(ctx, out_req->argv[0], ctest_current_binary_dir(ctx), false);
+    out_req->target = eval_sv_path_normalize_temp(ctx, out_req->target);
+    if (eval_should_stop(ctx)) return false;
 
-    if (target.count == 0 || root.count == 0 || !ctest_path_is_within(target, root)) {
+    if (out_req->target.count == 0 || out_req->root.count == 0 || !ctest_path_is_within(out_req->target, out_req->root)) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("ctest_empty_binary_directory() refuses to operate outside CMAKE_BINARY_DIR"),
-                              target);
-        return eval_result_from_ctx(ctx);
+                              out_req->target);
+        return false;
     }
 
-    char *target_c = eval_sv_to_cstr_temp(ctx, target);
-    EVAL_OOM_RETURN_IF_NULL(ctx, target_c, eval_result_fatal());
+    return true;
+}
+
+static bool ctest_execute_empty_binary_directory_request(Evaluator_Context *ctx,
+                                                         const Node *node,
+                                                         const Ctest_Empty_Binary_Directory_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    char *target_c = eval_sv_to_cstr_temp(ctx, req->target);
+    EVAL_OOM_RETURN_IF_NULL(ctx, target_c, false);
 
     if (nob_file_exists(target_c) && nob_get_file_type(target_c) == NOB_FILE_DIRECTORY) {
         if (!ctest_remove_tree(target_c)) {
@@ -715,68 +924,134 @@ Eval_Result eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, con
                                   node,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("ctest_empty_binary_directory() failed to remove directory contents"),
-                                  target);
-            return eval_result_from_ctx(ctx);
+                                  req->target);
+            return false;
         }
         if (!nob_mkdir_if_not_exists(target_c)) {
             (void)ctest_emit_diag(ctx,
                                   node,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("ctest_empty_binary_directory() failed to recreate directory"),
-                                  target);
-            return eval_result_from_ctx(ctx);
+                                  req->target);
+            return false;
         }
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_empty_binary_directory"), "DIRECTORY", target)) return eval_result_fatal();
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_empty_binary_directory"), &args, nob_sv_from_cstr("CLEARED")));
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_empty_binary_directory"), "DIRECTORY", req->target)) return false;
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_empty_binary_directory"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("CLEARED"));
 }
 
-Eval_Result eval_handle_ctest_memcheck(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {
-        "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR", "DEFECT_COUNT", "PARALLEL_LEVEL"
-    };
-    static const char *const flags[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_memcheck"), &spec, false, true));
-}
+static bool ctest_parse_read_custom_files_request(Evaluator_Context *ctx,
+                                                  const Node *node,
+                                                  Ctest_Read_Custom_Files_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
 
-Eval_Result eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(args) == 0) {
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (arena_arr_len(out_req->argv) == 0) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("ctest_read_custom_files() requires one or more directories"),
                               nob_sv_from_cstr("Usage: ctest_read_custom_files(<dir>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    SV_List loaded = {0};
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
-    for (size_t i = 0; i < arena_arr_len(args); i++) {
-        String_View dir = eval_path_resolve_for_cmake_arg(ctx, args[i], base_dir, false);
+    for (size_t i = 0; i < arena_arr_len(out_req->argv); i++) {
+        String_View dir = eval_path_resolve_for_cmake_arg(ctx, out_req->argv[i], base_dir, false);
         String_View custom = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr("CTestCustom.cmake"));
-        if (eval_should_stop(ctx)) return eval_result_fatal();
+        if (eval_should_stop(ctx)) return false;
 
         char *custom_c = eval_sv_to_cstr_temp(ctx, custom);
-        EVAL_OOM_RETURN_IF_NULL(ctx, custom_c, eval_result_fatal());
+        EVAL_OOM_RETURN_IF_NULL(ctx, custom_c, false);
         if (nob_file_exists(custom_c) && nob_get_file_type(custom_c) != NOB_FILE_DIRECTORY) {
-            Eval_Result exec_res = eval_execute_file(ctx, custom, false, nob_sv_from_cstr(""));
-            if (eval_result_is_fatal(exec_res)) return exec_res;
-            if (!svu_list_push_temp(ctx, &loaded, custom)) return eval_result_fatal();
+            if (!svu_list_push_temp(ctx, &out_req->loaded_files, custom)) return false;
         }
+    }
+
+    return true;
+}
+
+static bool ctest_execute_read_custom_files_request(Evaluator_Context *ctx,
+                                                    const Ctest_Read_Custom_Files_Request *req) {
+    if (!ctx || !req) return false;
+
+    for (size_t i = 0; i < arena_arr_len(req->loaded_files); i++) {
+        Eval_Result exec_res = eval_execute_file(ctx, req->loaded_files[i], false, nob_sv_from_cstr(""));
+        if (eval_result_is_fatal(exec_res)) return false;
     }
 
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_read_custom_files"),
                          "LOADED_FILES",
-                         eval_sv_join_semi_temp(ctx, loaded, arena_arr_len(loaded)))) {
-        return eval_result_fatal();
+                         eval_sv_join_semi_temp(ctx, req->loaded_files, arena_arr_len(req->loaded_files)))) {
+        return false;
     }
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_read_custom_files"), &args, nob_sv_from_cstr("MODELED")));
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_read_custom_files"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_build(Evaluator_Context *ctx, const Node *node) {
+    return ctest_handle_metadata_request(ctx,
+                                         node,
+                                         nob_sv_from_cstr("ctest_build"),
+                                         &s_ctest_build_parse_spec,
+                                         false,
+                                         true,
+                                         nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_configure(Evaluator_Context *ctx, const Node *node) {
+    return ctest_handle_metadata_request(ctx,
+                                         node,
+                                         nob_sv_from_cstr("ctest_configure"),
+                                         &s_ctest_configure_parse_spec,
+                                         true,
+                                         true,
+                                         nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_coverage(Evaluator_Context *ctx, const Node *node) {
+    return ctest_handle_metadata_request(ctx,
+                                         node,
+                                         nob_sv_from_cstr("ctest_coverage"),
+                                         &s_ctest_coverage_parse_spec,
+                                         false,
+                                         true,
+                                         nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_empty_binary_directory(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Empty_Binary_Directory_Request req = {0};
+    if (!ctest_parse_empty_binary_directory_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_empty_binary_directory_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_ctest_memcheck(Evaluator_Context *ctx, const Node *node) {
+    return ctest_handle_metadata_request(ctx,
+                                         node,
+                                         nob_sv_from_cstr("ctest_memcheck"),
+                                         &s_ctest_memcheck_parse_spec,
+                                         false,
+                                         true,
+                                         nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_read_custom_files(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Read_Custom_Files_Request req = {0};
+    if (!ctest_parse_read_custom_files_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_read_custom_files_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 static bool ctest_parse_double(String_View sv, double *out_value) {
@@ -793,36 +1068,36 @@ static bool ctest_parse_double(String_View sv, double *out_value) {
     return true;
 }
 
-Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+static bool ctest_parse_run_script_request(Evaluator_Context *ctx,
+                                           const Node *node,
+                                           Ctest_Run_Script_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
 
-    bool new_process = false;
-    String_View return_var = nob_sv_from_cstr("");
-    SV_List scripts = {0};
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
 
-    for (size_t i = 0; i < arena_arr_len(args); i++) {
-        if (eval_sv_eq_ci_lit(args[i], "NEW_PROCESS")) {
-            new_process = true;
+    for (size_t i = 0; i < arena_arr_len(out_req->argv); i++) {
+        if (eval_sv_eq_ci_lit(out_req->argv[i], "NEW_PROCESS")) {
+            out_req->new_process = true;
             continue;
         }
-        if (eval_sv_eq_ci_lit(args[i], "RETURN_VALUE")) {
-            if (i + 1 >= arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(out_req->argv[i], "RETURN_VALUE")) {
+            if (i + 1 >= arena_arr_len(out_req->argv)) {
                 (void)ctest_emit_diag(ctx,
                                       node,
                                       EV_DIAG_ERROR,
                                       nob_sv_from_cstr("ctest_run_script(RETURN_VALUE ...) requires a variable"),
                                       nob_sv_from_cstr("Usage: ctest_run_script(... RETURN_VALUE <var>)"));
-                return eval_result_from_ctx(ctx);
+                return false;
             }
-            return_var = args[++i];
+            out_req->return_var = out_req->argv[++i];
             continue;
         }
-        if (!svu_list_push_temp(ctx, &scripts, args[i])) return eval_result_fatal();
+        if (!svu_list_push_temp(ctx, &out_req->scripts, out_req->argv[i])) return false;
     }
 
-    if (arena_arr_len(scripts) == 0) {
+    if (arena_arr_len(out_req->scripts) == 0) {
         String_View current = eval_current_list_file(ctx);
         if (current.count == 0) {
             (void)ctest_emit_diag(ctx,
@@ -830,27 +1105,30 @@ Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *nod
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("ctest_run_script() needs a script when no current list file is available"),
                                   nob_sv_from_cstr("Usage: ctest_run_script(<script>...)"));
-            return eval_result_from_ctx(ctx);
+            return false;
         }
-        if (!svu_list_push_temp(ctx, &scripts, current)) return eval_result_fatal();
+        if (!svu_list_push_temp(ctx, &out_req->scripts, current)) return false;
     }
 
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
-    String_View *resolved_scripts = NULL;
-    if (!ctest_resolve_scripts(ctx, scripts, base_dir, &resolved_scripts)) return eval_result_fatal();
+    return ctest_resolve_scripts(ctx, out_req->scripts, base_dir, &out_req->resolved_scripts);
+}
+
+static bool ctest_execute_run_script_request(Evaluator_Context *ctx, const Ctest_Run_Script_Request *req) {
+    if (!ctx || !req) return false;
 
     const char *rv_text = "0";
-    for (size_t i = 0; i < arena_arr_len(resolved_scripts); i++) {
+    for (size_t i = 0; i < arena_arr_len(req->resolved_scripts); i++) {
         size_t error_count_before = ctx->runtime_state.run_report.error_count;
         Eval_Result exec_res = eval_result_fatal();
-        if (new_process) {
+        if (req->new_process) {
             Ctest_New_Process_State child_state = {0};
-            if (!ctest_new_process_begin(ctx, &child_state)) return eval_result_fatal();
-            exec_res = eval_execute_file(ctx, resolved_scripts[i], false, nob_sv_from_cstr(""));
+            if (!ctest_new_process_begin(ctx, &child_state)) return false;
+            exec_res = eval_execute_file(ctx, req->resolved_scripts[i], false, nob_sv_from_cstr(""));
             ctest_new_process_end(ctx, &child_state);
-            if (ctx->oom) return eval_result_fatal();
+            if (ctx->oom) return false;
         } else {
-            exec_res = eval_execute_file(ctx, resolved_scripts[i], false, nob_sv_from_cstr(""));
+            exec_res = eval_execute_file(ctx, req->resolved_scripts[i], false, nob_sv_from_cstr(""));
         }
         bool script_failed = eval_result_is_fatal(exec_res) ||
                              ctx->runtime_state.run_report.error_count > error_count_before;
@@ -860,253 +1138,336 @@ Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *nod
         }
     }
 
-    if (return_var.count > 0 && !eval_var_set_current(ctx, return_var, nob_sv_from_cstr(rv_text))) return eval_result_fatal();
+    if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr(rv_text))) return false;
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_run_script"),
                          "EXECUTION_MODE",
-                         new_process ? nob_sv_from_cstr("NEW_PROCESS") : nob_sv_from_cstr("IN_PROCESS"))) {
-        return eval_result_fatal();
+                         req->new_process ? nob_sv_from_cstr("NEW_PROCESS") : nob_sv_from_cstr("IN_PROCESS"))) {
+        return false;
     }
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_run_script"),
                          "SCRIPTS",
-                         eval_sv_join_semi_temp(ctx, scripts, arena_arr_len(scripts)))) {
-        return eval_result_fatal();
+                         eval_sv_join_semi_temp(ctx, req->scripts, arena_arr_len(req->scripts)))) {
+        return false;
     }
     if (!ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_run_script"),
                          "RESOLVED_SCRIPTS",
-                         eval_sv_join_semi_temp(ctx, resolved_scripts, arena_arr_len(resolved_scripts)))) {
-        return eval_result_fatal();
+                         eval_sv_join_semi_temp(ctx, req->resolved_scripts, arena_arr_len(req->resolved_scripts)))) {
+        return false;
     }
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_run_script"), &args, nob_sv_from_cstr("MODELED")));
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_run_script"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("MODELED"));
 }
 
-Eval_Result eval_handle_ctest_sleep(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (!(arena_arr_len(args) == 1 || arena_arr_len(args) == 3)) {
+static bool ctest_parse_sleep_request(Evaluator_Context *ctx,
+                                      const Node *node,
+                                      Ctest_Sleep_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!(arena_arr_len(out_req->argv) == 1 || arena_arr_len(out_req->argv) == 3)) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
                               nob_sv_from_cstr("ctest_sleep() expects one or three numeric arguments"),
                               nob_sv_from_cstr("Usage: ctest_sleep(<seconds>) or ctest_sleep(<time1> <duration> <time2>)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
     double values[3] = {0};
-    for (size_t i = 0; i < arena_arr_len(args); i++) {
-        if (!ctest_parse_double(args[i], &values[i])) {
+    for (size_t i = 0; i < arena_arr_len(out_req->argv); i++) {
+        if (!ctest_parse_double(out_req->argv[i], &values[i])) {
             (void)ctest_emit_diag(ctx,
                                   node,
                                   EV_DIAG_ERROR,
                                   nob_sv_from_cstr("ctest_sleep() requires numeric arguments"),
-                                  args[i]);
-            return eval_result_from_ctx(ctx);
+                                  out_req->argv[i]);
+            return false;
         }
     }
 
-    String_View duration = nob_sv_from_cstr("0");
-    if (arena_arr_len(args) == 1) {
-        duration = args[0];
-    } else {
-        double computed = values[0] + values[1] - values[2];
-        if (computed < 0.0) computed = 0.0;
-        char buf[64];
-        int n = snprintf(buf, sizeof(buf), "%.3f", computed);
-        if (n < 0 || (size_t)n >= sizeof(buf)) {
-            (void)ctx_oom(ctx);
-            return eval_result_fatal();
-        }
-        duration = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+    if (arena_arr_len(out_req->argv) == 1) {
+        out_req->duration = out_req->argv[0];
+        return true;
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_sleep"), "DURATION", duration)) return eval_result_fatal();
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_sleep"), &args, nob_sv_from_cstr("NOOP")));
+    double computed = values[0] + values[1] - values[2];
+    if (computed < 0.0) computed = 0.0;
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%.3f", computed);
+    if (n < 0 || (size_t)n >= sizeof(buf)) return ctx_oom(ctx);
+    out_req->duration = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-Eval_Result eval_handle_ctest_start(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {"TRACK"};
-    static const char *const flags[] = {"APPEND"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 1, 3};
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+static bool ctest_execute_sleep_request(Evaluator_Context *ctx, const Ctest_Sleep_Request *req) {
+    if (!ctx || !req) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_sleep"), "DURATION", req->duration)) return false;
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_sleep"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("NOOP"));
+}
 
-    Ctest_Parse_Result parsed = {0};
-    if (!ctest_parse_generic(ctx, node, nob_sv_from_cstr("ctest_start"), &args, &spec, &parsed)) {
-        return eval_result_from_ctx(ctx);
+static bool ctest_parse_start_request(Evaluator_Context *ctx,
+                                      const Node *node,
+                                      Ctest_Start_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_parse_generic(ctx,
+                             node,
+                             nob_sv_from_cstr("ctest_start"),
+                             &out_req->argv,
+                             &s_ctest_start_parse_spec,
+                             &out_req->parsed)) {
+        return false;
     }
 
-    String_View model = parsed.positionals[0];
-    String_View source = arena_arr_len(parsed.positionals) >= 2 ? parsed.positionals[1] : ctest_source_root(ctx);
-    String_View build = arena_arr_len(parsed.positionals) >= 3 ? parsed.positionals[2] : ctest_binary_root(ctx);
-    String_View track = ctest_parsed_field_value(&parsed, "TRACK");
-    bool append_mode = ctest_parsed_field_value(&parsed, "APPEND").count > 0;
+    out_req->model = out_req->parsed.positionals[0];
+    String_View source = arena_arr_len(out_req->parsed.positionals) >= 2
+        ? out_req->parsed.positionals[1]
+        : ctest_source_root(ctx);
+    String_View build = arena_arr_len(out_req->parsed.positionals) >= 3
+        ? out_req->parsed.positionals[2]
+        : ctest_binary_root(ctx);
+    out_req->track = ctest_parsed_field_value(&out_req->parsed, "TRACK");
+    out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
+    out_req->resolved_source = ctest_resolve_source_dir(ctx, source);
+    out_req->resolved_build = ctest_resolve_binary_dir(ctx, build);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
 
-    String_View resolved_source = ctest_resolve_source_dir(ctx, source);
-    String_View resolved_build = ctest_resolve_binary_dir(ctx, build);
-    if (eval_should_stop(ctx)) return eval_result_fatal();
+static bool ctest_execute_start_request(Evaluator_Context *ctx, const Ctest_Start_Request *req) {
+    if (!ctx || !req) return false;
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "MODEL", model)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_SOURCE", resolved_source)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_BUILD", resolved_build)) return eval_result_fatal();
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "MODEL", req->model)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_SOURCE", req->resolved_source)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_BUILD", req->resolved_build)) return false;
 
-    if (!ctest_set_session_field(ctx, "MODEL", model)) return eval_result_fatal();
-    if (!ctest_set_session_field(ctx, "SOURCE", resolved_source)) return eval_result_fatal();
-    if (!ctest_set_session_field(ctx, "BUILD", resolved_build)) return eval_result_fatal();
-    if (!ctest_set_session_field(ctx, "TRACK", track)) return eval_result_fatal();
+    if (!ctest_set_session_field(ctx, "MODEL", req->model)) return false;
+    if (!ctest_set_session_field(ctx, "SOURCE", req->resolved_source)) return false;
+    if (!ctest_set_session_field(ctx, "BUILD", req->resolved_build)) return false;
+    if (!ctest_set_session_field(ctx, "TRACK", req->track)) return false;
 
     String_View tag = nob_sv_from_cstr("");
     String_View testing_dir = nob_sv_from_cstr("");
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
-    if (!ctest_ensure_session_tag(ctx, model, append_mode, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
-        return eval_result_fatal();
+    if (!ctest_ensure_session_tag(ctx, req->model, req->append_mode, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
+        return false;
     }
 
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_MODEL"), model)) return eval_result_fatal();
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_TRACK"), track)) return eval_result_fatal();
-    if (!ctest_publish_common_dirs(ctx, resolved_source, resolved_build)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG", tag)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TESTING_DIR", testing_dir)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG_FILE", tag_file)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG_DIR", tag_dir_path)) return eval_result_fatal();
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_MODEL"), req->model)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_TRACK"), req->track)) return false;
+    if (!ctest_publish_common_dirs(ctx, req->resolved_source, req->resolved_build)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG", tag)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TESTING_DIR", testing_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG_FILE", tag_file)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG_DIR", tag_dir_path)) return false;
 
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_start"), &args, nob_sv_from_cstr("STAGED")));
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_start"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("STAGED"));
 }
 
-Eval_Result eval_handle_ctest_submit(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {"RETRY_COUNT", "RETRY_DELAY", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"};
-    static const char *const multi[] = {"PARTS", "FILES"};
-    static const char *const flags[] = {"QUIET"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), multi, sizeof(multi)/sizeof(multi[0]), flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+static bool ctest_parse_submit_request(Evaluator_Context *ctx,
+                                       const Node *node,
+                                       Ctest_Submit_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
 
-    Ctest_Parse_Result parsed = {0};
-    if (!ctest_parse_generic(ctx, node, nob_sv_from_cstr("ctest_submit"), &args, &spec, &parsed)) {
-        return eval_result_from_ctx(ctx);
-    }
-
-    String_View model = ctest_get_session_field(ctx, "MODEL");
-    if (model.count == 0) model = nob_sv_from_cstr("Experimental");
-    String_View tag = nob_sv_from_cstr("");
-    String_View testing_dir = nob_sv_from_cstr("");
-    String_View tag_file = nob_sv_from_cstr("");
-    String_View tag_dir_path = nob_sv_from_cstr("");
-    if (!ctest_ensure_session_tag(ctx, model, false, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
-        return eval_result_fatal();
-    }
-
-    String_View build_dir = ctest_session_resolved_build_dir(ctx);
-    String_View parts = ctest_parsed_field_value(&parsed, "PARTS");
-    String_View files = nob_sv_from_cstr("");
-    if (!ctest_resolve_files(ctx,
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_parse_generic(ctx,
                              node,
                              nob_sv_from_cstr("ctest_submit"),
-                             ctest_parsed_field_value(&parsed, "FILES"),
-                             build_dir.count > 0 ? build_dir : ctest_current_binary_dir(ctx),
-                             false,
-                             true,
-                             &files)) {
-        return eval_result_from_ctx(ctx);
+                             &out_req->argv,
+                             &s_ctest_submit_parse_spec,
+                             &out_req->parsed)) {
+        return false;
+    }
+
+    out_req->model = ctest_get_session_field(ctx, "MODEL");
+    if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
+    out_req->build_dir = ctest_session_resolved_build_dir(ctx);
+    out_req->parts = ctest_parsed_field_value(&out_req->parsed, "PARTS");
+    return ctest_resolve_files(ctx,
+                               node,
+                               nob_sv_from_cstr("ctest_submit"),
+                               ctest_parsed_field_value(&out_req->parsed, "FILES"),
+                               out_req->build_dir.count > 0 ? out_req->build_dir : ctest_current_binary_dir(ctx),
+                               false,
+                               true,
+                               &out_req->files);
+}
+
+static bool ctest_execute_submit_request(Evaluator_Context *ctx, const Ctest_Submit_Request *req) {
+    if (!ctx || !req) return false;
+
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx, req->model, false, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
+        return false;
     }
 
     String_View manifest = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("SubmitManifest.txt"));
-    if (eval_should_stop(ctx)) return eval_result_fatal();
+    if (eval_should_stop(ctx)) return false;
     if (!ctest_write_manifest(ctx,
                               nob_sv_from_cstr("ctest_submit"),
                               manifest,
                               tag,
                               ctest_get_session_field(ctx, "TRACK"),
-                              parts,
-                              files)) {
-        return eval_result_fatal();
+                              req->parts,
+                              req->files)) {
+        return false;
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TAG", tag)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TAG_FILE", tag_file)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TESTING_DIR", testing_dir)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "MANIFEST", manifest)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESOLVED_PARTS", parts)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESOLVED_FILES", files)) return eval_result_fatal();
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TAG", tag)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TAG_FILE", tag_file)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TESTING_DIR", testing_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "MANIFEST", manifest)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESOLVED_PARTS", req->parts)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESOLVED_FILES", req->files)) return false;
 
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_submit"), &args, nob_sv_from_cstr("STAGED")));
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_submit"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("STAGED"));
 }
 
-Eval_Result eval_handle_ctest_test(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {
-        "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR", "PARALLEL_LEVEL",
-        "STOP_TIME", "TEST_LOAD", "OUTPUT_JUNIT"
-    };
-    static const char *const flags[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_test"), &spec, false, true));
-}
+static bool ctest_parse_upload_request(Evaluator_Context *ctx,
+                                       const Node *node,
+                                       Ctest_Upload_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
 
-Eval_Result eval_handle_ctest_update(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {"SOURCE", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"};
-    static const char *const flags[] = {"QUIET"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), NULL, 0, flags, sizeof(flags)/sizeof(flags[0]), 0, 0};
-    return eval_result_from_bool(ctest_handle_metadata_with_context(ctx, node, nob_sv_from_cstr("ctest_update"), &spec, true, false));
-}
-
-Eval_Result eval_handle_ctest_upload(Evaluator_Context *ctx, const Node *node) {
-    static const char *const single[] = {"CAPTURE_CMAKE_ERROR"};
-    static const char *const multi[] = {"FILES"};
-    Ctest_Parse_Spec spec = {single, sizeof(single)/sizeof(single[0]), multi, sizeof(multi)/sizeof(multi[0]), NULL, 0, 0, 0};
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-
-    Ctest_Parse_Result parsed = {0};
-    if (!ctest_parse_generic(ctx, node, nob_sv_from_cstr("ctest_upload"), &args, &spec, &parsed)) {
-        return eval_result_from_ctx(ctx);
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_parse_generic(ctx,
+                             node,
+                             nob_sv_from_cstr("ctest_upload"),
+                             &out_req->argv,
+                             &s_ctest_upload_parse_spec,
+                             &out_req->parsed)) {
+        return false;
     }
 
-    String_View model = ctest_get_session_field(ctx, "MODEL");
-    if (model.count == 0) model = nob_sv_from_cstr("Experimental");
+    out_req->model = ctest_get_session_field(ctx, "MODEL");
+    if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
+    out_req->build_dir = ctest_session_resolved_build_dir(ctx);
+    return ctest_resolve_files(ctx,
+                               node,
+                               nob_sv_from_cstr("ctest_upload"),
+                               ctest_parsed_field_value(&out_req->parsed, "FILES"),
+                               out_req->build_dir.count > 0 ? out_req->build_dir : ctest_current_binary_dir(ctx),
+                               true,
+                               true,
+                               &out_req->files);
+}
+
+static bool ctest_execute_upload_request(Evaluator_Context *ctx, const Ctest_Upload_Request *req) {
+    if (!ctx || !req) return false;
+
     String_View tag = nob_sv_from_cstr("");
     String_View testing_dir = nob_sv_from_cstr("");
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
-    if (!ctest_ensure_session_tag(ctx, model, false, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
-        return eval_result_fatal();
-    }
-
-    String_View build_dir = ctest_session_resolved_build_dir(ctx);
-    String_View files = nob_sv_from_cstr("");
-    if (!ctest_resolve_files(ctx,
-                             node,
-                             nob_sv_from_cstr("ctest_upload"),
-                             ctest_parsed_field_value(&parsed, "FILES"),
-                             build_dir.count > 0 ? build_dir : ctest_current_binary_dir(ctx),
-                             true,
-                             true,
-                             &files)) {
-        return eval_result_from_ctx(ctx);
+    if (!ctest_ensure_session_tag(ctx, req->model, false, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
+        return false;
     }
 
     String_View manifest = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("UploadManifest.txt"));
-    if (eval_should_stop(ctx)) return eval_result_fatal();
+    if (eval_should_stop(ctx)) return false;
     if (!ctest_write_manifest(ctx,
                               nob_sv_from_cstr("ctest_upload"),
                               manifest,
                               tag,
                               ctest_get_session_field(ctx, "TRACK"),
                               nob_sv_from_cstr(""),
-                              files)) {
-        return eval_result_fatal();
+                              req->files)) {
+        return false;
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG", tag)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG_FILE", tag_file)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TESTING_DIR", testing_dir)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "MANIFEST", manifest)) return eval_result_fatal();
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "RESOLVED_FILES", files)) return eval_result_fatal();
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG", tag)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG_FILE", tag_file)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TESTING_DIR", testing_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "MANIFEST", manifest)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "RESOLVED_FILES", req->files)) return false;
 
-    return eval_result_from_bool(eval_ctest_publish_metadata(ctx, nob_sv_from_cstr("ctest_upload"), &args, nob_sv_from_cstr("STAGED")));
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_upload"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("STAGED"));
+}
+
+Eval_Result eval_handle_ctest_run_script(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Run_Script_Request req = {0};
+    if (!ctest_parse_run_script_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_run_script_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_ctest_sleep(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Sleep_Request req = {0};
+    if (!ctest_parse_sleep_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_sleep_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_ctest_start(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Start_Request req = {0};
+    if (!ctest_parse_start_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_start_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_ctest_submit(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Submit_Request req = {0};
+    if (!ctest_parse_submit_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_submit_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_ctest_test(Evaluator_Context *ctx, const Node *node) {
+    return ctest_handle_metadata_request(ctx,
+                                         node,
+                                         nob_sv_from_cstr("ctest_test"),
+                                         &s_ctest_test_parse_spec,
+                                         false,
+                                         true,
+                                         nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_update(Evaluator_Context *ctx, const Node *node) {
+    return ctest_handle_metadata_request(ctx,
+                                         node,
+                                         nob_sv_from_cstr("ctest_update"),
+                                         &s_ctest_update_parse_spec,
+                                         true,
+                                         false,
+                                         nob_sv_from_cstr("MODELED"));
+}
+
+Eval_Result eval_handle_ctest_upload(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Upload_Request req = {0};
+    if (!ctest_parse_upload_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_upload_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }

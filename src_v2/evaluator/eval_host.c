@@ -32,6 +32,12 @@ typedef struct {
 
 typedef Host_Distrib_Entry *Host_Distrib_Entry_List;
 
+typedef struct {
+    String_View result_var;
+    String_View *query_keys;
+    size_t query_key_count;
+} Host_System_Information_Request;
+
 typedef enum {
     HOST_CPU_FEATURE_FPU = 0,
     HOST_CPU_FEATURE_MMX,
@@ -940,53 +946,88 @@ static bool host_info_query_value(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+static bool host_parse_system_information_request(Evaluator_Context *ctx,
+                                                  const Node *node,
+                                                  Cmake_Event_Origin origin,
+                                                  Host_System_Information_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    Host_System_Information_Request req = {0};
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+    if (eval_should_stop(ctx)) return false;
 
     if (arena_arr_len(args) < 4 ||
         !eval_sv_eq_ci_lit(args[0], "RESULT") ||
         !eval_sv_eq_ci_lit(args[2], "QUERY")) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "host", nob_sv_from_cstr("cmake_host_system_information() requires RESULT and QUERY clauses"), nob_sv_from_cstr("Usage: cmake_host_system_information(RESULT <var> QUERY <key>...)"));
-        return eval_result_from_ctx(ctx);
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                             node,
+                                             origin,
+                                             EV_DIAG_ERROR,
+                                             EVAL_DIAG_MISSING_REQUIRED,
+                                             "host",
+                                             nob_sv_from_cstr("cmake_host_system_information() requires RESULT and QUERY clauses"),
+                                             nob_sv_from_cstr("Usage: cmake_host_system_information(RESULT <var> QUERY <key>...)"));
+        return false;
     }
 
-    String_View result_var = args[1];
-    if (arena_arr_len(args) >= 5 && eval_sv_eq_ci_lit(args[3], "WINDOWS_REGISTRY")) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
-            ctx,
-            node,
-            o,
-            EV_DIAG_ERROR,
-            EVAL_DIAG_NOT_IMPLEMENTED,
-            "host",
-            nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY ...) is not implemented yet"),
-            args[4]);
-        (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr(""));
-        return eval_result_from_ctx(ctx);
+    req.result_var = args[1];
+    req.query_keys = args + 3;
+    req.query_key_count = arena_arr_len(args) - 3;
+    *out_req = req;
+    return true;
+}
+
+static bool host_execute_system_information_request(Evaluator_Context *ctx,
+                                                    const Node *node,
+                                                    Cmake_Event_Origin origin,
+                                                    const Host_System_Information_Request *req) {
+    if (!ctx || !node || !req) return false;
+    if (req->query_key_count >= 2 && eval_sv_eq_ci_lit(req->query_keys[0], "WINDOWS_REGISTRY")) {
+        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                             node,
+                                             origin,
+                                             EV_DIAG_ERROR,
+                                             EVAL_DIAG_NOT_IMPLEMENTED,
+                                             "host",
+                                             nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY ...) is not implemented yet"),
+                                             req->query_keys[1]);
+        (void)eval_var_set_current(ctx, req->result_var, nob_sv_from_cstr(""));
+        return true;
     }
 
-    String_View *values = arena_alloc_array(eval_temp_arena(ctx), String_View, arena_arr_len(args) - 3);
-    EVAL_OOM_RETURN_IF_NULL(ctx, values, eval_result_fatal());
+    String_View *values = arena_alloc_array(eval_temp_arena(ctx), String_View, req->query_key_count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, values, false);
 
     size_t value_count = 0;
-    for (size_t i = 3; i < arena_arr_len(args); i++) {
+    for (size_t i = 0; i < req->query_key_count; i++) {
         String_View value = nob_sv_from_cstr("");
         bool supported = false;
-        if (!host_info_query_value(ctx, result_var, args[i], &value, &supported)) return eval_result_fatal();
+        if (!host_info_query_value(ctx, req->result_var, req->query_keys[i], &value, &supported)) return false;
         if (!supported) {
-            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_IMPLEMENTED, "host", nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"), args[i]);
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                 node,
+                                                 origin,
+                                                 EV_DIAG_ERROR,
+                                                 EVAL_DIAG_NOT_IMPLEMENTED,
+                                                 "host",
+                                                 nob_sv_from_cstr("cmake_host_system_information() query key is not implemented yet"),
+                                                 req->query_keys[i]);
             value = nob_sv_from_cstr("");
         }
         values[value_count++] = value;
     }
 
     String_View result = eval_sv_join_semi_temp(ctx, values, value_count);
-    if (eval_should_stop(ctx)) return eval_result_fatal();
-    if (!eval_var_set_current(ctx, result_var, result)) return eval_result_fatal();
+    if (eval_should_stop(ctx)) return false;
+    return eval_var_set_current(ctx, req->result_var, result);
+}
+
+Eval_Result eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    Host_System_Information_Request req = {0};
+    if (!host_parse_system_information_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
+    if (!host_execute_system_information_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
 
