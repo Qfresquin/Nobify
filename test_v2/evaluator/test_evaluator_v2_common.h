@@ -1130,7 +1130,22 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
 
     String_View expected_norm = evaluator_normalize_newlines_to_arena(arena, expected);
     if (!nob_sv_eq(actual_norm, expected_norm)) {
+        size_t mismatch = 0;
+        size_t shared = actual_norm.count < expected_norm.count ? actual_norm.count : expected_norm.count;
+        while (mismatch < shared && actual_norm.data[mismatch] == expected_norm.data[mismatch]) mismatch++;
+
         nob_log(NOB_ERROR, "golden mismatch for %s", input_path);
+        nob_log(NOB_ERROR,
+                "golden lengths: expected=%zu actual=%zu first_mismatch=%zu",
+                expected_norm.count,
+                actual_norm.count,
+                mismatch);
+        if (mismatch < shared) {
+            nob_log(NOB_ERROR,
+                    "golden bytes: expected=0x%02X actual=0x%02X",
+                    (unsigned char)expected_norm.data[mismatch],
+                    (unsigned char)actual_norm.data[mismatch]);
+        }
         nob_log(NOB_ERROR, "--- expected (%s) ---\n%.*s", expected_path, (int)expected_norm.count, expected_norm.data);
         nob_log(NOB_ERROR, "--- actual ---\n%.*s", (int)actual_norm.count, actual_norm.data);
         ok = false;

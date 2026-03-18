@@ -887,6 +887,146 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
     TEST_PASS();
 }
 
+TEST(evaluator_target_usage_commands_store_canonical_direct_and_interface_properties) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(usage_props STATIC usage.c)\n"
+        "target_compile_definitions(usage_props PRIVATE LOCAL_DEF PUBLIC PUB_DEF INTERFACE IFACE_DEF)\n"
+        "target_compile_options(usage_props BEFORE PRIVATE -local PUBLIC -pub INTERFACE -iface)\n"
+        "target_include_directories(usage_props SYSTEM BEFORE PRIVATE inc/local PUBLIC inc/pub AFTER INTERFACE inc/iface)\n"
+        "target_link_directories(usage_props PRIVATE lib/local PUBLIC lib/pub INTERFACE lib/iface)\n"
+        "target_link_options(usage_props BEFORE PRIVATE LINK_LOCAL PUBLIC LINK_PUBLIC INTERFACE LINK_IFACE)\n"
+        "target_link_libraries(usage_props PRIVATE privlib PUBLIC publib DEBUG dbgpub INTERFACE ifacelib OPTIMIZED optiface)\n"
+        "get_target_property(DIRECT_DEFS usage_props COMPILE_DEFINITIONS)\n"
+        "get_target_property(IFACE_DEFS usage_props INTERFACE_COMPILE_DEFINITIONS)\n"
+        "get_target_property(DIRECT_OPTS usage_props COMPILE_OPTIONS)\n"
+        "get_target_property(IFACE_OPTS usage_props INTERFACE_COMPILE_OPTIONS)\n"
+        "get_target_property(DIRECT_INCS usage_props INCLUDE_DIRECTORIES)\n"
+        "get_target_property(IFACE_INCS usage_props INTERFACE_INCLUDE_DIRECTORIES)\n"
+        "get_target_property(DIRECT_LINK_DIRS usage_props LINK_DIRECTORIES)\n"
+        "get_target_property(IFACE_LINK_DIRS usage_props INTERFACE_LINK_DIRECTORIES)\n"
+        "get_target_property(DIRECT_LINK_OPTS usage_props LINK_OPTIONS)\n"
+        "get_target_property(IFACE_LINK_OPTS usage_props INTERFACE_LINK_OPTIONS)\n"
+        "get_target_property(DIRECT_LINK_LIBS usage_props LINK_LIBRARIES)\n"
+        "get_target_property(IFACE_LINK_LIBS usage_props INTERFACE_LINK_LIBRARIES)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_public_compile_option_before = false;
+    bool saw_public_include_dir_system_before = false;
+    bool saw_interface_include_dir_after = false;
+    bool saw_interface_link_option_before = false;
+    bool saw_debug_link_library = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EV_TARGET_COMPILE_OPTIONS &&
+            nob_sv_eq(ev->as.target_compile_options.target_name, nob_sv_from_cstr("usage_props")) &&
+            nob_sv_eq(ev->as.target_compile_options.item, nob_sv_from_cstr("-pub")) &&
+            ev->as.target_compile_options.visibility == EV_VISIBILITY_PUBLIC &&
+            ev->as.target_compile_options.is_before) {
+            saw_public_compile_option_before = true;
+        } else if (ev->h.kind == EV_TARGET_INCLUDE_DIRECTORIES &&
+                   nob_sv_eq(ev->as.target_include_directories.target_name, nob_sv_from_cstr("usage_props")) &&
+                   sv_contains_sv(ev->as.target_include_directories.path, nob_sv_from_cstr("inc/pub")) &&
+                   ev->as.target_include_directories.visibility == EV_VISIBILITY_PUBLIC &&
+                   ev->as.target_include_directories.is_system &&
+                   ev->as.target_include_directories.is_before) {
+            saw_public_include_dir_system_before = true;
+        } else if (ev->h.kind == EV_TARGET_INCLUDE_DIRECTORIES &&
+                   nob_sv_eq(ev->as.target_include_directories.target_name, nob_sv_from_cstr("usage_props")) &&
+                   sv_contains_sv(ev->as.target_include_directories.path, nob_sv_from_cstr("inc/iface")) &&
+                   ev->as.target_include_directories.visibility == EV_VISIBILITY_INTERFACE &&
+                   ev->as.target_include_directories.is_system &&
+                   !ev->as.target_include_directories.is_before) {
+            saw_interface_include_dir_after = true;
+        } else if (ev->h.kind == EV_TARGET_LINK_OPTIONS &&
+                   nob_sv_eq(ev->as.target_link_options.target_name, nob_sv_from_cstr("usage_props")) &&
+                   nob_sv_eq(ev->as.target_link_options.item, nob_sv_from_cstr("LINK_IFACE")) &&
+                   ev->as.target_link_options.visibility == EV_VISIBILITY_INTERFACE &&
+                   ev->as.target_link_options.is_before) {
+            saw_interface_link_option_before = true;
+        } else if (ev->h.kind == EV_TARGET_LINK_LIBRARIES &&
+                   nob_sv_eq(ev->as.target_link_libraries.target_name, nob_sv_from_cstr("usage_props")) &&
+                   nob_sv_eq(ev->as.target_link_libraries.item,
+                             nob_sv_from_cstr("$<$<CONFIG:Debug>:dbgpub>")) &&
+                   ev->as.target_link_libraries.visibility == EV_VISIBILITY_PUBLIC) {
+            saw_debug_link_library = true;
+        }
+    }
+
+    ASSERT(saw_public_compile_option_before);
+    ASSERT(saw_public_include_dir_system_before);
+    ASSERT(saw_interface_include_dir_after);
+    ASSERT(saw_interface_link_option_before);
+    ASSERT(saw_debug_link_library);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIRECT_DEFS")),
+                     nob_sv_from_cstr("LOCAL_DEF;PUB_DEF")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IFACE_DEFS")),
+                     nob_sv_from_cstr("PUB_DEF;IFACE_DEF")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIRECT_OPTS")),
+                     nob_sv_from_cstr("-local;-pub")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IFACE_OPTS")),
+                     nob_sv_from_cstr("-pub;-iface")));
+
+    String_View direct_incs = eval_var_get(ctx, nob_sv_from_cstr("DIRECT_INCS"));
+    ASSERT(semicolon_list_count(direct_incs) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(direct_incs, 0), nob_sv_from_cstr("inc/local")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(direct_incs, 1), nob_sv_from_cstr("inc/pub")));
+
+    String_View iface_incs = eval_var_get(ctx, nob_sv_from_cstr("IFACE_INCS"));
+    ASSERT(semicolon_list_count(iface_incs) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(iface_incs, 0), nob_sv_from_cstr("inc/pub")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(iface_incs, 1), nob_sv_from_cstr("inc/iface")));
+
+    String_View direct_link_dirs = eval_var_get(ctx, nob_sv_from_cstr("DIRECT_LINK_DIRS"));
+    ASSERT(semicolon_list_count(direct_link_dirs) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(direct_link_dirs, 0), nob_sv_from_cstr("lib/local")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(direct_link_dirs, 1), nob_sv_from_cstr("lib/pub")));
+
+    String_View iface_link_dirs = eval_var_get(ctx, nob_sv_from_cstr("IFACE_LINK_DIRS"));
+    ASSERT(semicolon_list_count(iface_link_dirs) == 2);
+    ASSERT(sv_contains_sv(semicolon_list_item_at(iface_link_dirs, 0), nob_sv_from_cstr("lib/pub")));
+    ASSERT(sv_contains_sv(semicolon_list_item_at(iface_link_dirs, 1), nob_sv_from_cstr("lib/iface")));
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIRECT_LINK_OPTS")),
+                     nob_sv_from_cstr("LINK_LOCAL;LINK_PUBLIC")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IFACE_LINK_OPTS")),
+                     nob_sv_from_cstr("LINK_PUBLIC;LINK_IFACE")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIRECT_LINK_LIBS")),
+                     nob_sv_from_cstr("privlib;publib;$<$<CONFIG:Debug>:dbgpub>")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IFACE_LINK_LIBS")),
+                     nob_sv_from_cstr("publib;$<$<CONFIG:Debug>:dbgpub>;ifacelib;$<$<NOT:$<CONFIG:Debug>>:optiface>")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_source_group_supports_files_tree_and_regex_forms) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1597,6 +1737,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed);
     test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
+    test_evaluator_target_usage_commands_store_canonical_direct_and_interface_properties(passed, failed);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
     test_evaluator_message_mode_severity_mapping(passed, failed);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed);

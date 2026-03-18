@@ -40,6 +40,458 @@ typedef enum {
     TARGET_FILE_SET_CXX_MODULES,
 } Target_File_Set_Kind;
 
+typedef struct {
+    Cmake_Visibility visibility;
+    SV_List items;
+} Target_Usage_Visibility_Group;
+
+typedef struct {
+    String_View target_name;
+    Target_Usage_Visibility_Group *groups;
+} Target_Usage_Grouped_Request;
+
+typedef struct {
+    Cmake_Visibility visibility;
+    String_View item;
+    bool is_before;
+    bool is_system;
+} Target_Usage_Item_Entry;
+
+typedef struct {
+    String_View target_name;
+    Target_Usage_Item_Entry *items;
+} Target_Usage_Items_Request;
+
+typedef struct {
+    String_View target_name;
+    Target_Usage_Item_Entry *items;
+    String_View trailing_qualifier;
+} Target_Link_Libraries_Request;
+
+typedef enum {
+    TARGET_PCH_REQUEST_GROUPS = 0,
+    TARGET_PCH_REQUEST_REUSE_FROM,
+} Target_Pch_Request_Kind;
+
+typedef struct {
+    String_View target_name;
+    Target_Pch_Request_Kind kind;
+    String_View donor_target;
+    Target_Usage_Visibility_Group *groups;
+} Target_Precompile_Headers_Request;
+
+typedef enum {
+    TARGET_SOURCES_ENTRY_ITEM = 0,
+    TARGET_SOURCES_ENTRY_FILE_SET,
+} Target_Sources_Entry_Kind;
+
+typedef struct {
+    Target_Sources_Entry_Kind kind;
+    Cmake_Visibility visibility;
+    String_View item;
+    Target_File_Set_Parse file_set;
+} Target_Sources_Entry;
+
+typedef struct {
+    String_View target_name;
+    Target_Sources_Entry *entries;
+} Target_Sources_Request;
+
+typedef String_View (*Target_Usage_Normalize_Fn)(Evaluator_Context *ctx, String_View item);
+typedef bool (*Target_Usage_Emit_Item_Fn)(Evaluator_Context *ctx,
+                                          Cmake_Event_Origin origin,
+                                          String_View target_name,
+                                          const Target_Usage_Item_Entry *entry);
+
+static String_View target_usage_identity_item(Evaluator_Context *ctx, String_View item) {
+    (void)ctx;
+    return item;
+}
+
+static String_View target_compile_definition_normalize_temp(Evaluator_Context *ctx, String_View item) {
+    (void)ctx;
+    return eval_normalize_compile_definition_item(item);
+}
+
+static String_View target_usage_resolve_path_item_temp(Evaluator_Context *ctx, String_View item) {
+    if (!ctx) return item;
+    return eval_path_resolve_for_cmake_arg(ctx, item, eval_current_source_dir_for_paths(ctx), true);
+}
+
+static bool target_usage_visibility_writes_direct(Cmake_Visibility visibility) {
+    return visibility != EV_VISIBILITY_INTERFACE;
+}
+
+static bool target_usage_visibility_writes_interface(Cmake_Visibility visibility) {
+    return visibility == EV_VISIBILITY_PUBLIC || visibility == EV_VISIBILITY_INTERFACE;
+}
+
+static bool target_usage_append_item_entry(Evaluator_Context *ctx,
+                                           Target_Usage_Item_Entry **entries,
+                                           Cmake_Visibility visibility,
+                                           String_View item,
+                                           bool is_before,
+                                           bool is_system) {
+    if (!ctx || !entries) return false;
+    if (item.count == 0) return true;
+
+    Target_Usage_Item_Entry entry = {
+        .visibility = visibility,
+        .item = item,
+        .is_before = is_before,
+        .is_system = is_system,
+    };
+    return arena_arr_push(eval_temp_arena(ctx), *entries, entry);
+}
+
+static bool target_usage_group_append_item(Evaluator_Context *ctx,
+                                           Target_Usage_Visibility_Group **groups,
+                                           Cmake_Visibility visibility,
+                                           String_View item) {
+    if (!ctx || !groups) return false;
+    if (item.count == 0) return true;
+
+    if (arena_arr_len(*groups) == 0 || arena_arr_last(*groups).visibility != visibility) {
+        Target_Usage_Visibility_Group group = {0};
+        group.visibility = visibility;
+        if (!arena_arr_push(eval_temp_arena(ctx), *groups, group)) return false;
+    }
+
+    return svu_list_push_temp(ctx, &arena_arr_last(*groups).items, item);
+}
+
+static bool target_usage_parse_visibility_groups(Evaluator_Context *ctx,
+                                                 const Node *node,
+                                                 SV_List args,
+                                                 size_t start,
+                                                 bool require_visibility,
+                                                 Target_Usage_Normalize_Fn normalize,
+                                                 Target_Usage_Visibility_Group **out_groups) {
+    if (!ctx || !node || !out_groups) return false;
+    *out_groups = NULL;
+
+    Cmake_Visibility visibility = EV_VISIBILITY_UNSPECIFIED;
+    for (size_t i = start; i < arena_arr_len(args); i++) {
+        if (target_usage_parse_visibility(args[i], &visibility)) continue;
+        if (require_visibility && visibility == EV_VISIBILITY_UNSPECIFIED) {
+            return target_usage_require_visibility(ctx, node);
+        }
+
+        String_View item = normalize ? normalize(ctx, args[i]) : args[i];
+        if (eval_should_stop(ctx)) return false;
+        if (!target_usage_group_append_item(ctx, out_groups, visibility, item)) return false;
+    }
+
+    return true;
+}
+
+static bool target_usage_apply_visibility_groups(Evaluator_Context *ctx,
+                                                 Cmake_Event_Origin origin,
+                                                 String_View target_name,
+                                                 const Target_Usage_Visibility_Group *groups,
+                                                 String_View direct_prop,
+                                                 String_View interface_prop) {
+    if (!ctx) return false;
+
+    for (size_t gi = 0; gi < arena_arr_len(groups); gi++) {
+        const Target_Usage_Visibility_Group *group = &groups[gi];
+        for (size_t ii = 0; ii < arena_arr_len(group->items); ii++) {
+            String_View item = group->items[ii];
+            if (target_usage_visibility_writes_direct(group->visibility)) {
+                if (!target_usage_store_and_emit_target_property(ctx,
+                                                                 origin,
+                                                                 target_name,
+                                                                 direct_prop,
+                                                                 item,
+                                                                 EV_PROP_APPEND_LIST)) {
+                    return false;
+                }
+            }
+            if (target_usage_visibility_writes_interface(group->visibility)) {
+                if (!target_usage_store_and_emit_target_property(ctx,
+                                                                 origin,
+                                                                 target_name,
+                                                                 interface_prop,
+                                                                 item,
+                                                                 EV_PROP_APPEND_LIST)) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool target_usage_apply_item_entries(Evaluator_Context *ctx,
+                                            Cmake_Event_Origin origin,
+                                            String_View target_name,
+                                            const Target_Usage_Item_Entry *entries,
+                                            String_View direct_prop,
+                                            String_View interface_prop,
+                                            Target_Usage_Emit_Item_Fn emit_item) {
+    if (!ctx) return false;
+
+    for (size_t i = 0; i < arena_arr_len(entries); i++) {
+        const Target_Usage_Item_Entry *entry = &entries[i];
+        if (direct_prop.count > 0 && target_usage_visibility_writes_direct(entry->visibility)) {
+            if (!target_usage_store_and_emit_target_property(
+                    ctx, origin, target_name, direct_prop, entry->item, EV_PROP_APPEND_LIST)) {
+                return false;
+            }
+        }
+        if (interface_prop.count > 0 && target_usage_visibility_writes_interface(entry->visibility)) {
+            if (!target_usage_store_and_emit_target_property(
+                    ctx, origin, target_name, interface_prop, entry->item, EV_PROP_APPEND_LIST)) {
+                return false;
+            }
+        }
+        if (emit_item && !emit_item(ctx, origin, target_name, entry)) return false;
+    }
+
+    return true;
+}
+
+static bool target_usage_emit_link_libraries_entry(Evaluator_Context *ctx,
+                                                   Cmake_Event_Origin origin,
+                                                   String_View target_name,
+                                                   const Target_Usage_Item_Entry *entry) {
+    return eval_emit_target_link_libraries(ctx, origin, target_name, entry->visibility, entry->item);
+}
+
+static bool target_usage_emit_link_options_entry(Evaluator_Context *ctx,
+                                                 Cmake_Event_Origin origin,
+                                                 String_View target_name,
+                                                 const Target_Usage_Item_Entry *entry) {
+    return eval_emit_target_link_options(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
+}
+
+static bool target_usage_emit_link_directories_entry(Evaluator_Context *ctx,
+                                                     Cmake_Event_Origin origin,
+                                                     String_View target_name,
+                                                     const Target_Usage_Item_Entry *entry) {
+    return eval_emit_target_link_directories(ctx, origin, target_name, entry->visibility, entry->item);
+}
+
+static bool target_usage_emit_include_directories_entry(Evaluator_Context *ctx,
+                                                        Cmake_Event_Origin origin,
+                                                        String_View target_name,
+                                                        const Target_Usage_Item_Entry *entry) {
+    return eval_emit_target_include_directories(ctx,
+                                                origin,
+                                                target_name,
+                                                entry->visibility,
+                                                entry->item,
+                                                entry->is_system,
+                                                entry->is_before);
+}
+
+static bool target_usage_emit_compile_definitions_entry(Evaluator_Context *ctx,
+                                                        Cmake_Event_Origin origin,
+                                                        String_View target_name,
+                                                        const Target_Usage_Item_Entry *entry) {
+    return eval_emit_target_compile_definitions(ctx, origin, target_name, entry->visibility, entry->item);
+}
+
+static bool target_usage_emit_compile_options_entry(Evaluator_Context *ctx,
+                                                    Cmake_Event_Origin origin,
+                                                    String_View target_name,
+                                                    const Target_Usage_Item_Entry *entry) {
+    return eval_emit_target_compile_options(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
+}
+
+static bool target_usage_parse_item_request(Evaluator_Context *ctx,
+                                            const Node *node,
+                                            Cmake_Event_Origin origin,
+                                            SV_List args,
+                                            String_View missing_cause,
+                                            String_View usage_hint,
+                                            bool require_visibility,
+                                            bool allow_before,
+                                            bool allow_system,
+                                            bool allow_after,
+                                            Target_Usage_Normalize_Fn normalize,
+                                            Target_Usage_Items_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 2) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       origin,
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_MISSING_REQUIRED,
+                                       "dispatcher",
+                                       missing_cause,
+                                       usage_hint);
+        return false;
+    }
+
+    *out_req = (Target_Usage_Items_Request){0};
+    out_req->target_name = args[0];
+    if (!target_usage_validate_target(ctx, node, out_req->target_name)) return false;
+
+    Cmake_Visibility visibility = EV_VISIBILITY_UNSPECIFIED;
+    bool is_before = false;
+    bool is_system = false;
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (allow_system && eval_sv_eq_ci_lit(args[i], "SYSTEM")) {
+            is_system = true;
+            continue;
+        }
+        if (allow_before && eval_sv_eq_ci_lit(args[i], "BEFORE")) {
+            is_before = true;
+            continue;
+        }
+        if (allow_after && eval_sv_eq_ci_lit(args[i], "AFTER")) {
+            is_before = false;
+            continue;
+        }
+        if (target_usage_parse_visibility(args[i], &visibility)) continue;
+        if (require_visibility && visibility == EV_VISIBILITY_UNSPECIFIED) {
+            return target_usage_require_visibility(ctx, node);
+        }
+
+        String_View item = normalize ? normalize(ctx, args[i]) : args[i];
+        if (eval_should_stop(ctx)) return false;
+        if (!target_usage_append_item_entry(
+                ctx, &out_req->items, visibility, item, is_before, is_system)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool target_compile_features_parse_request(Evaluator_Context *ctx,
+                                                  const Node *node,
+                                                  Cmake_Event_Origin origin,
+                                                  SV_List args,
+                                                  Target_Usage_Grouped_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 3) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_MISSING_REQUIRED,
+            "dispatcher",
+            nob_sv_from_cstr("target_compile_features() requires target, visibility and features"),
+            nob_sv_from_cstr("Usage: target_compile_features(<tgt> <PUBLIC|PRIVATE|INTERFACE> <features...>)"));
+        return false;
+    }
+
+    *out_req = (Target_Usage_Grouped_Request){0};
+    out_req->target_name = args[0];
+    if (!target_usage_validate_target(ctx, node, out_req->target_name)) return false;
+
+    return target_usage_parse_visibility_groups(
+        ctx, node, args, 1, true, target_usage_identity_item, &out_req->groups);
+}
+
+static bool target_precompile_headers_parse_request(Evaluator_Context *ctx,
+                                                    const Node *node,
+                                                    Cmake_Event_Origin origin,
+                                                    SV_List args,
+                                                    Target_Precompile_Headers_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 3) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_MISSING_REQUIRED,
+            "dispatcher",
+            nob_sv_from_cstr("target_precompile_headers() requires target and arguments"),
+            nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> <PUBLIC|PRIVATE|INTERFACE> <headers...>)"));
+        return false;
+    }
+
+    *out_req = (Target_Precompile_Headers_Request){0};
+    out_req->target_name = args[0];
+    if (!target_usage_validate_target(ctx, node, out_req->target_name)) return false;
+
+    if (eval_sv_eq_ci_lit(args[1], "REUSE_FROM")) {
+        if (arena_arr_len(args) != 3) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+                ctx,
+                node,
+                origin,
+                EV_DIAG_ERROR,
+                EVAL_DIAG_MISSING_REQUIRED,
+                "dispatcher",
+                nob_sv_from_cstr("target_precompile_headers(REUSE_FROM) expects exactly one donor target"),
+                nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> REUSE_FROM <other-target>)"));
+            return false;
+        }
+        if (!target_usage_validate_target(ctx, node, args[2])) return false;
+        out_req->kind = TARGET_PCH_REQUEST_REUSE_FROM;
+        out_req->donor_target = args[2];
+        return true;
+    }
+
+    out_req->kind = TARGET_PCH_REQUEST_GROUPS;
+    return target_usage_parse_visibility_groups(
+        ctx, node, args, 1, true, target_pch_item_normalize_temp, &out_req->groups);
+}
+
+static bool target_link_libraries_parse_request(Evaluator_Context *ctx,
+                                                const Node *node,
+                                                Cmake_Event_Origin origin,
+                                                SV_List args,
+                                                Target_Link_Libraries_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 2) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_MISSING_REQUIRED,
+            "dispatcher",
+            nob_sv_from_cstr("target_link_libraries() requires target and at least one item"),
+            nob_sv_from_cstr("Usage: target_link_libraries(<tgt> [PRIVATE|PUBLIC|INTERFACE] <item>...)"));
+        return false;
+    }
+
+    *out_req = (Target_Link_Libraries_Request){0};
+    out_req->target_name = args[0];
+    if (!target_usage_validate_target(ctx, node, out_req->target_name)) return false;
+
+    Cmake_Visibility visibility = EV_VISIBILITY_UNSPECIFIED;
+    String_View qualifier = nob_sv_from_cstr("");
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (target_usage_parse_visibility(args[i], &visibility)) continue;
+        if (eval_sv_eq_ci_lit(args[i], "DEBUG") ||
+            eval_sv_eq_ci_lit(args[i], "OPTIMIZED") ||
+            eval_sv_eq_ci_lit(args[i], "GENERAL")) {
+            qualifier = args[i];
+            continue;
+        }
+
+        String_View item = args[i];
+        if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
+            item = wrap_link_item_with_config_genex_temp(
+                ctx, item, nob_sv_from_cstr("$<$<CONFIG:Debug>:"));
+        } else if (eval_sv_eq_ci_lit(qualifier, "OPTIMIZED")) {
+            item = wrap_link_item_with_config_genex_temp(
+                ctx, item, nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
+        }
+        if (eval_should_stop(ctx)) return false;
+
+        if (!target_usage_append_item_entry(
+                ctx, &out_req->items, visibility, item, false, false)) {
+            return false;
+        }
+        qualifier = nob_sv_from_cstr("");
+    }
+
+    out_req->trailing_qualifier = qualifier;
+    return true;
+}
+
 static bool target_sources_is_file_set_clause_keyword(String_View tok) {
     return eval_sv_eq_ci_lit(tok, "TYPE") ||
            eval_sv_eq_ci_lit(tok, "BASE_DIRS") ||
@@ -209,6 +661,65 @@ static bool target_sources_parse_file_set(Evaluator_Context *ctx,
     return true;
 }
 
+static bool target_sources_parse_request(Evaluator_Context *ctx,
+                                         const Node *node,
+                                         Cmake_Event_Origin origin,
+                                         SV_List args,
+                                         Target_Sources_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) < 3) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_MISSING_REQUIRED,
+            "dispatcher",
+            nob_sv_from_cstr("target_sources() requires target, visibility and items"),
+            nob_sv_from_cstr("Usage: target_sources(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+        return false;
+    }
+
+    *out_req = (Target_Sources_Request){0};
+    out_req->target_name = args[0];
+    if (!target_usage_validate_target(ctx, node, out_req->target_name)) return false;
+
+    Cmake_Visibility visibility = EV_VISIBILITY_UNSPECIFIED;
+    String_View current_src_dir = eval_current_source_dir_for_paths(ctx);
+    for (size_t i = 1; i < arena_arr_len(args); i++) {
+        if (target_usage_parse_visibility(args[i], &visibility)) continue;
+
+        if (eval_sv_eq_ci_lit(args[i], "FILE_SET")) {
+            if (visibility == EV_VISIBILITY_UNSPECIFIED) {
+                return target_usage_require_visibility(ctx, node);
+            }
+
+            Target_Sources_Entry entry = {0};
+            entry.kind = TARGET_SOURCES_ENTRY_FILE_SET;
+            entry.visibility = visibility;
+            if (!target_sources_parse_file_set(ctx, node, origin, args, i + 1, &entry.file_set)) {
+                return false;
+            }
+            if (!arena_arr_push(eval_temp_arena(ctx), out_req->entries, entry)) return false;
+            i = entry.file_set.next_index - 1;
+            continue;
+        }
+
+        if (visibility == EV_VISIBILITY_UNSPECIFIED) {
+            return target_usage_require_visibility(ctx, node);
+        }
+
+        Target_Sources_Entry entry = {0};
+        entry.kind = TARGET_SOURCES_ENTRY_ITEM;
+        entry.visibility = visibility;
+        entry.item = eval_path_resolve_for_cmake_arg(ctx, args[i], current_src_dir, true);
+        if (eval_should_stop(ctx)) return false;
+        if (!arena_arr_push(eval_temp_arena(ctx), out_req->entries, entry)) return false;
+    }
+
+    return true;
+}
+
 static bool target_sources_store_file_set(Evaluator_Context *ctx,
                                           Cmake_Event_Origin origin,
                                           String_View target_name,
@@ -341,61 +852,32 @@ Eval_Result eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *nod
 Eval_Result eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx) || arena_arr_len(a) < 2) return eval_result_from_ctx(ctx);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    String_View qualifier = nob_sv_from_cstr("");
-
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
-            vis = EV_VISIBILITY_PRIVATE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
-            vis = EV_VISIBILITY_PUBLIC;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
-            vis = EV_VISIBILITY_INTERFACE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "DEBUG") ||
-            eval_sv_eq_ci_lit(a[i], "OPTIMIZED") ||
-            eval_sv_eq_ci_lit(a[i], "GENERAL")) {
-            qualifier = a[i];
-            continue;
-        }
-
-        String_View item = a[i];
-        if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
-            item = wrap_link_item_with_config_genex_temp(ctx,
-                                                         item,
-                                                         nob_sv_from_cstr("$<$<CONFIG:Debug>:"));
-        } else if (eval_sv_eq_ci_lit(qualifier, "OPTIMIZED")) {
-            item = wrap_link_item_with_config_genex_temp(ctx,
-                                                         item,
-                                                         nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
-        }
-
-        (void)vis;
-        if (!eval_property_write(ctx,
-                                 o,
-                                 nob_sv_from_cstr("TARGET"),
-                                 tgt,
-                                 nob_sv_from_cstr("LINK_LIBRARIES"),
-                                 item,
-                                 EV_PROP_APPEND_LIST,
-                                 true)) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!eval_emit_target_link_libraries(ctx, o, tgt, vis, item)) return eval_result_from_ctx(ctx);
-        qualifier = nob_sv_from_cstr("");
+    Target_Link_Libraries_Request req = {0};
+    if (!target_link_libraries_parse_request(ctx, node, o, a, &req)) {
+        return eval_result_from_ctx(ctx);
     }
 
-    if (qualifier.count > 0) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("target_link_libraries() qualifier without following item"), qualifier);
+    if (!target_usage_apply_item_entries(ctx,
+                                         o,
+                                         req.target_name,
+                                         req.items,
+                                         nob_sv_from_cstr("LINK_LIBRARIES"),
+                                         nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"),
+                                         target_usage_emit_link_libraries_entry)) {
+        return eval_result_from_ctx(ctx);
+    }
+
+    if (req.trailing_qualifier.count > 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       o,
+                                       EV_DIAG_WARNING,
+                                       EVAL_DIAG_INVALID_STATE,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("target_link_libraries() qualifier without following item"),
+                                       req.trailing_qualifier);
     }
     return eval_result_from_ctx(ctx);
 }
@@ -405,46 +887,31 @@ Eval_Result eval_handle_target_link_options(Evaluator_Context *ctx, const Node *
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_link_options() requires target and items"), nob_sv_from_cstr("Usage: target_link_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+    Target_Usage_Items_Request req = {0};
+    if (!target_usage_parse_item_request(
+            ctx,
+            node,
+            o,
+            a,
+            nob_sv_from_cstr("target_link_options() requires target and items"),
+            nob_sv_from_cstr("Usage: target_link_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
+            false,
+            true,
+            false,
+            false,
+            target_usage_identity_item,
+            &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    bool is_before = false;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
-            is_before = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
-            vis = EV_VISIBILITY_PRIVATE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
-            vis = EV_VISIBILITY_PUBLIC;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
-            vis = EV_VISIBILITY_INTERFACE;
-            continue;
-        }
-
-        (void)vis;
-        (void)is_before;
-        if (!eval_property_write(ctx,
-                                 o,
-                                 nob_sv_from_cstr("TARGET"),
-                                 tgt,
-                                 nob_sv_from_cstr("LINK_OPTIONS"),
-                                 a[i],
-                                 EV_PROP_APPEND_LIST,
-                                 true)) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!eval_emit_target_link_options(ctx, o, tgt, vis, a[i], is_before)) return eval_result_from_ctx(ctx);
+    if (!target_usage_apply_item_entries(ctx,
+                                         o,
+                                         req.target_name,
+                                         req.items,
+                                         nob_sv_from_cstr("LINK_OPTIONS"),
+                                         nob_sv_from_cstr("INTERFACE_LINK_OPTIONS"),
+                                         target_usage_emit_link_options_entry)) {
+        return eval_result_from_ctx(ctx);
     }
 
     return eval_result_from_ctx(ctx);
@@ -455,43 +922,31 @@ Eval_Result eval_handle_target_link_directories(Evaluator_Context *ctx, const No
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_link_directories() requires target and items"), nob_sv_from_cstr("Usage: target_link_directories(<tgt> <PUBLIC|PRIVATE|INTERFACE> <dirs...>)"));
+    Target_Usage_Items_Request req = {0};
+    if (!target_usage_parse_item_request(
+            ctx,
+            node,
+            o,
+            a,
+            nob_sv_from_cstr("target_link_directories() requires target and items"),
+            nob_sv_from_cstr("Usage: target_link_directories(<tgt> <PUBLIC|PRIVATE|INTERFACE> <dirs...>)"),
+            false,
+            false,
+            false,
+            false,
+            target_usage_resolve_path_item_temp,
+            &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
-            vis = EV_VISIBILITY_PRIVATE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
-            vis = EV_VISIBILITY_PUBLIC;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
-            vis = EV_VISIBILITY_INTERFACE;
-            continue;
-        }
-
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
-        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        (void)vis;
-        if (!eval_property_write(ctx,
-                                 o,
-                                 nob_sv_from_cstr("TARGET"),
-                                 tgt,
-                                 nob_sv_from_cstr("LINK_DIRECTORIES"),
-                                 resolved,
-                                 EV_PROP_APPEND_LIST,
-                                 true)) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!eval_emit_target_link_directories(ctx, o, tgt, vis, resolved)) return eval_result_from_ctx(ctx);
+    if (!target_usage_apply_item_entries(ctx,
+                                         o,
+                                         req.target_name,
+                                         req.items,
+                                         nob_sv_from_cstr("LINK_DIRECTORIES"),
+                                         nob_sv_from_cstr("INTERFACE_LINK_DIRECTORIES"),
+                                         target_usage_emit_link_directories_entry)) {
+        return eval_result_from_ctx(ctx);
     }
 
     return eval_result_from_ctx(ctx);
@@ -502,62 +957,31 @@ Eval_Result eval_handle_target_include_directories(Evaluator_Context *ctx, const
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_include_directories() requires target and items"), nob_sv_from_cstr("Usage: target_include_directories(<tgt> [SYSTEM] [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+    Target_Usage_Items_Request req = {0};
+    if (!target_usage_parse_item_request(
+            ctx,
+            node,
+            o,
+            a,
+            nob_sv_from_cstr("target_include_directories() requires target and items"),
+            nob_sv_from_cstr("Usage: target_include_directories(<tgt> [SYSTEM] [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
+            false,
+            true,
+            true,
+            true,
+            target_usage_resolve_path_item_temp,
+            &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    bool is_system = false;
-    bool is_before = false;
-    String_View cur_src = eval_current_source_dir_for_paths(ctx);
-
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "SYSTEM")) {
-            is_system = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
-            is_before = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "AFTER")) {
-            is_before = false;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
-            vis = EV_VISIBILITY_PRIVATE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
-            vis = EV_VISIBILITY_PUBLIC;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
-            vis = EV_VISIBILITY_INTERFACE;
-            continue;
-        }
-
-        String_View resolved = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
-        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        (void)vis;
-        (void)is_system;
-        (void)is_before;
-        if (!eval_property_write(ctx,
-                                 o,
-                                 nob_sv_from_cstr("TARGET"),
-                                 tgt,
-                                 nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
-                                 resolved,
-                                 EV_PROP_APPEND_LIST,
-                                 true)) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!eval_emit_target_include_directories(ctx, o, tgt, vis, resolved, is_system, is_before)) {
-            return eval_result_from_ctx(ctx);
-        }
+    if (!target_usage_apply_item_entries(ctx,
+                                         o,
+                                         req.target_name,
+                                         req.items,
+                                         nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
+                                         nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
+                                         target_usage_emit_include_directories_entry)) {
+        return eval_result_from_ctx(ctx);
     }
 
     return eval_result_from_ctx(ctx);
@@ -568,43 +992,31 @@ Eval_Result eval_handle_target_compile_definitions(Evaluator_Context *ctx, const
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_compile_definitions() requires target and items"), nob_sv_from_cstr("Usage: target_compile_definitions(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+    Target_Usage_Items_Request req = {0};
+    if (!target_usage_parse_item_request(
+            ctx,
+            node,
+            o,
+            a,
+            nob_sv_from_cstr("target_compile_definitions() requires target and items"),
+            nob_sv_from_cstr("Usage: target_compile_definitions(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
+            false,
+            false,
+            false,
+            false,
+            target_compile_definition_normalize_temp,
+            &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
-            vis = EV_VISIBILITY_PRIVATE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
-            vis = EV_VISIBILITY_PUBLIC;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
-            vis = EV_VISIBILITY_INTERFACE;
-            continue;
-        }
-
-        String_View item = eval_normalize_compile_definition_item(a[i]);
-        if (item.count == 0) continue;
-
-        (void)vis;
-        if (!eval_property_write(ctx,
-                                 o,
-                                 nob_sv_from_cstr("TARGET"),
-                                 tgt,
-                                 nob_sv_from_cstr("COMPILE_DEFINITIONS"),
-                                 item,
-                                 EV_PROP_APPEND_LIST,
-                                 true)) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!eval_emit_target_compile_definitions(ctx, o, tgt, vis, item)) return eval_result_from_ctx(ctx);
+    if (!target_usage_apply_item_entries(ctx,
+                                         o,
+                                         req.target_name,
+                                         req.items,
+                                         nob_sv_from_cstr("COMPILE_DEFINITIONS"),
+                                         nob_sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS"),
+                                         target_usage_emit_compile_definitions_entry)) {
+        return eval_result_from_ctx(ctx);
     }
     return eval_result_from_ctx(ctx);
 }
@@ -614,46 +1026,31 @@ Eval_Result eval_handle_target_compile_options(Evaluator_Context *ctx, const Nod
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 2) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_compile_options() requires target and items"), nob_sv_from_cstr("Usage: target_compile_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+    Target_Usage_Items_Request req = {0};
+    if (!target_usage_parse_item_request(
+            ctx,
+            node,
+            o,
+            a,
+            nob_sv_from_cstr("target_compile_options() requires target and items"),
+            nob_sv_from_cstr("Usage: target_compile_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
+            false,
+            true,
+            false,
+            false,
+            target_usage_identity_item,
+            &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    bool is_before = false;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (eval_sv_eq_ci_lit(a[i], "BEFORE")) {
-            is_before = true;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PRIVATE")) {
-            vis = EV_VISIBILITY_PRIVATE;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "PUBLIC")) {
-            vis = EV_VISIBILITY_PUBLIC;
-            continue;
-        }
-        if (eval_sv_eq_ci_lit(a[i], "INTERFACE")) {
-            vis = EV_VISIBILITY_INTERFACE;
-            continue;
-        }
-
-        (void)vis;
-        (void)is_before;
-        if (!eval_property_write(ctx,
-                                 o,
-                                 nob_sv_from_cstr("TARGET"),
-                                 tgt,
-                                 nob_sv_from_cstr("COMPILE_OPTIONS"),
-                                 a[i],
-                                 EV_PROP_APPEND_LIST,
-                                 true)) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!eval_emit_target_compile_options(ctx, o, tgt, vis, a[i], is_before)) return eval_result_from_ctx(ctx);
+    if (!target_usage_apply_item_entries(ctx,
+                                         o,
+                                         req.target_name,
+                                         req.items,
+                                         nob_sv_from_cstr("COMPILE_OPTIONS"),
+                                         nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"),
+                                         target_usage_emit_compile_options_entry)) {
+        return eval_result_from_ctx(ctx);
     }
     return eval_result_from_ctx(ctx);
 }
@@ -663,67 +1060,49 @@ Eval_Result eval_handle_target_sources(Evaluator_Context *ctx, const Node *node)
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_sources() requires target, visibility and items"), nob_sv_from_cstr("Usage: target_sources(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"));
+    Target_Sources_Request req = {0};
+    if (!target_sources_parse_request(ctx, node, o, a, &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (target_usage_parse_visibility(a[i], &vis)) continue;
-        if (eval_sv_eq_ci_lit(a[i], "FILE_SET")) {
-            if (vis == EV_VISIBILITY_UNSPECIFIED) {
-                (void)target_usage_require_visibility(ctx, node);
-                return eval_result_from_ctx(ctx);
-            }
-            Target_File_Set_Parse file_set = {0};
-            if (!target_sources_parse_file_set(ctx, node, o, a, i + 1, &file_set)) {
-                return eval_result_from_ctx(ctx);
-            }
-            if (file_set.kind == TARGET_FILE_SET_CXX_MODULES &&
-                vis == EV_VISIBILITY_INTERFACE &&
-                !eval_target_is_imported(ctx, tgt)) {
+    for (size_t i = 0; i < arena_arr_len(req.entries); i++) {
+        const Target_Sources_Entry *entry = &req.entries[i];
+        if (entry->kind == TARGET_SOURCES_ENTRY_FILE_SET) {
+            if (entry->file_set.kind == TARGET_FILE_SET_CXX_MODULES &&
+                entry->visibility == EV_VISIBILITY_INTERFACE &&
+                !eval_target_is_imported(ctx, req.target_name)) {
                 target_diag_error(ctx,
                                   node,
                                   nob_sv_from_cstr("target_sources(FILE_SET TYPE CXX_MODULES) may not use INTERFACE scope on non-IMPORTED targets"),
-                                  tgt);
+                                  req.target_name);
                 return eval_result_from_ctx(ctx);
             }
-            if (!target_sources_store_file_set(ctx, o, tgt, vis, &file_set)) {
+            if (!target_sources_store_file_set(
+                    ctx, o, req.target_name, entry->visibility, &entry->file_set)) {
                 return eval_result_from_ctx(ctx);
             }
-            i = file_set.next_index - 1;
             continue;
         }
-        if (vis == EV_VISIBILITY_UNSPECIFIED) {
-            (void)target_usage_require_visibility(ctx, node);
-            return eval_result_from_ctx(ctx);
-        }
 
-        String_View item = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
-        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-
-        if (vis != EV_VISIBILITY_INTERFACE) {
+        if (entry->visibility != EV_VISIBILITY_INTERFACE) {
             if (!target_usage_store_target_property(ctx,
                                                     o,
-                                                    tgt,
+                                                    req.target_name,
                                                     nob_sv_from_cstr("SOURCES"),
-                                                    item,
+                                                    entry->item,
                                                     EV_PROP_APPEND_LIST)) {
                 return eval_result_from_ctx(ctx);
             }
-            if (!eval_emit_target_add_source(ctx, o, tgt, item)) return eval_result_from_ctx(ctx);
+            if (!eval_emit_target_add_source(ctx, o, req.target_name, entry->item)) {
+                return eval_result_from_ctx(ctx);
+            }
         }
-        if (vis != EV_VISIBILITY_PRIVATE) {
+        if (entry->visibility != EV_VISIBILITY_PRIVATE) {
             if (!target_usage_store_and_emit_target_property(ctx,
                                                              o,
-                                                             tgt,
+                                                             req.target_name,
                                                              nob_sv_from_cstr("INTERFACE_SOURCES"),
-                                                             item,
+                                                             entry->item,
                                                              EV_PROP_APPEND_LIST)) {
                 return eval_result_from_ctx(ctx);
             }
@@ -738,43 +1117,18 @@ Eval_Result eval_handle_target_compile_features(Evaluator_Context *ctx, const No
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_compile_features() requires target, visibility and features"), nob_sv_from_cstr("Usage: target_compile_features(<tgt> <PUBLIC|PRIVATE|INTERFACE> <features...>)"));
+    Target_Usage_Grouped_Request req = {0};
+    if (!target_compile_features_parse_request(ctx, node, o, a, &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (target_usage_parse_visibility(a[i], &vis)) continue;
-        if (vis == EV_VISIBILITY_UNSPECIFIED) {
-            (void)target_usage_require_visibility(ctx, node);
-            return eval_result_from_ctx(ctx);
-        }
-        if (a[i].count == 0) continue;
-
-        if (vis != EV_VISIBILITY_INTERFACE) {
-            if (!target_usage_store_and_emit_target_property(ctx,
-                                                             o,
-                                                             tgt,
-                                                             nob_sv_from_cstr("COMPILE_FEATURES"),
-                                                             a[i],
-                                                             EV_PROP_APPEND_LIST)) {
-                return eval_result_from_ctx(ctx);
-            }
-        }
-        if (vis != EV_VISIBILITY_PRIVATE) {
-            if (!target_usage_store_and_emit_target_property(ctx,
-                                                             o,
-                                                             tgt,
-                                                             nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
-                                                             a[i],
-                                                             EV_PROP_APPEND_LIST)) {
-                return eval_result_from_ctx(ctx);
-            }
-        }
+    if (!target_usage_apply_visibility_groups(ctx,
+                                              o,
+                                              req.target_name,
+                                              req.groups,
+                                              nob_sv_from_cstr("COMPILE_FEATURES"),
+                                              nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"))) {
+        return eval_result_from_ctx(ctx);
     }
 
     return eval_result_from_ctx(ctx);
@@ -785,66 +1139,35 @@ Eval_Result eval_handle_target_precompile_headers(Evaluator_Context *ctx, const 
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (arena_arr_len(a) < 3) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_precompile_headers() requires target and arguments"), nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> <PUBLIC|PRIVATE|INTERFACE> <headers...>)"));
+    Target_Precompile_Headers_Request req = {0};
+    if (!target_precompile_headers_parse_request(ctx, node, o, a, &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View tgt = a[0];
-    if (!target_usage_validate_target(ctx, node, tgt)) return eval_result_from_ctx(ctx);
-
-    if (eval_sv_eq_ci_lit(a[1], "REUSE_FROM")) {
-        if (arena_arr_len(a) != 3) {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("target_precompile_headers(REUSE_FROM) expects exactly one donor target"), nob_sv_from_cstr("Usage: target_precompile_headers(<tgt> REUSE_FROM <other-target>)"));
-            return eval_result_from_ctx(ctx);
-        }
-        if (!target_usage_validate_target(ctx, node, a[2])) return eval_result_from_ctx(ctx);
+    if (req.kind == TARGET_PCH_REQUEST_REUSE_FROM) {
         if (!target_usage_store_and_emit_target_property(ctx,
                                                          o,
-                                                         tgt,
+                                                         req.target_name,
                                                          nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"),
-                                                         a[2],
+                                                         req.donor_target,
                                                          EV_PROP_SET)) {
             return eval_result_from_ctx(ctx);
         }
-        if (!eval_sv_key_eq(tgt, a[2])) {
-            if (!eval_emit_target_dependency(ctx, o, tgt, a[2])) return eval_result_from_ctx(ctx);
+        if (!eval_sv_key_eq(req.target_name, req.donor_target)) {
+            if (!eval_emit_target_dependency(ctx, o, req.target_name, req.donor_target)) {
+                return eval_result_from_ctx(ctx);
+            }
         }
         return eval_result_from_ctx(ctx);
     }
 
-    Cmake_Visibility vis = EV_VISIBILITY_UNSPECIFIED;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        if (target_usage_parse_visibility(a[i], &vis)) continue;
-        if (vis == EV_VISIBILITY_UNSPECIFIED) {
-            (void)target_usage_require_visibility(ctx, node);
-            return eval_result_from_ctx(ctx);
-        }
-
-        String_View item = target_pch_item_normalize_temp(ctx, a[i]);
-        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        if (item.count == 0) continue;
-
-        if (vis != EV_VISIBILITY_INTERFACE) {
-            if (!target_usage_store_and_emit_target_property(ctx,
-                                                             o,
-                                                             tgt,
-                                                             nob_sv_from_cstr("PRECOMPILE_HEADERS"),
-                                                             item,
-                                                             EV_PROP_APPEND_LIST)) {
-                return eval_result_from_ctx(ctx);
-            }
-        }
-        if (vis != EV_VISIBILITY_PRIVATE) {
-            if (!target_usage_store_and_emit_target_property(ctx,
-                                                             o,
-                                                             tgt,
-                                                             nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"),
-                                                             item,
-                                                             EV_PROP_APPEND_LIST)) {
-                return eval_result_from_ctx(ctx);
-            }
-        }
+    if (!target_usage_apply_visibility_groups(ctx,
+                                              o,
+                                              req.target_name,
+                                              req.groups,
+                                              nob_sv_from_cstr("PRECOMPILE_HEADERS"),
+                                              nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"))) {
+        return eval_result_from_ctx(ctx);
     }
 
     return eval_result_from_ctx(ctx);

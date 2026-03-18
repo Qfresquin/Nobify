@@ -811,6 +811,43 @@ TEST(evaluator_get_property_target_source_and_test_wrappers) {
     TEST_PASS();
 }
 
+TEST(evaluator_get_directory_property_missing_materializes_empty_string) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "get_directory_property(DIR_MISSING UNKNOWN_DIR_PROP)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(eval_var_defined_visible(ctx, nob_sv_from_cstr("DIR_MISSING")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DIR_MISSING")), nob_sv_from_cstr("")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2138,6 +2175,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_set_property_cache_requires_existing_entry(passed, failed);
     test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed);
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
+    test_evaluator_get_directory_property_missing_materializes_empty_string(passed, failed);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
     test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed);

@@ -59,18 +59,18 @@
     X("FetchContent_MakeAvailable", eval_handle_fetchcontent_makeavailable, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_Populate", eval_handle_fetchcontent_populate, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_SetPopulated", eval_handle_fetchcontent_setpopulated, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("get_cmake_property", eval_handle_get_cmake_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("get_directory_property", eval_handle_get_directory_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("get_cmake_property", eval_handle_get_cmake_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("get_directory_property", eval_handle_get_directory_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("find_file", eval_handle_find_file, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("find_library", eval_handle_find_library, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("find_path", eval_handle_find_path, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("find_package", eval_handle_find_package, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("find_program", eval_handle_find_program, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("get_filename_component", eval_handle_get_filename_component, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("get_property", eval_handle_get_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("get_source_file_property", eval_handle_get_source_file_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("get_target_property", eval_handle_get_target_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("get_test_property", eval_handle_get_test_property, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("get_property", eval_handle_get_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("get_source_file_property", eval_handle_get_source_file_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("get_target_property", eval_handle_get_target_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("get_test_property", eval_handle_get_test_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include", eval_handle_include, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include_external_msproject", eval_handle_include_external_msproject, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("include_regular_expression", eval_handle_include_regular_expression, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
@@ -110,15 +110,15 @@
     X("subdir_depends", eval_handle_subdir_depends, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("subdirs", eval_handle_subdirs, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("aux_source_directory", eval_handle_aux_source_directory, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("target_compile_features", eval_handle_target_compile_features, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("target_compile_features", eval_handle_target_compile_features, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_compile_definitions", eval_handle_target_compile_definitions, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_compile_options", eval_handle_target_compile_options, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_include_directories", eval_handle_target_include_directories, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_link_directories", eval_handle_target_link_directories, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_link_libraries", eval_handle_target_link_libraries, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_link_options", eval_handle_target_link_options, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("target_precompile_headers", eval_handle_target_precompile_headers, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("target_sources", eval_handle_target_sources, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("target_precompile_headers", eval_handle_target_precompile_headers, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("target_sources", eval_handle_target_sources, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("try_compile", eval_handle_try_compile, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("try_run", eval_handle_try_run, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("unset", eval_handle_unset, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
