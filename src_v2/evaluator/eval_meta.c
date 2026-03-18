@@ -91,39 +91,6 @@ static void meta_sb_append_include_line(Nob_String_Builder *sb,
     nob_sb_append_cstr(sb, ")\n");
 }
 
-static String_View meta_property_store_key_temp(Evaluator_Context *ctx,
-                                                String_View scope_upper,
-                                                String_View object_id,
-                                                String_View prop_upper) {
-    static const char prefix[] = "NOBIFY_PROPERTY_";
-    if (!ctx) return nob_sv_from_cstr("");
-
-    bool has_obj = object_id.count > 0;
-    size_t total = (sizeof(prefix) - 1) + scope_upper.count + 2 + prop_upper.count;
-    if (has_obj) total += 2 + object_id.count;
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    memcpy(buf + off, prefix, sizeof(prefix) - 1);
-    off += sizeof(prefix) - 1;
-    memcpy(buf + off, scope_upper.data, scope_upper.count);
-    off += scope_upper.count;
-    buf[off++] = ':';
-    buf[off++] = ':';
-    if (has_obj) {
-        memcpy(buf + off, object_id.data, object_id.count);
-        off += object_id.count;
-        buf[off++] = ':';
-        buf[off++] = ':';
-    }
-    memcpy(buf + off, prop_upper.data, prop_upper.count);
-    off += prop_upper.count;
-    buf[off] = '\0';
-    return nob_sv_from_parts(buf, off);
-}
-
 static String_View meta_target_property_temp(Evaluator_Context *ctx,
                                              String_View target_name,
                                              String_View property_name,
@@ -133,15 +100,12 @@ static String_View meta_target_property_temp(Evaluator_Context *ctx,
 
     String_View prop_upper = eval_property_upper_name_temp(ctx, property_name);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    String_View store_key = meta_property_store_key_temp(ctx,
-                                                         nob_sv_from_cstr("TARGET"),
-                                                         target_name,
-                                                         prop_upper);
-    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
 
     String_View value = nob_sv_from_cstr("");
     bool have = false;
-    if (!eval_property_store_get_key(ctx, store_key, &value, &have)) return nob_sv_from_cstr("");
+    if (!eval_property_engine_get(ctx, nob_sv_from_cstr("TARGET"), target_name, prop_upper, &value, &have)) {
+        return nob_sv_from_cstr("");
+    }
     if (out_set) *out_set = have;
     return have ? value : nob_sv_from_cstr("");
 }

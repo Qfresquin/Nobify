@@ -33,10 +33,8 @@ static bool include_enables_fetchcontent_commands(String_View arg) {
 }
 
 static bool include_file_exists_sv(Evaluator_Context *ctx, String_View path) {
-    if (!ctx || path.count == 0) return false;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    return nob_file_exists(path_c) != 0;
+    bool exists = false;
+    return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
 static bool include_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {

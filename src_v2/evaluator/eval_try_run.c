@@ -237,6 +237,7 @@ Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
 
     Eval_Process_Run_Request proc_req = {
         .argv = argv,
+        .argc = arena_arr_len(argv),
         .working_directory = working_dir,
         .stdin_data = nob_sv_from_cstr(""),
     };

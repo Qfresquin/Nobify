@@ -158,6 +158,14 @@ bool eval_process_env_unset(Evaluator_Context *ctx, String_View name) {
 String_View eval_process_cwd_temp(Evaluator_Context *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
 
+    if (ctx->services && ctx->services->process_get_cwd) {
+        String_View cwd = nob_sv_from_cstr("");
+        if (!ctx->services->process_get_cwd(ctx->services->user_data, eval_temp_arena(ctx), &cwd)) {
+            return nob_sv_from_cstr("");
+        }
+        return cwd;
+    }
+
     char cwd_buf[4096] = {0};
 #if defined(_WIN32)
     if (!_getcwd(cwd_buf, (int)sizeof(cwd_buf) - 1)) return nob_sv_from_cstr("");
@@ -219,27 +227,14 @@ const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name) {
         return entry->value.is_set ? entry->value.text.data : NULL;
     }
     if (eval_should_stop(ctx)) return NULL;
+    if (ctx && ctx->services && ctx->services->env_get) {
+        return ctx->services->env_get(ctx->services->user_data, eval_temp_arena(ctx), name);
+    }
     return eval_getenv_temp_platform(ctx, name);
 }
 
 bool eval_has_env(Evaluator_Context *ctx, const char *name) {
-    if (!name || name[0] == '\0') return false;
-
-    Eval_Process_Env_Entry *entry = eval_process_env_find_cstr(ctx, name);
-    if (entry) return entry->value.is_set;
-    if (eval_should_stop(ctx)) return false;
-
-#if defined(_WIN32)
-    if (!ctx) return false;
-    char *lookup_name = eval_process_env_key_cstr_temp(ctx, name);
-    EVAL_OOM_RETURN_IF_NULL(ctx, lookup_name, false);
-    SetLastError(ERROR_SUCCESS);
-    DWORD needed = GetEnvironmentVariableA(lookup_name, NULL, 0);
-    return (needed > 0) || (GetLastError() == ERROR_SUCCESS);
-#else
-    (void)ctx;
-    return getenv(name) != NULL;
-#endif
+    return eval_getenv_temp(ctx, name) != NULL;
 }
 
 static bool eval_process_seen_key_contains(const SV_List *seen_keys, const char *key) {
@@ -365,19 +360,26 @@ static bool eval_process_collect_envp(Evaluator_Context *ctx, const char ***out_
 bool eval_process_run_capture(Evaluator_Context *ctx,
                               const Eval_Process_Run_Request *req,
                               Eval_Process_Run_Result *out) {
-    if (!ctx || !req || !out || arena_arr_len(req->argv) == 0) return false;
+    if (!ctx || !req || !out || !req->argv || req->argc == 0) return false;
+
+    if (ctx->services && ctx->services->process_run_capture) {
+        return ctx->services->process_run_capture(ctx->services->user_data,
+                                                  eval_temp_arena(ctx),
+                                                  req,
+                                                  out);
+    }
 
     *out = (Eval_Process_Run_Result){
         .result_text = nob_sv_from_cstr("1"),
     };
 
-    const char **argv = arena_alloc_array(eval_temp_arena(ctx), const char *, arena_arr_len(req->argv) + 1);
+    const char **argv = arena_alloc_array(eval_temp_arena(ctx), const char *, req->argc + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, argv, false);
-    for (size_t i = 0; i < arena_arr_len(req->argv); i++) {
+    for (size_t i = 0; i < req->argc; i++) {
         argv[i] = eval_sv_to_cstr_temp(ctx, req->argv[i]);
         EVAL_OOM_RETURN_IF_NULL(ctx, argv[i], false);
     }
-    argv[arena_arr_len(req->argv)] = NULL;
+    argv[req->argc] = NULL;
 
     const char **envp = NULL;
     if (!eval_process_collect_envp(ctx, &envp)) return false;
@@ -553,6 +555,7 @@ bool eval_process_run_nob_cmd_capture(Evaluator_Context *ctx,
 
     Eval_Process_Run_Request req = {
         .argv = argv,
+        .argc = arena_arr_len(argv),
         .working_directory = working_directory,
         .stdin_data = stdin_data,
     };

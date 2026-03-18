@@ -61,11 +61,14 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
 
     const Eval_Native_Command *native = eval_native_cmd_find_const(ctx, node->as.cmd.name);
     if (native) {
+        Eval_Command_Transaction tx = {0};
+        if (!eval_command_tx_begin(ctx, &tx)) return eval_result_fatal();
         if (!eval_emit_command_begin(ctx,
                                      o,
                                      node->as.cmd.name,
                                      EVENT_COMMAND_DISPATCH_BUILTIN,
                                      argc)) {
+            (void)eval_command_tx_finish(ctx, &tx, false);
             return eval_result_fatal();
         }
         size_t error_count_before = runtime->run_report.error_count;
@@ -73,7 +76,8 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
         Eval_Result running_result = eval_result_ok_if_running(ctx);
         bool native_succeeded = !eval_result_is_fatal(native_result) &&
                                 !eval_result_is_fatal(running_result) &&
-                                runtime->run_report.error_count == error_count_before;
+                                runtime->run_report.error_count == error_count_before &&
+                                tx.pending_error_count == 0;
         if (!eval_emit_command_end(ctx,
                                    o,
                                    node->as.cmd.name,
@@ -81,17 +85,22 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                    argc,
                                    native_succeeded ? EVENT_COMMAND_STATUS_SUCCESS
                                                     : EVENT_COMMAND_STATUS_ERROR)) {
+            (void)eval_command_tx_finish(ctx, &tx, false);
             return eval_result_fatal();
         }
+        if (!eval_command_tx_finish(ctx, &tx, native_succeeded)) return eval_result_fatal();
         return eval_result_merge(native_result, running_result);
     }
 
     User_Command *user = eval_user_cmd_find(ctx, node->as.cmd.name);
     if (user) {
+        Eval_Command_Transaction tx = {0};
         Event_Command_Dispatch_Kind dispatch_kind =
             (user->kind == USER_CMD_MACRO) ? EVENT_COMMAND_DISPATCH_MACRO
                                            : EVENT_COMMAND_DISPATCH_FUNCTION;
+        if (!eval_command_tx_begin(ctx, &tx)) return eval_result_fatal();
         if (!eval_emit_command_begin(ctx, o, node->as.cmd.name, dispatch_kind, argc)) {
+            (void)eval_command_tx_finish(ctx, &tx, false);
             return eval_result_fatal();
         }
         SV_List args = (user->kind == USER_CMD_MACRO)
@@ -104,12 +113,15 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                         dispatch_kind,
                                         argc,
                                         EVENT_COMMAND_STATUS_ERROR);
+            (void)eval_command_tx_finish(ctx, &tx, false);
             return eval_result_fatal();
         }
         size_t error_count_before = runtime->run_report.error_count;
         if (eval_user_cmd_invoke(ctx, node->as.cmd.name, &args, o)) {
-            bool user_succeeded = !eval_result_is_fatal(eval_result_ok_if_running(ctx)) &&
-                                  runtime->run_report.error_count == error_count_before;
+            Eval_Result running_result = eval_result_ok_if_running(ctx);
+            bool user_succeeded = !eval_result_is_fatal(running_result) &&
+                                  runtime->run_report.error_count == error_count_before &&
+                                  tx.pending_error_count == 0;
             if (!eval_emit_command_end(ctx,
                                        o,
                                        node->as.cmd.name,
@@ -117,9 +129,11 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                        argc,
                                        user_succeeded ? EVENT_COMMAND_STATUS_SUCCESS
                                                       : EVENT_COMMAND_STATUS_ERROR)) {
+                (void)eval_command_tx_finish(ctx, &tx, false);
                 return eval_result_fatal();
             }
-            return eval_result_ok_if_running(ctx);
+            if (!eval_command_tx_finish(ctx, &tx, user_succeeded)) return eval_result_fatal();
+            return running_result;
         }
         if (!eval_emit_command_end(ctx,
                                    o,
@@ -127,16 +141,21 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                    dispatch_kind,
                                    argc,
                                    EVENT_COMMAND_STATUS_ERROR)) {
+            (void)eval_command_tx_finish(ctx, &tx, false);
             return eval_result_fatal();
         }
+        if (!eval_command_tx_finish(ctx, &tx, false)) return eval_result_fatal();
         return eval_result_from_ctx(ctx);
     }
 
+    Eval_Command_Transaction tx = {0};
+    if (!eval_command_tx_begin(ctx, &tx)) return eval_result_fatal();
     if (!eval_emit_command_begin(ctx,
                                  o,
                                  node->as.cmd.name,
                                  EVENT_COMMAND_DISPATCH_UNKNOWN,
                                  argc)) {
+        (void)eval_command_tx_finish(ctx, &tx, false);
         return eval_result_fatal();
     }
 
@@ -158,6 +177,10 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
                                EVENT_COMMAND_DISPATCH_UNKNOWN,
                                argc,
                                EVENT_COMMAND_STATUS_UNSUPPORTED)) {
+        (void)eval_command_tx_finish(ctx, &tx, false);
+        return eval_result_fatal();
+    }
+    if (!eval_command_tx_finish(ctx, &tx, tx.pending_error_count == 0 && !eval_result_is_fatal(diag_result))) {
         return eval_result_fatal();
     }
     return diag_result;

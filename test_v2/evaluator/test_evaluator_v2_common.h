@@ -415,6 +415,47 @@ static Eval_Result native_test_handler_snapshot_set_unsupported_error_and_probe_
         inline_severity == EV_DIAG_ERROR ? nob_sv_from_cstr("ERROR") : nob_sv_from_cstr("WARNING")));
 }
 
+typedef struct {
+    const char *name;
+    const char *value;
+} Eval_Test_Env_Service_Data;
+
+static const char *evaluator_test_env_service_get(void *user_data,
+                                                  Arena *scratch_arena,
+                                                  const char *name) {
+    Eval_Test_Env_Service_Data *data = (Eval_Test_Env_Service_Data*)user_data;
+    if (!data || !name || !data->name || strcmp(name, data->name) != 0) return NULL;
+    if (!scratch_arena || !data->value) return data ? data->value : NULL;
+    return arena_strndup(scratch_arena, data->value, strlen(data->value));
+}
+
+static Eval_Result native_test_handler_tx_rollback_target(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || !node) return eval_result_fatal();
+
+    String_View name = nob_sv_from_cstr("phase_e_rollback_target");
+    Event_Origin o = eval_origin_from_node(ctx, node);
+
+    if (!eval_target_register(ctx, name)) return eval_result_fatal();
+    if (!eval_emit_target_declare(ctx,
+                                  o,
+                                  name,
+                                  EV_TARGET_EXECUTABLE,
+                                  false,
+                                  false,
+                                  nob_sv_from_cstr(""))) {
+        return eval_result_fatal();
+    }
+
+    return eval_emit_diag_with_severity(ctx,
+                                        EV_DIAG_ERROR,
+                                        EVAL_DIAG_INVALID_STATE,
+                                        nob_sv_from_cstr("phase_e_tx"),
+                                        node->as.cmd.name,
+                                        o,
+                                        nob_sv_from_cstr("transaction rollback probe"),
+                                        nob_sv_from_cstr(""));
+}
+
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
     if (!arena || !path || !out) return false;
 

@@ -40,23 +40,11 @@ char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
 }
 
 bool eval_emit_event(Evaluator_Context *ctx, Event ev) {
-    if (!ctx || eval_should_stop(ctx)) return false;
-    ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
-    ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
-    if (!event_stream_push(ctx->stream, &ev)) {
-        return ctx_oom(ctx);
-    }
-    return true;
+    return eval_command_tx_push_event(ctx, &ev, false);
 }
 
 bool eval_emit_event_allow_stopped(Evaluator_Context *ctx, Event ev) {
-    if (!ctx || ctx->oom || !ctx->stream) return false;
-    ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
-    ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
-    if (!event_stream_push(ctx->stream, &ev)) {
-        return ctx_oom(ctx);
-    }
-    return true;
+    return eval_command_tx_push_event(ctx, &ev, true);
 }
 
 bool eval_sv_key_eq(String_View a, String_View b) {
@@ -85,21 +73,122 @@ String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx) {
     return eval_current_source_dir(ctx);
 }
 
+static Eval_Directory_Node *eval_directory_find_node(Evaluator_Context *ctx, String_View source_dir) {
+    if (!ctx || source_dir.count == 0) return NULL;
+    Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
+    for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
+        if (svu_eq_ci_sv(graph->nodes[i].source_dir, source_dir)) return &graph->nodes[i];
+    }
+    return NULL;
+}
+
+static const Eval_Directory_Node *eval_directory_find_node_const(const Evaluator_Context *ctx, String_View source_dir) {
+    if (!ctx || source_dir.count == 0) return NULL;
+    const Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
+    for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
+        if (svu_eq_ci_sv(graph->nodes[i].source_dir, source_dir)) return &graph->nodes[i];
+    }
+    return NULL;
+}
+
+static bool eval_directory_list_append_unique(Evaluator_Context *ctx, SV_List *list, String_View value) {
+    if (!ctx || !list || value.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (eval_sv_key_eq((*list)[i], value)) return true;
+    }
+    value = sv_copy_to_event_arena(ctx, value);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, *list, value);
+}
+
+bool eval_directory_register_node(Evaluator_Context *ctx,
+                                  String_View source_dir,
+                                  String_View binary_dir,
+                                  String_View parent_source_dir,
+                                  String_View parent_binary_dir) {
+    if (!ctx || source_dir.count == 0) return false;
+
+    String_View normalized_source = eval_sv_path_normalize_temp(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+    if (normalized_source.count == 0) return false;
+    String_View normalized_binary =
+        binary_dir.count > 0 ? eval_sv_path_normalize_temp(ctx, binary_dir) : nob_sv_from_cstr("");
+    if (eval_should_stop(ctx)) return false;
+    String_View normalized_parent_source =
+        parent_source_dir.count > 0 ? eval_sv_path_normalize_temp(ctx, parent_source_dir) : nob_sv_from_cstr("");
+    if (eval_should_stop(ctx)) return false;
+    String_View normalized_parent_binary =
+        parent_binary_dir.count > 0 ? eval_sv_path_normalize_temp(ctx, parent_binary_dir) : nob_sv_from_cstr("");
+    if (eval_should_stop(ctx)) return false;
+
+    Eval_Directory_Node *existing = eval_directory_find_node(ctx, normalized_source);
+    if (existing) {
+        if (existing->binary_dir.count == 0 && normalized_binary.count > 0) {
+            existing->binary_dir = sv_copy_to_event_arena(ctx, normalized_binary);
+            if (eval_should_stop(ctx)) return false;
+        }
+        if (existing->parent_source_dir.count == 0 && normalized_parent_source.count > 0) {
+            existing->parent_source_dir = sv_copy_to_event_arena(ctx, normalized_parent_source);
+            if (eval_should_stop(ctx)) return false;
+        }
+        if (existing->parent_binary_dir.count == 0 && normalized_parent_binary.count > 0) {
+            existing->parent_binary_dir = sv_copy_to_event_arena(ctx, normalized_parent_binary);
+            if (eval_should_stop(ctx)) return false;
+        }
+        return true;
+    }
+
+    Eval_Directory_Node node = {0};
+    node.source_dir = sv_copy_to_event_arena(ctx, normalized_source);
+    node.binary_dir = sv_copy_to_event_arena(ctx, normalized_binary);
+    node.parent_source_dir = sv_copy_to_event_arena(ctx, normalized_parent_source);
+    node.parent_binary_dir = sv_copy_to_event_arena(ctx, normalized_parent_binary);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.directories.nodes, node);
+}
+
 bool eval_directory_register_known(Evaluator_Context *ctx, String_View dir) {
     if (!ctx || dir.count == 0) return false;
 
-    String_View normalized = eval_sv_path_normalize_temp(ctx, dir);
+    String_View source_dir = eval_sv_path_normalize_temp(ctx, dir);
     if (eval_should_stop(ctx)) return false;
-    if (normalized.count == 0) return false;
+    if (source_dir.count == 0) return false;
 
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_directories); i++) {
-        if (svu_eq_ci_sv(commands->known_directories[i], normalized)) return true;
+    String_View current_source = eval_current_source_dir(ctx);
+    String_View current_binary = eval_current_binary_dir(ctx);
+    String_View binary_dir = nob_sv_from_cstr("");
+    String_View parent_source_dir = nob_sv_from_cstr("");
+    String_View parent_binary_dir = nob_sv_from_cstr("");
+
+    if (current_source.count > 0) {
+        current_source = eval_sv_path_normalize_temp(ctx, current_source);
+        if (eval_should_stop(ctx)) return false;
+    }
+    if (current_binary.count > 0) {
+        current_binary = eval_sv_path_normalize_temp(ctx, current_binary);
+        if (eval_should_stop(ctx)) return false;
     }
 
-    String_View stable = sv_copy_to_event_arena(ctx, normalized);
-    if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, commands->known_directories, stable);
+    if (svu_eq_ci_sv(source_dir, current_source)) {
+        binary_dir = current_binary;
+        const Eval_Exec_Context *current = eval_exec_current_const(ctx);
+        if (current) {
+            size_t depth = arena_arr_len(ctx->exec_contexts);
+            if (depth >= 2) {
+                const Eval_Exec_Context *parent = &ctx->exec_contexts[depth - 2];
+                if (parent->source_dir.count > 0) {
+                    parent_source_dir = eval_sv_path_normalize_temp(ctx, parent->source_dir);
+                    if (eval_should_stop(ctx)) return false;
+                }
+                if (parent->binary_dir.count > 0) {
+                    parent_binary_dir = eval_sv_path_normalize_temp(ctx, parent->binary_dir);
+                    if (eval_should_stop(ctx)) return false;
+                }
+            }
+        }
+    }
+
+    return eval_directory_register_node(ctx, source_dir, binary_dir, parent_source_dir, parent_binary_dir);
 }
 
 bool eval_directory_is_known(Evaluator_Context *ctx, String_View dir) {
@@ -109,11 +198,49 @@ bool eval_directory_is_known(Evaluator_Context *ctx, String_View dir) {
     if (eval_should_stop(ctx)) return false;
     if (normalized.count == 0) return false;
 
-    const Eval_Command_State *commands = eval_command_slice_const(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_directories); i++) {
-        if (svu_eq_ci_sv(commands->known_directories[i], normalized)) return true;
-    }
-    return false;
+    return eval_directory_find_node_const(ctx, normalized) != NULL;
+}
+
+bool eval_directory_parent(Evaluator_Context *ctx, String_View source_dir, String_View *out_parent_source_dir) {
+    if (out_parent_source_dir) *out_parent_source_dir = nob_sv_from_cstr("");
+    if (!ctx || !out_parent_source_dir || source_dir.count == 0) return false;
+    String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+    const Eval_Directory_Node *node = eval_directory_find_node_const(ctx, normalized);
+    if (!node) return true;
+    *out_parent_source_dir = node->parent_source_dir;
+    return true;
+}
+
+bool eval_directory_binary_dir(Evaluator_Context *ctx, String_View source_dir, String_View *out_binary_dir) {
+    if (out_binary_dir) *out_binary_dir = nob_sv_from_cstr("");
+    if (!ctx || !out_binary_dir || source_dir.count == 0) return false;
+    String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+    const Eval_Directory_Node *node = eval_directory_find_node_const(ctx, normalized);
+    if (!node) return true;
+    *out_binary_dir = node->binary_dir;
+    return true;
+}
+
+bool eval_directory_note_target(Evaluator_Context *ctx, String_View source_dir, String_View target_name) {
+    if (!ctx || source_dir.count == 0 || target_name.count == 0) return false;
+    if (!eval_directory_register_known(ctx, source_dir)) return false;
+    String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+    Eval_Directory_Node *node = eval_directory_find_node(ctx, normalized);
+    if (!node) return false;
+    return eval_directory_list_append_unique(ctx, &node->declared_targets, target_name);
+}
+
+bool eval_directory_note_test(Evaluator_Context *ctx, String_View source_dir, String_View test_name) {
+    if (!ctx || source_dir.count == 0 || test_name.count == 0) return false;
+    if (!eval_directory_register_known(ctx, source_dir)) return false;
+    String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+    Eval_Directory_Node *node = eval_directory_find_node(ctx, normalized);
+    if (!node) return false;
+    return eval_directory_list_append_unique(ctx, &node->declared_tests, test_name);
 }
 
 String_View eval_detect_host_system_name(void) {
@@ -417,6 +544,147 @@ bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, 
     return true;
 }
 
+bool eval_service_read_file(Evaluator_Context *ctx,
+                            String_View path,
+                            String_View *out_contents,
+                            bool *out_found) {
+    if (out_contents) *out_contents = nob_sv_from_cstr("");
+    if (out_found) *out_found = false;
+    if (!ctx || path.count == 0) return false;
+
+    if (ctx->services && ctx->services->fs_read_file) {
+        return ctx->services->fs_read_file(ctx->services->user_data,
+                                           eval_temp_arena(ctx),
+                                           path,
+                                           out_contents,
+                                           out_found);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path_c, &sb)) return false;
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+
+    if (out_contents) *out_contents = contents;
+    if (out_found) *out_found = true;
+    return true;
+}
+
+bool eval_service_write_file(Evaluator_Context *ctx,
+                             String_View path,
+                             String_View contents,
+                             bool append) {
+    if (!ctx || path.count == 0) return false;
+    if (ctx->services && ctx->services->fs_write_file) {
+        return ctx->services->fs_write_file(ctx->services->user_data, path, contents, append);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    if (!append) {
+        return nob_write_entire_file(path_c, contents.data ? contents.data : "", contents.count);
+    }
+
+    Nob_String_Builder sb = {0};
+    if (nob_file_exists(path_c) && !nob_read_entire_file(path_c, &sb)) return false;
+    if (contents.count > 0) nob_sb_append_buf(&sb, contents.data, contents.count);
+    bool ok = nob_write_entire_file(path_c, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    return ok;
+}
+
+bool eval_service_mkdir(Evaluator_Context *ctx, String_View path) {
+    if (!ctx || path.count == 0) return false;
+    if (ctx->services && ctx->services->fs_mkdir) {
+        return ctx->services->fs_mkdir(ctx->services->user_data, path);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    return nob_mkdir_if_not_exists(path_c);
+}
+
+bool eval_service_file_exists(Evaluator_Context *ctx, String_View path, bool *out_exists) {
+    if (out_exists) *out_exists = false;
+    if (!ctx || path.count == 0) return false;
+
+    if (ctx->services && ctx->services->fs_file_exists) {
+        return ctx->services->fs_file_exists(ctx->services->user_data, path, out_exists);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    if (out_exists) *out_exists = nob_file_exists(path_c) != 0;
+    return true;
+}
+
+bool eval_service_copy_file(Evaluator_Context *ctx, String_View src, String_View dst) {
+    if (!ctx || src.count == 0 || dst.count == 0) return false;
+    if (ctx->services && ctx->services->fs_copy_file) {
+        return ctx->services->fs_copy_file(ctx->services->user_data, src, dst);
+    }
+
+    char *src_c = eval_sv_to_cstr_temp(ctx, src);
+    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
+    return nob_copy_file(src_c, dst_c);
+}
+
+bool eval_service_host_read_file(Evaluator_Context *ctx,
+                                 String_View path,
+                                 String_View *out_contents,
+                                 bool *out_found) {
+    if (out_contents) *out_contents = nob_sv_from_cstr("");
+    if (out_found) *out_found = false;
+    if (!ctx || path.count == 0) return false;
+
+    if (ctx->services && ctx->services->host_read_file) {
+        return ctx->services->host_read_file(ctx->services->user_data,
+                                             eval_temp_arena(ctx),
+                                             path,
+                                             out_contents,
+                                             out_found);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    FILE *fp = fopen(path_c, "rb");
+    if (!fp) return true;
+    if (out_found) *out_found = true;
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return true;
+    }
+    long size = ftell(fp);
+    if (size < 0) {
+        fclose(fp);
+        return true;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return true;
+    }
+
+    char *buf = arena_alloc(eval_temp_arena(ctx), (size_t)size + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    size_t read_n = fread(buf, 1, (size_t)size, fp);
+    bool had_error = ferror(fp) != 0;
+    fclose(fp);
+    if (read_n < (size_t)size && had_error) return true;
+
+    buf[read_n] = '\0';
+    if (out_contents) *out_contents = nob_sv_from_parts(buf, read_n);
+    return true;
+}
+
 bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path) {
     if (!ctx) return false;
     String_View parent = eval_file_parent_dir_view(path);
@@ -439,29 +707,16 @@ bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path) {
         if (*p != '/') continue;
         if ((p == tmp + 2) && isalpha((unsigned char)tmp[0]) && tmp[1] == ':') continue;
         *p = '\0';
-        (void)nob_mkdir_if_not_exists(tmp);
+        (void)eval_service_mkdir(ctx, nob_sv_from_cstr(tmp));
         *p = '/';
     }
-    return nob_mkdir_if_not_exists(tmp);
+    return eval_service_mkdir(ctx, nob_sv_from_cstr(tmp));
 }
 
 bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View contents, bool append) {
     if (!ctx) return false;
     if (!eval_mkdirs_for_parent(ctx, path)) return false;
-
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-
-    if (!append) {
-        return nob_write_entire_file(path_c, contents.data ? contents.data : "", contents.count);
-    }
-
-    Nob_String_Builder sb = {0};
-    if (nob_file_exists(path_c)) {
-        if (!nob_read_entire_file(path_c, &sb)) return false;
-    }
-    if (contents.count > 0) nob_sb_append_buf(&sb, contents.data, contents.count);
-    return nob_write_entire_file(path_c, sb.items ? sb.items : "", sb.count);
+    return eval_service_write_file(ctx, path, contents, append);
 }
 
 bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_name, const SV_List *argv, String_View status) {

@@ -79,39 +79,7 @@ static bool host_read_optional_file_temp(Evaluator_Context *ctx,
                                          String_View *out_contents,
                                          bool *out_found) {
     if (!ctx || !path || !out_contents || !out_found) return false;
-    *out_contents = nob_sv_from_cstr("");
-    *out_found = false;
-
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return true;
-
-    *out_found = true;
-    if (fseek(fp, 0, SEEK_END) != 0) {
-        fclose(fp);
-        return true;
-    }
-
-    long size = ftell(fp);
-    if (size < 0) {
-        fclose(fp);
-        return true;
-    }
-    if (fseek(fp, 0, SEEK_SET) != 0) {
-        fclose(fp);
-        return true;
-    }
-
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)size + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
-
-    size_t read_n = fread(buf, 1, (size_t)size, fp);
-    bool had_error = ferror(fp) != 0;
-    fclose(fp);
-    if (read_n < (size_t)size && had_error) return true;
-
-    buf[read_n] = '\0';
-    *out_contents = nob_sv_from_parts(buf, read_n);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    return eval_service_host_read_file(ctx, nob_sv_from_cstr(path), out_contents, out_found);
 }
 
 static bool host_proc_cpuinfo_temp(Evaluator_Context *ctx, String_View *out_contents, bool *out_found) {

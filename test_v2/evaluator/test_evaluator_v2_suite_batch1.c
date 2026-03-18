@@ -170,6 +170,119 @@ TEST(evaluator_registry_api_supports_custom_commands_and_null_stream_runs) {
     TEST_PASS();
 }
 
+TEST(evaluator_session_services_env_lookup_is_injected) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Eval_Test_Env_Service_Data env_data = {
+        .name = "PHASE_E_ENV",
+        .value = "svc-phase-e",
+    };
+    EvalServices services = {
+        .user_data = &env_data,
+        .env_get = evaluator_test_env_service_get,
+    };
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = event_arena;
+    cfg.services = &services;
+    cfg.source_root = nob_sv_from_cstr(".");
+    cfg.binary_root = nob_sv_from_cstr(".");
+
+    EvalSession *session = eval_session_create(&cfg);
+    ASSERT(session != NULL);
+
+    EvalExec_Request request = {0};
+    request.scratch_arena = temp_arena;
+    request.source_dir = nob_sv_from_cstr(".");
+    request.binary_dir = nob_sv_from_cstr(".");
+    request.list_file = "CMakeLists.txt";
+
+    Ast_Root root = parse_cmake(temp_arena, "set(PHASE_E_ENV_VALUE \"$ENV{PHASE_E_ENV}\")\n");
+    EvalRunResult run = eval_session_run(session, &request, root);
+    ASSERT(!eval_result_is_fatal(run.result));
+    ASSERT(run.report.error_count == 0);
+    ASSERT(nob_sv_eq(eval_var_get(&session->ctx, nob_sv_from_cstr("PHASE_E_ENV_VALUE")), nob_sv_from_cstr("svc-phase-e")));
+
+    eval_session_destroy(session);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_command_transaction_rollback_suppresses_semantic_state_and_events) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Evaluator_Native_Command_Def def = {
+        .name = nob_sv_from_cstr("tx_rollback_target"),
+        .handler = native_test_handler_tx_rollback_target,
+        .implemented_level = EVAL_CMD_IMPL_PARTIAL,
+        .fallback_behavior = EVAL_FALLBACK_ERROR_CONTINUE,
+    };
+    ASSERT(evaluator_register_native_command(ctx, &def));
+
+    Ast_Root root = parse_cmake(temp_arena, "tx_rollback_target()\n");
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    String_View declared_dir = {0};
+    ASSERT(!eval_target_declared_dir(ctx, nob_sv_from_cstr("phase_e_rollback_target"), &declared_dir));
+
+    bool saw_target_declare = false;
+    bool saw_diag = false;
+    bool saw_begin = false;
+    bool saw_end = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EV_TARGET_DECLARE &&
+            nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("phase_e_rollback_target"))) {
+            saw_target_declare = true;
+        } else if (ev->h.kind == EV_DIAGNOSTIC &&
+                   nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("tx_rollback_target")) &&
+                   nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("transaction rollback probe"))) {
+            saw_diag = true;
+        } else if (ev->h.kind == EVENT_COMMAND_BEGIN &&
+                   nob_sv_eq(ev->as.command_begin.command_name, nob_sv_from_cstr("tx_rollback_target"))) {
+            saw_begin = true;
+        } else if (ev->h.kind == EVENT_COMMAND_END &&
+                   nob_sv_eq(ev->as.command_end.command_name, nob_sv_from_cstr("tx_rollback_target"))) {
+            saw_end = true;
+        }
+    }
+
+    ASSERT(!saw_target_declare);
+    ASSERT(saw_diag);
+    ASSERT(saw_begin);
+    ASSERT(saw_end);
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_g5_legacy_wrapper_capabilities_promoted_to_full) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1990,6 +2103,8 @@ void run_evaluator_v2_batch1(int *passed, int *failed) {
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
     test_evaluator_session_api_runs_with_explicit_request_and_stream(passed, failed);
     test_evaluator_registry_api_supports_custom_commands_and_null_stream_runs(passed, failed);
+    test_evaluator_session_services_env_lookup_is_injected(passed, failed);
+    test_evaluator_command_transaction_rollback_suppresses_semantic_state_and_events(passed, failed);
     test_evaluator_g5_legacy_wrapper_capabilities_promoted_to_full(passed, failed);
     test_evaluator_native_command_registry_runtime_extension(passed, failed);
     test_evaluator_command_capability_remains_native_only_introspection(passed, failed);

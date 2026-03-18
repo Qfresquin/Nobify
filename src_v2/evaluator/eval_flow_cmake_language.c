@@ -273,11 +273,11 @@ static bool flow_cmake_language_set_dependency_provider(Evaluator_Context *ctx,
                                      nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER \"\")"));
             return !eval_result_is_fatal(eval_result_from_ctx(ctx));
         }
-        ctx->command_state.dependency_provider.command_name = nob_sv_from_cstr("");
-        ctx->command_state.dependency_provider.supports_find_package = false;
-        ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial = false;
-        ctx->command_state.dependency_provider.active_find_package_depth = 0;
-        ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
+        ctx->semantic_state.package.dependency_provider.command_name = nob_sv_from_cstr("");
+        ctx->semantic_state.package.dependency_provider.supports_find_package = false;
+        ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial = false;
+        ctx->semantic_state.package.dependency_provider.active_find_package_depth = 0;
+        ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
@@ -350,12 +350,12 @@ static bool flow_cmake_language_set_dependency_provider(Evaluator_Context *ctx,
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
-    ctx->command_state.dependency_provider.command_name = sv_copy_to_event_arena(ctx, command_name);
+    ctx->semantic_state.package.dependency_provider.command_name = sv_copy_to_event_arena(ctx, command_name);
     if (eval_should_stop(ctx)) return false;
-    ctx->command_state.dependency_provider.supports_find_package = supports_find_package;
-    ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial = supports_fetchcontent;
-    ctx->command_state.dependency_provider.active_find_package_depth = 0;
-    ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
+    ctx->semantic_state.package.dependency_provider.supports_find_package = supports_find_package;
+    ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial = supports_fetchcontent;
+    ctx->semantic_state.package.dependency_provider.active_find_package_depth = 0;
+    ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 

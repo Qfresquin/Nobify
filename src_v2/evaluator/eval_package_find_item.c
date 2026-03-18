@@ -438,10 +438,14 @@ static bool find_item_append_package_roots(Evaluator_Context *ctx,
                                            Find_Item_Kind kind,
                                            SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs) return false;
-    if (opt->no_default_path || opt->no_package_root_path || arena_arr_len(ctx->command_state.active_find_packages) == 0) return true;
+    if (opt->no_default_path || opt->no_package_root_path ||
+        arena_arr_len(ctx->semantic_state.package.active_find_packages) == 0) {
+        return true;
+    }
     if (!eval_policy_is_new(ctx, EVAL_POLICY_CMP0074)) return true;
 
-    String_View pkg = ctx->command_state.active_find_packages[arena_arr_len(ctx->command_state.active_find_packages) - 1];
+    String_View pkg = ctx->semantic_state.package.active_find_packages
+        [arena_arr_len(ctx->semantic_state.package.active_find_packages) - 1];
     String_View mixed_root = svu_concat_suffix_temp(ctx, pkg, "_ROOT");
     bool cmp0144_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0144);
     String_View upper_root = cmp0144_new ? svu_concat_suffix_temp(ctx, sv_to_upper_temp(ctx, pkg), "_ROOT") : nob_sv_from_cstr("");
@@ -647,7 +651,10 @@ static bool find_item_invoke_validator(Evaluator_Context *ctx,
     }
 
     char key_buf[64];
-    int n = snprintf(key_buf, sizeof(key_buf), "_NOBIFY_FIND_VALID_%zu", arena_arr_len(ctx->command_state.active_find_packages) + eval_scope_visible_depth(ctx));
+    int n = snprintf(key_buf,
+                     sizeof(key_buf),
+                     "_NOBIFY_FIND_VALID_%zu",
+                     arena_arr_len(ctx->semantic_state.package.active_find_packages) + eval_scope_visible_depth(ctx));
     if (n <= 0 || (size_t)n >= sizeof(key_buf)) return ctx_oom(ctx);
     String_View result_var = nob_sv_from_cstr(key_buf);
     if (!eval_var_set_current(ctx, result_var, nob_sv_from_cstr("TRUE"))) return false;

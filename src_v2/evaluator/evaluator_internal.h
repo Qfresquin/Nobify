@@ -194,23 +194,6 @@ typedef enum {
 } Eval_Cmdline_Mode;
 
 typedef struct {
-    SV_List argv;
-    String_View working_directory;
-    String_View stdin_data;
-    bool has_timeout;
-    double timeout_seconds;
-} Eval_Process_Run_Request;
-
-typedef struct {
-    String_View stdout_text;
-    String_View stderr_text;
-    String_View result_text;
-    int exit_code;
-    bool started;
-    bool timed_out;
-} Eval_Process_Run_Result;
-
-typedef struct {
     String_View text;
     bool is_set;
 } Eval_Process_Env_Value;
@@ -365,29 +348,87 @@ typedef struct {
 typedef Eval_FetchContent_State *Eval_FetchContent_State_List;
 
 typedef struct {
-    Arena *known_targets_arena;
-    Arena *known_tests_arena;
-    Arena *user_commands_arena;
-    Eval_Target_Record_List known_targets;
-    Eval_Test_Record_List known_tests;
-    SV_List known_directories;
-    SV_List alias_targets;
-    Eval_Var_Entry *property_store;
-    User_Command_List user_commands;
-    struct {
-        String_View command_name;
-        bool supports_find_package;
-        bool supports_fetchcontent_makeavailable_serial;
-        size_t active_find_package_depth;
-        size_t active_fetchcontent_makeavailable_depth;
-    } dependency_provider;
+    String_View source_dir;
+    String_View binary_dir;
+    String_View parent_source_dir;
+    String_View parent_binary_dir;
+    SV_List declared_targets;
+    SV_List declared_tests;
+} Eval_Directory_Node;
+
+typedef Eval_Directory_Node *Eval_Directory_Node_List;
+
+typedef struct {
+    Eval_Directory_Node_List nodes;
+} Eval_Directory_Graph;
+
+typedef struct {
+    String_View scope_upper;
+    String_View object_id;
+    String_View property_upper;
+    String_View value;
+} Eval_Property_Record;
+
+typedef Eval_Property_Record *Eval_Property_Record_List;
+
+typedef struct {
+    Eval_Property_Record_List records;
+} Eval_Property_Engine;
+
+typedef struct {
+    Arena *arena;
+    Eval_Target_Record_List records;
+    SV_List aliases;
+} Eval_Target_Model;
+
+typedef struct {
+    Arena *arena;
+    Eval_Test_Record_List records;
+} Eval_Test_Model;
+
+typedef struct {
+    SV_List components;
+} Eval_Install_Model;
+
+typedef struct {
+    SV_List exports;
+} Eval_Export_Model;
+
+typedef struct {
+    String_View command_name;
+    bool supports_find_package;
+    bool supports_fetchcontent_makeavailable_serial;
+    size_t active_find_package_depth;
+    size_t active_fetchcontent_makeavailable_depth;
+} Eval_Dependency_Provider_State;
+
+typedef struct {
+    Eval_Dependency_Provider_State dependency_provider;
     SV_List active_find_packages;
-    Eval_FetchContent_Declaration_List fetchcontent_declarations;
-    Eval_FetchContent_State_List fetchcontent_states;
-    SV_List active_fetchcontent_makeavailable;
+} Eval_Package_Model;
+
+typedef struct {
+    Eval_FetchContent_Declaration_List declarations;
+    Eval_FetchContent_State_List states;
+    SV_List active_makeavailable;
+} Eval_FetchContent_Model;
+
+typedef struct {
+    Eval_Directory_Graph directories;
+    Eval_Property_Engine properties;
+    Eval_Target_Model targets;
+    Eval_Test_Model tests;
+    Eval_Install_Model install;
+    Eval_Export_Model export_state;
+    Eval_Package_Model package;
+    Eval_FetchContent_Model fetchcontent;
+} Eval_Semantic_State;
+
+typedef struct {
+    Arena *user_commands_arena;
+    User_Command_List user_commands;
     SV_List watched_variables;
     SV_List watched_variable_commands;
-    SV_List install_components;
 } Eval_Command_State;
 
 typedef struct {
@@ -401,9 +442,133 @@ typedef struct {
     Eval_Process_Env_Table env_overrides;
 } Eval_Process_State;
 
+typedef struct {
+    Eval_Var_Entry *entries;
+    size_t count;
+} Eval_Var_Table_Snapshot;
+
+typedef struct {
+    Eval_Cache_Entry *entries;
+    size_t count;
+} Eval_Cache_Table_Snapshot;
+
+typedef struct {
+    Eval_Process_Env_Entry *entries;
+    size_t count;
+} Eval_Process_Env_Table_Snapshot;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+    String_View parent_source_dir;
+    String_View parent_binary_dir;
+    String_View *declared_targets;
+    size_t declared_target_count;
+    String_View *declared_tests;
+    size_t declared_test_count;
+} Eval_Directory_Node_Snapshot;
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+    Eval_Deferred_Call *calls;
+    size_t call_count;
+} Eval_Deferred_Dir_Frame_Snapshot;
+
+typedef enum {
+    EVAL_TX_PROJECTION_EVENT = 0,
+    EVAL_TX_PROJECTION_DIAG,
+} Eval_Tx_Projection_Kind;
+
+typedef struct {
+    Event_Diag_Severity input_severity;
+    Event_Diag_Severity effective_severity;
+    Eval_Diag_Code code;
+    uint32_t scope_depth;
+    uint32_t policy_depth;
+    String_View component;
+    String_View command;
+    Event_Origin origin;
+    String_View cause;
+    String_View hint;
+} Eval_Tx_Diag_Projection;
+
+typedef struct {
+    Eval_Tx_Projection_Kind kind;
+    union {
+        Event event;
+        Eval_Tx_Diag_Projection diag;
+    } as;
+} Eval_Tx_Projection;
+
+typedef Eval_Tx_Projection *Eval_Tx_Projection_List;
+
+typedef struct Eval_Command_Transaction {
+    struct Eval_Command_Transaction *parent;
+    Arena_Mark mark;
+    bool active;
+    bool saw_error_diag;
+    size_t pending_warning_count;
+    size_t pending_error_count;
+    Eval_Tx_Projection_List projections;
+
+    Eval_Var_Table_Snapshot *scope_vars;
+    size_t scope_var_count;
+    size_t visible_scope_depth;
+
+    Eval_Cache_Table_Snapshot cache_entries;
+    Eval_Process_Env_Table_Snapshot env_overrides;
+
+    String_View *message_check_stack;
+    size_t message_check_count;
+
+    Eval_Directory_Node_Snapshot *directory_nodes;
+    size_t directory_node_count;
+    Eval_Property_Record *property_records;
+    size_t property_record_count;
+    Eval_Target_Record *target_records;
+    size_t target_record_count;
+    String_View *target_aliases;
+    size_t target_alias_count;
+    Eval_Test_Record *test_records;
+    size_t test_record_count;
+    String_View *install_components;
+    size_t install_component_count;
+    String_View *export_entries;
+    size_t export_count;
+    String_View *active_find_packages;
+    size_t active_find_package_count;
+    Eval_Dependency_Provider_State dependency_provider;
+    Eval_FetchContent_Declaration *fetchcontent_declarations;
+    size_t fetchcontent_declaration_count;
+    Eval_FetchContent_State *fetchcontent_states;
+    size_t fetchcontent_state_count;
+    String_View *active_makeavailable;
+    size_t active_makeavailable_count;
+
+    User_Command *user_commands;
+    size_t user_command_count;
+    String_View *watched_variables;
+    size_t watched_variable_count;
+    String_View *watched_variable_commands;
+    size_t watched_variable_command_count;
+    Eval_Property_Definition *property_definitions;
+    size_t property_definition_count;
+
+    Eval_File_Generate_Job *file_generate_jobs;
+    size_t file_generate_job_count;
+    Eval_Deferred_Dir_Frame_Snapshot *deferred_dirs;
+    size_t deferred_dir_count;
+    size_t next_deferred_call_id;
+
+    bool cpack_component_module_loaded;
+    bool fetchcontent_module_loaded;
+} Eval_Command_Transaction;
+
 struct Evaluator_Context {
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
     Arena *event_arena;    // PERSISTENT ARENA: storage interno do evaluator; Event_Stream owna payloads só no push
+    Arena *transaction_arena;
     Cmake_Event_Stream *stream;
     EvalRegistry *registry;
     const EvalServices *services;
@@ -416,6 +581,7 @@ struct Evaluator_Context {
     Eval_Scope_State scope_state;
 
     SV_List message_check_stack;
+    Eval_Semantic_State semantic_state;
     Eval_Command_State command_state;
     Eval_File_State file_state;
     Eval_Process_State process_state;
@@ -435,6 +601,7 @@ struct Evaluator_Context {
     bool return_requested;
     Eval_Return_Context return_context;
     Eval_Runtime_State runtime_state;
+    Eval_Command_Transaction *active_transaction;
 
     bool oom;
     bool stop_requested;
@@ -481,6 +648,8 @@ Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx,
 bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effective_sev);
 String_View eval_compat_profile_to_sv(Eval_Compat_Profile profile);
 bool ctx_oom(Evaluator_Context *ctx);
+size_t eval_pending_warning_count(const Evaluator_Context *ctx);
+size_t eval_pending_error_count(const Evaluator_Context *ctx);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
 String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id);
 
@@ -509,7 +678,7 @@ static inline Eval_Result eval_result_from_bool(bool ok) {
 
 static inline Eval_Result eval_result_from_ctx(Evaluator_Context *ctx) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
-    return ctx->runtime_state.run_report.error_count > 0 ? eval_result_soft_error() : eval_result_ok();
+    return eval_pending_error_count(ctx) > 0 ? eval_result_soft_error() : eval_result_ok();
 }
 
 static inline Eval_Result eval_result_ok_if_running(Evaluator_Context *ctx) {
@@ -573,6 +742,14 @@ static inline Eval_Runtime_State *eval_runtime_slice(Evaluator_Context *ctx) {
 
 static inline const Eval_Runtime_State *eval_runtime_slice_const(const Evaluator_Context *ctx) {
     return ctx ? &ctx->runtime_state : NULL;
+}
+
+static inline Eval_Semantic_State *eval_semantic_slice(Evaluator_Context *ctx) {
+    return ctx ? &ctx->semantic_state : NULL;
+}
+
+static inline const Eval_Semantic_State *eval_semantic_slice_const(const Evaluator_Context *ctx) {
+    return ctx ? &ctx->semantic_state : NULL;
 }
 
 static inline Eval_Command_State *eval_command_slice(Evaluator_Context *ctx) {
@@ -1799,6 +1976,33 @@ void eval_report_record_diag(Evaluator_Context *ctx,
 void eval_report_finalize(Evaluator_Context *ctx);
 bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability);
 bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg);
+bool eval_command_tx_begin(Evaluator_Context *ctx, Eval_Command_Transaction *tx);
+bool eval_command_tx_finish(Evaluator_Context *ctx, Eval_Command_Transaction *tx, bool commit_state);
+bool eval_command_tx_push_event(Evaluator_Context *ctx, const Event *ev, bool allow_stopped);
+bool eval_command_tx_push_diag(Evaluator_Context *ctx,
+                               Event_Diag_Severity input_sev,
+                               Event_Diag_Severity effective_sev,
+                               Eval_Diag_Code code,
+                               String_View component,
+                               String_View command,
+                               Event_Origin origin,
+                               String_View cause,
+                               String_View hint);
+bool eval_service_read_file(Evaluator_Context *ctx,
+                            String_View path,
+                            String_View *out_contents,
+                            bool *out_found);
+bool eval_service_write_file(Evaluator_Context *ctx,
+                             String_View path,
+                             String_View contents,
+                             bool append);
+bool eval_service_mkdir(Evaluator_Context *ctx, String_View path);
+bool eval_service_file_exists(Evaluator_Context *ctx, String_View path, bool *out_exists);
+bool eval_service_copy_file(Evaluator_Context *ctx, String_View src, String_View dst);
+bool eval_service_host_read_file(Evaluator_Context *ctx,
+                                 String_View path,
+                                 String_View *out_contents,
+                                 bool *out_found);
 
 // ---- vars ----
 String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key);
@@ -1850,6 +2054,15 @@ static inline String_View eval_current_list_file(Evaluator_Context *ctx) {
 }
 
 // ---- targets ----
+bool eval_directory_register_node(Evaluator_Context *ctx,
+                                  String_View source_dir,
+                                  String_View binary_dir,
+                                  String_View parent_source_dir,
+                                  String_View parent_binary_dir);
+bool eval_directory_parent(Evaluator_Context *ctx, String_View source_dir, String_View *out_parent_source_dir);
+bool eval_directory_binary_dir(Evaluator_Context *ctx, String_View source_dir, String_View *out_binary_dir);
+bool eval_directory_note_target(Evaluator_Context *ctx, String_View source_dir, String_View target_name);
+bool eval_directory_note_test(Evaluator_Context *ctx, String_View source_dir, String_View test_name);
 bool eval_target_known(Evaluator_Context *ctx, String_View name);
 bool eval_target_register(Evaluator_Context *ctx, String_View name);
 bool eval_target_set_imported(Evaluator_Context *ctx, String_View name, bool imported);
@@ -1895,11 +2108,17 @@ bool eval_property_query_cmake(Evaluator_Context *ctx,
                                Event_Origin origin,
                                String_View out_var,
                                String_View property_name);
-bool eval_property_store_set_key(Evaluator_Context *ctx, String_View store_key, String_View value);
-bool eval_property_store_get_key(Evaluator_Context *ctx,
-                                 String_View store_key,
-                                 String_View *out_value,
-                                 bool *out_set);
+bool eval_property_engine_set(Evaluator_Context *ctx,
+                              String_View scope_upper,
+                              String_View object_id,
+                              String_View property_upper,
+                              String_View value);
+bool eval_property_engine_get(Evaluator_Context *ctx,
+                              String_View scope_upper,
+                              String_View object_id,
+                              String_View property_upper,
+                              String_View *out_value,
+                              bool *out_set);
 
 // ---- native commands ----
 Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name);

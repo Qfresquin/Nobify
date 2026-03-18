@@ -180,17 +180,12 @@ static bool ctest_publish_common_dirs(Evaluator_Context *ctx, String_View source
 }
 
 static bool ctest_path_exists(Evaluator_Context *ctx, String_View path) {
-    if (!ctx || path.count == 0) return false;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    return nob_file_exists(path_c);
+    bool exists = false;
+    return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
 static bool ctest_ensure_directory(Evaluator_Context *ctx, String_View dir) {
-    if (!ctx || dir.count == 0) return false;
-    char *dir_c = eval_sv_to_cstr_temp(ctx, dir);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dir_c, false);
-    return nob_mkdir_if_not_exists(dir_c);
+    return eval_service_mkdir(ctx, dir);
 }
 
 static String_View ctest_session_resolved_build_dir(Evaluator_Context *ctx) {
@@ -399,21 +394,21 @@ static bool ctest_new_process_begin(Evaluator_Context *ctx, Ctest_New_Process_St
 
     state->message_check_count = arena_arr_len(ctx->message_check_stack);
     state->user_commands_count = arena_arr_len(ctx->command_state.user_commands);
-    state->known_targets_count = arena_arr_len(ctx->command_state.known_targets);
-    state->alias_targets_count = arena_arr_len(ctx->command_state.alias_targets);
-    state->dependency_provider_command_name = ctx->command_state.dependency_provider.command_name;
-    state->dependency_provider_supports_find_package = ctx->command_state.dependency_provider.supports_find_package;
+    state->known_targets_count = arena_arr_len(ctx->semantic_state.targets.records);
+    state->alias_targets_count = arena_arr_len(ctx->semantic_state.targets.aliases);
+    state->dependency_provider_command_name = ctx->semantic_state.package.dependency_provider.command_name;
+    state->dependency_provider_supports_find_package = ctx->semantic_state.package.dependency_provider.supports_find_package;
     state->dependency_provider_supports_fetchcontent_makeavailable_serial =
-        ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial;
+        ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial;
     state->dependency_provider_active_find_package_depth =
-        ctx->command_state.dependency_provider.active_find_package_depth;
+        ctx->semantic_state.package.dependency_provider.active_find_package_depth;
     state->dependency_provider_active_fetchcontent_makeavailable_depth =
-        ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth;
-    state->active_find_packages_count = arena_arr_len(ctx->command_state.active_find_packages);
-    state->fetchcontent_declarations_count = arena_arr_len(ctx->command_state.fetchcontent_declarations);
-    state->fetchcontent_states_count = arena_arr_len(ctx->command_state.fetchcontent_states);
+        ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth;
+    state->active_find_packages_count = arena_arr_len(ctx->semantic_state.package.active_find_packages);
+    state->fetchcontent_declarations_count = arena_arr_len(ctx->semantic_state.fetchcontent.declarations);
+    state->fetchcontent_states_count = arena_arr_len(ctx->semantic_state.fetchcontent.states);
     state->active_fetchcontent_makeavailable_count =
-        arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable);
+        arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable);
     state->watched_variables_count = arena_arr_len(ctx->command_state.watched_variables);
     state->watched_variable_commands_count = arena_arr_len(ctx->command_state.watched_variable_commands);
     state->cpack_component_module_loaded = ctx->cpack_component_module_loaded;
@@ -434,31 +429,31 @@ static void ctest_new_process_end(Evaluator_Context *ctx, const Ctest_New_Proces
     if (ctx->command_state.user_commands) {
         arena_arr_set_len(ctx->command_state.user_commands, state->user_commands_count);
     }
-    if (ctx->command_state.known_targets) {
-        arena_arr_set_len(ctx->command_state.known_targets, state->known_targets_count);
+    if (ctx->semantic_state.targets.records) {
+        arena_arr_set_len(ctx->semantic_state.targets.records, state->known_targets_count);
     }
-    if (ctx->command_state.alias_targets) {
-        arena_arr_set_len(ctx->command_state.alias_targets, state->alias_targets_count);
+    if (ctx->semantic_state.targets.aliases) {
+        arena_arr_set_len(ctx->semantic_state.targets.aliases, state->alias_targets_count);
     }
-    ctx->command_state.dependency_provider.command_name = state->dependency_provider_command_name;
-    ctx->command_state.dependency_provider.supports_find_package = state->dependency_provider_supports_find_package;
-    ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial =
+    ctx->semantic_state.package.dependency_provider.command_name = state->dependency_provider_command_name;
+    ctx->semantic_state.package.dependency_provider.supports_find_package = state->dependency_provider_supports_find_package;
+    ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial =
         state->dependency_provider_supports_fetchcontent_makeavailable_serial;
-    ctx->command_state.dependency_provider.active_find_package_depth =
+    ctx->semantic_state.package.dependency_provider.active_find_package_depth =
         state->dependency_provider_active_find_package_depth;
-    ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth =
+    ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth =
         state->dependency_provider_active_fetchcontent_makeavailable_depth;
-    if (ctx->command_state.active_find_packages) {
-        arena_arr_set_len(ctx->command_state.active_find_packages, state->active_find_packages_count);
+    if (ctx->semantic_state.package.active_find_packages) {
+        arena_arr_set_len(ctx->semantic_state.package.active_find_packages, state->active_find_packages_count);
     }
-    if (ctx->command_state.fetchcontent_declarations) {
-        arena_arr_set_len(ctx->command_state.fetchcontent_declarations, state->fetchcontent_declarations_count);
+    if (ctx->semantic_state.fetchcontent.declarations) {
+        arena_arr_set_len(ctx->semantic_state.fetchcontent.declarations, state->fetchcontent_declarations_count);
     }
-    if (ctx->command_state.fetchcontent_states) {
-        arena_arr_set_len(ctx->command_state.fetchcontent_states, state->fetchcontent_states_count);
+    if (ctx->semantic_state.fetchcontent.states) {
+        arena_arr_set_len(ctx->semantic_state.fetchcontent.states, state->fetchcontent_states_count);
     }
-    if (ctx->command_state.active_fetchcontent_makeavailable) {
-        arena_arr_set_len(ctx->command_state.active_fetchcontent_makeavailable,
+    if (ctx->semantic_state.fetchcontent.active_makeavailable) {
+        arena_arr_set_len(ctx->semantic_state.fetchcontent.active_makeavailable,
                           state->active_fetchcontent_makeavailable_count);
     }
     if (ctx->command_state.watched_variables) {

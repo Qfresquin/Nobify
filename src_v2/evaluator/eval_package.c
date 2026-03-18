@@ -1,9 +1,8 @@
 #include "eval_package_internal.h"
 
 bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    return nob_file_exists(path_c) != 0;
+    bool exists = false;
+    return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
 bool find_package_diag_error(Evaluator_Context *ctx,
@@ -1091,7 +1090,7 @@ static bool find_package_execute_resolved_artifacts(Evaluator_Context *ctx,
     bool pushed_pkg = false;
     String_View active_pkg = sv_copy_to_event_arena(ctx, opt->pkg);
     if (!eval_should_stop(ctx)) {
-        pushed_pkg = arena_arr_push(ctx->event_arena, ctx->command_state.active_find_packages, active_pkg);
+        pushed_pkg = arena_arr_push(ctx->event_arena, ctx->semantic_state.package.active_find_packages, active_pkg);
         if (!pushed_pkg) ctx_oom(ctx);
     }
 
@@ -1128,8 +1127,9 @@ static bool find_package_execute_resolved_artifacts(Evaluator_Context *ctx,
         *io_found = false;
     }
 
-    if (pushed_pkg && arena_arr_len(ctx->command_state.active_find_packages) > 0) {
-        arena_arr_set_len(ctx->command_state.active_find_packages, arena_arr_len(ctx->command_state.active_find_packages) - 1);
+    if (pushed_pkg && arena_arr_len(ctx->semantic_state.package.active_find_packages) > 0) {
+        arena_arr_set_len(ctx->semantic_state.package.active_find_packages,
+                          arena_arr_len(ctx->semantic_state.package.active_find_packages) - 1);
     }
 
     if (*io_found && opt->requested_version.count > 0) {
@@ -1169,8 +1169,8 @@ static bool find_package_invoke_dependency_provider(Evaluator_Context *ctx,
 
     if (arena_arr_len(*resolved_args) == 0) return true;
 
-    String_View provider_command_name = ctx->command_state.dependency_provider.command_name;
-    if (provider_command_name.count == 0 || !ctx->command_state.dependency_provider.supports_find_package) return true;
+    String_View provider_command_name = ctx->semantic_state.package.dependency_provider.command_name;
+    if (provider_command_name.count == 0 || !ctx->semantic_state.package.dependency_provider.supports_find_package) return true;
 
     String_View pkg = (*resolved_args)[0];
     String_View found_key = svu_concat_suffix_temp(ctx, pkg, "_FOUND");
@@ -1183,15 +1183,15 @@ static bool find_package_invoke_dependency_provider(Evaluator_Context *ctx,
         if (!eval_sv_arr_push_temp(ctx, &provider_args, (*resolved_args)[i])) return false;
     }
 
-    ctx->command_state.dependency_provider.active_find_package_depth++;
+    ctx->semantic_state.package.dependency_provider.active_find_package_depth++;
     Eval_Result invoke_result = eval_result_ok();
     if (!eval_user_cmd_invoke(ctx, provider_command_name, &provider_args, eval_origin_from_node(ctx, node))) {
         invoke_result = eval_result_from_ctx(ctx);
     } else {
         invoke_result = eval_result_ok_if_running(ctx);
     }
-    if (ctx->command_state.dependency_provider.active_find_package_depth > 0) {
-        ctx->command_state.dependency_provider.active_find_package_depth--;
+    if (ctx->semantic_state.package.dependency_provider.active_find_package_depth > 0) {
+        ctx->semantic_state.package.dependency_provider.active_find_package_depth--;
     }
     if (eval_result_is_fatal(invoke_result)) return false;
 
@@ -1243,7 +1243,7 @@ Eval_Result eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("find_package() EXACT specified without version"), nob_sv_from_cstr("EXACT is ignored when no version is requested"));
     }
 
-    if (opt.bypass_provider && ctx->command_state.dependency_provider.active_find_package_depth == 0) {
+    if (opt.bypass_provider && ctx->semantic_state.package.dependency_provider.active_find_package_depth == 0) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, "dispatcher", nob_sv_from_cstr("find_package(BYPASS_PROVIDER) may only be used from inside a dependency provider"), nob_sv_from_cstr("Remove BYPASS_PROVIDER or call it only from the registered provider command"));
         return eval_result_from_ctx(ctx);
     }
@@ -1252,8 +1252,8 @@ Eval_Result eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
     bool found = false;
     bool found_from_provider = false;
     if (!opt.bypass_provider &&
-        ctx->command_state.dependency_provider.command_name.count > 0 &&
-        ctx->command_state.dependency_provider.supports_find_package) {
+        ctx->semantic_state.package.dependency_provider.command_name.count > 0 &&
+        ctx->semantic_state.package.dependency_provider.supports_find_package) {
         if (!find_package_invoke_dependency_provider(ctx, node, &a, &found, &found_path)) {
             return eval_result_from_ctx(ctx);
         }

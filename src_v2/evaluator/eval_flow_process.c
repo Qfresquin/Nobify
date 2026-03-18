@@ -431,6 +431,7 @@ static bool flow_exec_run_command(Evaluator_Context *ctx,
 
     Eval_Process_Run_Request req = {
         .argv = cmd->args,
+        .argc = arena_arr_len(cmd->args),
         .working_directory = working_directory,
         .stdin_data = stdin_data,
         .has_timeout = deadline_seconds > 0.0,

@@ -115,12 +115,6 @@ static bool msg_is_cmake_false(String_View v) {
     return false;
 }
 
-static bool msg_write_all(FILE *f, const char *text) {
-    if (!f || !text) return false;
-    size_t n = strlen(text);
-    return fwrite(text, 1, n, f) == n;
-}
-
 bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg) {
     if (!ctx) return false;
 
@@ -129,44 +123,32 @@ bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_
 
     String_View cmakefiles_dir = eval_sv_path_join(eval_temp_arena(ctx), bin, nob_sv_from_cstr("CMakeFiles"));
     if (eval_should_stop(ctx)) return false;
-    char *cmakefiles_dir_c = eval_sv_to_cstr_temp(ctx, cmakefiles_dir);
-    EVAL_OOM_RETURN_IF_NULL(ctx, cmakefiles_dir_c, false);
-    if (!nob_mkdir_if_not_exists(cmakefiles_dir_c)) return false;
+    if (!eval_service_mkdir(ctx, cmakefiles_dir)) return false;
 
     String_View log_path = eval_sv_path_join(eval_temp_arena(ctx), cmakefiles_dir, nob_sv_from_cstr("CMakeConfigureLog.yaml"));
     if (eval_should_stop(ctx)) return false;
-    char *log_path_c = eval_sv_to_cstr_temp(ctx, log_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, log_path_c, false);
-
-    FILE *f = fopen(log_path_c, "ab");
-    if (!f) return false;
-
-    bool ok = true;
-    ok = ok && msg_write_all(f, "---\n");
-    ok = ok && msg_write_all(f, "events:\n");
-    ok = ok && msg_write_all(f, "  - kind: \"message-v1\"\n");
-
-    char bt[1024];
-    snprintf(bt, sizeof(bt), "    backtrace:\n      - \"%s:%zu (message)\"\n",
-             ctx->current_file ? ctx->current_file : "CMakeLists.txt",
-             node ? node->line : 0u);
-    ok = ok && msg_write_all(f, bt);
-
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "---\n");
+    nob_sb_append_cstr(&sb, "events:\n");
+    nob_sb_append_cstr(&sb, "  - kind: \"message-v1\"\n");
+    nob_sb_appendf(&sb,
+                   "    backtrace:\n      - \"%s:%zu (message)\"\n",
+                   ctx->current_file ? ctx->current_file : "CMakeLists.txt",
+                   node ? node->line : 0u);
     if (arena_arr_len(ctx->message_check_stack) > 0) {
-        ok = ok && msg_write_all(f, "    checks:\n");
+        nob_sb_append_cstr(&sb, "    checks:\n");
         for (size_t i = arena_arr_len(ctx->message_check_stack); i-- > 0;) {
             String_View check = ctx->message_check_stack[i];
-            ok = ok && msg_write_all(f, "      - \"");
-            if (check.count > 0) ok = ok && (fwrite(check.data, 1, check.count, f) == check.count);
-            ok = ok && msg_write_all(f, "\"\n");
+            nob_sb_append_cstr(&sb, "      - \"");
+            if (check.count > 0) nob_sb_append_buf(&sb, check.data, check.count);
+            nob_sb_append_cstr(&sb, "\"\n");
         }
     }
-
-    ok = ok && msg_write_all(f, "    message: |\n      ");
-    if (msg.count > 0) ok = ok && (fwrite(msg.data, 1, msg.count, f) == msg.count);
-    ok = ok && msg_write_all(f, "\n...\n");
-
-    fclose(f);
+    nob_sb_append_cstr(&sb, "    message: |\n      ");
+    if (msg.count > 0) nob_sb_append_buf(&sb, msg.data, msg.count);
+    nob_sb_append_cstr(&sb, "\n...\n");
+    bool ok = eval_service_write_file(ctx, log_path, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), true);
+    nob_sb_free(sb);
     return ok;
 }
 

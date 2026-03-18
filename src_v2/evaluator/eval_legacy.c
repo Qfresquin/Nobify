@@ -410,7 +410,7 @@ Eval_Result eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node)
     String_View stable_var = sv_copy_to_event_arena(ctx, a[0]);
     String_View stable_cmd = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
     if (eval_should_stop(ctx)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->watched_variables, stable_var)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->watched_variable_commands, stable_cmd)) return eval_result_fatal();
+    if (!EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->watched_variables, stable_var)) return eval_result_fatal();
+    if (!EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->watched_variable_commands, stable_cmd)) return eval_result_fatal();
     return eval_result_from_ctx(ctx);
 }

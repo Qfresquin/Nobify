@@ -118,6 +118,69 @@ typedef struct {
 } Eval_Run_Report;
 
 typedef struct {
+    String_View *argv;
+    size_t argc;
+    String_View working_directory;
+    String_View stdin_data;
+    bool has_timeout;
+    double timeout_seconds;
+} Eval_Process_Run_Request;
+
+typedef struct {
+    String_View stdout_text;
+    String_View stderr_text;
+    String_View result_text;
+    int exit_code;
+    bool started;
+    bool timed_out;
+} Eval_Process_Run_Result;
+
+typedef bool (*Eval_Service_Read_File_Fn)(void *user_data,
+                                          Arena *scratch_arena,
+                                          String_View path,
+                                          String_View *out_contents,
+                                          bool *out_found);
+typedef bool (*Eval_Service_Write_File_Fn)(void *user_data,
+                                           String_View path,
+                                           String_View contents,
+                                           bool append);
+typedef bool (*Eval_Service_Mkdir_Fn)(void *user_data, String_View path);
+typedef bool (*Eval_Service_File_Exists_Fn)(void *user_data,
+                                            String_View path,
+                                            bool *out_exists);
+typedef bool (*Eval_Service_Copy_File_Fn)(void *user_data,
+                                          String_View src,
+                                          String_View dst);
+typedef const char *(*Eval_Service_Get_Env_Fn)(void *user_data,
+                                               Arena *scratch_arena,
+                                               const char *name);
+typedef bool (*Eval_Service_Get_Cwd_Fn)(void *user_data,
+                                        Arena *scratch_arena,
+                                        String_View *out_cwd);
+typedef bool (*Eval_Service_Process_Run_Fn)(void *user_data,
+                                            Arena *scratch_arena,
+                                            const Eval_Process_Run_Request *request,
+                                            Eval_Process_Run_Result *out_result);
+typedef bool (*Eval_Service_Host_Read_File_Fn)(void *user_data,
+                                               Arena *scratch_arena,
+                                               String_View path,
+                                               String_View *out_contents,
+                                               bool *out_found);
+
+struct EvalServices {
+    void *user_data;
+    Eval_Service_Read_File_Fn fs_read_file;
+    Eval_Service_Write_File_Fn fs_write_file;
+    Eval_Service_Mkdir_Fn fs_mkdir;
+    Eval_Service_File_Exists_Fn fs_file_exists;
+    Eval_Service_Copy_File_Fn fs_copy_file;
+    Eval_Service_Get_Env_Fn env_get;
+    Eval_Service_Get_Cwd_Fn process_get_cwd;
+    Eval_Service_Process_Run_Fn process_run_capture;
+    Eval_Service_Host_Read_File_Fn host_read_file;
+};
+
+typedef struct {
     Arena *persistent_arena;
     const EvalServices *services;
     EvalRegistry *registry; /* optional; default registry if NULL */

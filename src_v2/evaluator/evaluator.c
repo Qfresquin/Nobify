@@ -28,6 +28,7 @@ static void destroy_sub_arena_cb(void *userdata) {
 
 Arena *eval_temp_arena(Evaluator_Context *ctx) { return ctx ? ctx->arena : NULL; }
 Arena *eval_event_arena(Evaluator_Context *ctx) { return ctx ? ctx->event_arena : NULL; }
+static Arena *eval_tx_arena(Evaluator_Context *ctx) { return ctx ? ctx->transaction_arena : NULL; }
 
 String_View sv_copy_to_temp_arena(Evaluator_Context *ctx, String_View sv) {
     String_View out = sv_copy_to_arena(ctx ? ctx->arena : NULL, sv);
@@ -37,6 +38,12 @@ String_View sv_copy_to_temp_arena(Evaluator_Context *ctx, String_View sv) {
 
 String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv) {
     String_View out = sv_copy_to_arena(ctx ? ctx->event_arena : NULL, sv);
+    if (ctx && sv.count > 0 && out.count == 0) ctx_oom(ctx);
+    return out;
+}
+
+static String_View sv_copy_to_tx_arena(Evaluator_Context *ctx, String_View sv) {
+    String_View out = sv_copy_to_arena(eval_tx_arena(ctx), sv);
     if (ctx && sv.count > 0 && out.count == 0) ctx_oom(ctx);
     return out;
 }
@@ -176,6 +183,756 @@ bool eval_should_stop(Evaluator_Context *ctx) {
 }
 
 // -----------------------------------------------------------------------------
+// Command transactions
+// -----------------------------------------------------------------------------
+
+static bool eval_emit_event_direct(Evaluator_Context *ctx, Event ev) {
+    if (!ctx || !ctx->stream) return false;
+    if (ev.h.scope_depth == 0) {
+        ev.h.scope_depth = (uint32_t)eval_scope_visible_depth(ctx);
+    }
+    if (ev.h.policy_depth == 0) {
+        ev.h.policy_depth = (uint32_t)eval_policy_visible_depth(ctx);
+    }
+    if (!event_stream_push(ctx->stream, &ev)) {
+        return ctx_oom(ctx);
+    }
+    return true;
+}
+
+static bool eval_tx_snapshot_bytes(Evaluator_Context *ctx,
+                                   const void *src,
+                                   size_t elem_size,
+                                   size_t count,
+                                   void **out_copy) {
+    if (out_copy) *out_copy = NULL;
+    if (!ctx || !out_copy) return false;
+    if (!src || count == 0 || elem_size == 0) return true;
+
+    void *copy = arena_alloc(eval_tx_arena(ctx), elem_size * count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
+    memcpy(copy, src, elem_size * count);
+    *out_copy = copy;
+    return true;
+}
+
+static bool eval_tx_snapshot_sv_array(Evaluator_Context *ctx,
+                                      const String_View *src,
+                                      size_t count,
+                                      String_View **out_copy) {
+    return eval_tx_snapshot_bytes(ctx, src, sizeof(*src), count, (void**)out_copy);
+}
+
+static size_t eval_tx_hash_entry_count_var(Eval_Var_Entry *entries) {
+    size_t count = 0;
+    ptrdiff_t n = stbds_shlen(entries);
+    for (ptrdiff_t i = 0; i < n; i++) {
+        if (entries[i].key) count++;
+    }
+    return count;
+}
+
+static size_t eval_tx_hash_entry_count_cache(Eval_Cache_Entry *entries) {
+    size_t count = 0;
+    ptrdiff_t n = stbds_shlen(entries);
+    for (ptrdiff_t i = 0; i < n; i++) {
+        if (entries[i].key) count++;
+    }
+    return count;
+}
+
+static size_t eval_tx_hash_entry_count_env(Eval_Process_Env_Entry *entries) {
+    size_t count = 0;
+    ptrdiff_t n = stbds_shlen(entries);
+    for (ptrdiff_t i = 0; i < n; i++) {
+        if (entries[i].key) count++;
+    }
+    return count;
+}
+
+static bool eval_tx_snapshot_var_table(Evaluator_Context *ctx,
+                                       Eval_Var_Entry *entries,
+                                       Eval_Var_Table_Snapshot *out) {
+    if (!out) return false;
+    out->entries = NULL;
+    out->count = 0;
+    if (!ctx || !entries) return true;
+
+    out->count = eval_tx_hash_entry_count_var(entries);
+    if (out->count == 0) return true;
+
+    out->entries = arena_alloc(eval_tx_arena(ctx), sizeof(*out->entries) * out->count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, out->entries, false);
+
+    size_t at = 0;
+    ptrdiff_t n = stbds_shlen(entries);
+    for (ptrdiff_t i = 0; i < n; i++) {
+        if (!entries[i].key) continue;
+        out->entries[at++] = entries[i];
+    }
+    return true;
+}
+
+static bool eval_tx_snapshot_cache_table(Evaluator_Context *ctx,
+                                         Eval_Cache_Entry *entries,
+                                         Eval_Cache_Table_Snapshot *out) {
+    if (!out) return false;
+    out->entries = NULL;
+    out->count = 0;
+    if (!ctx || !entries) return true;
+
+    out->count = eval_tx_hash_entry_count_cache(entries);
+    if (out->count == 0) return true;
+
+    out->entries = arena_alloc(eval_tx_arena(ctx), sizeof(*out->entries) * out->count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, out->entries, false);
+
+    size_t at = 0;
+    ptrdiff_t n = stbds_shlen(entries);
+    for (ptrdiff_t i = 0; i < n; i++) {
+        if (!entries[i].key) continue;
+        out->entries[at++] = entries[i];
+    }
+    return true;
+}
+
+static bool eval_tx_snapshot_env_table(Evaluator_Context *ctx,
+                                       Eval_Process_Env_Entry *entries,
+                                       Eval_Process_Env_Table_Snapshot *out) {
+    if (!out) return false;
+    out->entries = NULL;
+    out->count = 0;
+    if (!ctx || !entries) return true;
+
+    out->count = eval_tx_hash_entry_count_env(entries);
+    if (out->count == 0) return true;
+
+    out->entries = arena_alloc(eval_tx_arena(ctx), sizeof(*out->entries) * out->count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, out->entries, false);
+
+    size_t at = 0;
+    ptrdiff_t n = stbds_shlen(entries);
+    for (ptrdiff_t i = 0; i < n; i++) {
+        if (!entries[i].key) continue;
+        out->entries[at++] = entries[i];
+    }
+    return true;
+}
+
+static bool eval_tx_restore_var_table(Eval_Var_Entry **io_entries,
+                                      const Eval_Var_Table_Snapshot *snapshot) {
+    if (!io_entries || !snapshot) return false;
+    if (*io_entries) {
+        stbds_shfree(*io_entries);
+        *io_entries = NULL;
+    }
+    for (size_t i = 0; i < snapshot->count; i++) {
+        Eval_Var_Entry *entries = *io_entries;
+        stbds_shput(entries, snapshot->entries[i].key, snapshot->entries[i].value);
+        *io_entries = entries;
+    }
+    return true;
+}
+
+static bool eval_tx_restore_cache_table(Eval_Cache_Entry **io_entries,
+                                        const Eval_Cache_Table_Snapshot *snapshot) {
+    if (!io_entries || !snapshot) return false;
+    if (*io_entries) {
+        stbds_shfree(*io_entries);
+        *io_entries = NULL;
+    }
+    for (size_t i = 0; i < snapshot->count; i++) {
+        Eval_Cache_Entry *entries = *io_entries;
+        stbds_shput(entries, snapshot->entries[i].key, snapshot->entries[i].value);
+        *io_entries = entries;
+    }
+    return true;
+}
+
+static bool eval_tx_restore_env_table(Eval_Process_Env_Entry **io_entries,
+                                      const Eval_Process_Env_Table_Snapshot *snapshot) {
+    if (!io_entries || !snapshot) return false;
+    if (*io_entries) {
+        stbds_shfree(*io_entries);
+        *io_entries = NULL;
+    }
+    for (size_t i = 0; i < snapshot->count; i++) {
+        Eval_Process_Env_Entry *entries = *io_entries;
+        stbds_shput(entries, snapshot->entries[i].key, snapshot->entries[i].value);
+        *io_entries = entries;
+    }
+    return true;
+}
+
+static bool eval_tx_snapshot_directory_nodes(Evaluator_Context *ctx,
+                                             Eval_Directory_Node *nodes,
+                                             size_t count,
+                                             Eval_Directory_Node_Snapshot **out_copy) {
+    if (out_copy) *out_copy = NULL;
+    if (!ctx || !out_copy) return false;
+    if (!nodes || count == 0) return true;
+
+    Eval_Directory_Node_Snapshot *copy = arena_alloc(eval_tx_arena(ctx), sizeof(*copy) * count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
+    memset(copy, 0, sizeof(*copy) * count);
+
+    for (size_t i = 0; i < count; i++) {
+        copy[i].source_dir = nodes[i].source_dir;
+        copy[i].binary_dir = nodes[i].binary_dir;
+        copy[i].parent_source_dir = nodes[i].parent_source_dir;
+        copy[i].parent_binary_dir = nodes[i].parent_binary_dir;
+        copy[i].declared_target_count = arena_arr_len(nodes[i].declared_targets);
+        copy[i].declared_test_count = arena_arr_len(nodes[i].declared_tests);
+        if (!eval_tx_snapshot_sv_array(ctx,
+                                       nodes[i].declared_targets,
+                                       copy[i].declared_target_count,
+                                       &copy[i].declared_targets)) {
+            return false;
+        }
+        if (!eval_tx_snapshot_sv_array(ctx,
+                                       nodes[i].declared_tests,
+                                       copy[i].declared_test_count,
+                                       &copy[i].declared_tests)) {
+            return false;
+        }
+    }
+
+    *out_copy = copy;
+    return true;
+}
+
+static bool eval_tx_snapshot_deferred_dirs(Evaluator_Context *ctx,
+                                           Eval_Deferred_Dir_Frame *frames,
+                                           size_t count,
+                                           Eval_Deferred_Dir_Frame_Snapshot **out_copy) {
+    if (out_copy) *out_copy = NULL;
+    if (!ctx || !out_copy) return false;
+    if (!frames || count == 0) return true;
+
+    Eval_Deferred_Dir_Frame_Snapshot *copy = arena_alloc(eval_tx_arena(ctx), sizeof(*copy) * count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
+    memset(copy, 0, sizeof(*copy) * count);
+
+    for (size_t i = 0; i < count; i++) {
+        copy[i].source_dir = frames[i].source_dir;
+        copy[i].binary_dir = frames[i].binary_dir;
+        copy[i].call_count = arena_arr_len(frames[i].calls);
+        if (!eval_tx_snapshot_bytes(ctx,
+                                    frames[i].calls,
+                                    sizeof(*frames[i].calls),
+                                    copy[i].call_count,
+                                    (void**)&copy[i].calls)) {
+            return false;
+        }
+    }
+
+    *out_copy = copy;
+    return true;
+}
+
+static bool eval_tx_restore_directory_nodes(Evaluator_Context *ctx,
+                                            Eval_Directory_Node_List *io_nodes,
+                                            const Eval_Directory_Node_Snapshot *snapshot,
+                                            size_t count) {
+    if (!ctx || !io_nodes) return false;
+
+    arena_arr_set_len(*io_nodes, count);
+    if (count > 0 && !*io_nodes) return ctx_oom(ctx);
+
+    for (size_t i = 0; i < count; i++) {
+        Eval_Directory_Node *node = &(*io_nodes)[i];
+        memset(node, 0, sizeof(*node));
+
+        node->source_dir = snapshot[i].source_dir;
+        node->binary_dir = snapshot[i].binary_dir;
+        node->parent_source_dir = snapshot[i].parent_source_dir;
+        node->parent_binary_dir = snapshot[i].parent_binary_dir;
+        for (size_t j = 0; j < snapshot[i].declared_target_count; j++) {
+            if (!EVAL_ARR_PUSH(ctx,
+                               ctx->event_arena,
+                               node->declared_targets,
+                               snapshot[i].declared_targets[j])) {
+                return false;
+            }
+        }
+        for (size_t j = 0; j < snapshot[i].declared_test_count; j++) {
+            if (!EVAL_ARR_PUSH(ctx,
+                               ctx->event_arena,
+                               node->declared_tests,
+                               snapshot[i].declared_tests[j])) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool eval_tx_restore_deferred_dirs(Evaluator_Context *ctx,
+                                          Eval_Deferred_Dir_Frame_Stack *io_frames,
+                                          const Eval_Deferred_Dir_Frame_Snapshot *snapshot,
+                                          size_t count) {
+    if (!ctx || !io_frames) return false;
+
+    arena_arr_set_len(*io_frames, count);
+    if (count > 0 && !*io_frames) return ctx_oom(ctx);
+
+    for (size_t i = 0; i < count; i++) {
+        Eval_Deferred_Dir_Frame *frame = &(*io_frames)[i];
+        memset(frame, 0, sizeof(*frame));
+
+        frame->source_dir = snapshot[i].source_dir;
+        frame->binary_dir = snapshot[i].binary_dir;
+        for (size_t j = 0; j < snapshot[i].call_count; j++) {
+            if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, frame->calls, snapshot[i].calls[j])) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool eval_tx_projection_append(Evaluator_Context *ctx, const Eval_Tx_Projection *projection) {
+    if (!ctx || !projection) return false;
+    Eval_Command_Transaction *tx = ctx->active_transaction;
+    if (!tx) return false;
+    return EVAL_ARR_PUSH(ctx, eval_tx_arena(ctx), tx->projections, *projection);
+}
+
+static bool eval_tx_flush_diag_projection(Evaluator_Context *ctx,
+                                          const Eval_Tx_Diag_Projection *diag) {
+    if (!ctx || !diag) return false;
+
+    Eval_Error_Class cls = eval_diag_error_class(diag->code);
+    Diag_Severity logger_input_sev = (diag->input_severity == EV_DIAG_ERROR) ? DIAG_SEV_ERROR : DIAG_SEV_WARNING;
+
+    diag_log(logger_input_sev,
+             "evaluator",
+             ctx->current_file ? ctx->current_file : "<input>",
+             diag->origin.line,
+             diag->origin.col,
+             nob_temp_sprintf("%.*s", (int)diag->command.count, diag->command.data ? diag->command.data : ""),
+             diag->cause.data ? diag->cause.data : "",
+             diag->hint.data ? diag->hint.data : "");
+
+    Event ev = {0};
+    ev.h.kind = EVENT_DIAG;
+    ev.h.origin = diag->origin;
+    ev.h.scope_depth = diag->scope_depth;
+    ev.h.policy_depth = diag->policy_depth;
+    ev.as.diag.severity = diag->effective_severity;
+    ev.as.diag.component = diag->component;
+    ev.as.diag.command = diag->command;
+    ev.as.diag.code = eval_diag_code_to_sv(diag->code);
+    ev.as.diag.error_class = eval_error_class_to_sv(cls);
+    ev.as.diag.cause = diag->cause;
+    ev.as.diag.hint = diag->hint;
+    if (!eval_emit_event_direct(ctx, ev)) return false;
+
+    eval_report_record_diag(ctx, diag->input_severity, diag->effective_severity, diag->code);
+    return true;
+}
+
+static bool eval_tx_projection_keep_on_failure(const Eval_Tx_Projection *projection) {
+    if (!projection) return false;
+    if (projection->kind == EVAL_TX_PROJECTION_DIAG) return true;
+    return projection->as.event.h.kind == EVENT_COMMAND_BEGIN ||
+           projection->as.event.h.kind == EVENT_COMMAND_END;
+}
+
+size_t eval_pending_warning_count(const Evaluator_Context *ctx) {
+    if (!ctx) return 0;
+
+    size_t count = ctx->runtime_state.run_report.warning_count;
+    for (const Eval_Command_Transaction *tx = ctx->active_transaction; tx; tx = tx->parent) {
+        count += tx->pending_warning_count;
+    }
+    return count;
+}
+
+size_t eval_pending_error_count(const Evaluator_Context *ctx) {
+    if (!ctx) return 0;
+
+    size_t count = ctx->runtime_state.run_report.error_count;
+    for (const Eval_Command_Transaction *tx = ctx->active_transaction; tx; tx = tx->parent) {
+        count += tx->pending_error_count;
+    }
+    return count;
+}
+
+bool eval_command_tx_push_event(Evaluator_Context *ctx, const Event *ev, bool allow_stopped) {
+    if (!ctx || !ev) return false;
+    if (!allow_stopped && eval_should_stop(ctx)) return false;
+    if (allow_stopped && (ctx->oom || !ctx->stream)) return false;
+
+    Event buffered = *ev;
+    buffered.h.scope_depth = (uint32_t)eval_scope_visible_depth(ctx);
+    buffered.h.policy_depth = (uint32_t)eval_policy_visible_depth(ctx);
+
+    if (!ctx->active_transaction) {
+        return eval_emit_event_direct(ctx, buffered);
+    }
+
+    if (buffered.h.kind == EVENT_COMMAND_BEGIN) {
+        return eval_emit_event_direct(ctx, buffered);
+    }
+
+    if (!event_copy_into_arena(eval_tx_arena(ctx), &buffered)) {
+        return ctx_oom(ctx);
+    }
+
+    Eval_Tx_Projection projection = {0};
+    projection.kind = EVAL_TX_PROJECTION_EVENT;
+    projection.as.event = buffered;
+    return eval_tx_projection_append(ctx, &projection);
+}
+
+bool eval_command_tx_push_diag(Evaluator_Context *ctx,
+                               Event_Diag_Severity input_sev,
+                               Event_Diag_Severity effective_sev,
+                               Eval_Diag_Code code,
+                               String_View component,
+                               String_View command,
+                               Event_Origin origin,
+                               String_View cause,
+                               String_View hint) {
+    if (!ctx) return false;
+
+    if (!ctx->active_transaction) {
+        Eval_Tx_Diag_Projection diag = {
+            .input_severity = input_sev,
+            .effective_severity = effective_sev,
+            .code = code,
+            .component = component,
+            .command = command,
+            .origin = origin,
+            .cause = cause,
+            .hint = hint,
+        };
+        return eval_tx_flush_diag_projection(ctx, &diag);
+    }
+
+    Eval_Tx_Projection projection = {0};
+    projection.kind = EVAL_TX_PROJECTION_DIAG;
+    projection.as.diag.input_severity = input_sev;
+    projection.as.diag.effective_severity = effective_sev;
+    projection.as.diag.code = code;
+    projection.as.diag.scope_depth = (uint32_t)eval_scope_visible_depth(ctx);
+    projection.as.diag.policy_depth = (uint32_t)eval_policy_visible_depth(ctx);
+    projection.as.diag.component = sv_copy_to_tx_arena(ctx, component);
+    projection.as.diag.command = sv_copy_to_tx_arena(ctx, command);
+    projection.as.diag.origin = origin;
+    projection.as.diag.cause = sv_copy_to_tx_arena(ctx, cause);
+    projection.as.diag.hint = sv_copy_to_tx_arena(ctx, hint);
+    if (eval_should_stop(ctx)) return false;
+    if (input_sev == EV_DIAG_WARNING) {
+        ctx->active_transaction->pending_warning_count++;
+    }
+    if (effective_sev == EV_DIAG_ERROR) {
+        ctx->active_transaction->saw_error_diag = true;
+        ctx->active_transaction->pending_error_count++;
+    }
+    return eval_tx_projection_append(ctx, &projection);
+}
+
+bool eval_command_tx_begin(Evaluator_Context *ctx, Eval_Command_Transaction *tx) {
+    if (!ctx || !tx || !eval_tx_arena(ctx)) return false;
+    memset(tx, 0, sizeof(*tx));
+    tx->parent = ctx->active_transaction;
+    tx->mark = arena_mark(eval_tx_arena(ctx));
+    tx->active = true;
+    tx->scope_var_count = arena_arr_len(ctx->scope_state.scopes);
+    tx->visible_scope_depth = ctx->scope_state.visible_scope_depth;
+    tx->dependency_provider = ctx->semantic_state.package.dependency_provider;
+    tx->next_deferred_call_id = ctx->file_state.next_deferred_call_id;
+    tx->cpack_component_module_loaded = ctx->cpack_component_module_loaded;
+    tx->fetchcontent_module_loaded = ctx->fetchcontent_module_loaded;
+
+    if (tx->scope_var_count > 0) {
+        tx->scope_vars = arena_alloc(eval_tx_arena(ctx), sizeof(*tx->scope_vars) * tx->scope_var_count);
+        EVAL_OOM_RETURN_IF_NULL(ctx, tx->scope_vars, false);
+        memset(tx->scope_vars, 0, sizeof(*tx->scope_vars) * tx->scope_var_count);
+        for (size_t i = 0; i < tx->scope_var_count; i++) {
+            if (!eval_tx_snapshot_var_table(ctx, ctx->scope_state.scopes[i].vars, &tx->scope_vars[i])) return false;
+        }
+    }
+
+    if (!eval_tx_snapshot_cache_table(ctx, ctx->scope_state.cache_entries, &tx->cache_entries)) return false;
+    if (!eval_tx_snapshot_env_table(ctx, ctx->process_state.env_overrides, &tx->env_overrides)) return false;
+
+    tx->message_check_count = arena_arr_len(ctx->message_check_stack);
+    if (!eval_tx_snapshot_sv_array(ctx, ctx->message_check_stack, tx->message_check_count, &tx->message_check_stack)) return false;
+
+    tx->directory_node_count = arena_arr_len(ctx->semantic_state.directories.nodes);
+    if (!eval_tx_snapshot_directory_nodes(ctx,
+                                          ctx->semantic_state.directories.nodes,
+                                          tx->directory_node_count,
+                                          &tx->directory_nodes)) {
+        return false;
+    }
+
+    tx->property_record_count = arena_arr_len(ctx->semantic_state.properties.records);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.properties.records,
+                                sizeof(*ctx->semantic_state.properties.records),
+                                tx->property_record_count,
+                                (void**)&tx->property_records)) {
+        return false;
+    }
+
+    tx->target_record_count = arena_arr_len(ctx->semantic_state.targets.records);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.targets.records,
+                                sizeof(*ctx->semantic_state.targets.records),
+                                tx->target_record_count,
+                                (void**)&tx->target_records)) {
+        return false;
+    }
+    tx->target_alias_count = arena_arr_len(ctx->semantic_state.targets.aliases);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.targets.aliases,
+                                   tx->target_alias_count,
+                                   &tx->target_aliases)) {
+        return false;
+    }
+    tx->test_record_count = arena_arr_len(ctx->semantic_state.tests.records);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.tests.records,
+                                sizeof(*ctx->semantic_state.tests.records),
+                                tx->test_record_count,
+                                (void**)&tx->test_records)) {
+        return false;
+    }
+    tx->install_component_count = arena_arr_len(ctx->semantic_state.install.components);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.install.components,
+                                   tx->install_component_count,
+                                   &tx->install_components)) {
+        return false;
+    }
+    tx->export_count = arena_arr_len(ctx->semantic_state.export_state.exports);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.export_state.exports,
+                                   tx->export_count,
+                                   &tx->export_entries)) {
+        return false;
+    }
+    tx->active_find_package_count = arena_arr_len(ctx->semantic_state.package.active_find_packages);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.package.active_find_packages,
+                                   tx->active_find_package_count,
+                                   &tx->active_find_packages)) {
+        return false;
+    }
+    tx->fetchcontent_declaration_count = arena_arr_len(ctx->semantic_state.fetchcontent.declarations);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.fetchcontent.declarations,
+                                sizeof(*ctx->semantic_state.fetchcontent.declarations),
+                                tx->fetchcontent_declaration_count,
+                                (void**)&tx->fetchcontent_declarations)) {
+        return false;
+    }
+    tx->fetchcontent_state_count = arena_arr_len(ctx->semantic_state.fetchcontent.states);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.fetchcontent.states,
+                                sizeof(*ctx->semantic_state.fetchcontent.states),
+                                tx->fetchcontent_state_count,
+                                (void**)&tx->fetchcontent_states)) {
+        return false;
+    }
+    tx->active_makeavailable_count = arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.fetchcontent.active_makeavailable,
+                                   tx->active_makeavailable_count,
+                                   &tx->active_makeavailable)) {
+        return false;
+    }
+
+    tx->user_command_count = arena_arr_len(ctx->command_state.user_commands);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->command_state.user_commands,
+                                sizeof(*ctx->command_state.user_commands),
+                                tx->user_command_count,
+                                (void**)&tx->user_commands)) {
+        return false;
+    }
+    tx->watched_variable_count = arena_arr_len(ctx->command_state.watched_variables);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->command_state.watched_variables,
+                                   tx->watched_variable_count,
+                                   &tx->watched_variables)) {
+        return false;
+    }
+    tx->watched_variable_command_count = arena_arr_len(ctx->command_state.watched_variable_commands);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->command_state.watched_variable_commands,
+                                   tx->watched_variable_command_count,
+                                   &tx->watched_variable_commands)) {
+        return false;
+    }
+    tx->property_definition_count = arena_arr_len(ctx->property_definitions);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->property_definitions,
+                                sizeof(*ctx->property_definitions),
+                                tx->property_definition_count,
+                                (void**)&tx->property_definitions)) {
+        return false;
+    }
+
+    tx->file_generate_job_count = arena_arr_len(ctx->file_state.file_generate_jobs);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->file_state.file_generate_jobs,
+                                sizeof(*ctx->file_state.file_generate_jobs),
+                                tx->file_generate_job_count,
+                                (void**)&tx->file_generate_jobs)) {
+        return false;
+    }
+    tx->deferred_dir_count = arena_arr_len(ctx->file_state.deferred_dirs);
+    if (!eval_tx_snapshot_deferred_dirs(ctx,
+                                        ctx->file_state.deferred_dirs,
+                                        tx->deferred_dir_count,
+                                        &tx->deferred_dirs)) {
+        return false;
+    }
+
+    ctx->active_transaction = tx;
+    return true;
+}
+
+bool eval_command_tx_finish(Evaluator_Context *ctx, Eval_Command_Transaction *tx, bool commit_state) {
+    if (!ctx || !tx || ctx->active_transaction != tx) return false;
+
+#define EVAL_TX_RESTORE_ARRAY(arena_expr, dst, snap_items, snap_count)                                \
+    do {                                                                                               \
+        if ((dst) || (snap_count) > 0) {                                                               \
+            arena_arr_set_len((dst), (snap_count));                                                    \
+            if ((snap_count) > 0) memcpy((dst), (snap_items), sizeof(*(dst)) * (snap_count));         \
+        }                                                                                              \
+    } while (0)
+
+    if (!commit_state) {
+        if (arena_arr_len(ctx->scope_state.scopes) > tx->scope_var_count) {
+            arena_arr_set_len(ctx->scope_state.scopes, tx->scope_var_count);
+        }
+        ctx->scope_state.visible_scope_depth = tx->visible_scope_depth;
+        if (!eval_tx_restore_cache_table(&ctx->scope_state.cache_entries, &tx->cache_entries)) {
+            ctx->active_transaction = tx->parent;
+            arena_rewind(eval_tx_arena(ctx), tx->mark);
+            return false;
+        }
+        if (!eval_tx_restore_env_table(&ctx->process_state.env_overrides, &tx->env_overrides)) {
+            ctx->active_transaction = tx->parent;
+            arena_rewind(eval_tx_arena(ctx), tx->mark);
+            return false;
+        }
+
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena, ctx->message_check_stack, tx->message_check_stack, tx->message_check_count);
+
+        if (!eval_tx_restore_directory_nodes(ctx,
+                                             &ctx->semantic_state.directories.nodes,
+                                             tx->directory_nodes,
+                                             tx->directory_node_count)) {
+            ctx->active_transaction = tx->parent;
+            arena_rewind(eval_tx_arena(ctx), tx->mark);
+            return false;
+        }
+
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.properties.records,
+                              tx->property_records,
+                              tx->property_record_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->semantic_state.targets.arena,
+                              ctx->semantic_state.targets.records,
+                              tx->target_records,
+                              tx->target_record_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->semantic_state.targets.arena,
+                              ctx->semantic_state.targets.aliases,
+                              tx->target_aliases,
+                              tx->target_alias_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->semantic_state.tests.arena,
+                              ctx->semantic_state.tests.records,
+                              tx->test_records,
+                              tx->test_record_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.install.components,
+                              tx->install_components,
+                              tx->install_component_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.export_state.exports,
+                              tx->export_entries,
+                              tx->export_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.package.active_find_packages,
+                              tx->active_find_packages,
+                              tx->active_find_package_count);
+        ctx->semantic_state.package.dependency_provider = tx->dependency_provider;
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.fetchcontent.declarations,
+                              tx->fetchcontent_declarations,
+                              tx->fetchcontent_declaration_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.fetchcontent.states,
+                              tx->fetchcontent_states,
+                              tx->fetchcontent_state_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.fetchcontent.active_makeavailable,
+                              tx->active_makeavailable,
+                              tx->active_makeavailable_count);
+
+        EVAL_TX_RESTORE_ARRAY(ctx->command_state.user_commands_arena,
+                              ctx->command_state.user_commands,
+                              tx->user_commands,
+                              tx->user_command_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->command_state.user_commands_arena,
+                              ctx->command_state.watched_variables,
+                              tx->watched_variables,
+                              tx->watched_variable_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->command_state.user_commands_arena,
+                              ctx->command_state.watched_variable_commands,
+                              tx->watched_variable_commands,
+                              tx->watched_variable_command_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->property_definitions,
+                              tx->property_definitions,
+                              tx->property_definition_count);
+
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->file_state.file_generate_jobs,
+                              tx->file_generate_jobs,
+                              tx->file_generate_job_count);
+        if (!eval_tx_restore_deferred_dirs(ctx,
+                                           &ctx->file_state.deferred_dirs,
+                                           tx->deferred_dirs,
+                                           tx->deferred_dir_count)) {
+            ctx->active_transaction = tx->parent;
+            arena_rewind(eval_tx_arena(ctx), tx->mark);
+            return false;
+        }
+        ctx->file_state.next_deferred_call_id = tx->next_deferred_call_id;
+        ctx->cpack_component_module_loaded = tx->cpack_component_module_loaded;
+        ctx->fetchcontent_module_loaded = tx->fetchcontent_module_loaded;
+    }
+
+    bool flush_ok = true;
+    for (size_t i = 0; i < arena_arr_len(tx->projections); i++) {
+        Eval_Tx_Projection *projection = &tx->projections[i];
+        if (!commit_state && !eval_tx_projection_keep_on_failure(projection)) continue;
+        if (projection->kind == EVAL_TX_PROJECTION_EVENT) {
+            flush_ok = flush_ok && eval_emit_event_direct(ctx, projection->as.event);
+        } else {
+            flush_ok = flush_ok && eval_tx_flush_diag_projection(ctx, &projection->as.diag);
+        }
+    }
+
+    ctx->active_transaction = tx->parent;
+    arena_rewind(eval_tx_arena(ctx), tx->mark);
+    return flush_ok;
+
+#undef EVAL_TX_RESTORE_ARRAY
+}
+
+// -----------------------------------------------------------------------------
 // Diagnostics (error as data)
 // -----------------------------------------------------------------------------
 
@@ -218,33 +975,18 @@ Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
     Event_Diag_Severity compat_sev = eval_compat_effective_severity(ctx, sev);
     Diag_Severity logger_input_sev = eval_diag_to_global_severity(compat_sev);
     Event_Diag_Severity effective_sev = eval_diag_from_global_severity(diag_effective_severity(logger_input_sev));
-
-    diag_log(logger_input_sev,
-             "evaluator",
-             ctx->current_file ? ctx->current_file : "<input>",
-             origin.line,
-             origin.col,
-             nob_temp_sprintf("%.*s", (int)command.count, command.data ? command.data : ""),
-             cause.data ? cause.data : "",
-             hint.data ? hint.data : "");
-
-    Event ev = {0};
-    ev.h.kind = EVENT_DIAG;
-    ev.h.origin = origin;
-    ev.h.scope_depth = (uint32_t) eval_scope_visible_depth(ctx);
-    ev.h.policy_depth = (uint32_t) eval_policy_visible_depth(ctx);
-    ev.as.diag.severity = effective_sev;
-    ev.as.diag.component = sv_copy_to_event_arena(ctx, component);
-    ev.as.diag.command = sv_copy_to_event_arena(ctx, command);
-    ev.as.diag.code = sv_copy_to_event_arena(ctx, eval_diag_code_to_sv(code));
-    ev.as.diag.error_class = sv_copy_to_event_arena(ctx, eval_error_class_to_sv(cls));
-    ev.as.diag.cause = sv_copy_to_event_arena(ctx, cause);
-    ev.as.diag.hint = sv_copy_to_event_arena(ctx, hint);
-    if (!event_stream_push(ctx->stream, &ev)) {
-        (void)ctx_oom(ctx);
+    (void)cls;
+    if (!eval_command_tx_push_diag(ctx,
+                                   compat_sev,
+                                   effective_sev,
+                                   code,
+                                   component,
+                                   command,
+                                   origin,
+                                   cause,
+                                   hint)) {
         return eval_result_fatal();
     }
-    eval_report_record_diag(ctx, compat_sev, effective_sev, code);
     (void)eval_compat_decide_on_diag(ctx, effective_sev);
     if (eval_should_stop(ctx)) return eval_result_fatal();
     if (effective_sev == EV_DIAG_ERROR) return eval_result_soft_error();
@@ -478,33 +1220,34 @@ bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *o
 
 bool eval_target_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
-        if (eval_sv_key_eq(commands->known_targets[i].name, name)) return true;
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
+    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
+        if (eval_sv_key_eq(targets->records[i].name, name)) return true;
     }
     return false;
 }
 
 bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
-    Eval_Command_State *commands = eval_command_slice(ctx);
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
     Eval_Target_Record record = {0};
-    record.name = sv_copy_to_arena(commands->known_targets_arena, name);
+    record.name = sv_copy_to_arena(targets->arena, name);
     if (name.count > 0 && record.name.count == 0) return ctx_oom(ctx);
 
     String_View declared_dir = eval_current_source_dir_for_paths(ctx);
-    record.declared_dir = sv_copy_to_arena(commands->known_targets_arena, declared_dir);
+    record.declared_dir = sv_copy_to_arena(targets->arena, declared_dir);
     if (declared_dir.count > 0 && record.declared_dir.count == 0) return ctx_oom(ctx);
 
-    return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->known_targets, record);
+    if (!EVAL_ARR_PUSH(ctx, targets->arena, targets->records, record)) return false;
+    return eval_directory_note_target(ctx, declared_dir, record.name);
 }
 
 bool eval_target_set_imported(Evaluator_Context *ctx, String_View name, bool imported) {
     if (!ctx) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
-        if (!eval_sv_key_eq(commands->known_targets[i].name, name)) continue;
-        commands->known_targets[i].imported = imported;
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
+    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
+        if (!eval_sv_key_eq(targets->records[i].name, name)) continue;
+        targets->records[i].imported = imported;
         return true;
     }
     return false;
@@ -515,47 +1258,47 @@ bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_V
     *out_dir = nob_sv_from_cstr("");
     if (!ctx) return false;
 
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
-        if (!eval_sv_key_eq(commands->known_targets[i].name, name)) continue;
-        *out_dir = commands->known_targets[i].declared_dir;
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
+    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
+        if (!eval_sv_key_eq(targets->records[i].name, name)) continue;
+        *out_dir = targets->records[i].declared_dir;
         return true;
     }
-    return true;
+    return false;
 }
 
 bool eval_target_is_imported(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_targets); i++) {
-        if (!eval_sv_key_eq(commands->known_targets[i].name, name)) continue;
-        return commands->known_targets[i].imported;
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
+    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
+        if (!eval_sv_key_eq(targets->records[i].name, name)) continue;
+        return targets->records[i].imported;
     }
     return false;
 }
 
 bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->alias_targets); i++) {
-        if (eval_sv_key_eq(commands->alias_targets[i], name)) return true;
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
+    for (size_t i = 0; i < arena_arr_len(targets->aliases); i++) {
+        if (eval_sv_key_eq(targets->aliases[i], name)) return true;
     }
     return false;
 }
 
 bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || eval_target_alias_known(ctx, name)) return true;
-    Eval_Command_State *commands = eval_command_slice(ctx);
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, commands->known_targets_arena, commands->alias_targets, name);
+    return EVAL_ARR_PUSH(ctx, targets->arena, targets->aliases, name);
 }
 
 bool eval_test_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_tests); i++) {
-        if (eval_sv_key_eq(commands->known_tests[i].name, name)) return true;
+    Eval_Test_Model *tests = &ctx->semantic_state.tests;
+    for (size_t i = 0; i < arena_arr_len(tests->records); i++) {
+        if (eval_sv_key_eq(tests->records[i].name, name)) return true;
     }
     return false;
 }
@@ -566,10 +1309,10 @@ bool eval_test_known_in_directory(Evaluator_Context *ctx, String_View name, Stri
     declared_dir = eval_sv_path_normalize_temp(ctx, declared_dir);
     if (eval_should_stop(ctx)) return false;
 
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->known_tests); i++) {
-        if (!eval_sv_key_eq(commands->known_tests[i].name, name)) continue;
-        if (svu_eq_ci_sv(commands->known_tests[i].declared_dir, declared_dir)) return true;
+    Eval_Test_Model *tests = &ctx->semantic_state.tests;
+    for (size_t i = 0; i < arena_arr_len(tests->records); i++) {
+        if (!eval_sv_key_eq(tests->records[i].name, name)) continue;
+        if (svu_eq_ci_sv(tests->records[i].declared_dir, declared_dir)) return true;
     }
     return false;
 }
@@ -581,30 +1324,31 @@ bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View de
     if (eval_should_stop(ctx)) return false;
     if (eval_test_known_in_directory(ctx, name, declared_dir)) return true;
 
-    Eval_Command_State *commands = eval_command_slice(ctx);
+    Eval_Test_Model *tests = &ctx->semantic_state.tests;
     Eval_Test_Record record = {0};
-    record.name = sv_copy_to_arena(commands->known_tests_arena, name);
+    record.name = sv_copy_to_arena(tests->arena, name);
     if (name.count > 0 && record.name.count == 0) return ctx_oom(ctx);
-    record.declared_dir = sv_copy_to_arena(commands->known_tests_arena, declared_dir);
+    record.declared_dir = sv_copy_to_arena(tests->arena, declared_dir);
     if (declared_dir.count > 0 && record.declared_dir.count == 0) return ctx_oom(ctx);
-    return EVAL_ARR_PUSH(ctx, commands->known_tests_arena, commands->known_tests, record);
+    if (!EVAL_ARR_PUSH(ctx, tests->arena, tests->records, record)) return false;
+    return eval_directory_note_test(ctx, declared_dir, record.name);
 }
 
 bool eval_install_component_known(Evaluator_Context *ctx, String_View name) {
     if (!ctx || name.count == 0) return false;
-    Eval_Command_State *commands = eval_command_slice(ctx);
-    for (size_t i = 0; i < arena_arr_len(commands->install_components); i++) {
-        if (eval_sv_key_eq(commands->install_components[i], name)) return true;
+    Eval_Install_Model *install = &ctx->semantic_state.install;
+    for (size_t i = 0; i < arena_arr_len(install->components); i++) {
+        if (eval_sv_key_eq(install->components[i], name)) return true;
     }
     return false;
 }
 
 bool eval_install_component_register(Evaluator_Context *ctx, String_View name) {
     if (!ctx || name.count == 0 || eval_install_component_known(ctx, name)) return true;
-    Eval_Command_State *commands = eval_command_slice(ctx);
+    Eval_Install_Model *install = &ctx->semantic_state.install;
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, commands->install_components, name);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, install->components, name);
 }
 
 // -----------------------------------------------------------------------------
@@ -1011,6 +1755,7 @@ static bool eval_context_bind_request(EvalSession *session,
     ctx->break_requested = false;
     ctx->continue_requested = false;
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    ctx->active_transaction = NULL;
     eval_clear_return_state(ctx);
     eval_clear_stop_if_not_oom(ctx);
 
@@ -1114,9 +1859,11 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg, Even
     ctx->runtime_state.error_budget = 0;
     ctx->runtime_state.continue_on_error_snapshot = (ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
     eval_report_reset(ctx);
+    ctx->active_transaction = NULL;
 
-    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.known_targets_arena)) return NULL;
-    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.known_tests_arena)) return NULL;
+    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->transaction_arena)) return NULL;
+    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.targets.arena)) return NULL;
+    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.tests.arena)) return NULL;
     if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.user_commands_arena)) return NULL;
 
     if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.scopes, ((Var_Scope){0}))) return NULL;
@@ -1288,10 +2035,6 @@ void eval_session_destroy(EvalSession *session) {
 
     Evaluator_Context *ctx = &session->ctx;
     eval_file_lock_cleanup(ctx);
-    if (ctx->command_state.property_store) {
-        stbds_shfree(ctx->command_state.property_store);
-        ctx->command_state.property_store = NULL;
-    }
     if (ctx->scope_state.cache_entries) {
         stbds_shfree(ctx->scope_state.cache_entries);
         ctx->scope_state.cache_entries = NULL;

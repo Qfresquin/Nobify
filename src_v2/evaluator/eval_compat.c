@@ -138,7 +138,7 @@ bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effe
 
     Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
     if (runtime->compat_profile == EVAL_PROFILE_PERMISSIVE) {
-        if (runtime->error_budget > 0 && runtime->run_report.error_count >= runtime->error_budget) {
+        if (runtime->error_budget > 0 && eval_pending_error_count(ctx) >= runtime->error_budget) {
             eval_request_stop(ctx);
         }
     } else {

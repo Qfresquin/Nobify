@@ -43,14 +43,11 @@ static bool eval_read_external_source(Evaluator_Context *ctx,
     memcpy(path_c, file_path.data, file_path.count);
     path_c[file_path.count] = '\0';
 
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) {
+    String_View source_code = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, file_path, &source_code, &found) || !found) {
         return false;
     }
-
-    String_View source_code = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, sb.count));
-    nob_sb_free(sb);
-    if (eval_should_stop(ctx)) return false;
 
     *out_path_c = path_c;
     *out_source_code = source_code;

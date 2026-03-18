@@ -63,8 +63,8 @@ static String_View fetchcontent_upper_temp(Evaluator_Context *ctx, String_View i
 static Eval_FetchContent_Declaration *fetchcontent_find_declaration(Evaluator_Context *ctx,
                                                                     String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return NULL;
-    for (size_t i = 0; i < arena_arr_len(ctx->command_state.fetchcontent_declarations); i++) {
-        Eval_FetchContent_Declaration *decl = &ctx->command_state.fetchcontent_declarations[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.fetchcontent.declarations); i++) {
+        Eval_FetchContent_Declaration *decl = &ctx->semantic_state.fetchcontent.declarations[i];
         if (eval_sv_key_eq(decl->canonical_name, canonical_name)) return decl;
     }
     return NULL;
@@ -73,8 +73,8 @@ static Eval_FetchContent_Declaration *fetchcontent_find_declaration(Evaluator_Co
 static Eval_FetchContent_State *fetchcontent_find_state(Evaluator_Context *ctx,
                                                         String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return NULL;
-    for (size_t i = 0; i < arena_arr_len(ctx->command_state.fetchcontent_states); i++) {
-        Eval_FetchContent_State *state = &ctx->command_state.fetchcontent_states[i];
+    for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.fetchcontent.states); i++) {
+        Eval_FetchContent_State *state = &ctx->semantic_state.fetchcontent.states[i];
         if (eval_sv_key_eq(state->canonical_name, canonical_name)) return state;
     }
     return NULL;
@@ -135,10 +135,8 @@ static String_View fetchcontent_direct_default_binary_dir(Evaluator_Context *ctx
 }
 
 static bool fetchcontent_file_exists(Evaluator_Context *ctx, String_View path) {
-    if (!ctx || path.count == 0) return false;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    return nob_file_exists(path_c) != 0;
+    bool exists = false;
+    return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
 static bool fetchcontent_mkdir_p(Evaluator_Context *ctx, String_View dir) {
@@ -146,29 +144,27 @@ static bool fetchcontent_mkdir_p(Evaluator_Context *ctx, String_View dir) {
     String_View marker = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr(".keep"));
     if (eval_should_stop(ctx)) return false;
     if (!eval_mkdirs_for_parent(ctx, marker)) return false;
-    char *dir_c = eval_sv_to_cstr_temp(ctx, dir);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dir_c, false);
-    return nob_mkdir_if_not_exists(dir_c);
+    return eval_service_mkdir(ctx, dir);
 }
 
 static bool fetchcontent_push_active(Evaluator_Context *ctx, String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return false;
     String_View stable = sv_copy_to_event_arena(ctx, canonical_name);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->command_state.active_fetchcontent_makeavailable, stable);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.fetchcontent.active_makeavailable, stable);
 }
 
 static void fetchcontent_pop_active(Evaluator_Context *ctx, bool pushed) {
     if (!ctx || !pushed) return;
-    if (arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable) == 0) return;
-    arena_arr_set_len(ctx->command_state.active_fetchcontent_makeavailable,
-                      arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable) - 1);
+    if (arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) == 0) return;
+    arena_arr_set_len(ctx->semantic_state.fetchcontent.active_makeavailable,
+                      arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) - 1);
 }
 
 static bool fetchcontent_active_contains(Evaluator_Context *ctx, String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return false;
-    for (size_t i = 0; i < arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable); i++) {
-        if (eval_sv_key_eq(ctx->command_state.active_fetchcontent_makeavailable[i], canonical_name)) return true;
+    for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable); i++) {
+        if (eval_sv_key_eq(ctx->semantic_state.fetchcontent.active_makeavailable[i], canonical_name)) return true;
     }
     return false;
 }
@@ -216,7 +212,7 @@ static bool fetchcontent_upsert_state(Evaluator_Context *ctx,
     entry.source_dir = sv_copy_to_event_arena(ctx, source_dir);
     entry.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->command_state.fetchcontent_states, entry);
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.fetchcontent.states, entry);
 }
 
 static bool fetchcontent_looks_like_url(String_View value) {
@@ -751,7 +747,8 @@ static bool fetchcontent_git_run(Evaluator_Context *ctx,
                                  int *out_exit_code) {
     if (!ctx) return false;
     Eval_Process_Run_Request req = {0};
-    req.argv = (SV_List)argv;
+    req.argv = (String_View*)argv;
+    req.argc = arena_arr_len(argv);
     req.working_directory = working_directory;
 
     Eval_Process_Run_Result proc = {0};
@@ -1117,9 +1114,9 @@ static bool fetchcontent_invoke_dependency_provider(Evaluator_Context *ctx,
     if (!ctx || !node || !decl || !out_populated) return false;
     *out_populated = false;
 
-    String_View provider_command_name = ctx->command_state.dependency_provider.command_name;
+    String_View provider_command_name = ctx->semantic_state.package.dependency_provider.command_name;
     if (provider_command_name.count == 0 ||
-        !ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial) {
+        !ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial) {
         return true;
     }
 
@@ -1131,15 +1128,15 @@ static bool fetchcontent_invoke_dependency_provider(Evaluator_Context *ctx,
         if (!eval_sv_arr_push_temp(ctx, &provider_args, provider_method_args[i])) return false;
     }
 
-    ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth++;
+    ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth++;
     Eval_Result invoke_result = eval_result_ok();
     if (!eval_user_cmd_invoke(ctx, provider_command_name, &provider_args, eval_origin_from_node(ctx, node))) {
         invoke_result = eval_result_from_ctx(ctx);
     } else {
         invoke_result = eval_result_ok_if_running(ctx);
     }
-    if (ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth > 0) {
-        ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth--;
+    if (ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth > 0) {
+        ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth--;
     }
     if (eval_result_is_fatal(invoke_result)) return false;
 
@@ -1198,8 +1195,8 @@ static bool fetchcontent_makeavailable_one(Evaluator_Context *ctx,
     bool provider_populated = false;
     if (!already_active &&
         !has_source_override &&
-        ctx->command_state.dependency_provider.command_name.count > 0 &&
-        ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial) {
+        ctx->semantic_state.package.dependency_provider.command_name.count > 0 &&
+        ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial) {
         if (!fetchcontent_invoke_dependency_provider(ctx, node, decl, &provider_populated)) {
             fetchcontent_pop_active(ctx, pushed_active);
             return false;
@@ -1271,7 +1268,7 @@ Eval_Result eval_handle_fetchcontent_declare(Evaluator_Context *ctx, const Node 
 
     Eval_FetchContent_Declaration decl = {0};
     if (!fetchcontent_clone_declaration_to_event(ctx, &decl, &parsed)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->command_state.fetchcontent_declarations, decl)) {
+    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.fetchcontent.declarations, decl)) {
         return eval_result_fatal();
     }
     if (!fetchcontent_upsert_state(ctx, decl.name, decl.canonical_name, false, decl.source_dir, decl.binary_dir)) {
@@ -1454,8 +1451,8 @@ Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const 
                                        nob_sv_from_cstr("Usage: FetchContent_SetPopulated(<name> [SOURCE_DIR <dir>] [BINARY_DIR <dir>])"));
         return eval_result_from_ctx(ctx);
     }
-    if (ctx->command_state.dependency_provider.active_fetchcontent_makeavailable_depth == 0 ||
-        arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable) == 0) {
+    if (ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth == 0 ||
+        arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) == 0) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -1471,7 +1468,7 @@ Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const 
     String_View canonical_name = fetchcontent_lower_temp(ctx, dependency_name);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     String_View active_name =
-        ctx->command_state.active_fetchcontent_makeavailable[arena_arr_len(ctx->command_state.active_fetchcontent_makeavailable) - 1];
+        ctx->semantic_state.fetchcontent.active_makeavailable[arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) - 1];
     if (!eval_sv_key_eq(active_name, canonical_name)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,

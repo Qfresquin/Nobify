@@ -1057,6 +1057,70 @@ TEST(evaluator_directory_scoped_property_queries_require_known_directories) {
     TEST_PASS();
 }
 
+TEST(evaluator_directory_property_inheritance_uses_directory_graph_parent) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("graph_parent"));
+    ASSERT(nob_mkdir_if_not_exists("graph_child"));
+    ASSERT(nob_write_entire_file("graph_child/main.c", "int main(void){return 0;}\n", strlen("int main(void){return 0;}\n")));
+    ASSERT(nob_write_entire_file("graph_child/CMakeLists.txt",
+                                 "get_property(CHILD_MARK DIRECTORY PROPERTY GRAPH_MARK)\n"
+                                 "add_executable(graph_child_probe main.c)\n"
+                                 "target_compile_definitions(graph_child_probe PRIVATE CHILD_MARK=${CHILD_MARK})\n",
+                                 strlen("get_property(CHILD_MARK DIRECTORY PROPERTY GRAPH_MARK)\n"
+                                        "add_executable(graph_child_probe main.c)\n"
+                                        "target_compile_definitions(graph_child_probe PRIVATE CHILD_MARK=${CHILD_MARK})\n")));
+    ASSERT(nob_write_entire_file("graph_parent/CMakeLists.txt",
+                                 "set_property(DIRECTORY PROPERTY GRAPH_MARK from_parent)\n"
+                                 "add_subdirectory(../graph_child graph_child_build)\n",
+                                 strlen("set_property(DIRECTORY PROPERTY GRAPH_MARK from_parent)\n"
+                                        "add_subdirectory(../graph_child graph_child_build)\n")));
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "define_property(DIRECTORY PROPERTY GRAPH_MARK INHERITED)\n"
+        "set_property(DIRECTORY PROPERTY GRAPH_MARK from_root)\n"
+        "add_subdirectory(graph_parent)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_child_mark_from_parent = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("graph_child_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("CHILD_MARK=from_parent"))) {
+            saw_child_mark_from_parent = true;
+        }
+    }
+
+    ASSERT(saw_child_mark_from_parent);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2077,6 +2141,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
     test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed);
+    test_evaluator_directory_property_inheritance_uses_directory_graph_parent(passed, failed);
     test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);

@@ -218,8 +218,8 @@ TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ClearedPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
                      nob_sv_from_cstr("FIND_PACKAGE:ProvidedPkg;FIND_PACKAGE:FallbackPkg")));
-    ASSERT(ctx->command_state.dependency_provider.command_name.count == 0);
-    ASSERT(!ctx->command_state.dependency_provider.supports_find_package);
+    ASSERT(ctx->semantic_state.package.dependency_provider.command_name.count == 0);
+    ASSERT(!ctx->semantic_state.package.dependency_provider.supports_find_package);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
@@ -310,9 +310,9 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
                      eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN"))));
     ASSERT(eval_target_known(ctx, nob_sv_from_cstr("local_from_fetch")));
     ASSERT(eval_target_known(ctx, nob_sv_from_cstr("bypass_from_fetch")));
-    ASSERT(ctx->command_state.dependency_provider.command_name.count == 0);
-    ASSERT(!ctx->command_state.dependency_provider.supports_find_package);
-    ASSERT(!ctx->command_state.dependency_provider.supports_fetchcontent_makeavailable_serial);
+    ASSERT(ctx->semantic_state.package.dependency_provider.command_name.count == 0);
+    ASSERT(!ctx->semantic_state.package.dependency_provider.supports_find_package);
+    ASSERT(!ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);

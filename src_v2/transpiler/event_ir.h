@@ -908,6 +908,7 @@ Event_Stream *event_stream_create(Arena *arena);
 // payload ownership boundary: strings and string arrays are deep-copied into
 // the stream arena on success.
 bool event_stream_push(Event_Stream *stream, const Event *ev);
+bool event_copy_into_arena(Arena *arena, Event *ev);
 Event_Stream_Iterator event_stream_iter(const Event_Stream *stream);
 bool event_stream_next(Event_Stream_Iterator *it);
 

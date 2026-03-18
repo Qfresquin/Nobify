@@ -455,6 +455,11 @@ bool event_stream_push(Event_Stream *stream, const Event *src) {
     return true;
 }
 
+bool event_copy_into_arena(Arena *arena, Event *ev) {
+    if (!arena || !ev) return false;
+    return event_deep_copy_payload(arena, ev);
+}
+
 Event_Stream_Iterator event_stream_iter(const Event_Stream *stream) {
     Event_Stream_Iterator it = {0};
     it.stream = stream;
