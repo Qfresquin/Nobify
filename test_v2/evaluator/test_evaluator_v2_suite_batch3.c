@@ -107,6 +107,63 @@ TEST(evaluator_list_transform_output_variable_requires_single_output_var) {
     TEST_PASS();
 }
 
+TEST(evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(SORT_NAT \"a10;a2;A1\")\n"
+        "list(SORT SORT_NAT COMPARE NATURAL CASE INSENSITIVE)\n"
+        "set(SORT_BASE \"/tmp/A2.txt;/tmp/a1.txt;/tmp/b10.txt\")\n"
+        "list(SORT SORT_BASE COMPARE FILE_BASENAME CASE INSENSITIVE ORDER DESCENDING)\n"
+        "set(L \"  one  ;two;three;four\")\n"
+        "list(TRANSFORM L STRIP AT 0 OUTPUT_VARIABLE L_AT)\n"
+        "list(TRANSFORM L APPEND _X FOR 1 3 2 OUTPUT_VARIABLE L_FOR)\n"
+        "list(TRANSFORM L TOUPPER REGEX \"^t\" OUTPUT_VARIABLE L_REGEX)\n"
+        "list(TRANSFORM L REPLACE \"o\" \"O\" REGEX \"^t\" OUTPUT_VARIABLE L_REPLACE_REGEX)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SORT_NAT")),
+                     nob_sv_from_cstr("A1;a2;a10")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("SORT_BASE")),
+                     nob_sv_from_cstr("/tmp/b10.txt;/tmp/A2.txt;/tmp/a1.txt")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("L")),
+                     nob_sv_from_cstr("  one  ;two;three;four")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("L_AT")),
+                     nob_sv_from_cstr("one;two;three;four")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("L_FOR")),
+                     nob_sv_from_cstr("  one  ;two_X;three;four_X")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("L_REGEX")),
+                     nob_sv_from_cstr("  one  ;TWO;THREE;four")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("L_REPLACE_REGEX")),
+                     nob_sv_from_cstr("  one  ;twO;three;four")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_math_rejects_empty_and_incomplete_invocations) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2493,6 +2550,7 @@ TEST(evaluator_batch6_metadata_commands_reject_incomplete_option_values) {
 void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);
     test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed);
+    test_evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations(passed, failed);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);
     test_evaluator_set_target_properties_rejects_alias_target(passed, failed);
     test_evaluator_add_executable_imported_and_alias_signatures(passed, failed);

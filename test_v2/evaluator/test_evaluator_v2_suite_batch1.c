@@ -1066,6 +1066,76 @@ TEST(evaluator_cmake_path_extended_surface_and_strict_validation) {
     TEST_PASS();
 }
 
+TEST(evaluator_cmake_path_getters_and_relative_absolute_roundtrip_cover_remaining_components) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr("/src");
+    init.binary_dir = nob_sv_from_cstr("/bin");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_path(SET P_DRV \"C:/alpha/beta/file.name.ext\")\n"
+        "cmake_path(GET P_DRV ROOT_NAME P_ROOT_NAME)\n"
+        "cmake_path(GET P_DRV ROOT_DIRECTORY P_ROOT_DIR)\n"
+        "cmake_path(GET P_DRV ROOT_PATH P_ROOT_PATH)\n"
+        "cmake_path(GET P_DRV FILENAME P_FILENAME)\n"
+        "cmake_path(GET P_DRV RELATIVE_PART P_RELATIVE_PART)\n"
+        "cmake_path(GET P_DRV PARENT_PATH P_PARENT_PATH)\n"
+        "cmake_path(SET P_REL \"alpha/./beta\")\n"
+        "cmake_path(ABSOLUTE_PATH P_REL BASE_DIRECTORY \"C:/base\" NORMALIZE OUTPUT_VARIABLE P_ABS)\n"
+        "cmake_path(RELATIVE_PATH P_ABS BASE_DIRECTORY \"C:/base\" OUTPUT_VARIABLE P_REL_AGAIN)\n"
+        "cmake_path(HAS_ROOT_PATH P_REL P_REL_HAS_ROOT_PATH)\n"
+        "cmake_path(SET P_ROOT_ONLY \"C:/\")\n"
+        "cmake_path(HAS_FILENAME P_ROOT_ONLY P_ROOT_HAS_FILENAME)\n"
+        "cmake_path(COMPARE \"C:\\\\alpha\\\\beta\" EQUAL \"C:/alpha/beta\" P_CANON_EQ)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_ROOT_NAME")),
+                     nob_sv_from_cstr("C:")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_ROOT_DIR")),
+                     nob_sv_from_cstr("/")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_ROOT_PATH")),
+                     nob_sv_from_cstr("C:/")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_FILENAME")),
+                     nob_sv_from_cstr("file.name.ext")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_RELATIVE_PART")),
+                     nob_sv_from_cstr("alpha/beta/file.name.ext")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_PARENT_PATH")),
+                     nob_sv_from_cstr("C:/alpha/beta")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_ABS")),
+                     nob_sv_from_cstr("C:/base/alpha/beta")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_REL_AGAIN")),
+                     nob_sv_from_cstr("alpha/beta")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_REL_HAS_ROOT_PATH")),
+                     nob_sv_from_cstr("OFF")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_ROOT_HAS_FILENAME")),
+                     nob_sv_from_cstr("OFF")));
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("P_CANON_EQ")),
+                     nob_sv_from_cstr("ON")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_flow_commands_reject_extra_arguments) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2269,6 +2339,7 @@ void run_evaluator_v2_batch1(int *passed, int *failed) {
     test_evaluator_run_result_kind_tri_state_contract(passed, failed);
     test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed);
     test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed);
+    test_evaluator_cmake_path_getters_and_relative_absolute_roundtrip_cover_remaining_components(passed, failed);
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
     test_evaluator_while_iteration_limit_snapshot_applies_per_loop_entry(passed, failed);
     test_evaluator_while_iteration_limit_invalid_value_warns_and_falls_back(passed, failed);
