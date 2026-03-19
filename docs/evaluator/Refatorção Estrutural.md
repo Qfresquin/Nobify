@@ -125,8 +125,11 @@ Exit criteria:
 
 Snapshot status (March 19, 2026):
 - The public shim based on `Evaluator_Context` is gone from `src_v2/evaluator/evaluator.h`.
+- `EvalNativeCommandDef` is now the only public native-command definition type.
 - Native handlers now receive `EvalExecContext *`, and public native extension points are session/registry based.
-- `eval_session_run(...)` instantiates a fresh per-run `EvalExecContext`, then snapshots only persistent state back into `EvalSession`.
+- `EvalSession` now owns canonical persistent state directly through `EvalSessionState`; it no longer stores a hidden persisted execution context.
+- `eval_session_create(...)` initializes canonical session state directly and no longer bootstraps it through a temporary `Event_Stream`.
+- `eval_session_run(...)` instantiates a fresh per-run `EvalExecContext`, loads the current `EvalSessionState`, and commits only canonical persistent state back into `EvalSession` at the end of the run.
 - Flow control (`break` / `continue` / `return`) is modeled on execution frames instead of global run booleans.
 - Registry mutation is blocked during `eval_session_run(...)`.
 - `test_v2/evaluator`, `test_v2/pipeline`, `test_v2/codegen`, and `src_v2/app` no longer include evaluator internals and now use the public session/request API.
@@ -162,3 +165,9 @@ new evaluator features by extending:
 without having to reinterpret the architecture for each new command family.
 
 This acceptance bar is satisfied in the current workspace snapshot.
+
+Textual closure checks for this wave:
+- no `persisted_exec`
+- no `run_active`
+- no `Evaluator_Native_Command_Def`
+- no public `Evaluator_Context`

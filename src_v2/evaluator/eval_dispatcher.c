@@ -30,7 +30,7 @@ bool eval_dispatcher_seed_builtin_commands(EvalRegistry *registry) {
     if (registry->builtins_seeded) return true;
 #define SEED_BUILTIN(cmd_name, cmd_handler, cmd_level, cmd_fallback)                                  \
     do {                                                                                               \
-        Evaluator_Native_Command_Def def = {0};                                                       \
+        EvalNativeCommandDef def = {0};                                                                \
         def.name = nob_sv_from_cstr(cmd_name);                                                         \
         def.handler = (cmd_handler);                                                                   \
         def.implemented_level = (cmd_level);                                                           \

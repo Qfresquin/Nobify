@@ -575,6 +575,22 @@ typedef struct Eval_Command_Transaction {
     bool fetchcontent_module_loaded;
 } Eval_Command_Transaction;
 
+typedef struct {
+    EvalRegistry *registry;
+    const EvalServices *services;
+    Eval_Scope_State scope_state;
+    Eval_Semantic_State semantic_state;
+    Eval_Command_State command_state;
+    Eval_Process_State process_state;
+    Eval_Property_Definition_List property_definitions;
+    Eval_Policy_Level *policy_levels;
+    size_t visible_policy_depth;
+    Eval_Runtime_State runtime_state;
+    Arena *transaction_arena;
+    bool cpack_component_module_loaded;
+    bool fetchcontent_module_loaded;
+} EvalSessionState;
+
 struct EvalExecContext {
     struct EvalSession *session;
     Arena *arena;          // TEMP ARENA: Limpa a cada statement (usado p/ expansão de args)
@@ -623,12 +639,11 @@ struct EvalRegistry {
 };
 
 struct EvalSession {
-    EvalExecContext persisted_exec;
+    EvalSessionState state;
     Arena *persistent_arena;
     String_View source_root;
     String_View binary_root;
     bool owns_registry;
-    bool run_active;
     Eval_Run_Report last_run_report;
 };
 
@@ -2132,13 +2147,13 @@ Eval_Native_Command *eval_native_cmd_find(EvalExecContext *ctx, String_View name
 const Eval_Native_Command *eval_native_cmd_find_const(const EvalExecContext *ctx, String_View name);
 const Eval_Native_Command *eval_registry_find_const(const EvalRegistry *registry, String_View name);
 bool eval_registry_register_internal(EvalRegistry *registry,
-                                     const Evaluator_Native_Command_Def *def,
+                                     const EvalNativeCommandDef *def,
                                      bool is_builtin);
 bool eval_registry_unregister_internal(EvalRegistry *registry,
                                        String_View name,
                                        bool allow_builtin_remove);
 bool eval_native_cmd_register_internal(EvalExecContext *ctx,
-                                       const Evaluator_Native_Command_Def *def,
+                                       const EvalNativeCommandDef *def,
                                        bool is_builtin,
                                        bool allow_during_run);
 bool eval_native_cmd_unregister_internal(EvalExecContext *ctx,

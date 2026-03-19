@@ -1629,7 +1629,7 @@ static Eval_Native_Command *eval_registry_find(EvalRegistry *registry, String_Vi
 }
 
 bool eval_registry_register_internal(EvalRegistry *registry,
-                                     const Evaluator_Native_Command_Def *def,
+                                     const EvalNativeCommandDef *def,
                                      bool is_builtin) {
     if (!registry || !registry->arena || !def || !def->handler || def->name.count == 0 || !def->name.data) {
         return false;
@@ -1695,7 +1695,7 @@ Eval_Native_Command *eval_native_cmd_find(EvalExecContext *ctx, String_View name
 }
 
 bool eval_native_cmd_register_internal(EvalExecContext *ctx,
-                                       const Evaluator_Native_Command_Def *def,
+                                       const EvalNativeCommandDef *def,
                                        bool is_builtin,
                                        bool allow_during_run) {
     if (!ctx || !ctx->registry || !def || !def->handler || def->name.count == 0 || !def->name.data) return false;
@@ -1779,6 +1779,89 @@ static bool eval_attach_sub_arena(Arena *owner, Arena **out_arena) {
 static const char *eval_copy_cstr_to_arena(Arena *arena, const char *src) {
     if (!arena || !src) return NULL;
     return arena_strndup(arena, src, strlen(src));
+}
+
+static void eval_scope_state_reset_for_session(Eval_Scope_State *scope) {
+    if (!scope) return;
+
+    if (scope->scopes && arena_arr_len(scope->scopes) > 1) {
+        for (size_t i = 1; i < arena_arr_len(scope->scopes); i++) {
+            if (scope->scopes[i].vars) {
+                stbds_shfree(scope->scopes[i].vars);
+                scope->scopes[i].vars = NULL;
+            }
+        }
+        arena_arr_set_len(scope->scopes, 1);
+    }
+
+    scope->visible_scope_depth = arena_arr_len(scope->scopes) > 0 ? 1 : 0;
+    if (scope->macro_frames) arena_arr_set_len(scope->macro_frames, 0);
+    if (scope->block_frames) arena_arr_set_len(scope->block_frames, 0);
+    if (scope->return_propagate_vars) arena_arr_set_len(scope->return_propagate_vars, 0);
+}
+
+static void eval_exec_load_session_state(EvalExecContext *ctx, EvalSession *session) {
+    if (!ctx) return;
+    memset(ctx, 0, sizeof(*ctx));
+    if (!session) return;
+
+    ctx->session = session;
+    ctx->event_arena = session->persistent_arena;
+    ctx->transaction_arena = session->state.transaction_arena;
+    ctx->registry = session->state.registry;
+    ctx->services = session->state.services;
+    ctx->scope_state = session->state.scope_state;
+    ctx->semantic_state = session->state.semantic_state;
+    ctx->command_state = session->state.command_state;
+    ctx->process_state = session->state.process_state;
+    ctx->property_definitions = session->state.property_definitions;
+    ctx->policy_levels = session->state.policy_levels;
+    ctx->visible_policy_depth = session->state.visible_policy_depth;
+    ctx->runtime_state = session->state.runtime_state;
+    ctx->cpack_component_module_loaded = session->state.cpack_component_module_loaded;
+    ctx->fetchcontent_module_loaded = session->state.fetchcontent_module_loaded;
+    ctx->source_dir = session->source_root;
+    ctx->binary_dir = session->binary_root;
+    ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+}
+
+static void eval_exec_prepare_session_view(EvalExecContext *ctx, EvalSession *session) {
+    eval_exec_load_session_state(ctx, session);
+    if (!ctx || !session) return;
+
+    ctx->arena = session->persistent_arena;
+    ctx->stream = NULL;
+    ctx->current_file = NULL;
+    ctx->file_eval_depth = 0;
+    ctx->function_eval_depth = 0;
+    ctx->active_transaction = NULL;
+    ctx->oom = false;
+    ctx->stop_requested = false;
+}
+
+static void eval_session_commit_state_from_exec(EvalSession *session, const EvalExecContext *exec) {
+    if (!session || !exec) return;
+
+    session->state.registry = exec->registry;
+    session->state.services = exec->services;
+    session->state.scope_state = exec->scope_state;
+    eval_scope_state_reset_for_session(&session->state.scope_state);
+    session->state.semantic_state = exec->semantic_state;
+    session->state.command_state = exec->command_state;
+    session->state.process_state = exec->process_state;
+    session->state.property_definitions = exec->property_definitions;
+    session->state.policy_levels = exec->policy_levels;
+    session->state.visible_policy_depth = exec->visible_policy_depth;
+    session->state.runtime_state.compat_profile = exec->runtime_state.compat_profile;
+    session->state.runtime_state.unsupported_policy = exec->runtime_state.unsupported_policy;
+    session->state.runtime_state.error_budget = exec->runtime_state.error_budget;
+    session->state.runtime_state.continue_on_error_snapshot =
+        (exec->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
+    session->state.runtime_state.run_report = (Eval_Run_Report){0};
+    session->state.runtime_state.in_variable_watch_notification = false;
+    session->state.transaction_arena = exec->transaction_arena;
+    session->state.cpack_component_module_loaded = exec->cpack_component_module_loaded;
+    session->state.fetchcontent_module_loaded = exec->fetchcontent_module_loaded;
 }
 
 static bool eval_push_root_exec_context(EvalExecContext *ctx) {
@@ -1867,39 +1950,6 @@ static bool eval_exec_bind_request(EvalExecContext *ctx,
     return true;
 }
 
-static void eval_session_snapshot_from_exec(EvalSession *session, const EvalExecContext *exec) {
-    if (!session || !exec) return;
-
-    EvalExecContext *dst = &session->persisted_exec;
-    *dst = *exec;
-    dst->session = session;
-    dst->arena = session->persistent_arena;
-    dst->stream = NULL;
-    dst->source_dir = session->source_root;
-    dst->binary_dir = session->binary_root;
-    dst->current_file = NULL;
-
-    dst->scope_state.visible_scope_depth = 1;
-    if (dst->scope_state.macro_frames) arena_arr_set_len(dst->scope_state.macro_frames, 0);
-    if (dst->scope_state.block_frames) arena_arr_set_len(dst->scope_state.block_frames, 0);
-    if (dst->scope_state.return_propagate_vars) arena_arr_set_len(dst->scope_state.return_propagate_vars, 0);
-    if (dst->message_check_stack) arena_arr_set_len(dst->message_check_stack, 0);
-    if (dst->exec_contexts) arena_arr_set_len(dst->exec_contexts, 0);
-    if (dst->file_state.deferred_dirs) arena_arr_set_len(dst->file_state.deferred_dirs, 0);
-
-    dst->visible_policy_depth = 0;
-    dst->file_eval_depth = 0;
-    dst->function_eval_depth = 0;
-    dst->return_context = EVAL_RETURN_CTX_TOPLEVEL;
-    dst->runtime_state.run_report = (Eval_Run_Report){0};
-    dst->runtime_state.continue_on_error_snapshot =
-        (dst->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
-    dst->runtime_state.in_variable_watch_notification = false;
-    dst->active_transaction = NULL;
-    dst->oom = false;
-    dst->stop_requested = false;
-}
-
 static Eval_Result eval_context_run_prepared(EvalExecContext *ctx, Ast_Root ast) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     if (!eval_push_root_exec_context(ctx)) return eval_result_fatal();
@@ -1953,41 +2003,39 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     EVAL_SESSION_CREATE_REQUIRE(!(source_root.count > 0 && session->source_root.count == 0), "copy source_root");
     EVAL_SESSION_CREATE_REQUIRE(!(binary_root.count > 0 && session->binary_root.count == 0), "copy binary_root");
 
-    EvalExecContext *ctx = &session->persisted_exec;
-    ctx->session = session;
-    ctx->arena = cfg->persistent_arena;
-    ctx->event_arena = cfg->persistent_arena;
-    ctx->stream = event_stream_create(cfg->persistent_arena);
-    EVAL_SESSION_CREATE_REQUIRE(ctx->stream, "create bootstrap stream");
-
-    ctx->services = cfg->services;
-    ctx->registry = cfg->registry;
-    if (!ctx->registry) {
-        ctx->registry = eval_registry_create(cfg->persistent_arena);
-        EVAL_SESSION_CREATE_REQUIRE(ctx->registry, "create registry");
+    session->state.services = cfg->services;
+    session->state.registry = cfg->registry;
+    if (!session->state.registry) {
+        session->state.registry = eval_registry_create(cfg->persistent_arena);
+        EVAL_SESSION_CREATE_REQUIRE(session->state.registry, "create registry");
         session->owns_registry = true;
     }
-    EVAL_SESSION_CREATE_REQUIRE(eval_dispatcher_seed_builtin_commands(ctx->registry), "seed builtins");
+    EVAL_SESSION_CREATE_REQUIRE(eval_dispatcher_seed_builtin_commands(session->state.registry), "seed builtins");
 
-    ctx->source_dir = session->source_root;
-    ctx->binary_dir = session->binary_root;
-    ctx->current_file = NULL;
-    ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
-    eval_clear_return_state(ctx);
-    ctx->runtime_state.compat_profile = EVAL_PROFILE_PERMISSIVE;
+    session->state.runtime_state.compat_profile = EVAL_PROFILE_PERMISSIVE;
     if (cfg->compat_profile == EVAL_PROFILE_STRICT || cfg->compat_profile == EVAL_PROFILE_CI_STRICT) {
-        ctx->runtime_state.compat_profile = cfg->compat_profile;
+        session->state.runtime_state.compat_profile = cfg->compat_profile;
     }
-    ctx->runtime_state.unsupported_policy = EVAL_UNSUPPORTED_WARN;
-    ctx->runtime_state.error_budget = 0;
-    ctx->runtime_state.continue_on_error_snapshot = (ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
-    eval_report_reset(ctx);
-    ctx->active_transaction = NULL;
+    session->state.runtime_state.unsupported_policy = EVAL_UNSUPPORTED_WARN;
+    session->state.runtime_state.error_budget = 0;
+    session->state.runtime_state.continue_on_error_snapshot =
+        (session->state.runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
+    session->state.runtime_state.run_report = (Eval_Run_Report){0};
+    session->state.runtime_state.in_variable_watch_notification = false;
 
-    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->transaction_arena), "attach tx arena");
-    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.targets.arena), "attach targets arena");
-    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.tests.arena), "attach tests arena");
-    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.user_commands_arena), "attach user_commands arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &session->state.transaction_arena), "attach tx arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &session->state.semantic_state.targets.arena),
+                                "attach targets arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &session->state.semantic_state.tests.arena),
+                                "attach tests arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &session->state.command_state.user_commands_arena),
+                                "attach user_commands arena");
+
+    EvalExecContext ctx_storage = {0};
+    EvalExecContext *ctx = &ctx_storage;
+    eval_exec_prepare_session_view(ctx, session);
+    eval_clear_return_state(ctx);
+    eval_report_reset(ctx);
 
     EVAL_SESSION_CREATE_REQUIRE(EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.scopes, ((Var_Scope){0})),
                                 "push global scope");
@@ -2089,14 +2137,16 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_FILE_GLOB_STRICT), nob_sv_from_cstr("0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_WHILE_MAX_ITERATIONS), nob_sv_from_cstr("10000"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("NOBIFY_ENABLED_LANGUAGES"), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_property_write(ctx,
-                             (Event_Origin){0},
-                             nob_sv_from_cstr("GLOBAL"),
-                             nob_sv_from_cstr(""),
-                             nob_sv_from_cstr("ENABLED_LANGUAGES"),
-                             nob_sv_from_cstr(""),
-                             EV_PROP_SET,
-                             false)) {
+    if (!eval_property_engine_set(ctx,
+                                  nob_sv_from_cstr("GLOBAL"),
+                                  nob_sv_from_cstr(""),
+                                  nob_sv_from_cstr("ENABLED_LANGUAGES"),
+                                  nob_sv_from_cstr(""))) {
+        return NULL;
+    }
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("NOBIFY_PROPERTY_GLOBAL::ENABLED_LANGUAGES"),
+                              nob_sv_from_cstr(""))) {
         return NULL;
     }
 
@@ -2115,7 +2165,7 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
     }
 
-    ctx->stream = NULL;
+    eval_session_commit_state_from_exec(session, ctx);
     return session;
 
 #undef EVAL_SESSION_CREATE_REQUIRE
@@ -2175,25 +2225,24 @@ EvalSession *eval_session_create(const EvalSession_Config *cfg) {
 void eval_session_destroy(EvalSession *session) {
     if (!session) return;
 
-    EvalExecContext *ctx = &session->persisted_exec;
-    eval_file_lock_cleanup(ctx);
-    if (ctx->scope_state.cache_entries) {
-        stbds_shfree(ctx->scope_state.cache_entries);
-        ctx->scope_state.cache_entries = NULL;
+    EvalSessionState *state = &session->state;
+    if (state->scope_state.cache_entries) {
+        stbds_shfree(state->scope_state.cache_entries);
+        state->scope_state.cache_entries = NULL;
     }
-    if (ctx->process_state.env_overrides) {
-        stbds_shfree(ctx->process_state.env_overrides);
-        ctx->process_state.env_overrides = NULL;
+    if (state->process_state.env_overrides) {
+        stbds_shfree(state->process_state.env_overrides);
+        state->process_state.env_overrides = NULL;
     }
-    for (size_t i = 0; i < arena_arr_len(ctx->scope_state.scopes); i++) {
-        if (ctx->scope_state.scopes[i].vars) {
-            stbds_shfree(ctx->scope_state.scopes[i].vars);
-            ctx->scope_state.scopes[i].vars = NULL;
+    for (size_t i = 0; i < arena_arr_len(state->scope_state.scopes); i++) {
+        if (state->scope_state.scopes[i].vars) {
+            stbds_shfree(state->scope_state.scopes[i].vars);
+            state->scope_state.scopes[i].vars = NULL;
         }
     }
-    if (session->owns_registry && ctx->registry) {
-        eval_registry_destroy(ctx->registry);
-        ctx->registry = NULL;
+    if (session->owns_registry && state->registry) {
+        eval_registry_destroy(state->registry);
+        state->registry = NULL;
     }
 }
 
@@ -2208,9 +2257,9 @@ EvalRunResult eval_session_run(EvalSession *session,
     if (!effective_stream) return out;
 
     size_t emitted_before = request->stream ? request->stream->count : 0;
-    EvalExecContext exec = session->persisted_exec;
-    session->run_active = true;
-    if (session->persisted_exec.registry) session->persisted_exec.registry->mutation_blocked = true;
+    EvalExecContext exec = {0};
+    eval_exec_load_session_state(&exec, session);
+    if (session->state.registry) session->state.registry->mutation_blocked = true;
     if (!eval_exec_bind_request(&exec,
                                 session,
                                 request->scratch_arena,
@@ -2218,8 +2267,7 @@ EvalRunResult eval_session_run(EvalSession *session,
                                 request->source_dir,
                                 request->binary_dir,
                                 request->list_file)) {
-        session->run_active = false;
-        if (session->persisted_exec.registry) session->persisted_exec.registry->mutation_blocked = false;
+        if (session->state.registry) session->state.registry->mutation_blocked = false;
         return out;
     }
 
@@ -2227,32 +2275,42 @@ EvalRunResult eval_session_run(EvalSession *session,
     out.report = exec.runtime_state.run_report;
     out.emitted_event_count = request->stream ? (request->stream->count - emitted_before) : 0;
     session->last_run_report = out.report;
-    if (session->persisted_exec.registry) session->persisted_exec.registry->mutation_blocked = false;
-    session->run_active = false;
-    eval_session_snapshot_from_exec(session, &exec);
+    if (session->state.registry) session->state.registry->mutation_blocked = false;
+    eval_session_commit_state_from_exec(session, &exec);
     return out;
 }
 
 bool eval_session_set_compat_profile(EvalSession *session, Eval_Compat_Profile profile) {
-    return session ? eval_compat_set_profile(&session->persisted_exec, profile) : false;
+    if (!session) return false;
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, session);
+    if (!eval_compat_set_profile(&exec, profile)) return false;
+    eval_session_commit_state_from_exec(session, &exec);
+    return true;
 }
 
 bool eval_session_register_native_command(EvalSession *session,
                                           const EvalNativeCommandDef *def) {
     if (!session) return false;
-    return eval_native_cmd_register_internal(&session->persisted_exec, def, false, false);
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, session);
+    return eval_native_cmd_register_internal(&exec, def, false, false);
 }
 
 bool eval_session_unregister_native_command(EvalSession *session,
                                             String_View command_name) {
     if (!session) return false;
-    return eval_native_cmd_unregister_internal(&session->persisted_exec, command_name, false, false);
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, session);
+    return eval_native_cmd_unregister_internal(&exec, command_name, false, false);
 }
 
 bool eval_session_command_exists(const EvalSession *session, String_View command_name) {
     if (!session) return false;
-    if (eval_registry_find_const(session->persisted_exec.registry, command_name)) return true;
-    return eval_user_cmd_find((EvalExecContext*)&session->persisted_exec, command_name) != NULL;
+    if (eval_registry_find_const(session->state.registry, command_name)) return true;
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, (EvalSession*)session);
+    return eval_user_cmd_find(&exec, command_name) != NULL;
 }
 
 Eval_Result eval_run_ast_inline(EvalExecContext *ctx, Ast_Root ast) {
@@ -2265,8 +2323,10 @@ bool eval_session_get_visible_var(const EvalSession *session,
                                   String_View *out_value) {
     if (out_value) *out_value = nob_sv_from_cstr("");
     if (!session || !out_value) return false;
-    *out_value = eval_var_get_visible((EvalExecContext*)&session->persisted_exec, key);
-    return eval_var_defined_visible((EvalExecContext*)&session->persisted_exec, key);
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, (EvalSession*)session);
+    *out_value = eval_var_get_visible(&exec, key);
+    return eval_var_defined_visible(&exec, key);
 }
 
 const EvalServices *eval_exec_services(const EvalExecContext *exec) {

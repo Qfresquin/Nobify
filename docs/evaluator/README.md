@@ -11,8 +11,11 @@ As of March 19, 2026:
 - the public evaluator boundary is the session/request model documented in the
   v2 specs
 - `Evaluator_Context` is no longer part of the public API surface
+- `EvalNativeCommandDef` is the only public native-command definition type
 - `eval_session_run(...)` now executes each run inside a fresh
   `EvalExecContext` linked back to a persistent `EvalSession`
+- `EvalSession` owns canonical persistent session state directly; session
+  creation no longer bootstraps that state through a temporary execution stream
 - downstream contracts may depend on `Event_Stream`, but any evaluator API
   references must use the target `EvalSession` / `EvalExec_Request` /
   `EvalRunResult` boundary

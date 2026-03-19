@@ -100,6 +100,8 @@ Architecture note for this snapshot:
   `EvalRunResult` public boundary directly; remaining `PARTIAL` rows in this
   matrix are semantic coverage gaps, not residual public/runtime drift toward
   `Evaluator_Context`
+- canonical persistent evaluator state now lives in `EvalSessionState`, while
+  each `eval_session_run(...)` uses a fresh transient `EvalExecContext`
 
 ## 4. Audit Matrix
 

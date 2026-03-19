@@ -95,9 +95,7 @@ typedef struct {
     Eval_Native_Command_Handler handler;
     Eval_Command_Impl_Level implemented_level;
     Eval_Command_Fallback fallback_behavior;
-} Evaluator_Native_Command_Def;
-
-typedef Evaluator_Native_Command_Def EvalNativeCommandDef;
+} EvalNativeCommandDef;
 
 typedef enum {
     EVAL_RUN_OK = 0,
