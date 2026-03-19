@@ -41,18 +41,18 @@ typedef struct {
     bool warn_unknown;
 } Eval_Opt_Parse_Config;
 
-typedef bool (*Eval_Opt_On_Option_Fn)(Evaluator_Context *ctx,
+typedef bool (*Eval_Opt_On_Option_Fn)(EvalExecContext *ctx,
                                       void *userdata,
                                       int id,
                                       SV_List values,
                                       size_t token_index);
 
-typedef bool (*Eval_Opt_On_Positional_Fn)(Evaluator_Context *ctx,
+typedef bool (*Eval_Opt_On_Positional_Fn)(EvalExecContext *ctx,
                                           void *userdata,
                                           String_View value,
                                           size_t token_index);
 
-bool eval_opt_parse_walk(Evaluator_Context *ctx,
+bool eval_opt_parse_walk(EvalExecContext *ctx,
                          SV_List args,
                          size_t start,
                          const Eval_Opt_Spec *specs,

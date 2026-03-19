@@ -15,7 +15,7 @@ static bool user_cmd_sv_eq_ci(String_View a, String_View b) {
     return true;
 }
 
-static bool clone_args_to_event(Evaluator_Context *ctx, const Args *src, Args *dst) {
+static bool clone_args_to_event(EvalExecContext *ctx, const Args *src, Args *dst) {
     if (!ctx || !src || !dst) return false;
     *dst = NULL;
     if (arena_arr_len(*src) == 0) return true;
@@ -37,11 +37,11 @@ static bool clone_args_to_event(Evaluator_Context *ctx, const Args *src, Args *d
     return true;
 }
 
-static bool clone_node_to_event(Evaluator_Context *ctx, const Node *src, Node *dst);
-static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *src, Node_List *dst);
-static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clause_List *src, ElseIf_Clause_List *dst);
+static bool clone_node_to_event(EvalExecContext *ctx, const Node *src, Node *dst);
+static bool clone_node_list_to_event(EvalExecContext *ctx, const Node_List *src, Node_List *dst);
+static bool clone_elseif_list_to_event(EvalExecContext *ctx, const ElseIf_Clause_List *src, ElseIf_Clause_List *dst);
 
-static bool clone_node_to_event(Evaluator_Context *ctx, const Node *src, Node *dst) {
+static bool clone_node_to_event(EvalExecContext *ctx, const Node *src, Node *dst) {
     if (!ctx || !src || !dst) return false;
     memset(dst, 0, sizeof(*dst));
     dst->kind = src->kind;
@@ -79,7 +79,7 @@ static bool clone_node_to_event(Evaluator_Context *ctx, const Node *src, Node *d
     }
 }
 
-static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clause_List *src, ElseIf_Clause_List *dst) {
+static bool clone_elseif_list_to_event(EvalExecContext *ctx, const ElseIf_Clause_List *src, ElseIf_Clause_List *dst) {
     if (!ctx || !src || !dst) return false;
     *dst = NULL;
     for (size_t i = 0; i < arena_arr_len(*src); i++) {
@@ -91,7 +91,7 @@ static bool clone_elseif_list_to_event(Evaluator_Context *ctx, const ElseIf_Clau
     return true;
 }
 
-static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *src, Node_List *dst) {
+static bool clone_node_list_to_event(EvalExecContext *ctx, const Node_List *src, Node_List *dst) {
     if (!ctx || !src || !dst) return false;
     *dst = NULL;
     for (size_t i = 0; i < arena_arr_len(*src); i++) {
@@ -102,7 +102,7 @@ static bool clone_node_list_to_event(Evaluator_Context *ctx, const Node_List *sr
     return true;
 }
 
-bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
+bool eval_user_cmd_register(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node) return false;
     if (node->kind != NODE_FUNCTION && node->kind != NODE_MACRO) return false;
 
@@ -135,7 +135,7 @@ bool eval_user_cmd_register(Evaluator_Context *ctx, const Node *node) {
     return EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->user_commands, cmd);
 }
 
-User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name) {
+User_Command *eval_user_cmd_find(EvalExecContext *ctx, String_View name) {
     if (!ctx) return NULL;
     Eval_Command_State *commands = eval_command_slice(ctx);
     for (size_t i = arena_arr_len(commands->user_commands); i-- > 0;) {
@@ -146,7 +146,7 @@ User_Command *eval_user_cmd_find(Evaluator_Context *ctx, String_View name) {
     return NULL;
 }
 
-bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_List *args, Cmake_Event_Origin origin) {
+bool eval_user_cmd_invoke(EvalExecContext *ctx, String_View name, const SV_List *args, Cmake_Event_Origin origin) {
     if (eval_should_stop(ctx)) return false;
 
     User_Command *cmd = eval_user_cmd_find(ctx, name);
@@ -256,8 +256,10 @@ bool eval_user_cmd_invoke(Evaluator_Context *ctx, String_View name, const SV_Lis
     body_result = eval_execute_node_list(ctx, &cmd->body);
     ok = !eval_result_is_fatal(body_result);
 cleanup:
-    bool did_return = ctx->return_requested;
-    if (ctx->return_requested && arena_arr_len(ctx->scope_state.return_propagate_vars) > 0 &&
+    bool did_return = exec_pushed &&
+                      eval_exec_current(ctx) &&
+                      eval_exec_current(ctx)->pending_flow == EVAL_FLOW_RETURN;
+    if (did_return && arena_arr_len(ctx->scope_state.return_propagate_vars) > 0 &&
         is_function && eval_scope_visible_depth(ctx) > 1) {
         for (size_t i = 0; i < arena_arr_len(ctx->scope_state.return_propagate_vars); i++) {
             String_View key = ctx->scope_state.return_propagate_vars[i];

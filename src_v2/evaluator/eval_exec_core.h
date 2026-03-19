@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-Eval_Result eval_execute_node_list(Evaluator_Context *ctx, const Node_List *list);
+Eval_Result eval_execute_node_list(EvalExecContext *ctx, const Node_List *list);
 
 #ifdef __cplusplus
 }

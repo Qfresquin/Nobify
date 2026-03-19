@@ -83,7 +83,7 @@ static bool file_transfer_is_remote_url(String_View in) {
     return false;
 }
 
-static String_View file_transfer_local_path_temp(Evaluator_Context *ctx, String_View in) {
+static String_View file_transfer_local_path_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx) return nob_sv_from_cstr("");
     if (in.count >= 7 && (memcmp(in.data, "file://", 7) == 0 || memcmp(in.data, "FILE://", 7) == 0)) {
         return nob_sv_from_parts(in.data + 7, in.count - 7);
@@ -91,7 +91,7 @@ static String_View file_transfer_local_path_temp(Evaluator_Context *ctx, String_
     return in;
 }
 
-static String_View file_transfer_trim_temp(Evaluator_Context *ctx, String_View in) {
+static String_View file_transfer_trim_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx) return nob_sv_from_cstr("");
     size_t begin = 0;
     size_t end = in.count;
@@ -100,31 +100,31 @@ static String_View file_transfer_trim_temp(Evaluator_Context *ctx, String_View i
     return sv_copy_to_temp_arena(ctx, nob_sv_from_parts(in.data + begin, end - begin));
 }
 
-static String_View file_transfer_first_line_temp(Evaluator_Context *ctx, String_View in) {
+static String_View file_transfer_first_line_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx) return nob_sv_from_cstr("");
     size_t end = 0;
     while (end < in.count && in.data[end] != '\n' && in.data[end] != '\r') end++;
     return file_transfer_trim_temp(ctx, nob_sv_from_parts(in.data, end));
 }
 
-static void file_transfer_set_status_sv(Evaluator_Context *ctx, String_View status_var, int code, String_View msg) {
+static void file_transfer_set_status_sv(EvalExecContext *ctx, String_View status_var, int code, String_View msg) {
     if (!ctx || status_var.count == 0) return;
     const int mlen = (msg.count > (size_t)INT32_MAX) ? INT32_MAX : (int)msg.count;
     (void)eval_var_set_current(ctx, status_var, nob_sv_from_cstr(nob_temp_sprintf("%d;%.*s", code, mlen, msg.data ? msg.data : "")));
 }
 
-static void file_transfer_set_log_sv(Evaluator_Context *ctx, String_View log_var, String_View msg) {
+static void file_transfer_set_log_sv(EvalExecContext *ctx, String_View log_var, String_View msg) {
     if (!ctx || log_var.count == 0) return;
     (void)eval_var_set_current(ctx, log_var, msg);
 }
 
-static void file_transfer_set_success(Evaluator_Context *ctx, const File_Transfer_Options *opt, String_View log_msg) {
+static void file_transfer_set_success(EvalExecContext *ctx, const File_Transfer_Options *opt, String_View log_msg) {
     if (!ctx || !opt) return;
     file_transfer_set_status_sv(ctx, opt->status_var, 0, nob_sv_from_cstr("No error"));
     file_transfer_set_log_sv(ctx, opt->log_var, log_msg);
 }
 
-static void file_transfer_fail(Evaluator_Context *ctx,
+static void file_transfer_fail(EvalExecContext *ctx,
                                const Node *node,
                                Cmake_Event_Origin o,
                                const File_Transfer_Options *opt,
@@ -143,7 +143,7 @@ static void file_transfer_fail(Evaluator_Context *ctx,
     EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", cause, hint.count > 0 ? hint : msg);
 }
 
-static bool file_transfer_parse_options(Evaluator_Context *ctx,
+static bool file_transfer_parse_options(EvalExecContext *ctx,
                                         const Node *node,
                                         SV_List args,
                                         size_t start,
@@ -276,7 +276,7 @@ static bool file_transfer_parse_expected_hash(String_View in, String_View *out_a
     return false;
 }
 
-static bool file_transfer_path_exists(Evaluator_Context *ctx, String_View path) {
+static bool file_transfer_path_exists(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
     char *p = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
@@ -284,7 +284,7 @@ static bool file_transfer_path_exists(Evaluator_Context *ctx, String_View path) 
     return stat(p, &st) == 0;
 }
 
-static bool file_transfer_verify_download_hash(Evaluator_Context *ctx,
+static bool file_transfer_verify_download_hash(EvalExecContext *ctx,
                                                String_View dst,
                                                const File_Transfer_Options *opt,
                                                String_View *out_status) {
@@ -329,7 +329,7 @@ static bool file_transfer_verify_download_hash(Evaluator_Context *ctx,
 }
 
 #if !defined(_WIN32)
-static bool file_transfer_run_capture(Evaluator_Context *ctx,
+static bool file_transfer_run_capture(EvalExecContext *ctx,
                                       char *const argv[],
                                       int *out_status_code,
                                       String_View *out_log) {
@@ -395,7 +395,7 @@ static bool file_transfer_run_capture(Evaluator_Context *ctx,
     return true;
 }
 #else
-static bool file_transfer_run_capture(Evaluator_Context *ctx,
+static bool file_transfer_run_capture(EvalExecContext *ctx,
                                       char *const argv[],
                                       int *out_status_code,
                                       String_View *out_log) {
@@ -408,7 +408,7 @@ static bool file_transfer_run_capture(Evaluator_Context *ctx,
 }
 #endif
 
-static bool file_transfer_remote_download(Evaluator_Context *ctx,
+static bool file_transfer_remote_download(EvalExecContext *ctx,
                                           const Node *node,
                                           Cmake_Event_Origin o,
                                           String_View url,
@@ -523,7 +523,7 @@ static bool file_transfer_remote_download(Evaluator_Context *ctx,
     return file_transfer_run_capture(ctx, argv, out_status_code, out_log);
 }
 
-static bool file_transfer_remote_upload(Evaluator_Context *ctx,
+static bool file_transfer_remote_upload(EvalExecContext *ctx,
                                         const Node *node,
                                         Cmake_Event_Origin o,
                                         String_View src,
@@ -616,7 +616,7 @@ static bool file_transfer_remote_upload(Evaluator_Context *ctx,
     return file_transfer_run_capture(ctx, argv, out_status_code, out_log);
 }
 
-static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(DOWNLOAD) requires at least URL/path"), nob_sv_from_cstr("Usage: file(DOWNLOAD <url> [<file>] [STATUS var] [LOG var])"));
@@ -809,7 +809,7 @@ static bool handle_file_download(Evaluator_Context *ctx, const Node *node, SV_Li
     return true;
 }
 
-static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(UPLOAD) requires source file and URL/path"), nob_sv_from_cstr("Usage: file(UPLOAD <file> <url> [STATUS var] [LOG var])"));
@@ -911,7 +911,7 @@ static bool handle_file_upload(Evaluator_Context *ctx, const Node *node, SV_List
     return true;
 }
 
-bool eval_file_handle_transfer(Evaluator_Context *ctx, const Node *node, SV_List args) {
+bool eval_file_handle_transfer(EvalExecContext *ctx, const Node *node, SV_List args) {
     if (!ctx || !node || arena_arr_len(args) == 0) return false;
     if (eval_sv_eq_ci_lit(args[0], "DOWNLOAD")) return handle_file_download(ctx, node, args);
     if (eval_sv_eq_ci_lit(args[0], "UPLOAD")) return handle_file_upload(ctx, node, args);

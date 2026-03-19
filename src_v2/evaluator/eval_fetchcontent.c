@@ -45,7 +45,7 @@ typedef struct {
     String_View binary_dir;
 } FetchContent_SetPopulated_Request;
 
-static bool fetchcontent_require_module(Evaluator_Context *ctx,
+static bool fetchcontent_require_module(EvalExecContext *ctx,
                                         String_View command,
                                         Cmake_Event_Origin origin) {
     if (!ctx) return false;
@@ -70,28 +70,28 @@ static String_View fetchcontent_ascii_case_copy(Arena *arena, String_View in, in
     return nob_sv_from_cstr(buf);
 }
 
-static String_View fetchcontent_lower_temp(Evaluator_Context *ctx, String_View in) {
+static String_View fetchcontent_lower_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     String_View out = fetchcontent_ascii_case_copy(eval_temp_arena(ctx), in, tolower);
     if (out.data == NULL) ctx_oom(ctx);
     return out;
 }
 
-static String_View fetchcontent_lower_event(Evaluator_Context *ctx, String_View in) {
+static String_View fetchcontent_lower_event(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     String_View out = fetchcontent_ascii_case_copy(ctx->event_arena, in, tolower);
     if (out.data == NULL) ctx_oom(ctx);
     return out;
 }
 
-static String_View fetchcontent_upper_temp(Evaluator_Context *ctx, String_View in) {
+static String_View fetchcontent_upper_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     String_View out = fetchcontent_ascii_case_copy(eval_temp_arena(ctx), in, toupper);
     if (out.data == NULL) ctx_oom(ctx);
     return out;
 }
 
-static Eval_FetchContent_Declaration *fetchcontent_find_declaration(Evaluator_Context *ctx,
+static Eval_FetchContent_Declaration *fetchcontent_find_declaration(EvalExecContext *ctx,
                                                                     String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return NULL;
     for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.fetchcontent.declarations); i++) {
@@ -101,7 +101,7 @@ static Eval_FetchContent_Declaration *fetchcontent_find_declaration(Evaluator_Co
     return NULL;
 }
 
-static Eval_FetchContent_State *fetchcontent_find_state(Evaluator_Context *ctx,
+static Eval_FetchContent_State *fetchcontent_find_state(EvalExecContext *ctx,
                                                         String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return NULL;
     for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.fetchcontent.states); i++) {
@@ -111,19 +111,19 @@ static Eval_FetchContent_State *fetchcontent_find_state(Evaluator_Context *ctx,
     return NULL;
 }
 
-static String_View fetchcontent_current_binary_dir(Evaluator_Context *ctx) {
+static String_View fetchcontent_current_binary_dir(EvalExecContext *ctx) {
     String_View current = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (current.count == 0) current = ctx ? ctx->binary_dir : nob_sv_from_cstr("");
     return current;
 }
 
-static String_View fetchcontent_current_source_dir(Evaluator_Context *ctx) {
+static String_View fetchcontent_current_source_dir(EvalExecContext *ctx) {
     String_View current = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (current.count == 0) current = ctx ? ctx->source_dir : nob_sv_from_cstr("");
     return current;
 }
 
-static String_View fetchcontent_saved_base_dir(Evaluator_Context *ctx) {
+static String_View fetchcontent_saved_base_dir(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View base = eval_var_get_visible(ctx, nob_sv_from_cstr("FETCHCONTENT_BASE_DIR"));
     if (base.count > 0) {
@@ -137,40 +137,40 @@ static String_View fetchcontent_saved_base_dir(Evaluator_Context *ctx) {
     return eval_sv_path_join(eval_temp_arena(ctx), cmake_binary_dir, nob_sv_from_cstr("_deps"));
 }
 
-static String_View fetchcontent_saved_default_source_dir(Evaluator_Context *ctx, String_View canonical_name) {
+static String_View fetchcontent_saved_default_source_dir(EvalExecContext *ctx, String_View canonical_name) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View suffix = svu_concat_suffix_temp(ctx, canonical_name, "-src");
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), fetchcontent_saved_base_dir(ctx), suffix);
 }
 
-static String_View fetchcontent_saved_default_binary_dir(Evaluator_Context *ctx, String_View canonical_name) {
+static String_View fetchcontent_saved_default_binary_dir(EvalExecContext *ctx, String_View canonical_name) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View suffix = svu_concat_suffix_temp(ctx, canonical_name, "-build");
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), fetchcontent_saved_base_dir(ctx), suffix);
 }
 
-static String_View fetchcontent_direct_default_source_dir(Evaluator_Context *ctx, String_View canonical_name) {
+static String_View fetchcontent_direct_default_source_dir(EvalExecContext *ctx, String_View canonical_name) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View suffix = svu_concat_suffix_temp(ctx, canonical_name, "-src");
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), fetchcontent_current_binary_dir(ctx), suffix);
 }
 
-static String_View fetchcontent_direct_default_binary_dir(Evaluator_Context *ctx, String_View canonical_name) {
+static String_View fetchcontent_direct_default_binary_dir(EvalExecContext *ctx, String_View canonical_name) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View suffix = svu_concat_suffix_temp(ctx, canonical_name, "-build");
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), fetchcontent_current_binary_dir(ctx), suffix);
 }
 
-static bool fetchcontent_file_exists(Evaluator_Context *ctx, String_View path) {
+static bool fetchcontent_file_exists(EvalExecContext *ctx, String_View path) {
     bool exists = false;
     return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
-static bool fetchcontent_mkdir_p(Evaluator_Context *ctx, String_View dir) {
+static bool fetchcontent_mkdir_p(EvalExecContext *ctx, String_View dir) {
     if (!ctx || dir.count == 0) return false;
     String_View marker = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr(".keep"));
     if (eval_should_stop(ctx)) return false;
@@ -178,21 +178,21 @@ static bool fetchcontent_mkdir_p(Evaluator_Context *ctx, String_View dir) {
     return eval_service_mkdir(ctx, dir);
 }
 
-static bool fetchcontent_push_active(Evaluator_Context *ctx, String_View canonical_name) {
+static bool fetchcontent_push_active(EvalExecContext *ctx, String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return false;
     String_View stable = sv_copy_to_event_arena(ctx, canonical_name);
     if (eval_should_stop(ctx)) return false;
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.fetchcontent.active_makeavailable, stable);
 }
 
-static void fetchcontent_pop_active(Evaluator_Context *ctx, bool pushed) {
+static void fetchcontent_pop_active(EvalExecContext *ctx, bool pushed) {
     if (!ctx || !pushed) return;
     if (arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) == 0) return;
     arena_arr_set_len(ctx->semantic_state.fetchcontent.active_makeavailable,
                       arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) - 1);
 }
 
-static bool fetchcontent_active_contains(Evaluator_Context *ctx, String_View canonical_name) {
+static bool fetchcontent_active_contains(EvalExecContext *ctx, String_View canonical_name) {
     if (!ctx || canonical_name.count == 0) return false;
     for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable); i++) {
         if (eval_sv_key_eq(ctx->semantic_state.fetchcontent.active_makeavailable[i], canonical_name)) return true;
@@ -200,7 +200,7 @@ static bool fetchcontent_active_contains(Evaluator_Context *ctx, String_View can
     return false;
 }
 
-static bool fetchcontent_publish_default_vars(Evaluator_Context *ctx,
+static bool fetchcontent_publish_default_vars(EvalExecContext *ctx,
                                               String_View dependency_name,
                                               bool populated,
                                               String_View source_dir,
@@ -220,7 +220,7 @@ static bool fetchcontent_publish_default_vars(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_upsert_state(Evaluator_Context *ctx,
+static bool fetchcontent_upsert_state(EvalExecContext *ctx,
                                       String_View dependency_name,
                                       String_View canonical_name,
                                       bool populated,
@@ -254,7 +254,7 @@ static bool fetchcontent_looks_like_url(String_View value) {
     return false;
 }
 
-static String_View fetchcontent_resolve_local_like_path(Evaluator_Context *ctx,
+static String_View fetchcontent_resolve_local_like_path(EvalExecContext *ctx,
                                                         String_View raw_value,
                                                         String_View base_dir) {
     if (!ctx || raw_value.count == 0) return nob_sv_from_cstr("");
@@ -300,7 +300,7 @@ static bool fetchcontent_is_unsupported_transport_key(String_View token) {
            eval_sv_eq_ci_lit(token, "CVS_REPOSITORY");
 }
 
-static bool fetchcontent_append_list_to_temp(Evaluator_Context *ctx, SV_List *out, const SV_List src) {
+static bool fetchcontent_append_list_to_temp(EvalExecContext *ctx, SV_List *out, const SV_List src) {
     if (!ctx || !out) return false;
     for (size_t i = 0; i < arena_arr_len(src); i++) {
         if (!eval_sv_arr_push_temp(ctx, out, src[i])) return false;
@@ -308,7 +308,7 @@ static bool fetchcontent_append_list_to_temp(Evaluator_Context *ctx, SV_List *ou
     return true;
 }
 
-static bool fetchcontent_collect_tail_args_temp(Evaluator_Context *ctx,
+static bool fetchcontent_collect_tail_args_temp(EvalExecContext *ctx,
                                                 SV_List args,
                                                 size_t start,
                                                 SV_List *out) {
@@ -320,7 +320,7 @@ static bool fetchcontent_collect_tail_args_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_clone_list_to_event(Evaluator_Context *ctx, SV_List *out, const SV_List src) {
+static bool fetchcontent_clone_list_to_event(EvalExecContext *ctx, SV_List *out, const SV_List src) {
     if (!ctx || !out) return false;
     *out = NULL;
     for (size_t i = 0; i < arena_arr_len(src); i++) {
@@ -331,7 +331,7 @@ static bool fetchcontent_clone_list_to_event(Evaluator_Context *ctx, SV_List *ou
     return true;
 }
 
-static bool fetchcontent_clone_declaration_to_event(Evaluator_Context *ctx,
+static bool fetchcontent_clone_declaration_to_event(EvalExecContext *ctx,
                                                     Eval_FetchContent_Declaration *out_decl,
                                                     const Eval_FetchContent_Declaration *src_decl) {
     if (!ctx || !out_decl || !src_decl) return false;
@@ -356,7 +356,7 @@ static bool fetchcontent_clone_declaration_to_event(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool fetchcontent_try_find_mode_from_var(Evaluator_Context *ctx,
+static bool fetchcontent_try_find_mode_from_var(EvalExecContext *ctx,
                                                 Eval_FetchContent_Try_Find_Mode *out_mode) {
     if (!ctx || !out_mode) return false;
     String_View mode = eval_var_get_visible(ctx, nob_sv_from_cstr("FETCHCONTENT_TRY_FIND_PACKAGE_MODE"));
@@ -370,7 +370,7 @@ static bool fetchcontent_try_find_mode_from_var(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_store_single_value(Evaluator_Context *ctx,
+static bool fetchcontent_store_single_value(EvalExecContext *ctx,
                                             const Node *node,
                                             String_View dependency_name,
                                             String_View keyword,
@@ -456,7 +456,7 @@ static bool fetchcontent_store_single_value(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_parse_declaration(Evaluator_Context *ctx,
+static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
                                            const Node *node,
                                            String_View dependency_name,
                                            const SV_List args,
@@ -649,7 +649,7 @@ static bool fetchcontent_parse_declaration(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool fetchcontent_build_provider_args(Evaluator_Context *ctx,
+static bool fetchcontent_build_provider_args(EvalExecContext *ctx,
                                              const Eval_FetchContent_Declaration *decl,
                                              SV_List *out_args) {
     if (!ctx || !decl || !out_args) return false;
@@ -677,7 +677,7 @@ static bool fetchcontent_build_provider_args(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_run_inline_command(Evaluator_Context *ctx,
+static bool fetchcontent_run_inline_command(EvalExecContext *ctx,
                                             String_View command_name,
                                             const SV_List *args) {
     if (!ctx || command_name.count == 0 || !args) return false;
@@ -689,7 +689,7 @@ static bool fetchcontent_run_inline_command(Evaluator_Context *ctx,
     return !eval_result_is_fatal(res) && !eval_result_is_soft_error(res);
 }
 
-static bool fetchcontent_run_add_subdirectory(Evaluator_Context *ctx,
+static bool fetchcontent_run_add_subdirectory(EvalExecContext *ctx,
                                               String_View source_dir,
                                               String_View binary_dir,
                                               bool exclude_from_all,
@@ -703,7 +703,7 @@ static bool fetchcontent_run_add_subdirectory(Evaluator_Context *ctx,
     return fetchcontent_run_inline_command(ctx, nob_sv_from_cstr("add_subdirectory"), &call_args);
 }
 
-static bool fetchcontent_run_file_download(Evaluator_Context *ctx,
+static bool fetchcontent_run_file_download(EvalExecContext *ctx,
                                            String_View input,
                                            String_View output,
                                            String_View expected_hash,
@@ -724,7 +724,7 @@ static bool fetchcontent_run_file_download(Evaluator_Context *ctx,
     return fetchcontent_run_inline_command(ctx, nob_sv_from_cstr("file"), &args);
 }
 
-static bool fetchcontent_run_file_archive_extract(Evaluator_Context *ctx,
+static bool fetchcontent_run_file_archive_extract(EvalExecContext *ctx,
                                                   String_View input,
                                                   String_View destination,
                                                   bool preserve_timestamps) {
@@ -739,7 +739,7 @@ static bool fetchcontent_run_file_archive_extract(Evaluator_Context *ctx,
     return fetchcontent_run_inline_command(ctx, nob_sv_from_cstr("file"), &args);
 }
 
-static bool fetchcontent_run_find_package(Evaluator_Context *ctx,
+static bool fetchcontent_run_find_package(EvalExecContext *ctx,
                                           String_View dependency_name,
                                           const Eval_FetchContent_Declaration *decl,
                                           bool *out_found) {
@@ -773,7 +773,7 @@ static bool fetchcontent_run_find_package(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View fetchcontent_path_basename_temp(Evaluator_Context *ctx, String_View path) {
+static String_View fetchcontent_path_basename_temp(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return nob_sv_from_cstr("content");
     size_t start = 0;
     for (size_t i = 0; i < path.count; i++) {
@@ -783,7 +783,7 @@ static String_View fetchcontent_path_basename_temp(Evaluator_Context *ctx, Strin
     return nob_sv_from_parts(path.data + start, path.count - start);
 }
 
-static bool fetchcontent_git_run(Evaluator_Context *ctx,
+static bool fetchcontent_git_run(EvalExecContext *ctx,
                                  String_View working_directory,
                                  const SV_List argv,
                                  String_View *out_stderr,
@@ -801,7 +801,7 @@ static bool fetchcontent_git_run(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_git_emit_failure(Evaluator_Context *ctx,
+static bool fetchcontent_git_emit_failure(EvalExecContext *ctx,
                                           const Node *node,
                                           String_View cause,
                                           String_View detail) {
@@ -817,7 +817,7 @@ static bool fetchcontent_git_emit_failure(Evaluator_Context *ctx,
     return false;
 }
 
-static bool fetchcontent_git_update_submodules(Evaluator_Context *ctx,
+static bool fetchcontent_git_update_submodules(EvalExecContext *ctx,
                                                const Node *node,
                                                const Eval_FetchContent_Declaration *decl,
                                                String_View source_dir) {
@@ -852,7 +852,7 @@ static bool fetchcontent_git_update_submodules(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_git_checkout(Evaluator_Context *ctx,
+static bool fetchcontent_git_checkout(EvalExecContext *ctx,
                                       const Node *node,
                                       String_View source_dir,
                                       String_View git_tag) {
@@ -874,7 +874,7 @@ static bool fetchcontent_git_checkout(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_git_fetch_and_update(Evaluator_Context *ctx,
+static bool fetchcontent_git_fetch_and_update(EvalExecContext *ctx,
                                               const Node *node,
                                               const Eval_FetchContent_Declaration *decl,
                                               String_View source_dir,
@@ -919,7 +919,7 @@ static bool fetchcontent_git_fetch_and_update(Evaluator_Context *ctx,
     return fetchcontent_git_update_submodules(ctx, node, decl, source_dir);
 }
 
-static bool fetchcontent_is_updates_disconnected(Evaluator_Context *ctx, String_View dependency_name) {
+static bool fetchcontent_is_updates_disconnected(EvalExecContext *ctx, String_View dependency_name) {
     if (!ctx) return false;
     String_View upper = fetchcontent_upper_temp(ctx, dependency_name);
     String_View key_parts[2] = {
@@ -933,7 +933,7 @@ static bool fetchcontent_is_updates_disconnected(Evaluator_Context *ctx, String_
     return eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("FETCHCONTENT_UPDATES_DISCONNECTED")));
 }
 
-static bool fetchcontent_populate_url(Evaluator_Context *ctx,
+static bool fetchcontent_populate_url(EvalExecContext *ctx,
                                       const Node *node,
                                       const Eval_FetchContent_Declaration *decl,
                                       String_View source_dir) {
@@ -957,7 +957,7 @@ static bool fetchcontent_populate_url(Evaluator_Context *ctx,
                                                  decl->download_extract_timestamp);
 }
 
-static bool fetchcontent_populate_git(Evaluator_Context *ctx,
+static bool fetchcontent_populate_git(EvalExecContext *ctx,
                                       const Node *node,
                                       String_View dependency_name,
                                       const Eval_FetchContent_Declaration *decl,
@@ -1011,7 +1011,7 @@ static bool fetchcontent_populate_git(Evaluator_Context *ctx,
     return fetchcontent_git_update_submodules(ctx, node, decl, source_dir);
 }
 
-static bool fetchcontent_write_redirect_stub(Evaluator_Context *ctx,
+static bool fetchcontent_write_redirect_stub(EvalExecContext *ctx,
                                              String_View dependency_name,
                                              String_View redirect_path,
                                              bool version_file) {
@@ -1046,7 +1046,7 @@ static bool fetchcontent_write_redirect_stub(Evaluator_Context *ctx,
     return ok;
 }
 
-static bool fetchcontent_stage_override_redirects(Evaluator_Context *ctx,
+static bool fetchcontent_stage_override_redirects(EvalExecContext *ctx,
                                                   const Eval_FetchContent_Declaration *decl) {
     if (!ctx || !decl || !decl->override_find_package) return false;
     String_View redirects_dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"));
@@ -1074,7 +1074,7 @@ static bool fetchcontent_stage_override_redirects(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_finalize_population(Evaluator_Context *ctx,
+static bool fetchcontent_finalize_population(EvalExecContext *ctx,
                                              const Eval_FetchContent_Declaration *decl,
                                              bool populated,
                                              String_View source_dir,
@@ -1086,7 +1086,7 @@ static bool fetchcontent_finalize_population(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_populate_content(Evaluator_Context *ctx,
+static bool fetchcontent_populate_content(EvalExecContext *ctx,
                                           const Node *node,
                                           String_View dependency_name,
                                           const Eval_FetchContent_Declaration *decl,
@@ -1150,7 +1150,7 @@ static bool fetchcontent_populate_content(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool fetchcontent_invoke_dependency_provider(Evaluator_Context *ctx,
+static bool fetchcontent_invoke_dependency_provider(EvalExecContext *ctx,
                                                     const Node *node,
                                                     const Eval_FetchContent_Declaration *decl,
                                                     bool *out_populated) {
@@ -1188,7 +1188,7 @@ static bool fetchcontent_invoke_dependency_provider(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool fetchcontent_makeavailable_one(Evaluator_Context *ctx,
+static bool fetchcontent_makeavailable_one(EvalExecContext *ctx,
                                            const Node *node,
                                            String_View dependency_name) {
     if (!ctx || !node || dependency_name.count == 0) return false;
@@ -1277,7 +1277,7 @@ static bool fetchcontent_makeavailable_one(Evaluator_Context *ctx,
     return ok;
 }
 
-static bool fetchcontent_parse_declare_request(Evaluator_Context *ctx,
+static bool fetchcontent_parse_declare_request(EvalExecContext *ctx,
                                                const Node *node,
                                                Cmake_Event_Origin origin,
                                                SV_List args,
@@ -1312,7 +1312,7 @@ static bool fetchcontent_parse_declare_request(Evaluator_Context *ctx,
                                           &out_req->parsed_decl);
 }
 
-static bool fetchcontent_execute_declare_request(Evaluator_Context *ctx,
+static bool fetchcontent_execute_declare_request(EvalExecContext *ctx,
                                                  const FetchContent_Declare_Request *req) {
     if (!ctx || !req) return false;
     if (req->skip_existing) return true;
@@ -1330,7 +1330,7 @@ static bool fetchcontent_execute_declare_request(Evaluator_Context *ctx,
                                      decl.binary_dir);
 }
 
-static bool fetchcontent_parse_makeavailable_request(Evaluator_Context *ctx,
+static bool fetchcontent_parse_makeavailable_request(EvalExecContext *ctx,
                                                      const Node *node,
                                                      Cmake_Event_Origin origin,
                                                      SV_List args,
@@ -1352,7 +1352,7 @@ static bool fetchcontent_parse_makeavailable_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_execute_makeavailable_request(Evaluator_Context *ctx,
+static bool fetchcontent_execute_makeavailable_request(EvalExecContext *ctx,
                                                        const Node *node,
                                                        const FetchContent_MakeAvailable_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -1363,7 +1363,7 @@ static bool fetchcontent_execute_makeavailable_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_parse_getproperties_request(Evaluator_Context *ctx,
+static bool fetchcontent_parse_getproperties_request(EvalExecContext *ctx,
                                                      const Node *node,
                                                      Cmake_Event_Origin origin,
                                                      SV_List args,
@@ -1431,7 +1431,7 @@ static bool fetchcontent_getproperties_has_explicit_outputs(const FetchContent_G
            req->outputs.populated_var.count > 0;
 }
 
-static bool fetchcontent_execute_getproperties_request(Evaluator_Context *ctx,
+static bool fetchcontent_execute_getproperties_request(EvalExecContext *ctx,
                                                        const FetchContent_GetProperties_Request *req) {
     if (!ctx || !req) return false;
 
@@ -1466,7 +1466,7 @@ static bool fetchcontent_execute_getproperties_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_parse_populate_request(Evaluator_Context *ctx,
+static bool fetchcontent_parse_populate_request(EvalExecContext *ctx,
                                                 const Node *node,
                                                 Cmake_Event_Origin origin,
                                                 SV_List args,
@@ -1501,7 +1501,7 @@ static bool fetchcontent_parse_populate_request(Evaluator_Context *ctx,
                                           &out_req->direct_decl);
 }
 
-static bool fetchcontent_execute_populate_request(Evaluator_Context *ctx,
+static bool fetchcontent_execute_populate_request(EvalExecContext *ctx,
                                                   const Node *node,
                                                   Cmake_Event_Origin origin,
                                                   const FetchContent_Populate_Request *req) {
@@ -1528,7 +1528,7 @@ static bool fetchcontent_execute_populate_request(Evaluator_Context *ctx,
     return fetchcontent_populate_content(ctx, node, req->dependency_name, decl, false);
 }
 
-static bool fetchcontent_parse_setpopulated_request(Evaluator_Context *ctx,
+static bool fetchcontent_parse_setpopulated_request(EvalExecContext *ctx,
                                                     const Node *node,
                                                     Cmake_Event_Origin origin,
                                                     SV_List args,
@@ -1609,7 +1609,7 @@ static bool fetchcontent_parse_setpopulated_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool fetchcontent_execute_setpopulated_request(Evaluator_Context *ctx,
+static bool fetchcontent_execute_setpopulated_request(EvalExecContext *ctx,
                                                       const FetchContent_SetPopulated_Request *req) {
     if (!ctx || !req) return false;
 
@@ -1641,7 +1641,7 @@ static bool fetchcontent_execute_setpopulated_request(Evaluator_Context *ctx,
                                              binary_dir);
 }
 
-Eval_Result eval_handle_fetchcontent_declare(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_fetchcontent_declare(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
 
@@ -1653,7 +1653,7 @@ Eval_Result eval_handle_fetchcontent_declare(Evaluator_Context *ctx, const Node 
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_fetchcontent_makeavailable(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_fetchcontent_makeavailable(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
 
@@ -1665,7 +1665,7 @@ Eval_Result eval_handle_fetchcontent_makeavailable(Evaluator_Context *ctx, const
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_fetchcontent_getproperties(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_fetchcontent_getproperties(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
 
@@ -1677,7 +1677,7 @@ Eval_Result eval_handle_fetchcontent_getproperties(Evaluator_Context *ctx, const
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_fetchcontent_populate(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_fetchcontent_populate(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
 
@@ -1689,7 +1689,7 @@ Eval_Result eval_handle_fetchcontent_populate(Evaluator_Context *ctx, const Node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_fetchcontent_setpopulated(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_fetchcontent_setpopulated(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (!fetchcontent_require_module(ctx, node->as.cmd.name, origin)) return eval_result_from_ctx(ctx);
 

@@ -64,7 +64,7 @@ typedef struct {
     String_View args_var;
 } Get_Filename_Component_Request;
 
-static bool sync_directory_property_mutation(Evaluator_Context *ctx,
+static bool sync_directory_property_mutation(EvalExecContext *ctx,
                                              Event_Origin origin,
                                              const char *property_name,
                                              Event_Property_Mutate_Op op,
@@ -85,7 +85,7 @@ static bool sv_list_contains_exact(const SV_List *list, String_View item) {
     return false;
 }
 
-static bool sv_list_push_unique_temp(Evaluator_Context *ctx, SV_List *list, String_View item) {
+static bool sv_list_push_unique_temp(EvalExecContext *ctx, SV_List *list, String_View item) {
     if (!ctx || !list) return false;
     if (item.count == 0) return true;
     if (sv_list_contains_exact(list, item)) return true;
@@ -107,7 +107,7 @@ static bool semicolon_list_contains_exact(String_View list, String_View item) {
     return false;
 }
 
-static bool append_list_var_unique(Evaluator_Context *ctx, String_View var, String_View item, bool *out_added) {
+static bool append_list_var_unique(EvalExecContext *ctx, String_View var, String_View item, bool *out_added) {
     if (out_added) *out_added = false;
     String_View current = eval_var_get_visible(ctx, var);
     if (current.count == 0) {
@@ -132,7 +132,7 @@ static bool append_list_var_unique(Evaluator_Context *ctx, String_View var, Stri
     return true;
 }
 
-static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, String_View item, bool *out_removed) {
+static bool remove_list_var_exact(EvalExecContext *ctx, String_View var, String_View item, bool *out_removed) {
     if (out_removed) *out_removed = false;
     if (!ctx || item.count == 0) return false;
 
@@ -190,7 +190,7 @@ static bool remove_list_var_exact(Evaluator_Context *ctx, String_View var, Strin
     return eval_var_set_current(ctx, var, nob_sv_from_parts(buf, off));
 }
 
-static bool collect_new_list_var_items(Evaluator_Context *ctx,
+static bool collect_new_list_var_items(EvalExecContext *ctx,
                                        String_View var,
                                        const SV_List *requested_items,
                                        SV_List *out_added_items) {
@@ -206,7 +206,7 @@ static bool collect_new_list_var_items(Evaluator_Context *ctx,
     return true;
 }
 
-static bool current_list_var_items_temp(Evaluator_Context *ctx, String_View var, SV_List *out_items) {
+static bool current_list_var_items_temp(EvalExecContext *ctx, String_View var, SV_List *out_items) {
     if (!ctx || !out_items) return false;
     *out_items = NULL;
 
@@ -248,7 +248,7 @@ static bool split_valid_definition_flag(String_View item, String_View *out_defin
     return true;
 }
 
-static bool remove_definitions_parse_request(Evaluator_Context *ctx,
+static bool remove_definitions_parse_request(EvalExecContext *ctx,
                                              SV_List args,
                                              Remove_Definitions_Request *out_req) {
     if (!ctx || !out_req) return false;
@@ -268,7 +268,7 @@ static bool remove_definitions_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool remove_definitions_execute_request(Evaluator_Context *ctx,
+static bool remove_definitions_execute_request(EvalExecContext *ctx,
                                                Event_Origin origin,
                                                const Remove_Definitions_Request *req) {
     if (!ctx || !req) return false;
@@ -324,7 +324,7 @@ static bool remove_definitions_execute_request(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View join_directory_property_items_temp(Evaluator_Context *ctx,
+static String_View join_directory_property_items_temp(EvalExecContext *ctx,
                                                       const SV_List *items,
                                                       Event_Property_Mutate_Op op) {
     if (!ctx || !items) return nob_sv_from_cstr("");
@@ -334,7 +334,7 @@ static String_View join_directory_property_items_temp(Evaluator_Context *ctx,
     return eval_sv_join_semi_temp(ctx, *items, count);
 }
 
-static String_View directory_property_store_key_temp(Evaluator_Context *ctx, String_View property_name) {
+static String_View directory_property_store_key_temp(EvalExecContext *ctx, String_View property_name) {
     static const char prefix[] = "NOBIFY_PROPERTY_DIRECTORY::";
     if (!ctx) return nob_sv_from_cstr("");
 
@@ -356,7 +356,7 @@ static String_View directory_property_store_key_temp(Evaluator_Context *ctx, Str
     return nob_sv_from_parts(buf, off);
 }
 
-static String_View merge_directory_property_value_temp(Evaluator_Context *ctx,
+static String_View merge_directory_property_value_temp(EvalExecContext *ctx,
                                                        String_View current,
                                                        const SV_List *items,
                                                        Event_Property_Mutate_Op op) {
@@ -391,7 +391,7 @@ static String_View merge_directory_property_value_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, off);
 }
 
-static bool sync_directory_property_mutation(Evaluator_Context *ctx,
+static bool sync_directory_property_mutation(EvalExecContext *ctx,
                                              Event_Origin origin,
                                              const char *property_name,
                                              Event_Property_Mutate_Op op,
@@ -507,13 +507,13 @@ static bool gfc_is_notfound_value(String_View value) {
     return eval_sv_eq_ci_lit(value, "NOTFOUND") || gfc_sv_ends_with_ci_lit(value, "-NOTFOUND");
 }
 
-static bool gfc_cache_request_reuses_existing_result(Evaluator_Context *ctx, String_View out_var) {
+static bool gfc_cache_request_reuses_existing_result(EvalExecContext *ctx, String_View out_var) {
     if (!ctx || out_var.count == 0) return false;
     if (!eval_var_defined_visible(ctx, out_var)) return false;
     return !gfc_is_notfound_value(eval_var_get_visible(ctx, out_var));
 }
 
-static bool gfc_resolve_program_full_path(Evaluator_Context *ctx,
+static bool gfc_resolve_program_full_path(EvalExecContext *ctx,
                                           String_View token,
                                           String_View *out_program,
                                           bool *out_found) {
@@ -521,7 +521,7 @@ static bool gfc_resolve_program_full_path(Evaluator_Context *ctx,
     return eval_find_program_full_path_temp(ctx, token, out_program, out_found);
 }
 
-static bool gfc_set_output_value(Evaluator_Context *ctx,
+static bool gfc_set_output_value(EvalExecContext *ctx,
                                  Cmake_Event_Origin origin,
                                  String_View out_var,
                                  String_View value,
@@ -533,7 +533,7 @@ static bool gfc_set_output_value(Evaluator_Context *ctx,
     return eval_emit_var_set_cache(ctx, origin, out_var, value);
 }
 
-static bool gfc_parse_cache_only_trailing_args(Evaluator_Context *ctx,
+static bool gfc_parse_cache_only_trailing_args(EvalExecContext *ctx,
                                                const Node *node,
                                                Cmake_Event_Origin origin,
                                                SV_List args,
@@ -559,7 +559,7 @@ static bool gfc_parse_cache_only_trailing_args(Evaluator_Context *ctx,
     return true;
 }
 
-static bool gfc_parse_absolute_or_realpath_trailing_args(Evaluator_Context *ctx,
+static bool gfc_parse_absolute_or_realpath_trailing_args(EvalExecContext *ctx,
                                                          const Node *node,
                                                          Cmake_Event_Origin origin,
                                                          SV_List args,
@@ -589,7 +589,7 @@ static bool gfc_parse_absolute_or_realpath_trailing_args(Evaluator_Context *ctx,
     return true;
 }
 
-static bool gfc_parse_program_trailing_args(Evaluator_Context *ctx,
+static bool gfc_parse_program_trailing_args(EvalExecContext *ctx,
                                             const Node *node,
                                             Cmake_Event_Origin origin,
                                             SV_List args,
@@ -614,7 +614,7 @@ static bool gfc_parse_program_trailing_args(Evaluator_Context *ctx,
     return true;
 }
 
-static bool gfc_parse_request(Evaluator_Context *ctx,
+static bool gfc_parse_request(EvalExecContext *ctx,
                               const Node *node,
                               Cmake_Event_Origin origin,
                               Get_Filename_Component_Request *out_req) {
@@ -734,7 +734,7 @@ static bool gfc_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool gfc_execute_program_request(Evaluator_Context *ctx,
+static bool gfc_execute_program_request(EvalExecContext *ctx,
                                         Cmake_Event_Origin origin,
                                         const Get_Filename_Component_Request *req,
                                         String_View *out_result) {
@@ -779,7 +779,7 @@ static bool gfc_execute_program_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool gfc_execute_request(Evaluator_Context *ctx,
+static bool gfc_execute_request(EvalExecContext *ctx,
                                 Cmake_Event_Origin origin,
                                 const Get_Filename_Component_Request *req) {
     if (!ctx || !req) return false;
@@ -835,7 +835,7 @@ static bool gfc_execute_request(Evaluator_Context *ctx,
                                 req->cache_type);
 }
 
-static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *ctx,
+static bool emit_compile_definition_to_current_file_targets(EvalExecContext *ctx,
                                                             Cmake_Event_Origin origin,
                                                             String_View item) {
     if (!ctx || item.count == 0) return false;
@@ -855,7 +855,7 @@ static bool emit_compile_definition_to_current_file_targets(Evaluator_Context *c
     return true;
 }
 
-static bool emit_compile_option_to_current_file_targets(Evaluator_Context *ctx,
+static bool emit_compile_option_to_current_file_targets(EvalExecContext *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View item) {
     if (!ctx || item.count == 0) return false;
@@ -876,7 +876,7 @@ static bool emit_compile_option_to_current_file_targets(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
+static String_View wrap_link_item_with_config_genex_temp(EvalExecContext *ctx,
                                                          String_View item,
                                                          String_View cond_prefix) {
     if (!ctx || item.count == 0 || cond_prefix.count == 0) return item;
@@ -888,7 +888,7 @@ static String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
     return svu_join_no_sep_temp(ctx, parts, 3);
 }
 
-static bool split_comma_list_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+static bool split_comma_list_temp(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
     if (input.count == 0) return true;
 
@@ -910,7 +910,7 @@ static bool split_comma_list_temp(Evaluator_Context *ctx, String_View input, SV_
     return true;
 }
 
-static bool expand_compile_option_token(Evaluator_Context *ctx, String_View tok, SV_List *out) {
+static bool expand_compile_option_token(EvalExecContext *ctx, String_View tok, SV_List *out) {
     if (!ctx || !out) return false;
     if (tok.count == 0) return true;
 
@@ -921,7 +921,7 @@ static bool expand_compile_option_token(Evaluator_Context *ctx, String_View tok,
     return svu_list_push_temp(ctx, out, tok);
 }
 
-static bool expand_link_option_token(Evaluator_Context *ctx, String_View tok, SV_List *out) {
+static bool expand_link_option_token(EvalExecContext *ctx, String_View tok, SV_List *out) {
     if (!ctx || !out) return false;
     if (tok.count == 0) return true;
 
@@ -958,7 +958,7 @@ static bool expand_link_option_token(Evaluator_Context *ctx, String_View tok, SV
     return svu_list_push_temp(ctx, out, tok);
 }
 
-static bool directory_parse_add_compile_options_request(Evaluator_Context *ctx,
+static bool directory_parse_add_compile_options_request(EvalExecContext *ctx,
                                                         const Node *node,
                                                         Directory_Items_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -979,7 +979,7 @@ static bool directory_parse_add_compile_options_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_execute_add_compile_options_request(Evaluator_Context *ctx,
+static bool directory_execute_add_compile_options_request(EvalExecContext *ctx,
                                                           Event_Origin origin,
                                                           const Directory_Items_Request *req) {
     if (!ctx || !req) return false;
@@ -998,7 +998,7 @@ static bool directory_execute_add_compile_options_request(Evaluator_Context *ctx
     return true;
 }
 
-static bool directory_parse_add_compile_definitions_request(Evaluator_Context *ctx,
+static bool directory_parse_add_compile_definitions_request(EvalExecContext *ctx,
                                                             const Node *node,
                                                             Directory_Items_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -1015,7 +1015,7 @@ static bool directory_parse_add_compile_definitions_request(Evaluator_Context *c
     return true;
 }
 
-static bool directory_execute_add_compile_definitions_request(Evaluator_Context *ctx,
+static bool directory_execute_add_compile_definitions_request(EvalExecContext *ctx,
                                                               Cmake_Event_Origin origin,
                                                               const Directory_Items_Request *req) {
     if (!ctx || !req) return false;
@@ -1037,7 +1037,7 @@ static bool directory_execute_add_compile_definitions_request(Evaluator_Context 
     return true;
 }
 
-static bool directory_parse_add_definitions_request(Evaluator_Context *ctx,
+static bool directory_parse_add_definitions_request(EvalExecContext *ctx,
                                                     const Node *node,
                                                     Add_Definitions_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -1061,7 +1061,7 @@ static bool directory_parse_add_definitions_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_execute_add_definitions_request(Evaluator_Context *ctx,
+static bool directory_execute_add_definitions_request(EvalExecContext *ctx,
                                                       Cmake_Event_Origin origin,
                                                       const Add_Definitions_Request *req) {
     if (!ctx || !req) return false;
@@ -1101,7 +1101,7 @@ static bool directory_execute_add_definitions_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_parse_include_regular_expression_request(Evaluator_Context *ctx,
+static bool directory_parse_include_regular_expression_request(EvalExecContext *ctx,
                                                                const Node *node,
                                                                Cmake_Event_Origin origin,
                                                                Include_Regular_Expression_Request *out_req) {
@@ -1124,7 +1124,7 @@ static bool directory_parse_include_regular_expression_request(Evaluator_Context
     return true;
 }
 
-static bool directory_execute_include_regular_expression_request(Evaluator_Context *ctx,
+static bool directory_execute_include_regular_expression_request(EvalExecContext *ctx,
                                                                  const Include_Regular_Expression_Request *req) {
     if (!ctx || !req) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_INCLUDE_REGULAR_EXPRESSION"), req->regex_match)) {
@@ -1139,7 +1139,7 @@ static bool directory_execute_include_regular_expression_request(Evaluator_Conte
     return true;
 }
 
-static bool directory_parse_add_link_options_request(Evaluator_Context *ctx,
+static bool directory_parse_add_link_options_request(EvalExecContext *ctx,
                                                      const Node *node,
                                                      Directory_Items_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -1160,7 +1160,7 @@ static bool directory_parse_add_link_options_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_execute_add_link_options_request(Evaluator_Context *ctx,
+static bool directory_execute_add_link_options_request(EvalExecContext *ctx,
                                                        Cmake_Event_Origin origin,
                                                        const Directory_Items_Request *req) {
     if (!ctx || !req) return false;
@@ -1179,7 +1179,7 @@ static bool directory_execute_add_link_options_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_parse_include_directories_request(Evaluator_Context *ctx,
+static bool directory_parse_include_directories_request(EvalExecContext *ctx,
                                                         const Node *node,
                                                         Directory_Path_Mutation_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -1211,7 +1211,7 @@ static bool directory_parse_include_directories_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_execute_include_directories_request(Evaluator_Context *ctx,
+static bool directory_execute_include_directories_request(EvalExecContext *ctx,
                                                           Event_Origin origin,
                                                           const Directory_Path_Mutation_Request *req) {
     if (!ctx || !req) return false;
@@ -1225,7 +1225,7 @@ static bool directory_execute_include_directories_request(Evaluator_Context *ctx
                                             &req->items);
 }
 
-static bool directory_parse_link_directories_request(Evaluator_Context *ctx,
+static bool directory_parse_link_directories_request(EvalExecContext *ctx,
                                                      const Node *node,
                                                      Directory_Path_Mutation_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -1253,7 +1253,7 @@ static bool directory_parse_link_directories_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_execute_link_directories_request(Evaluator_Context *ctx,
+static bool directory_execute_link_directories_request(EvalExecContext *ctx,
                                                        Event_Origin origin,
                                                        const Directory_Path_Mutation_Request *req) {
     if (!ctx || !req) return false;
@@ -1266,7 +1266,7 @@ static bool directory_execute_link_directories_request(Evaluator_Context *ctx,
                                             &req->items);
 }
 
-static bool directory_parse_link_libraries_request(Evaluator_Context *ctx,
+static bool directory_parse_link_libraries_request(EvalExecContext *ctx,
                                                    const Node *node,
                                                    Cmake_Event_Origin origin,
                                                    Link_Libraries_Request *out_req) {
@@ -1311,14 +1311,14 @@ static bool directory_parse_link_libraries_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool directory_execute_link_libraries_request(Evaluator_Context *ctx,
+static bool directory_execute_link_libraries_request(EvalExecContext *ctx,
                                                      const Link_Libraries_Request *req) {
     (void)ctx;
     (void)req;
     return true;
 }
 
-Eval_Result eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_compile_options(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1328,7 +1328,7 @@ Eval_Result eval_handle_add_compile_options(Evaluator_Context *ctx, const Node *
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_compile_definitions(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_compile_definitions(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1338,7 +1338,7 @@ Eval_Result eval_handle_add_compile_definitions(Evaluator_Context *ctx, const No
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_definitions(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1348,7 +1348,7 @@ Eval_Result eval_handle_add_definitions(Evaluator_Context *ctx, const Node *node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_remove_definitions(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Event_Origin o = eval_origin_from_node(ctx, node);
@@ -1362,7 +1362,7 @@ Eval_Result eval_handle_remove_definitions(Evaluator_Context *ctx, const Node *n
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_include_regular_expression(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include_regular_expression(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1374,7 +1374,7 @@ Eval_Result eval_handle_include_regular_expression(Evaluator_Context *ctx, const
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_link_options(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_link_options(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1384,7 +1384,7 @@ Eval_Result eval_handle_add_link_options(Evaluator_Context *ctx, const Node *nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_link_libraries(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1394,7 +1394,7 @@ Eval_Result eval_handle_link_libraries(Evaluator_Context *ctx, const Node *node)
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_include_directories(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include_directories(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1404,7 +1404,7 @@ Eval_Result eval_handle_include_directories(Evaluator_Context *ctx, const Node *
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_link_directories(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_link_directories(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1414,7 +1414,7 @@ Eval_Result eval_handle_link_directories(Evaluator_Context *ctx, const Node *nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_get_filename_component(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_filename_component(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);

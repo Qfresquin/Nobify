@@ -6,8 +6,8 @@
 #include "parser.h"
 #include "evaluator.h"
 
-struct Evaluator_Context;
+struct EvalExecContext;
 
-Eval_Result eval_handle_install(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_install(struct EvalExecContext *ctx, const Node *node);
 
 #endif // EVAL_INSTALL_H_

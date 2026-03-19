@@ -3,7 +3,7 @@
 #include "evaluator_internal.h"
 #include "eval_opt_parser.h"
 
-static bool require_cpack_component_module(Evaluator_Context *ctx,
+static bool require_cpack_component_module(EvalExecContext *ctx,
                                            String_View command,
                                            Cmake_Event_Origin origin) {
     if (!ctx) return false;
@@ -23,7 +23,7 @@ typedef struct {
     String_View display_name;
 } Cpack_Install_Type_Request;
 
-static bool cpack_install_type_on_option(Evaluator_Context *ctx,
+static bool cpack_install_type_on_option(EvalExecContext *ctx,
                                          void *userdata,
                                          int id,
                                          SV_List values,
@@ -36,7 +36,7 @@ static bool cpack_install_type_on_option(Evaluator_Context *ctx,
     return true;
 }
 
-static bool cpack_install_type_on_positional(Evaluator_Context *ctx,
+static bool cpack_install_type_on_positional(EvalExecContext *ctx,
                                              void *userdata,
                                              String_View value,
                                              size_t token_index) {
@@ -66,7 +66,7 @@ typedef struct {
     bool bold_title;
 } Cpack_Component_Group_Request;
 
-static bool cpack_group_on_option(Evaluator_Context *ctx,
+static bool cpack_group_on_option(EvalExecContext *ctx,
                                   void *userdata,
                                   int id,
                                   SV_List values,
@@ -96,7 +96,7 @@ static bool cpack_group_on_option(Evaluator_Context *ctx,
     }
 }
 
-static bool cpack_group_on_positional(Evaluator_Context *ctx,
+static bool cpack_group_on_positional(EvalExecContext *ctx,
                                       void *userdata,
                                       String_View value,
                                       size_t token_index) {
@@ -138,7 +138,7 @@ typedef struct {
     bool downloaded;
 } Cpack_Component_Request;
 
-static bool cpack_component_on_option(Evaluator_Context *ctx,
+static bool cpack_component_on_option(EvalExecContext *ctx,
                                       void *userdata,
                                       int id,
                                       SV_List values,
@@ -185,7 +185,7 @@ static bool cpack_component_on_option(Evaluator_Context *ctx,
     }
 }
 
-static bool cpack_component_on_positional(Evaluator_Context *ctx,
+static bool cpack_component_on_positional(EvalExecContext *ctx,
                                           void *userdata,
                                           String_View value,
                                           size_t token_index) {
@@ -196,7 +196,7 @@ static bool cpack_component_on_positional(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool cpack_parse_install_type_request(Evaluator_Context *ctx,
+static bool cpack_parse_install_type_request(EvalExecContext *ctx,
                                              const Node *node,
                                              Cmake_Event_Origin origin,
                                              Cpack_Install_Type_Request *out_req) {
@@ -237,13 +237,13 @@ static bool cpack_parse_install_type_request(Evaluator_Context *ctx,
                                out_req);
 }
 
-static bool cpack_execute_install_type_request(Evaluator_Context *ctx,
+static bool cpack_execute_install_type_request(EvalExecContext *ctx,
                                                const Cpack_Install_Type_Request *req) {
     if (!ctx || !req) return false;
     return eval_emit_cpack_add_install_type(ctx, req->origin, req->name, req->display_name);
 }
 
-static bool cpack_parse_component_group_request(Evaluator_Context *ctx,
+static bool cpack_parse_component_group_request(EvalExecContext *ctx,
                                                 const Node *node,
                                                 Cmake_Event_Origin origin,
                                                 Cpack_Component_Group_Request *out_req) {
@@ -292,7 +292,7 @@ static bool cpack_parse_component_group_request(Evaluator_Context *ctx,
                                out_req);
 }
 
-static bool cpack_execute_component_group_request(Evaluator_Context *ctx,
+static bool cpack_execute_component_group_request(EvalExecContext *ctx,
                                                   const Cpack_Component_Group_Request *req) {
     if (!ctx || !req) return false;
     return eval_emit_cpack_add_component_group(ctx,
@@ -305,7 +305,7 @@ static bool cpack_execute_component_group_request(Evaluator_Context *ctx,
                                                req->bold_title);
 }
 
-static bool cpack_parse_component_request(Evaluator_Context *ctx,
+static bool cpack_parse_component_request(EvalExecContext *ctx,
                                           const Node *node,
                                           Cmake_Event_Origin origin,
                                           Cpack_Component_Request *out_req) {
@@ -366,7 +366,7 @@ static bool cpack_parse_component_request(Evaluator_Context *ctx,
                                out_req);
 }
 
-static bool cpack_execute_component_request(Evaluator_Context *ctx,
+static bool cpack_execute_component_request(EvalExecContext *ctx,
                                             const Cpack_Component_Request *req) {
     if (!ctx || !req) return false;
     return eval_emit_cpack_add_component(ctx,
@@ -385,7 +385,7 @@ static bool cpack_execute_component_request(Evaluator_Context *ctx,
                                          req->downloaded);
 }
 
-Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cpack_add_install_type(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -395,7 +395,7 @@ Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cpack_add_component_group(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -405,7 +405,7 @@ Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const 
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cpack_add_component(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);

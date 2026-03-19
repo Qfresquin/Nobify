@@ -114,7 +114,7 @@ static bool flow_exec_emit_command_echo(const Flow_Exec_Command *cmd, Flow_Exec_
     return fflush(out) == 0;
 }
 
-static Flow_Exec_Command_Echo flow_exec_default_command_echo(Evaluator_Context *ctx) {
+static Flow_Exec_Command_Echo flow_exec_default_command_echo(EvalExecContext *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_EXECUTE_PROCESS_COMMAND_ECHO"));
     if (eval_sv_eq_ci_lit(v, "STDOUT")) return FLOW_EXEC_ECHO_STDOUT;
     if (eval_sv_eq_ci_lit(v, "STDERR")) return FLOW_EXEC_ECHO_STDERR;
@@ -143,12 +143,12 @@ static bool flow_exec_is_keyword(String_View token) {
            flow_arg_exact_ci(token, "ENCODING");
 }
 
-static bool flow_exec_append_command_arg(Evaluator_Context *ctx, Flow_Exec_Command *cmd, String_View arg) {
+static bool flow_exec_append_command_arg(EvalExecContext *ctx, Flow_Exec_Command *cmd, String_View arg) {
     if (!ctx || !cmd) return false;
     return EVAL_ARR_PUSH(ctx, ctx->arena, cmd->args, arg);
 }
 
-static bool flow_exec_append_command(Evaluator_Context *ctx,
+static bool flow_exec_append_command(EvalExecContext *ctx,
                                      Flow_Exec_Command_List *commands,
                                      Flow_Exec_Command cmd) {
     if (!ctx || !commands) return false;
@@ -158,7 +158,7 @@ static bool flow_exec_append_command(Evaluator_Context *ctx,
     return true;
 }
 
-static bool flow_exec_parse_timeout(Evaluator_Context *ctx,
+static bool flow_exec_parse_timeout(EvalExecContext *ctx,
                                     const Node *node,
                                     String_View value,
                                     double *out_seconds) {
@@ -179,7 +179,7 @@ static bool flow_exec_parse_timeout(Evaluator_Context *ctx,
     return true;
 }
 
-static bool flow_exec_parse_options(Evaluator_Context *ctx,
+static bool flow_exec_parse_options(EvalExecContext *ctx,
                                     const Node *node,
                                     SV_List args,
                                     Flow_Exec_Options *out_opt) {
@@ -407,7 +407,7 @@ static String_View flow_exec_primary_command_name(const Flow_Exec_Options *opt) 
     return opt->commands.items[0].args[0];
 }
 
-static bool flow_exec_stabilize_sv(Evaluator_Context *ctx, String_View *value) {
+static bool flow_exec_stabilize_sv(EvalExecContext *ctx, String_View *value) {
     if (!ctx || !value) return false;
     if (value->count == 0) return true;
     *value = sv_copy_to_arena(ctx->arena, *value);
@@ -415,7 +415,7 @@ static bool flow_exec_stabilize_sv(Evaluator_Context *ctx, String_View *value) {
     return true;
 }
 
-static bool flow_exec_stabilize_options(Evaluator_Context *ctx, Flow_Exec_Options *opt) {
+static bool flow_exec_stabilize_options(EvalExecContext *ctx, Flow_Exec_Options *opt) {
     if (!ctx || !opt) return false;
     if (opt->has_working_directory && !flow_exec_stabilize_sv(ctx, &opt->working_directory)) return false;
     if (opt->has_input_file && !flow_exec_stabilize_sv(ctx, &opt->input_file)) return false;
@@ -424,7 +424,7 @@ static bool flow_exec_stabilize_options(Evaluator_Context *ctx, Flow_Exec_Option
     return true;
 }
 
-static bool flow_parse_execute_process_request(Evaluator_Context *ctx,
+static bool flow_parse_execute_process_request(EvalExecContext *ctx,
                                                const Node *node,
                                                Flow_Execute_Process_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -440,7 +440,7 @@ static bool flow_parse_execute_process_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool flow_exec_read_file(Evaluator_Context *ctx, String_View path, String_View *out_text) {
+static bool flow_exec_read_file(EvalExecContext *ctx, String_View path, String_View *out_text) {
     if (!ctx || !out_text) return false;
     *out_text = nob_sv_from_cstr("");
     if (path.count == 0) return true;
@@ -458,7 +458,7 @@ static bool flow_exec_read_file(Evaluator_Context *ctx, String_View path, String
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool flow_exec_write_file(Evaluator_Context *ctx, String_View path, String_View content) {
+static bool flow_exec_write_file(EvalExecContext *ctx, String_View path, String_View content) {
     if (!ctx) return false;
     if (path.count == 0) return true;
 
@@ -468,7 +468,7 @@ static bool flow_exec_write_file(Evaluator_Context *ctx, String_View path, Strin
     return nob_write_entire_file(path_c, content.data ? content.data : "", content.count);
 }
 
-static bool flow_exec_run_command(Evaluator_Context *ctx,
+static bool flow_exec_run_command(EvalExecContext *ctx,
                                   const Flow_Exec_Command *cmd,
                                   String_View working_directory,
                                   String_View stdin_data,
@@ -502,7 +502,7 @@ static bool flow_exec_run_command(Evaluator_Context *ctx,
     return true;
 }
 
-static bool flow_exec_collect_results(Evaluator_Context *ctx,
+static bool flow_exec_collect_results(EvalExecContext *ctx,
                                       const Flow_Exec_Options *opt,
                                       String_View *out_stdout,
                                       String_View *out_stderr,
@@ -576,7 +576,7 @@ static bool flow_exec_collect_results(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
+static bool flow_exec_apply_outputs(EvalExecContext *ctx,
                                     const Node *node,
                                     const Flow_Exec_Options *opt,
                                     String_View stdout_text,
@@ -660,6 +660,7 @@ static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
         }
 
         if (fatal_hit) {
+            eval_command_tx_preserve_scope_vars_on_failure(ctx);
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("execute_process() child process failed"), last_result);
             eval_request_stop(ctx);
         }
@@ -668,7 +669,7 @@ static bool flow_exec_apply_outputs(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool flow_execute_execute_process_request(Evaluator_Context *ctx,
+static bool flow_execute_execute_process_request(EvalExecContext *ctx,
                                                  const Node *node,
                                                  Cmake_Event_Origin origin,
                                                  const Flow_Execute_Process_Request *req) {
@@ -718,7 +719,7 @@ static bool flow_execute_execute_process_request(Evaluator_Context *ctx,
                                    had_error);
 }
 
-Eval_Result eval_handle_execute_process(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_execute_process(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -728,7 +729,7 @@ Eval_Result eval_handle_execute_process(Evaluator_Context *ctx, const Node *node
     return eval_result_from_ctx(ctx);
 }
 
-static bool flow_exec_program_parse(Evaluator_Context *ctx,
+static bool flow_exec_program_parse(EvalExecContext *ctx,
                                     const Node *node,
                                     const SV_List *args,
                                     Flow_Exec_Program_Compat *out) {
@@ -790,7 +791,7 @@ static bool flow_exec_program_parse(Evaluator_Context *ctx,
     return true;
 }
 
-static bool flow_exec_program_lower_request(Evaluator_Context *ctx,
+static bool flow_exec_program_lower_request(EvalExecContext *ctx,
                                             const Flow_Exec_Program_Compat *compat,
                                             Flow_Exec_Program_Request *out_req) {
     if (!ctx || !compat || !out_req) return false;
@@ -827,7 +828,7 @@ static bool flow_exec_program_lower_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool flow_parse_exec_program_request(Evaluator_Context *ctx,
+static bool flow_parse_exec_program_request(EvalExecContext *ctx,
                                             const Node *node,
                                             Cmake_Event_Origin origin,
                                             Flow_Exec_Program_Request *out_req) {
@@ -852,7 +853,7 @@ static bool flow_parse_exec_program_request(Evaluator_Context *ctx,
     return flow_exec_program_lower_request(ctx, &compat, out_req);
 }
 
-static bool flow_execute_exec_program_request(Evaluator_Context *ctx,
+static bool flow_execute_exec_program_request(EvalExecContext *ctx,
                                               const Node *node,
                                               const Flow_Exec_Program_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -882,7 +883,7 @@ static bool flow_execute_exec_program_request(Evaluator_Context *ctx,
                                    had_error);
 }
 
-Eval_Result eval_handle_exec_program(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_exec_program(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);

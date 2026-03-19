@@ -8,11 +8,11 @@
 #include <windows.h>
 #endif
 
-String_View eval_file_current_src_dir(Evaluator_Context *ctx) {
+String_View eval_file_current_src_dir(EvalExecContext *ctx) {
     return eval_current_source_dir(ctx);
 }
 
-String_View eval_file_current_bin_dir(Evaluator_Context *ctx) {
+String_View eval_file_current_bin_dir(EvalExecContext *ctx) {
     return eval_current_binary_dir(ctx);
 }
 
@@ -86,7 +86,7 @@ static void scope_normalize_slashes_in_place(char *s) {
     }
 }
 
-static bool scope_canonicalize_existing_cstr_temp(Evaluator_Context *ctx,
+static bool scope_canonicalize_existing_cstr_temp(EvalExecContext *ctx,
                                                   const char *path_c,
                                                   char **out_canon_cstr) {
     if (!ctx || !path_c || !out_canon_cstr) return false;
@@ -150,7 +150,7 @@ static bool scope_canonicalize_existing_cstr_temp(Evaluator_Context *ctx,
 #endif
 }
 
-static bool scope_canonicalize_existing_or_parent_temp(Evaluator_Context *ctx,
+static bool scope_canonicalize_existing_or_parent_temp(EvalExecContext *ctx,
                                                        String_View path,
                                                        String_View *out) {
     if (!ctx || !out || path.count == 0) return false;
@@ -190,7 +190,7 @@ static bool scope_canonicalize_existing_or_parent_temp(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_file_resolve_path(Evaluator_Context *ctx,
+bool eval_file_resolve_path(EvalExecContext *ctx,
                             const Node *node,
                             Cmake_Event_Origin origin,
                             String_View input_path,
@@ -253,7 +253,7 @@ bool eval_file_resolve_path(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
+bool eval_file_resolve_project_scoped_path(EvalExecContext *ctx,
                                            const Node *node,
                                            Cmake_Event_Origin origin,
                                            String_View input_path,
@@ -263,7 +263,7 @@ bool eval_file_resolve_project_scoped_path(Evaluator_Context *ctx,
         ctx, node, origin, input_path, relative_base, EVAL_FILE_PATH_MODE_CMAKE, out_path);
 }
 
-String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+String_View eval_file_cmk_path_normalize_temp(EvalExecContext *ctx, String_View input) {
     if (!ctx) return nob_sv_from_cstr("");
     if (input.count == 0) return nob_sv_from_cstr("");
 
@@ -328,7 +328,7 @@ String_View eval_file_cmk_path_normalize_temp(Evaluator_Context *ctx, String_Vie
     return nob_sv_from_cstr(buf);
 }
 
-bool eval_file_canonicalize_existing_path_temp(Evaluator_Context *ctx, String_View path, String_View *out_path) {
+bool eval_file_canonicalize_existing_path_temp(EvalExecContext *ctx, String_View path, String_View *out_path) {
     if (!ctx || !out_path || path.count == 0) return false;
     *out_path = nob_sv_from_cstr("");
 
@@ -365,7 +365,7 @@ static size_t mkdir_root_prefix_len(const char *path) {
     return 0;
 }
 
-bool eval_file_mkdir_p(Evaluator_Context *ctx, String_View path) {
+bool eval_file_mkdir_p(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
 
     String_View normalized = eval_file_cmk_path_normalize_temp(ctx, path);

@@ -8,7 +8,7 @@ static bool define_property_keyword(String_View tok) {
            eval_sv_eq_ci_lit(tok, "INITIALIZE_FROM_VARIABLE");
 }
 
-static bool eval_property_write_current_directory_shadow(Evaluator_Context *ctx,
+static bool eval_property_write_current_directory_shadow(EvalExecContext *ctx,
                                                          Event_Origin origin,
                                                          String_View scope_upper,
                                                          String_View object_name,
@@ -25,7 +25,7 @@ static bool eval_property_write_current_directory_shadow(Evaluator_Context *ctx,
         ctx, origin, scope_upper, scoped_object, property_name, value, op, emit_var_event);
 }
 
-Eval_Result eval_handle_set_directory_properties(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_set_directory_properties(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -56,7 +56,7 @@ Eval_Result eval_handle_set_directory_properties(Evaluator_Context *ctx, const N
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_set_source_files_properties(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_set_source_files_properties(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -187,7 +187,7 @@ Eval_Result eval_handle_set_source_files_properties(Evaluator_Context *ctx, cons
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_set_tests_properties(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -275,7 +275,7 @@ Eval_Result eval_handle_set_tests_properties(Evaluator_Context *ctx, const Node 
 }
 
 
-Eval_Result eval_handle_define_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_define_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -359,7 +359,7 @@ Eval_Result eval_handle_define_property(Evaluator_Context *ctx, const Node *node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_set_target_properties(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_set_target_properties(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -423,7 +423,7 @@ Eval_Result eval_handle_set_target_properties(Evaluator_Context *ctx, const Node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_set_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

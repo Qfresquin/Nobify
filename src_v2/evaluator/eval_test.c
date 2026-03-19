@@ -7,11 +7,11 @@
 #include <stdio.h>
 #include <string.h>
 
-static String_View test_current_bin_dir(Evaluator_Context *ctx) {
+static String_View test_current_bin_dir(EvalExecContext *ctx) {
     return eval_current_binary_dir(ctx);
 }
 
-static String_View test_source_stem_temp(Evaluator_Context *ctx, String_View path) {
+static String_View test_source_stem_temp(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return nob_sv_from_cstr("");
     size_t start = 0;
     for (size_t i = 0; i < path.count; i++) {
@@ -27,7 +27,7 @@ static String_View test_source_stem_temp(Evaluator_Context *ctx, String_View pat
     return nob_sv_from_parts(path.data + start, end - start);
 }
 
-static String_View test_global_marker_key_temp(Evaluator_Context *ctx, String_View name) {
+static String_View test_global_marker_key_temp(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0) return nob_sv_from_cstr("");
     size_t prefix_len = strlen("NOBIFY_TEST::");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), prefix_len + name.count + 1);
@@ -38,7 +38,7 @@ static String_View test_global_marker_key_temp(Evaluator_Context *ctx, String_Vi
     return nob_sv_from_cstr(buf);
 }
 
-Eval_Result eval_handle_enable_testing(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_enable_testing(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -64,7 +64,7 @@ typedef struct {
     bool command_expand_lists;
 } Add_Test_Option_State;
 
-static bool add_test_on_option(Evaluator_Context *ctx,
+static bool add_test_on_option(EvalExecContext *ctx,
                                void *userdata,
                                int id,
                                SV_List values,
@@ -90,7 +90,7 @@ static bool add_test_on_option(Evaluator_Context *ctx,
     return true;
 }
 
-static bool add_test_on_positional(Evaluator_Context *ctx,
+static bool add_test_on_positional(EvalExecContext *ctx,
                                    void *userdata,
                                    String_View value,
                                    size_t token_index) {
@@ -101,7 +101,7 @@ static bool add_test_on_positional(Evaluator_Context *ctx,
     return false;
 }
 
-Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -190,7 +190,7 @@ Eval_Result eval_handle_add_test(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_create_test_sourcelist(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_create_test_sourcelist(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);

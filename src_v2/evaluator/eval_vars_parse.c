@@ -82,7 +82,7 @@ static bool parse_strip_bracket_arg(String_View in, String_View *out) {
     return true;
 }
 
-static String_View parse_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
+static String_View parse_arg_flat(EvalExecContext *ctx, const Arg *arg) {
     if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
@@ -103,7 +103,7 @@ static String_View parse_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
     return nob_sv_from_parts(buf, off);
 }
 
-static String_View parse_eval_arg_single(Evaluator_Context *ctx, const Arg *arg) {
+static String_View parse_eval_arg_single(EvalExecContext *ctx, const Arg *arg) {
     if (!ctx || !arg) return nob_sv_from_cstr("");
 
     String_View flat = parse_arg_flat(ctx, arg);
@@ -124,7 +124,7 @@ static String_View parse_eval_arg_single(Evaluator_Context *ctx, const Arg *arg)
     return value;
 }
 
-static bool parse_resolve_arg_range(Evaluator_Context *ctx,
+static bool parse_resolve_arg_range(EvalExecContext *ctx,
                                     const Args *raw_args,
                                     size_t begin,
                                     SV_List *out) {
@@ -162,11 +162,11 @@ static Parse_Keyword_Spec *parse_find_keyword(Parse_Keyword_Spec *specs, size_t 
     return NULL;
 }
 
-static bool parse_warn_duplicate_keyword(Evaluator_Context *ctx, const Node *node, String_View keyword) {
+static bool parse_warn_duplicate_keyword(EvalExecContext *ctx, const Node *node, String_View keyword) {
     return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("cmake_parse_arguments"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("cmake_parse_arguments() keyword appears more than once across keyword lists"), keyword);
 }
 
-static bool parse_collect_keyword_values(Evaluator_Context *ctx,
+static bool parse_collect_keyword_values(EvalExecContext *ctx,
                                          const Arg *arg,
                                          SV_List *out) {
     if (!ctx || !arg || !out) return false;
@@ -179,7 +179,7 @@ static bool parse_collect_keyword_values(Evaluator_Context *ctx,
     return true;
 }
 
-static bool parse_add_keyword_values(Evaluator_Context *ctx,
+static bool parse_add_keyword_values(EvalExecContext *ctx,
                                      const Node *node,
                                      const SV_List *keywords,
                                      Parse_Keyword_Kind kind,
@@ -205,7 +205,7 @@ static bool parse_add_keyword_values(Evaluator_Context *ctx,
     return true;
 }
 
-static bool cmake_parse_arguments_build_specs(Evaluator_Context *ctx,
+static bool cmake_parse_arguments_build_specs(EvalExecContext *ctx,
                                               const Node *node,
                                               const SV_List *options,
                                               const SV_List *one_value_keywords,
@@ -242,7 +242,7 @@ static bool cmake_parse_arguments_build_specs(Evaluator_Context *ctx,
     return true;
 }
 
-static bool parse_nonnegative_index(Evaluator_Context *ctx, String_View token, size_t *out_value) {
+static bool parse_nonnegative_index(EvalExecContext *ctx, String_View token, size_t *out_value) {
     if (!ctx || !out_value) return false;
     *out_value = 0;
     if (token.count == 0) return false;
@@ -256,7 +256,7 @@ static bool parse_nonnegative_index(Evaluator_Context *ctx, String_View token, s
     return true;
 }
 
-static bool parse_build_prefix_var_name(Evaluator_Context *ctx,
+static bool parse_build_prefix_var_name(EvalExecContext *ctx,
                                         String_View prefix,
                                         const char *suffix,
                                         String_View *out_name) {
@@ -272,7 +272,7 @@ static bool parse_build_prefix_var_name(Evaluator_Context *ctx,
     return true;
 }
 
-static bool parse_build_prefixed_var_name(Evaluator_Context *ctx,
+static bool parse_build_prefixed_var_name(EvalExecContext *ctx,
                                           String_View prefix,
                                           String_View keyword,
                                           String_View *out_name) {
@@ -288,13 +288,13 @@ static bool parse_build_prefixed_var_name(Evaluator_Context *ctx,
     return true;
 }
 
-static bool parse_single_empty_value_defines_var(Evaluator_Context *ctx) {
+static bool parse_single_empty_value_defines_var(EvalExecContext *ctx) {
     if (!ctx) return false;
     if (!eval_policy_is_known(nob_sv_from_cstr(EVAL_POLICY_CMP0174))) return false;
     return eval_policy_is_new(ctx, EVAL_POLICY_CMP0174);
 }
 
-static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start_index, SV_List *out) {
+static bool parse_collect_parse_argv_source(EvalExecContext *ctx, size_t start_index, SV_List *out) {
     if (!ctx || !out) return false;
     *out = NULL;
 
@@ -312,7 +312,7 @@ static bool parse_collect_parse_argv_source(Evaluator_Context *ctx, size_t start
     return true;
 }
 
-static bool parse_assign_results(Evaluator_Context *ctx,
+static bool parse_assign_results(EvalExecContext *ctx,
                                  String_View prefix,
                                  Parse_Keyword_Spec *specs,
                                  size_t spec_count,
@@ -371,7 +371,7 @@ static bool parse_assign_results(Evaluator_Context *ctx,
     return true;
 }
 
-static bool cmake_parse_arguments_parse_request(Evaluator_Context *ctx,
+static bool cmake_parse_arguments_parse_request(EvalExecContext *ctx,
                                                 const Node *node,
                                                 Cmake_Parse_Arguments_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -440,7 +440,7 @@ static bool cmake_parse_arguments_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool cmake_parse_arguments_execute_request(Evaluator_Context *ctx,
+static bool cmake_parse_arguments_execute_request(EvalExecContext *ctx,
                                                   const Cmake_Parse_Arguments_Request *req) {
     if (!ctx || !req) return false;
 
@@ -499,7 +499,7 @@ static bool cmake_parse_arguments_execute_request(Evaluator_Context *ctx,
     return parse_assign_results(ctx, req->prefix, req->specs, req->spec_count, &unparsed, &missing);
 }
 
-Eval_Result eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_parse_arguments(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Parse_Arguments_Request req = {0};
@@ -508,14 +508,14 @@ Eval_Result eval_handle_cmake_parse_arguments(Evaluator_Context *ctx, const Node
     return eval_result_from_ctx(ctx);
 }
 
-static bool separate_arguments_parse_tokens(Evaluator_Context *ctx,
+static bool separate_arguments_parse_tokens(EvalExecContext *ctx,
                                             Eval_Cmdline_Mode mode,
                                             String_View input,
                                             SV_List *out) {
     return eval_split_command_line_temp(ctx, mode, input, out);
 }
 
-static String_View separate_arguments_replace_spaces_temp(Evaluator_Context *ctx, String_View input) {
+static String_View separate_arguments_replace_spaces_temp(EvalExecContext *ctx, String_View input) {
     if (!ctx || input.count == 0) return nob_sv_from_cstr("");
 
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
@@ -527,7 +527,7 @@ static String_View separate_arguments_replace_spaces_temp(Evaluator_Context *ctx
     return nob_sv_from_parts(buf, input.count);
 }
 
-static bool separate_arguments_set_program_pair(Evaluator_Context *ctx,
+static bool separate_arguments_set_program_pair(EvalExecContext *ctx,
                                                 String_View out_var,
                                                 String_View program,
                                                 String_View args_string) {
@@ -570,7 +570,7 @@ static bool separate_arguments_trim_whitespace(String_View input, String_View *o
     return true;
 }
 
-static bool separate_arguments_parse_request(Evaluator_Context *ctx,
+static bool separate_arguments_parse_request(EvalExecContext *ctx,
                                              const Node *node,
                                              SV_List args,
                                              Separate_Arguments_Request *out_req) {
@@ -687,20 +687,20 @@ static bool separate_arguments_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool separate_arguments_execute_legacy_request(Evaluator_Context *ctx,
+static bool separate_arguments_execute_legacy_request(EvalExecContext *ctx,
                                                       const Separate_Arguments_Request *req) {
     if (!ctx || !req) return false;
     String_View current = eval_var_get_visible(ctx, req->out_var);
     return eval_var_set_current(ctx, req->out_var, separate_arguments_replace_spaces_temp(ctx, current));
 }
 
-static bool separate_arguments_execute_set_empty_request(Evaluator_Context *ctx,
+static bool separate_arguments_execute_set_empty_request(EvalExecContext *ctx,
                                                          const Separate_Arguments_Request *req) {
     if (!ctx || !req) return false;
     return eval_var_set_current(ctx, req->out_var, nob_sv_from_cstr(""));
 }
 
-static bool separate_arguments_execute_split_request(Evaluator_Context *ctx,
+static bool separate_arguments_execute_split_request(EvalExecContext *ctx,
                                                      const Separate_Arguments_Request *req) {
     if (!ctx || !req) return false;
     SV_List tokens = NULL;
@@ -708,7 +708,7 @@ static bool separate_arguments_execute_split_request(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, req->out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)));
 }
 
-static bool separate_arguments_execute_program_split_request(Evaluator_Context *ctx,
+static bool separate_arguments_execute_program_split_request(EvalExecContext *ctx,
                                                              const Separate_Arguments_Request *req) {
     if (!ctx || !req) return false;
 
@@ -727,7 +727,7 @@ static bool separate_arguments_execute_program_split_request(Evaluator_Context *
     return eval_var_set_current(ctx, req->out_var, eval_sv_join_semi_temp(ctx, tokens, arena_arr_len(tokens)));
 }
 
-static bool separate_arguments_execute_program_pair_request(Evaluator_Context *ctx,
+static bool separate_arguments_execute_program_pair_request(EvalExecContext *ctx,
                                                             const Separate_Arguments_Request *req) {
     if (!ctx || !req) return false;
 
@@ -758,7 +758,7 @@ static bool separate_arguments_execute_program_pair_request(Evaluator_Context *c
     return separate_arguments_set_program_pair(ctx, req->out_var, program_path, program_args);
 }
 
-static bool separate_arguments_execute_request(Evaluator_Context *ctx,
+static bool separate_arguments_execute_request(EvalExecContext *ctx,
                                                const Separate_Arguments_Request *req) {
     if (!ctx || !req) return false;
 
@@ -780,7 +780,7 @@ static bool separate_arguments_execute_request(Evaluator_Context *ctx,
     return false;
 }
 
-Eval_Result eval_handle_separate_arguments(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_separate_arguments(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);

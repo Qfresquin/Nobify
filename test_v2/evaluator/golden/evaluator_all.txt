@@ -837,7 +837,7 @@ EVENTS count=0
 === END CASE ===
 
 === CASE compat_error_budget_stops_after_limit ===
-DIAG errors=1 warnings=0
+DIAG errors=0 warnings=1
 EVENTS count=1
 EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=3 col=1 sev=ERROR component='dispatcher' command='unknown_budget_cmd' code='EVAL_DIAG_UNKNOWN_COMMAND' class='ENGINE_LIMITATION' cause='Unknown command' hint='Ignored during evaluation'
 === END CASE ===
@@ -851,7 +851,7 @@ EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='polic
 === END CASE ===
 
 === CASE compat_unsupported_policy_error ===
-DIAG errors=1 warnings=0
+DIAG errors=0 warnings=1
 EVENTS count=3
 EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component='dispatcher' command='unknown_error_cmd' code='EVAL_DIAG_UNKNOWN_COMMAND' class='ENGINE_LIMITATION' cause='Unknown command' hint='Ignored during evaluation'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='policy_error_after' type=EXECUTABLE

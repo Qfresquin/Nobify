@@ -43,17 +43,17 @@ bool eval_dispatcher_seed_builtin_commands(EvalRegistry *registry) {
     return true;
 }
 
-bool eval_dispatcher_get_command_capability(const Evaluator_Context *ctx,
+bool eval_dispatcher_get_command_capability(const EvalExecContext *ctx,
                                             String_View name,
                                             Command_Capability *out_capability) {
     return eval_command_caps_lookup(ctx, name, out_capability);
 }
 
-bool eval_dispatcher_is_known_command(const Evaluator_Context *ctx, String_View name) {
+bool eval_dispatcher_is_known_command(const EvalExecContext *ctx, String_View name) {
     return eval_native_cmd_find_const(ctx, name) != NULL;
 }
 
-Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_dispatch_command(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node || node->kind != NODE_COMMAND) return eval_result_fatal();
     Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
     Event_Origin o = eval_origin_from_node(ctx, node);
@@ -99,6 +99,7 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
             (user->kind == USER_CMD_MACRO) ? EVENT_COMMAND_DISPATCH_MACRO
                                            : EVENT_COMMAND_DISPATCH_FUNCTION;
         if (!eval_command_tx_begin(ctx, &tx)) return eval_result_fatal();
+        tx.preserve_scope_vars_on_failure = true;
         if (!eval_emit_command_begin(ctx, o, node->as.cmd.name, dispatch_kind, argc)) {
             (void)eval_command_tx_finish(ctx, &tx, false);
             return eval_result_fatal();
@@ -159,10 +160,8 @@ Eval_Result eval_dispatch_command(Evaluator_Context *ctx, const Node *node) {
         return eval_result_fatal();
     }
 
-    Event_Diag_Severity sev = EV_DIAG_WARNING;
-    if (runtime->unsupported_policy == EVAL_UNSUPPORTED_ERROR) sev = EV_DIAG_ERROR;
     Eval_Result diag_result = EVAL_DIAG_RESULT_SEV(ctx,
-                                                   sev,
+                                                   EV_DIAG_WARNING,
                                                    EVAL_DIAG_UNKNOWN_COMMAND,
                                                    nob_sv_from_cstr("dispatcher"),
                                                    node->as.cmd.name,

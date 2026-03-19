@@ -6,14 +6,14 @@
 
 #include <string.h>
 
-static bool emit_dir_push_event(Evaluator_Context *ctx,
+static bool emit_dir_push_event(EvalExecContext *ctx,
                                 Cmake_Event_Origin origin,
                                 String_View source_dir,
                                 String_View binary_dir) {
     return eval_emit_dir_push(ctx, origin, source_dir, binary_dir);
 }
 
-static bool emit_dir_pop_event(Evaluator_Context *ctx,
+static bool emit_dir_pop_event(EvalExecContext *ctx,
                                Cmake_Event_Origin origin,
                                String_View source_dir,
                                String_View binary_dir) {
@@ -32,12 +32,12 @@ static bool include_enables_fetchcontent_commands(String_View arg) {
            eval_sv_eq_ci_lit(arg, "FetchContent.cmake");
 }
 
-static bool include_file_exists_sv(Evaluator_Context *ctx, String_View path) {
+static bool include_file_exists_sv(EvalExecContext *ctx, String_View path) {
     bool exists = false;
     return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
-static bool include_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+static bool include_split_semicolon_temp(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
     *out = NULL;
     if (input.count == 0) return true;
@@ -76,7 +76,7 @@ static bool include_path_is_same_or_child(String_View path, String_View base) {
     return path.data[base.count] == '/' || path.data[base.count] == '\\';
 }
 
-static bool include_find_module_candidate_in_dir(Evaluator_Context *ctx,
+static bool include_find_module_candidate_in_dir(EvalExecContext *ctx,
                                                  String_View dir,
                                                  const String_View *candidates,
                                                  size_t candidate_count,
@@ -93,7 +93,7 @@ static bool include_find_module_candidate_in_dir(Evaluator_Context *ctx,
     return false;
 }
 
-static bool include_try_module_search(Evaluator_Context *ctx,
+static bool include_try_module_search(EvalExecContext *ctx,
                                       String_View module_name,
                                       String_View current_list_dir,
                                       String_View current_source_dir,
@@ -158,7 +158,7 @@ static bool include_try_module_search(Evaluator_Context *ctx,
     return false;
 }
 
-static bool include_resolve_target(Evaluator_Context *ctx,
+static bool include_resolve_target(EvalExecContext *ctx,
                                    String_View file_or_module,
                                    String_View *out_resolved) {
     if (!ctx || !out_resolved) return false;
@@ -195,7 +195,7 @@ typedef enum {
     INCLUDE_GUARD_GLOBAL,
 } Include_Guard_Mode;
 
-static bool include_guard_var_defined_global(Evaluator_Context *ctx, String_View key) {
+static bool include_guard_var_defined_global(EvalExecContext *ctx, String_View key) {
     size_t saved_depth = 0;
     if (!eval_scope_use_global_view(ctx, &saved_depth)) return false;
     bool defined = eval_var_defined_visible(ctx, key);
@@ -203,7 +203,7 @@ static bool include_guard_var_defined_global(Evaluator_Context *ctx, String_View
     return defined;
 }
 
-static String_View include_guard_var_get_global(Evaluator_Context *ctx, String_View key) {
+static String_View include_guard_var_get_global(EvalExecContext *ctx, String_View key) {
     size_t saved_depth = 0;
     if (!eval_scope_use_global_view(ctx, &saved_depth)) return nob_sv_from_cstr("");
     String_View value = eval_var_get_visible(ctx, key);
@@ -211,7 +211,7 @@ static String_View include_guard_var_get_global(Evaluator_Context *ctx, String_V
     return value;
 }
 
-static bool include_guard_var_set_global(Evaluator_Context *ctx, String_View key, String_View value) {
+static bool include_guard_var_set_global(EvalExecContext *ctx, String_View key, String_View value) {
     size_t saved_depth = 0;
     if (!eval_scope_use_global_view(ctx, &saved_depth)) return false;
     bool ok = eval_var_set_current(ctx, key, value);
@@ -219,7 +219,7 @@ static bool include_guard_var_set_global(Evaluator_Context *ctx, String_View key
     return ok;
 }
 
-static String_View include_guard_key_for_mode(Evaluator_Context *ctx, Include_Guard_Mode mode, String_View current_file) {
+static String_View include_guard_key_for_mode(EvalExecContext *ctx, Include_Guard_Mode mode, String_View current_file) {
     if (!ctx) return nob_sv_from_cstr("");
     switch (mode) {
         case INCLUDE_GUARD_GLOBAL: {
@@ -238,7 +238,7 @@ static String_View include_guard_key_for_mode(Evaluator_Context *ctx, Include_Gu
     }
 }
 
-static bool include_guard_directory_hit(Evaluator_Context *ctx, String_View key, String_View current_source_dir) {
+static bool include_guard_directory_hit(EvalExecContext *ctx, String_View key, String_View current_source_dir) {
     if (!ctx) return false;
     String_View current_norm = eval_sv_path_normalize_temp(ctx, current_source_dir);
     String_View existing = include_guard_var_get_global(ctx, key);
@@ -256,7 +256,7 @@ static bool include_guard_directory_hit(Evaluator_Context *ctx, String_View key,
     return false;
 }
 
-static bool include_guard_directory_add(Evaluator_Context *ctx, String_View key, String_View current_source_dir) {
+static bool include_guard_directory_add(EvalExecContext *ctx, String_View key, String_View current_source_dir) {
     if (!ctx) return false;
     String_View current_norm = eval_sv_path_normalize_temp(ctx, current_source_dir);
     String_View existing = include_guard_var_get_global(ctx, key);
@@ -278,7 +278,7 @@ static bool include_guard_directory_add(Evaluator_Context *ctx, String_View key,
     return include_guard_var_set_global(ctx, key, updated);
 }
 
-Eval_Result eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include_guard(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -336,12 +336,12 @@ Eval_Result eval_handle_include_guard(Evaluator_Context *ctx, const Node *node) 
     }
 
     if (already_guarded) {
-        ctx->return_requested = true;
+        (void)eval_exec_request_return(ctx);
     }
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -439,7 +439,7 @@ Eval_Result eval_handle_include(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_subdirectory(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_subdirectory(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

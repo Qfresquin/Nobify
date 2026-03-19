@@ -24,7 +24,7 @@ bool list_item_in_set(String_View item, String_View *set, size_t set_count) {
     return false;
 }
 
-bool list_split_semicolon_preserve_empty(Evaluator_Context *ctx, String_View input, SV_List *out) {
+bool list_split_semicolon_preserve_empty(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
     if (input.count == 0) return true;
 
@@ -53,19 +53,19 @@ bool list_sv_parse_i64(String_View sv, long long *out) {
     return true;
 }
 
-String_View list_join_items_temp(Evaluator_Context *ctx, String_View *items, size_t count) {
+String_View list_join_items_temp(EvalExecContext *ctx, String_View *items, size_t count) {
     if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
     return eval_sv_join_semi_temp(ctx, items, count);
 }
 
-bool list_set_var_from_items(Evaluator_Context *ctx, String_View var, String_View *items, size_t count) {
+bool list_set_var_from_items(EvalExecContext *ctx, String_View var, String_View *items, size_t count) {
     if (!ctx) return false;
     String_View joined = list_join_items_temp(ctx, items, count);
     if (eval_should_stop(ctx)) return false;
     return eval_var_set_current(ctx, var, joined);
 }
 
-bool list_load_var_items(Evaluator_Context *ctx, String_View var, SV_List *out) {
+bool list_load_var_items(EvalExecContext *ctx, String_View var, SV_List *out) {
     if (!ctx || !out) return false;
     *out = (SV_List){0};
     return list_split_semicolon_preserve_empty(ctx, eval_var_get_visible(ctx, var), out);
@@ -86,7 +86,7 @@ bool list_normalize_index(size_t item_count, long long raw_index, bool allow_end
     return true;
 }
 
-String_View list_concat_temp(Evaluator_Context *ctx, String_View a, String_View b) {
+String_View list_concat_temp(EvalExecContext *ctx, String_View a, String_View b) {
     if (!ctx) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), a.count + b.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -96,7 +96,7 @@ String_View list_concat_temp(Evaluator_Context *ctx, String_View a, String_View 
     return nob_sv_from_cstr(buf);
 }
 
-String_View list_to_case_temp(Evaluator_Context *ctx, String_View in, bool upper) {
+String_View list_to_case_temp(EvalExecContext *ctx, String_View in, bool upper) {
     if (!ctx) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -118,7 +118,7 @@ String_View list_strip_ws_view(String_View in) {
     return nob_sv_from_parts(in.data + b, e - b);
 }
 
-String_View list_genex_strip_temp(Evaluator_Context *ctx, String_View in) {
+String_View list_genex_strip_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -152,7 +152,7 @@ String_View list_genex_strip_temp(Evaluator_Context *ctx, String_View in) {
     return nob_sv_from_cstr(buf);
 }
 
-bool list_compile_regex(Evaluator_Context *ctx,
+bool list_compile_regex(EvalExecContext *ctx,
                         const Node *node,
                         Cmake_Event_Origin o,
                         String_View pattern,
@@ -167,7 +167,7 @@ bool list_compile_regex(Evaluator_Context *ctx,
     return true;
 }
 
-bool list_regex_replace_one_temp(Evaluator_Context *ctx,
+bool list_regex_replace_one_temp(EvalExecContext *ctx,
                                  regex_t *re,
                                  String_View replacement,
                                  String_View input,

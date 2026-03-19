@@ -10,7 +10,7 @@
 
 #include <string.h>
 
-static inline bool target_diag(Evaluator_Context *ctx,
+static inline bool target_diag(EvalExecContext *ctx,
                                const Node *node,
                                Cmake_Diag_Severity severity,
                                String_View cause,
@@ -26,14 +26,14 @@ static inline bool target_diag(Evaluator_Context *ctx,
                               hint);
 }
 
-static inline bool target_diag_error(Evaluator_Context *ctx,
+static inline bool target_diag_error(EvalExecContext *ctx,
                                      const Node *node,
                                      String_View cause,
                                      String_View hint) {
     return target_diag(ctx, node, EV_DIAG_ERROR, cause, hint);
 }
 
-static inline bool property_diag_unknown_directory(Evaluator_Context *ctx,
+static inline bool property_diag_unknown_directory(EvalExecContext *ctx,
                                                    const Node *node,
                                                    String_View cause,
                                                    String_View dir) {
@@ -48,7 +48,7 @@ static inline bool property_diag_unknown_directory(Evaluator_Context *ctx,
                               dir);
 }
 
-static inline bool target_usage_validate_target(Evaluator_Context *ctx,
+static inline bool target_usage_validate_target(EvalExecContext *ctx,
                                                 const Node *node,
                                                 String_View target_name) {
     if (!ctx || !node) return false;
@@ -89,7 +89,7 @@ static inline bool target_usage_parse_visibility(String_View tok, Cmake_Visibili
     return false;
 }
 
-static inline bool target_usage_require_visibility(Evaluator_Context *ctx,
+static inline bool target_usage_require_visibility(EvalExecContext *ctx,
                                                    const Node *node) {
     if (!ctx || !node) return false;
     target_diag_error(ctx,
@@ -99,7 +99,7 @@ static inline bool target_usage_require_visibility(Evaluator_Context *ctx,
     return false;
 }
 
-static inline String_View target_pch_item_normalize_temp(Evaluator_Context *ctx, String_View item) {
+static inline String_View target_pch_item_normalize_temp(EvalExecContext *ctx, String_View item) {
     if (!ctx) return item;
     if (item.count == 0) return item;
     if (item.count >= 2 && item.data[0] == '$' && item.data[1] == '<') return item;
@@ -107,7 +107,7 @@ static inline String_View target_pch_item_normalize_temp(Evaluator_Context *ctx,
     return eval_path_resolve_for_cmake_arg(ctx, item, eval_current_source_dir_for_paths(ctx), true);
 }
 
-static inline String_View wrap_link_item_with_config_genex_temp(Evaluator_Context *ctx,
+static inline String_View wrap_link_item_with_config_genex_temp(EvalExecContext *ctx,
                                                                 String_View item,
                                                                 String_View cond_prefix) {
     if (!ctx || item.count == 0 || cond_prefix.count == 0) return item;

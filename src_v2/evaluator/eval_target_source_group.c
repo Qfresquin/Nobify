@@ -1,6 +1,6 @@
 #include "eval_target_internal.h"
 
-static bool source_group_emit_assignment(Evaluator_Context *ctx,
+static bool source_group_emit_assignment(EvalExecContext *ctx,
                                          Cmake_Event_Origin o,
                                          String_View file_path,
                                          String_View group_name) {
@@ -26,7 +26,7 @@ static String_View source_group_dirname(String_View path) {
     return nob_sv_from_cstr("");
 }
 
-static bool source_group_path_relative_to_root(Evaluator_Context *ctx,
+static bool source_group_path_relative_to_root(EvalExecContext *ctx,
                                                String_View root,
                                                String_View file_path,
                                                String_View *out_relative) {
@@ -53,7 +53,7 @@ static bool source_group_path_relative_to_root(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View source_group_join_tree_name_temp(Evaluator_Context *ctx,
+static String_View source_group_join_tree_name_temp(EvalExecContext *ctx,
                                                     String_View prefix,
                                                     String_View relative_dir) {
     if (!ctx) return nob_sv_from_cstr("");
@@ -80,7 +80,7 @@ static String_View source_group_join_tree_name_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, off);
 }
 
-static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
+static bool source_group_emit_regex_rule(EvalExecContext *ctx,
                                          Cmake_Event_Origin o,
                                          String_View group_name,
                                          String_View regex_value) {
@@ -110,7 +110,7 @@ static bool source_group_emit_regex_rule(Evaluator_Context *ctx,
     return eval_emit_var_set_current(ctx, o, name_key, group_name);
 }
 
-Eval_Result eval_handle_source_group(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_source_group(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

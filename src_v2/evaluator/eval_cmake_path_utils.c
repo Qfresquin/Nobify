@@ -69,7 +69,7 @@ bool cmk_path_is_absolute_sv(String_View path) {
 #endif
 }
 
-String_View cmk_path_root_path_temp(Evaluator_Context *ctx, String_View path) {
+String_View cmk_path_root_path_temp(EvalExecContext *ctx, String_View path) {
     String_View root_name = cmk_path_root_name_sv(path);
     String_View root_dir = cmk_path_root_directory_sv(path);
     if (root_name.count == 0) return root_dir;
@@ -125,7 +125,7 @@ String_View cmk_path_stem_from_name_sv(String_View name, bool last_only) {
     return nob_sv_from_parts(name.data, (size_t)dot);
 }
 
-String_View cmk_path_relative_part_temp(Evaluator_Context *ctx, String_View path) {
+String_View cmk_path_relative_part_temp(EvalExecContext *ctx, String_View path) {
     String_View root = cmk_path_root_path_temp(ctx, path);
     if (root.count == 0) return path;
     if (path.count <= root.count) return nob_sv_from_cstr("");
@@ -146,21 +146,21 @@ String_View cmk_path_parent_part_sv(String_View path) {
     return nob_sv_from_parts(path.data, sep);
 }
 
-String_View cmk_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+String_View cmk_path_normalize_temp(EvalExecContext *ctx, String_View input) {
     return eval_sv_path_normalize_temp(ctx, input);
 }
 
-String_View cmk_path_set_temp(Evaluator_Context *ctx, String_View input, bool normalize) {
+String_View cmk_path_set_temp(EvalExecContext *ctx, String_View input, bool normalize) {
     String_View out = cmk_path_to_cmake_seps_temp(ctx, input);
     if (ctx->oom) return nob_sv_from_cstr("");
     return normalize ? cmk_path_normalize_temp(ctx, out) : out;
 }
 
-String_View cmk_path_current_source_dir(Evaluator_Context *ctx) {
+String_View cmk_path_current_source_dir(EvalExecContext *ctx) {
     return eval_current_source_dir(ctx);
 }
 
-String_View cmk_path_make_absolute_temp(Evaluator_Context *ctx, String_View value, String_View base_dir) {
+String_View cmk_path_make_absolute_temp(EvalExecContext *ctx, String_View value, String_View base_dir) {
     if (!ctx) return nob_sv_from_cstr("");
     if (eval_sv_is_abs_path(value)) return value;
 
@@ -175,7 +175,7 @@ String_View cmk_path_make_absolute_temp(Evaluator_Context *ctx, String_View valu
     return cmk_path_normalize_temp(ctx, abs);
 }
 
-static void cmk_path_collect_segments_after_root(Evaluator_Context *ctx,
+static void cmk_path_collect_segments_after_root(EvalExecContext *ctx,
                                                  String_View path,
                                                  String_View root,
                                                  SV_List *out) {
@@ -190,13 +190,13 @@ static void cmk_path_collect_segments_after_root(Evaluator_Context *ctx,
     }
 }
 
-static bool cmk_path_has_filename_temp(Evaluator_Context *ctx, String_View path) {
+static bool cmk_path_has_filename_temp(EvalExecContext *ctx, String_View path) {
     String_View rel = cmk_path_relative_part_temp(ctx, path);
     if (ctx->oom || rel.count == 0) return false;
     return cmk_path_filename_sv(rel).count > 0;
 }
 
-String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View path, String_View base_dir) {
+String_View cmk_path_relativize_temp(EvalExecContext *ctx, String_View path, String_View base_dir) {
     String_View a = cmk_path_normalize_temp(ctx, path);
     String_View b = cmk_path_normalize_temp(ctx, base_dir);
     if (ctx->oom) return nob_sv_from_cstr("");
@@ -251,7 +251,7 @@ String_View cmk_path_relativize_temp(Evaluator_Context *ctx, String_View path, S
     return nob_sv_from_cstr(buf);
 }
 
-String_View cmk_path_to_cmake_seps_temp(Evaluator_Context *ctx, String_View in) {
+String_View cmk_path_to_cmake_seps_temp(EvalExecContext *ctx, String_View in) {
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
     for (size_t i = 0; i < in.count; i++) {
@@ -261,7 +261,7 @@ String_View cmk_path_to_cmake_seps_temp(Evaluator_Context *ctx, String_View in) 
     return nob_sv_from_cstr(buf);
 }
 
-String_View cmk_path_to_native_seps_temp(Evaluator_Context *ctx, String_View in) {
+String_View cmk_path_to_native_seps_temp(EvalExecContext *ctx, String_View in) {
     char sep = '/';
 #if defined(_WIN32)
     sep = '\\';
@@ -275,7 +275,7 @@ String_View cmk_path_to_native_seps_temp(Evaluator_Context *ctx, String_View in)
     return nob_sv_from_cstr(buf);
 }
 
-String_View cmk_path_append_temp(Evaluator_Context *ctx, String_View path, String_View input) {
+String_View cmk_path_append_temp(EvalExecContext *ctx, String_View path, String_View input) {
     if (!ctx) return nob_sv_from_cstr("");
 
     path = cmk_path_set_temp(ctx, path, false);
@@ -313,7 +313,7 @@ String_View cmk_path_append_temp(Evaluator_Context *ctx, String_View path, Strin
     return svu_join_no_sep_temp(ctx, parts, 2);
 }
 
-bool cmk_path_split_char_list_temp(Evaluator_Context *ctx, String_View in, char sep, SV_List *out) {
+bool cmk_path_split_char_list_temp(EvalExecContext *ctx, String_View in, char sep, SV_List *out) {
     if (!ctx || !out) return false;
     size_t start = 0;
     for (size_t i = 0; i <= in.count; i++) {
@@ -325,7 +325,7 @@ bool cmk_path_split_char_list_temp(Evaluator_Context *ctx, String_View in, char 
     return true;
 }
 
-String_View cmk_path_join_char_list_temp(Evaluator_Context *ctx, SV_List list, char sep) {
+String_View cmk_path_join_char_list_temp(EvalExecContext *ctx, SV_List list, char sep) {
     if (!ctx) return nob_sv_from_cstr("");
     if (arena_arr_len(list) == 0) return nob_sv_from_cstr("");
 
@@ -350,7 +350,7 @@ String_View cmk_path_join_char_list_temp(Evaluator_Context *ctx, SV_List list, c
     return nob_sv_from_cstr(buf);
 }
 
-String_View cmk_path_component_get_temp(Evaluator_Context *ctx,
+String_View cmk_path_component_get_temp(EvalExecContext *ctx,
                                         String_View input,
                                         String_View component,
                                         bool last_only,
@@ -375,7 +375,7 @@ String_View cmk_path_component_get_temp(Evaluator_Context *ctx,
     return nob_sv_from_cstr("");
 }
 
-String_View cmk_path_remove_filename_temp(Evaluator_Context *ctx, String_View value) {
+String_View cmk_path_remove_filename_temp(EvalExecContext *ctx, String_View value) {
     (void)ctx;
     size_t sep = path_last_separator_index(value);
     if (sep == SIZE_MAX) return nob_sv_from_cstr("");
@@ -383,7 +383,7 @@ String_View cmk_path_remove_filename_temp(Evaluator_Context *ctx, String_View va
     return nob_sv_from_parts(value.data, sep + 1);
 }
 
-String_View cmk_path_replace_filename_temp(Evaluator_Context *ctx, String_View value, String_View input) {
+String_View cmk_path_replace_filename_temp(EvalExecContext *ctx, String_View value, String_View input) {
     if (!ctx) return input;
     size_t sep = path_last_separator_index(value);
     if (sep == SIZE_MAX) return input;
@@ -393,7 +393,7 @@ String_View cmk_path_replace_filename_temp(Evaluator_Context *ctx, String_View v
     return svu_join_no_sep_temp(ctx, parts, 2);
 }
 
-String_View cmk_path_transform_extension_temp(Evaluator_Context *ctx,
+String_View cmk_path_transform_extension_temp(EvalExecContext *ctx,
                                               String_View value,
                                               bool last_only,
                                               bool replace_mode,
@@ -430,7 +430,7 @@ bool cmk_path_is_component_supports_last_only(String_View component) {
     return eval_sv_eq_ci_lit(component, "EXTENSION") || eval_sv_eq_ci_lit(component, "STEM");
 }
 
-String_View cmk_path_compare_canonical_temp(Evaluator_Context *ctx, String_View in) {
+String_View cmk_path_compare_canonical_temp(EvalExecContext *ctx, String_View in) {
     String_View cmk = cmk_path_to_cmake_seps_temp(ctx, in);
     if (ctx->oom) return nob_sv_from_cstr("");
 
@@ -452,13 +452,13 @@ String_View cmk_path_compare_canonical_temp(Evaluator_Context *ctx, String_View 
     return nob_sv_from_cstr(buf);
 }
 
-static String_View cmk_path_prefix_operand_temp(Evaluator_Context *ctx, String_View in, bool normalize) {
+static String_View cmk_path_prefix_operand_temp(EvalExecContext *ctx, String_View in, bool normalize) {
     if (!ctx) return nob_sv_from_cstr("");
     if (normalize) return cmk_path_normalize_temp(ctx, cmk_path_set_temp(ctx, in, false));
     return cmk_path_compare_canonical_temp(ctx, in);
 }
 
-bool cmk_path_is_prefix_temp(Evaluator_Context *ctx, String_View prefix, String_View input, bool normalize) {
+bool cmk_path_is_prefix_temp(EvalExecContext *ctx, String_View prefix, String_View input, bool normalize) {
     if (!ctx) return false;
 
     prefix = cmk_path_prefix_operand_temp(ctx, prefix, normalize);

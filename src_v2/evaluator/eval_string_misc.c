@@ -218,7 +218,7 @@ static bool string_parse_uuid_bytes(String_View in, unsigned char out[16]) {
     return bi == 16;
 }
 
-static String_View string_format_uuid_temp(Evaluator_Context *ctx, const unsigned char uuid[16], bool upper) {
+static String_View string_format_uuid_temp(EvalExecContext *ctx, const unsigned char uuid[16], bool upper) {
     if (!ctx || !uuid) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), 37);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -255,7 +255,7 @@ static bool string_time_from_epoch(time_t t, bool utc, struct tm *out_tm) {
 #endif
 }
 
-static String_View string_timestamp_format_temp(Evaluator_Context *ctx,
+static String_View string_timestamp_format_temp(EvalExecContext *ctx,
                                                 String_View format,
                                                 bool utc) {
     if (!ctx) return nob_sv_from_cstr("");
@@ -288,7 +288,7 @@ static String_View string_timestamp_format_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, n);
 }
 
-static bool string_random_generate_temp(Evaluator_Context *ctx,
+static bool string_random_generate_temp(EvalExecContext *ctx,
                                         const String_Random_Options *opt,
                                         String_View *out) {
     if (!ctx || !opt || !out) return false;
@@ -312,7 +312,7 @@ static bool string_random_generate_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool string_uuid_name_based_temp(Evaluator_Context *ctx,
+static bool string_uuid_name_based_temp(EvalExecContext *ctx,
                                         String_View ns_sv,
                                         String_View name,
                                         String_View type,
@@ -350,7 +350,7 @@ static bool string_uuid_name_based_temp(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-Eval_Result eval_string_handle_misc(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+Eval_Result eval_string_handle_misc(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (!ctx || !node || arena_arr_len(a) < 1 || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (eval_sv_eq_ci_lit(a[0], "RANDOM")) {

@@ -20,16 +20,16 @@
 
 #include "stb_ds.h"
 
-static String_View file_apply_newline_style(Evaluator_Context *ctx, String_View in, String_View style);
+static String_View file_apply_newline_style(EvalExecContext *ctx, String_View in, String_View style);
 
-static bool file_read_bytes(Evaluator_Context *ctx, String_View path, Nob_String_Builder *out) {
+static bool file_read_bytes(EvalExecContext *ctx, String_View path, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
     char *p = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
     return nob_read_entire_file(p, out);
 }
 
-static bool file_write_bytes(Evaluator_Context *ctx, String_View path, const char *data, size_t len) {
+static bool file_write_bytes(EvalExecContext *ctx, String_View path, const char *data, size_t len) {
     if (!ctx) return false;
     if (!eval_file_mkdir_p(ctx, svu_dirname(path))) return false;
     char *p = eval_sv_to_cstr_temp(ctx, path);
@@ -37,7 +37,7 @@ static bool file_write_bytes(Evaluator_Context *ctx, String_View path, const cha
     return nob_write_entire_file(p, data, len);
 }
 
-static bool file_same_content(Evaluator_Context *ctx, String_View path, String_View content, bool *out_same) {
+static bool file_same_content(EvalExecContext *ctx, String_View path, String_View content, bool *out_same) {
     if (!ctx || !out_same) return false;
     *out_same = false;
 
@@ -52,7 +52,7 @@ static bool file_same_content(Evaluator_Context *ctx, String_View path, String_V
     return true;
 }
 
-static String_View file_cache_var_get(Evaluator_Context *ctx, String_View key) {
+static String_View file_cache_var_get(EvalExecContext *ctx, String_View key) {
     if (!ctx || !ctx->scope_state.cache_entries || key.count == 0 || !key.data) return nob_sv_from_cstr("");
     Eval_Cache_Entry *entry = stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
     return entry ? entry->value.data : nob_sv_from_cstr("");
@@ -70,7 +70,7 @@ static void file_append_configure_value(Nob_String_Builder *out, String_View val
     }
 }
 
-static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_hash(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) != 3) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(<HASH>) requires filename and output variable"), nob_sv_from_cstr("Usage: file(<HASH> <filename> <out-var>)"));
@@ -107,7 +107,7 @@ static bool handle_file_hash(Evaluator_Context *ctx, const Node *node, SV_List a
     return true;
 }
 
-static String_View file_expand_configure_once(Evaluator_Context *ctx,
+static String_View file_expand_configure_once(EvalExecContext *ctx,
                                               String_View input,
                                               bool at_only,
                                               bool escape_quotes) {
@@ -252,7 +252,7 @@ static bool configure_file_apply_permissions(String_View path, mode_t mode) {
     return path_c && chmod(path_c, mode) == 0;
 }
 
-static String_View configure_file_process_line(Evaluator_Context *ctx,
+static String_View configure_file_process_line(EvalExecContext *ctx,
                                                String_View line,
                                                bool at_only,
                                                bool escape_quotes) {
@@ -325,7 +325,7 @@ static String_View configure_file_process_line(Evaluator_Context *ctx,
     return out;
 }
 
-static String_View configure_file_expand_content(Evaluator_Context *ctx,
+static String_View configure_file_expand_content(EvalExecContext *ctx,
                                                 String_View input,
                                                 bool at_only,
                                                 bool escape_quotes) {
@@ -357,7 +357,7 @@ static String_View configure_file_expand_content(Evaluator_Context *ctx,
     return out;
 }
 
-Eval_Result eval_handle_configure_file(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_configure_file(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
@@ -502,7 +502,7 @@ Eval_Result eval_handle_configure_file(Evaluator_Context *ctx, const Node *node)
     return eval_result_from_ctx(ctx);
 }
 
-static String_View file_apply_newline_style(Evaluator_Context *ctx, String_View in, String_View style) {
+static String_View file_apply_newline_style(EvalExecContext *ctx, String_View in, String_View style) {
     if (!ctx || style.count == 0) return in;
     const char *nl = "\n";
     if (eval_sv_eq_ci_lit(style, "DOS") || eval_sv_eq_ci_lit(style, "WIN32") || eval_sv_eq_ci_lit(style, "CRLF")) {
@@ -528,7 +528,7 @@ static String_View file_apply_newline_style(Evaluator_Context *ctx, String_View 
     return r;
 }
 
-static bool handle_file_configure(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_configure(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     String_View output = nob_sv_from_cstr("");
     String_View content = nob_sv_from_cstr("");
@@ -582,7 +582,7 @@ static bool handle_file_configure(Evaluator_Context *ctx, const Node *node, SV_L
     return true;
 }
 
-static bool file_copy_file_do(Evaluator_Context *ctx, String_View src, String_View dst, bool only_if_different) {
+static bool file_copy_file_do(EvalExecContext *ctx, String_View src, String_View dst, bool only_if_different) {
     if (!ctx) return false;
     char *src_c = eval_sv_to_cstr_temp(ctx, src);
     char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
@@ -607,7 +607,7 @@ static bool file_copy_file_do(Evaluator_Context *ctx, String_View src, String_Vi
     return nob_copy_file(src_c, dst_c);
 }
 
-static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(COPY_FILE) requires source and destination"), nob_sv_from_cstr("Usage: file(COPY_FILE <old> <new> [RESULT <var>] [ONLY_IF_DIFFERENT] [INPUT_MAY_BE_RECENT])"));
@@ -662,7 +662,7 @@ static bool handle_file_copy_file(Evaluator_Context *ctx, const Node *node, SV_L
     return true;
 }
 
-static bool file_touch_one(Evaluator_Context *ctx, String_View path, bool create) {
+static bool file_touch_one(EvalExecContext *ctx, String_View path, bool create) {
     if (!ctx) return false;
     char *p = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
@@ -680,7 +680,7 @@ static bool file_touch_one(Evaluator_Context *ctx, String_View path, bool create
     return utime(p, &tb) == 0;
 }
 
-static bool handle_file_touch(Evaluator_Context *ctx, const Node *node, SV_List args, bool nocreate) {
+static bool handle_file_touch(EvalExecContext *ctx, const Node *node, SV_List args, bool nocreate) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nocreate ? nob_sv_from_cstr("file(TOUCH_NOCREATE) requires at least one file")
@@ -709,7 +709,7 @@ static bool handle_file_touch(Evaluator_Context *ctx, const Node *node, SV_List 
     return true;
 }
 
-bool eval_file_handle_extra(Evaluator_Context *ctx, const Node *node, SV_List args) {
+bool eval_file_handle_extra(EvalExecContext *ctx, const Node *node, SV_List args) {
     if (!ctx || !node || arena_arr_len(args) == 0) return false;
 
     if (eval_hash_is_supported_algo(args[0])) return handle_file_hash(ctx, node, args);

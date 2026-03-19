@@ -22,7 +22,7 @@ static void archive_log_line(Nob_String_Builder *sb, const char *text) {
     nob_sb_append_cstr(sb, text);
 }
 
-static bool archive_finalize_log(Evaluator_Context *ctx, Nob_String_Builder *sb, String_View *out_log) {
+static bool archive_finalize_log(EvalExecContext *ctx, Nob_String_Builder *sb, String_View *out_log) {
     if (!ctx || !sb || !out_log) return false;
     if (sb->count == 0) {
         *out_log = nob_sv_from_cstr("");
@@ -40,7 +40,7 @@ static String_View archive_basename_sv(String_View path) {
     return nob_sv_from_parts(path.data + base, path.count - base);
 }
 
-static String_View archive_path_join_unix_temp(Evaluator_Context *ctx, String_View a, String_View b) {
+static String_View archive_path_join_unix_temp(EvalExecContext *ctx, String_View a, String_View b) {
     if (!ctx) return nob_sv_from_cstr("");
     if (a.count == 0) return b;
     if (b.count == 0) return a;
@@ -171,7 +171,7 @@ static bool archive_copy_file_data(struct archive *a, const char *src_c) {
     return ok;
 }
 
-static bool archive_add_path_recursive(Evaluator_Context *ctx,
+static bool archive_add_path_recursive(EvalExecContext *ctx,
                                        struct archive *a,
                                        String_View src_path,
                                        String_View entry_name,
@@ -296,7 +296,7 @@ static bool archive_add_path_recursive(Evaluator_Context *ctx,
     return ok;
 }
 
-bool eval_file_backend_archive_create(Evaluator_Context *ctx,
+bool eval_file_backend_archive_create(EvalExecContext *ctx,
                                       const Eval_File_Archive_Create_Options *opt,
                                       int *out_status_code,
                                       String_View *out_log) {
@@ -388,7 +388,7 @@ static int archive_copy_data(struct archive *ar, struct archive *aw) {
     }
 }
 
-bool eval_file_backend_archive_extract(Evaluator_Context *ctx,
+bool eval_file_backend_archive_extract(EvalExecContext *ctx,
                                        const Eval_File_Archive_Extract_Options *opt,
                                        int *out_status_code,
                                        String_View *out_log) {
@@ -501,7 +501,7 @@ bool eval_file_backend_archive_extract(Evaluator_Context *ctx,
 
 #else
 
-bool eval_file_backend_archive_create(Evaluator_Context *ctx,
+bool eval_file_backend_archive_create(EvalExecContext *ctx,
                                       const Eval_File_Archive_Create_Options *opt,
                                       int *out_status_code,
                                       String_View *out_log) {
@@ -512,7 +512,7 @@ bool eval_file_backend_archive_create(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_file_backend_archive_extract(Evaluator_Context *ctx,
+bool eval_file_backend_archive_extract(EvalExecContext *ctx,
                                        const Eval_File_Archive_Extract_Options *opt,
                                        int *out_status_code,
                                        String_View *out_log) {

@@ -30,7 +30,7 @@ String_View sv_copy_to_arena(Arena *arena, String_View sv) {
     return nob_sv_from_cstr(dup);
 }
 
-char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
+char *eval_sv_to_cstr_temp(EvalExecContext *ctx, String_View sv) {
     if (!ctx) return NULL;
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sv.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
@@ -39,11 +39,11 @@ char *eval_sv_to_cstr_temp(Evaluator_Context *ctx, String_View sv) {
     return buf;
 }
 
-bool eval_emit_event(Evaluator_Context *ctx, Event ev) {
+bool eval_emit_event(EvalExecContext *ctx, Event ev) {
     return eval_command_tx_push_event(ctx, &ev, false);
 }
 
-bool eval_emit_event_allow_stopped(Evaluator_Context *ctx, Event ev) {
+bool eval_emit_event_allow_stopped(EvalExecContext *ctx, Event ev) {
     return eval_command_tx_push_event(ctx, &ev, true);
 }
 
@@ -69,11 +69,11 @@ String_View eval_normalize_compile_definition_item(String_View item) {
     return item;
 }
 
-String_View eval_current_source_dir_for_paths(Evaluator_Context *ctx) {
+String_View eval_current_source_dir_for_paths(EvalExecContext *ctx) {
     return eval_current_source_dir(ctx);
 }
 
-static Eval_Directory_Node *eval_directory_find_node(Evaluator_Context *ctx, String_View source_dir) {
+static Eval_Directory_Node *eval_directory_find_node(EvalExecContext *ctx, String_View source_dir) {
     if (!ctx || source_dir.count == 0) return NULL;
     Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
     for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
@@ -82,7 +82,7 @@ static Eval_Directory_Node *eval_directory_find_node(Evaluator_Context *ctx, Str
     return NULL;
 }
 
-static const Eval_Directory_Node *eval_directory_find_node_const(const Evaluator_Context *ctx, String_View source_dir) {
+static const Eval_Directory_Node *eval_directory_find_node_const(const EvalExecContext *ctx, String_View source_dir) {
     if (!ctx || source_dir.count == 0) return NULL;
     const Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
     for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
@@ -91,7 +91,7 @@ static const Eval_Directory_Node *eval_directory_find_node_const(const Evaluator
     return NULL;
 }
 
-static bool eval_directory_list_append_unique(Evaluator_Context *ctx, SV_List *list, String_View value) {
+static bool eval_directory_list_append_unique(EvalExecContext *ctx, SV_List *list, String_View value) {
     if (!ctx || !list || value.count == 0) return false;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
         if (eval_sv_key_eq((*list)[i], value)) return true;
@@ -101,7 +101,7 @@ static bool eval_directory_list_append_unique(Evaluator_Context *ctx, SV_List *l
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, *list, value);
 }
 
-bool eval_directory_register_node(Evaluator_Context *ctx,
+bool eval_directory_register_node(EvalExecContext *ctx,
                                   String_View source_dir,
                                   String_View binary_dir,
                                   String_View parent_source_dir,
@@ -147,7 +147,7 @@ bool eval_directory_register_node(Evaluator_Context *ctx,
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.directories.nodes, node);
 }
 
-bool eval_directory_register_known(Evaluator_Context *ctx, String_View dir) {
+bool eval_directory_register_known(EvalExecContext *ctx, String_View dir) {
     if (!ctx || dir.count == 0) return false;
 
     String_View source_dir = eval_sv_path_normalize_temp(ctx, dir);
@@ -191,7 +191,7 @@ bool eval_directory_register_known(Evaluator_Context *ctx, String_View dir) {
     return eval_directory_register_node(ctx, source_dir, binary_dir, parent_source_dir, parent_binary_dir);
 }
 
-bool eval_directory_is_known(Evaluator_Context *ctx, String_View dir) {
+bool eval_directory_is_known(EvalExecContext *ctx, String_View dir) {
     if (!ctx || dir.count == 0) return false;
 
     String_View normalized = eval_sv_path_normalize_temp(ctx, dir);
@@ -201,7 +201,7 @@ bool eval_directory_is_known(Evaluator_Context *ctx, String_View dir) {
     return eval_directory_find_node_const(ctx, normalized) != NULL;
 }
 
-bool eval_directory_parent(Evaluator_Context *ctx, String_View source_dir, String_View *out_parent_source_dir) {
+bool eval_directory_parent(EvalExecContext *ctx, String_View source_dir, String_View *out_parent_source_dir) {
     if (out_parent_source_dir) *out_parent_source_dir = nob_sv_from_cstr("");
     if (!ctx || !out_parent_source_dir || source_dir.count == 0) return false;
     String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
@@ -212,7 +212,7 @@ bool eval_directory_parent(Evaluator_Context *ctx, String_View source_dir, Strin
     return true;
 }
 
-bool eval_directory_binary_dir(Evaluator_Context *ctx, String_View source_dir, String_View *out_binary_dir) {
+bool eval_directory_binary_dir(EvalExecContext *ctx, String_View source_dir, String_View *out_binary_dir) {
     if (out_binary_dir) *out_binary_dir = nob_sv_from_cstr("");
     if (!ctx || !out_binary_dir || source_dir.count == 0) return false;
     String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
@@ -223,7 +223,7 @@ bool eval_directory_binary_dir(Evaluator_Context *ctx, String_View source_dir, S
     return true;
 }
 
-bool eval_directory_note_target(Evaluator_Context *ctx, String_View source_dir, String_View target_name) {
+bool eval_directory_note_target(EvalExecContext *ctx, String_View source_dir, String_View target_name) {
     if (!ctx || source_dir.count == 0 || target_name.count == 0) return false;
     if (!eval_directory_register_known(ctx, source_dir)) return false;
     String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
@@ -233,7 +233,7 @@ bool eval_directory_note_target(Evaluator_Context *ctx, String_View source_dir, 
     return eval_directory_list_append_unique(ctx, &node->declared_targets, target_name);
 }
 
-bool eval_directory_note_test(Evaluator_Context *ctx, String_View source_dir, String_View test_name) {
+bool eval_directory_note_test(EvalExecContext *ctx, String_View source_dir, String_View test_name) {
     if (!ctx || source_dir.count == 0 || test_name.count == 0) return false;
     if (!eval_directory_register_known(ctx, source_dir)) return false;
     String_View normalized = eval_sv_path_normalize_temp(ctx, source_dir);
@@ -272,7 +272,7 @@ String_View eval_detect_host_processor(void) {
 }
 
 #if defined(_WIN32)
-static String_View host_copy_printf_temp(Evaluator_Context *ctx, const char *fmt, ...) {
+static String_View host_copy_printf_temp(EvalExecContext *ctx, const char *fmt, ...) {
     if (!ctx || !fmt) return nob_sv_from_cstr("");
 
     va_list ap;
@@ -294,7 +294,7 @@ static String_View host_copy_printf_temp(Evaluator_Context *ctx, const char *fmt
 }
 #endif
 
-bool eval_host_hostname_temp(Evaluator_Context *ctx, String_View *out_hostname) {
+bool eval_host_hostname_temp(EvalExecContext *ctx, String_View *out_hostname) {
     if (!out_hostname) return false;
     *out_hostname = nob_sv_from_cstr("");
 
@@ -357,7 +357,7 @@ bool eval_host_memory_info(Eval_Host_Memory_Info *out_info) {
 #endif
 }
 
-String_View eval_host_os_release_temp(Evaluator_Context *ctx) {
+String_View eval_host_os_release_temp(EvalExecContext *ctx) {
 #if defined(_WIN32)
     OSVERSIONINFOA info = {0};
     info.dwOSVersionInfoSize = sizeof(info);
@@ -372,7 +372,7 @@ String_View eval_host_os_release_temp(Evaluator_Context *ctx) {
 #endif
 }
 
-String_View eval_host_os_version_temp(Evaluator_Context *ctx) {
+String_View eval_host_os_version_temp(EvalExecContext *ctx) {
 #if defined(_WIN32)
     OSVERSIONINFOA info = {0};
     info.dwOSVersionInfoSize = sizeof(info);
@@ -391,7 +391,7 @@ String_View eval_host_os_version_temp(Evaluator_Context *ctx) {
 #endif
 }
 
-String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View name) {
+String_View eval_property_upper_name_temp(EvalExecContext *ctx, String_View name) {
     if (!ctx) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -402,7 +402,7 @@ String_View eval_property_upper_name_temp(Evaluator_Context *ctx, String_View na
     return nob_sv_from_cstr(buf);
 }
 
-bool eval_property_scope_upper_temp(Evaluator_Context *ctx, String_View raw_scope, String_View *out_scope_upper) {
+bool eval_property_scope_upper_temp(EvalExecContext *ctx, String_View raw_scope, String_View *out_scope_upper) {
     (void)ctx;
     if (!out_scope_upper) return false;
     *out_scope_upper = nob_sv_from_cstr("");
@@ -420,7 +420,7 @@ bool eval_property_scope_upper_temp(Evaluator_Context *ctx, String_View raw_scop
     return out_scope_upper->count > 0;
 }
 
-String_View eval_property_scoped_object_id_temp(Evaluator_Context *ctx,
+String_View eval_property_scoped_object_id_temp(EvalExecContext *ctx,
                                                 const char *prefix,
                                                 String_View scope_object,
                                                 String_View item_object) {
@@ -496,7 +496,7 @@ static int eval_cstr_cmp_qsort(const void *a, const void *b) {
     return strcmp(*aa, *bb);
 }
 
-bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, SV_List *out_sources) {
+bool eval_list_dir_sources_sorted_temp(EvalExecContext *ctx, String_View dir, SV_List *out_sources) {
     Nob_File_Paths entries = {0};
     if (!ctx || !out_sources) return false;
     *out_sources = (SV_List){0};
@@ -544,7 +544,7 @@ bool eval_list_dir_sources_sorted_temp(Evaluator_Context *ctx, String_View dir, 
     return true;
 }
 
-bool eval_service_read_file(Evaluator_Context *ctx,
+bool eval_service_read_file(EvalExecContext *ctx,
                             String_View path,
                             String_View *out_contents,
                             bool *out_found) {
@@ -574,7 +574,7 @@ bool eval_service_read_file(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_service_write_file(Evaluator_Context *ctx,
+bool eval_service_write_file(EvalExecContext *ctx,
                              String_View path,
                              String_View contents,
                              bool append) {
@@ -598,7 +598,7 @@ bool eval_service_write_file(Evaluator_Context *ctx,
     return ok;
 }
 
-bool eval_service_mkdir(Evaluator_Context *ctx, String_View path) {
+bool eval_service_mkdir(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
     if (ctx->services && ctx->services->fs_mkdir) {
         return ctx->services->fs_mkdir(ctx->services->user_data, path);
@@ -609,7 +609,7 @@ bool eval_service_mkdir(Evaluator_Context *ctx, String_View path) {
     return nob_mkdir_if_not_exists(path_c);
 }
 
-bool eval_service_file_exists(Evaluator_Context *ctx, String_View path, bool *out_exists) {
+bool eval_service_file_exists(EvalExecContext *ctx, String_View path, bool *out_exists) {
     if (out_exists) *out_exists = false;
     if (!ctx || path.count == 0) return false;
 
@@ -623,7 +623,7 @@ bool eval_service_file_exists(Evaluator_Context *ctx, String_View path, bool *ou
     return true;
 }
 
-bool eval_service_copy_file(Evaluator_Context *ctx, String_View src, String_View dst) {
+bool eval_service_copy_file(EvalExecContext *ctx, String_View src, String_View dst) {
     if (!ctx || src.count == 0 || dst.count == 0) return false;
     if (ctx->services && ctx->services->fs_copy_file) {
         return ctx->services->fs_copy_file(ctx->services->user_data, src, dst);
@@ -636,7 +636,7 @@ bool eval_service_copy_file(Evaluator_Context *ctx, String_View src, String_View
     return nob_copy_file(src_c, dst_c);
 }
 
-bool eval_service_host_read_file(Evaluator_Context *ctx,
+bool eval_service_host_read_file(EvalExecContext *ctx,
                                  String_View path,
                                  String_View *out_contents,
                                  bool *out_found) {
@@ -685,7 +685,7 @@ bool eval_service_host_read_file(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path) {
+bool eval_mkdirs_for_parent(EvalExecContext *ctx, String_View path) {
     if (!ctx) return false;
     String_View parent = eval_file_parent_dir_view(path);
     if (parent.count == 0 || nob_sv_eq(parent, nob_sv_from_cstr("."))) return true;
@@ -713,13 +713,13 @@ bool eval_mkdirs_for_parent(Evaluator_Context *ctx, String_View path) {
     return eval_service_mkdir(ctx, nob_sv_from_cstr(tmp));
 }
 
-bool eval_write_text_file(Evaluator_Context *ctx, String_View path, String_View contents, bool append) {
+bool eval_write_text_file(EvalExecContext *ctx, String_View path, String_View contents, bool append) {
     if (!ctx) return false;
     if (!eval_mkdirs_for_parent(ctx, path)) return false;
     return eval_service_write_file(ctx, path, contents, append);
 }
 
-bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_name, const SV_List *argv, String_View status) {
+bool eval_ctest_publish_metadata(EvalExecContext *ctx, String_View command_name, const SV_List *argv, String_View status) {
     if (!ctx || command_name.count == 0 || !argv) return false;
 
     String_View joined = eval_sv_join_semi_temp(ctx, *argv, arena_arr_len(*argv));
@@ -751,7 +751,7 @@ bool eval_ctest_publish_metadata(Evaluator_Context *ctx, String_View command_nam
     return true;
 }
 
-bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, const SV_List *argv) {
+bool eval_legacy_publish_args(EvalExecContext *ctx, String_View command_name, const SV_List *argv) {
     if (!ctx || command_name.count == 0 || !argv) return false;
 
     String_View joined = eval_sv_join_semi_temp(ctx, *argv, arena_arr_len(*argv));
@@ -771,7 +771,7 @@ bool eval_legacy_publish_args(Evaluator_Context *ctx, String_View command_name, 
     return eval_var_set_current(ctx, nob_sv_from_cstr(key), joined);
 }
 
-static String_View eval_test_global_marker_key_temp(Evaluator_Context *ctx, String_View test_name) {
+static String_View eval_test_global_marker_key_temp(EvalExecContext *ctx, String_View test_name) {
     if (!ctx || test_name.count == 0) return nob_sv_from_cstr("");
     size_t prefix_len = strlen("NOBIFY_TEST::");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), prefix_len + test_name.count + 1);
@@ -782,7 +782,7 @@ static String_View eval_test_global_marker_key_temp(Evaluator_Context *ctx, Stri
     return nob_sv_from_cstr(buf);
 }
 
-String_View eval_test_scoped_marker_key_temp(Evaluator_Context *ctx,
+String_View eval_test_scoped_marker_key_temp(EvalExecContext *ctx,
                                              String_View scope_dir,
                                              String_View test_name) {
     if (!ctx || test_name.count == 0) return nob_sv_from_cstr("");
@@ -810,7 +810,7 @@ String_View eval_test_scoped_marker_key_temp(Evaluator_Context *ctx,
     return nob_sv_from_cstr(buf);
 }
 
-bool eval_test_exists_in_directory_scope(Evaluator_Context *ctx, String_View test_name, String_View scope_dir) {
+bool eval_test_exists_in_directory_scope(EvalExecContext *ctx, String_View test_name, String_View scope_dir) {
     if (!ctx || test_name.count == 0) return false;
 
     if (scope_dir.count == 0) scope_dir = eval_current_source_dir_for_paths(ctx);
@@ -879,7 +879,7 @@ int eval_semver_compare(const Eval_Semver *lhs, const Eval_Semver *rhs) {
     return 0;
 }
 
-String_View eval_sv_join_semi_temp(Evaluator_Context *ctx, String_View *items, size_t count) {
+String_View eval_sv_join_semi_temp(EvalExecContext *ctx, String_View *items, size_t count) {
     if (!ctx || count == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;

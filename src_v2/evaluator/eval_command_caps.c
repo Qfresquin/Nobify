@@ -12,7 +12,7 @@ static Command_Capability eval_capability_make(String_View name,
     return c;
 }
 
-bool eval_command_caps_lookup(const Evaluator_Context *ctx, String_View name, Command_Capability *out_capability) {
+bool eval_command_caps_lookup(const EvalExecContext *ctx, String_View name, Command_Capability *out_capability) {
     if (!out_capability) return false;
     // Capability lookup intentionally reuses the runtime native-command registry lookup
     // so dispatcher routing and capability introspection observe the same case-insensitive

@@ -29,11 +29,11 @@ typedef struct {
     SV_List post_exclude_files;
 } Runtime_Deps_Args;
 
-static bool runtime_push_temp(Evaluator_Context *ctx, SV_List *list, String_View v) {
+static bool runtime_push_temp(EvalExecContext *ctx, SV_List *list, String_View v) {
     return svu_list_push_temp(ctx, list, v);
 }
 
-static bool runtime_parse_lists(Evaluator_Context *ctx,
+static bool runtime_parse_lists(EvalExecContext *ctx,
                                 SV_List args,
                                 size_t *idx,
                                 SV_List *out,
@@ -90,7 +90,7 @@ static bool runtime_list_contains(SV_List list, String_View v) {
     return false;
 }
 
-static bool runtime_list_add_unique_noempty(Evaluator_Context *ctx, SV_List *list, String_View v) {
+static bool runtime_list_add_unique_noempty(EvalExecContext *ctx, SV_List *list, String_View v) {
     if (!ctx || !list) return false;
     if (v.count == 0) return true;
     if (runtime_list_contains(*list, v)) return true;
@@ -104,7 +104,7 @@ static bool runtime_sv_starts_with_lit(String_View sv, const char *lit) {
 }
 
 #if !defined(_WIN32)
-static bool runtime_run_capture(Evaluator_Context *ctx, char *const argv[], int *out_status_code, String_View *out_log) {
+static bool runtime_run_capture(EvalExecContext *ctx, char *const argv[], int *out_status_code, String_View *out_log) {
     if (!ctx || !argv || !out_status_code || !out_log) return false;
     *out_status_code = 1;
     *out_log = nob_sv_from_cstr("");
@@ -158,7 +158,7 @@ static bool runtime_run_capture(Evaluator_Context *ctx, char *const argv[], int 
     return true;
 }
 
-static bool runtime_match_any_regex(Evaluator_Context *ctx,
+static bool runtime_match_any_regex(EvalExecContext *ctx,
                                     const Node *node,
                                     Cmake_Event_Origin o,
                                     SV_List regexes,
@@ -189,7 +189,7 @@ static bool runtime_match_any_regex(Evaluator_Context *ctx,
     return true;
 }
 
-static bool runtime_allow_pre(Evaluator_Context *ctx,
+static bool runtime_allow_pre(EvalExecContext *ctx,
                               const Node *node,
                               Cmake_Event_Origin o,
                               const Runtime_Deps_Args *rd,
@@ -218,7 +218,7 @@ static bool runtime_allow_pre(Evaluator_Context *ctx,
     return true;
 }
 
-static bool runtime_allow_post(Evaluator_Context *ctx,
+static bool runtime_allow_post(EvalExecContext *ctx,
                                const Node *node,
                                Cmake_Event_Origin o,
                                const Runtime_Deps_Args *rd,
@@ -255,7 +255,7 @@ static bool runtime_allow_post(Evaluator_Context *ctx,
     return true;
 }
 
-static bool runtime_try_resolve_in_dirs(Evaluator_Context *ctx, String_View name, SV_List dirs, String_View *out_path) {
+static bool runtime_try_resolve_in_dirs(EvalExecContext *ctx, String_View name, SV_List dirs, String_View *out_path) {
     if (!ctx || !out_path) return false;
     *out_path = nob_sv_from_cstr("");
     if (name.count == 0) return true;
@@ -272,7 +272,7 @@ static bool runtime_try_resolve_in_dirs(Evaluator_Context *ctx, String_View name
     return true;
 }
 
-static bool runtime_collect_ldd_deps(Evaluator_Context *ctx,
+static bool runtime_collect_ldd_deps(EvalExecContext *ctx,
                                      const Node *node,
                                      Cmake_Event_Origin o,
                                      String_View file_path,
@@ -372,7 +372,7 @@ static bool runtime_collect_ldd_deps(Evaluator_Context *ctx,
 }
 #endif
 
-bool eval_file_handle_runtime_dependencies(Evaluator_Context *ctx, const Node *node, SV_List args) {
+bool eval_file_handle_runtime_dependencies(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     Runtime_Deps_Args rd = {0};
 

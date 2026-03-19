@@ -1,7 +1,7 @@
 # Evaluator Structural Refactor Plan
 
-Status: Transition Plan. This document defines how the repository migrates from
-the current evaluator implementation to the target architecture documented in
+Status: Landed. This document now serves as the closure record for the
+repository migration onto the target architecture documented in
 [evaluator_v2_spec.md](./evaluator_v2_spec.md) and
 [evaluator_architecture_target.md](./evaluator_architecture_target.md).
 
@@ -18,10 +18,10 @@ an architecture that is:
 This plan does not redefine the target architecture. It only describes how to
 reach it from the current codebase.
 
-## 2. Starting Point
+## 2. Historical Starting Point
 
-The current implementation is still centered on `Evaluator_Context` and a
-handler-heavy execution model.
+The migration started from an implementation centered on `Evaluator_Context`
+and a handler-heavy execution model.
 
 Known migration pressure points:
 - semantic state and variable projections are too tightly coupled,
@@ -78,8 +78,7 @@ Deliverables:
 
 Exit criteria:
 - session/request APIs exist
-- legacy create/run APIs are either removed or documented as compatibility
-  shims
+- legacy create/run APIs are removed from the public boundary
 
 ### Phase C: Runtime Topology Split
 
@@ -124,12 +123,26 @@ Exit criteria:
 - new feature work lands on the target pipeline by default
 - remaining audits measure semantic coverage rather than architectural drift
 
+Snapshot status (March 19, 2026):
+- The public shim based on `Evaluator_Context` is gone from `src_v2/evaluator/evaluator.h`.
+- Native handlers now receive `EvalExecContext *`, and public native extension points are session/registry based.
+- `eval_session_run(...)` instantiates a fresh per-run `EvalExecContext`, then snapshots only persistent state back into `EvalSession`.
+- Flow control (`break` / `continue` / `return`) is modeled on execution frames instead of global run booleans.
+- Registry mutation is blocked during `eval_session_run(...)`.
+- `test_v2/evaluator`, `test_v2/pipeline`, `test_v2/codegen`, and `src_v2/app` no longer include evaluator internals and now use the public session/request API.
+- `docs/evaluator/evaluator_coverage_matrix.md` reports `103` `FULL`, `32` `PARTIAL`, `0` `MISSING`, `0` native-tag divergences, and no remaining `artifact-critical` partial rows in this snapshot.
+- The remaining evaluator gaps are semantic coverage limits on typed request/canonical execution paths, not architectural drift from the target pipeline.
+
 ## 5. Temporary Compatibility Policy
 
 During migration, temporary adapters are allowed:
-- legacy API shims
 - transitional data projection helpers
 - compatibility wrappers around old handler entry points
+
+Current status:
+- public legacy API shims have been removed
+- compatibility wrappers that remain are behavior-level CMake compatibility
+  helpers, not architecture shims for `Evaluator_Context`
 
 These adapters are acceptable only if:
 - the target ownership model remains clear in docs,
@@ -147,3 +160,5 @@ new evaluator features by extending:
 - projection rules for variables, diagnostics, and Event IR
 
 without having to reinterpret the architecture for each new command family.
+
+This acceptance bar is satisfied in the current workspace snapshot.

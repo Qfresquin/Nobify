@@ -1,11 +1,11 @@
 #include "eval_package_internal.h"
 
-bool file_exists_sv(Evaluator_Context *ctx, String_View path) {
+bool file_exists_sv(EvalExecContext *ctx, String_View path) {
     bool exists = false;
     return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
-bool find_package_diag_error(Evaluator_Context *ctx,
+bool find_package_diag_error(EvalExecContext *ctx,
                              const Node *node,
                              String_View cause,
                              String_View hint) {
@@ -13,7 +13,7 @@ bool find_package_diag_error(Evaluator_Context *ctx,
     return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), cause, hint);
 }
 
-String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
+String_View sv_to_lower_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -24,7 +24,7 @@ String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in) {
     return nob_sv_from_cstr(buf);
 }
 
-bool find_package_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+bool find_package_split_semicolon_temp(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
     *out = NULL;
     if (input.count == 0) return true;
@@ -41,7 +41,7 @@ bool find_package_split_semicolon_temp(Evaluator_Context *ctx, String_View input
     return true;
 }
 
-void find_package_push_env_list(Evaluator_Context *ctx,
+void find_package_push_env_list(EvalExecContext *ctx,
                                 String_View *items,
                                 size_t *io_count,
                                 size_t cap,
@@ -73,7 +73,7 @@ void find_package_push_env_list(Evaluator_Context *ctx,
     }
 }
 
-static bool find_package_try_module(Evaluator_Context *ctx,
+static bool find_package_try_module(EvalExecContext *ctx,
                                     String_View pkg,
                                     String_View name_overrides,
                                     String_View extra_paths,
@@ -159,7 +159,7 @@ void find_package_push_prefix(String_View *items, size_t *io_count, size_t cap, 
     items[(*io_count)++] = v;
 }
 
-void find_package_push_prefix_variants(Evaluator_Context *ctx,
+void find_package_push_prefix_variants(EvalExecContext *ctx,
                                        String_View *items,
                                        size_t *io_count,
                                        size_t cap,
@@ -171,7 +171,7 @@ void find_package_push_prefix_variants(Evaluator_Context *ctx,
     find_package_push_prefix(items, io_count, cap, eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("share/cmake")));
 }
 
-static void find_package_push_prefix_list_variants(Evaluator_Context *ctx,
+static void find_package_push_prefix_list_variants(EvalExecContext *ctx,
                                                    String_View *items,
                                                    size_t *io_count,
                                                    size_t cap,
@@ -186,7 +186,7 @@ static void find_package_push_prefix_list_variants(Evaluator_Context *ctx,
     }
 }
 
-static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
+static void find_package_push_env_prefix_variants(EvalExecContext *ctx,
                                                   String_View *items,
                                                   size_t *io_count,
                                                   size_t cap,
@@ -199,7 +199,7 @@ static void find_package_push_env_prefix_variants(Evaluator_Context *ctx,
     find_package_push_prefix_variants(ctx, items, io_count, cap, root);
 }
 
-static void find_package_push_env_prefix_list_variants(Evaluator_Context *ctx,
+static void find_package_push_env_prefix_list_variants(EvalExecContext *ctx,
                                                        String_View *items,
                                                        size_t *io_count,
                                                        size_t cap,
@@ -231,7 +231,7 @@ static void find_package_push_env_prefix_list_variants(Evaluator_Context *ctx,
     }
 }
 
-void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
+void find_package_push_package_root_prefixes(EvalExecContext *ctx,
                                              String_View pkg,
                                              String_View names_csv,
                                              bool no_default_path,
@@ -277,7 +277,7 @@ void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
     }
 }
 
-String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
+String_View sv_to_upper_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -286,7 +286,7 @@ String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in) {
     return nob_sv_from_cstr(buf);
 }
 
-static bool find_package_try_config_in_prefixes(Evaluator_Context *ctx,
+static bool find_package_try_config_in_prefixes(EvalExecContext *ctx,
                                                 String_View current_src,
                                                 String_View default_name,
                                                 String_View names_csv,
@@ -356,7 +356,7 @@ static bool find_package_try_config_in_prefixes(Evaluator_Context *ctx,
     return false;
 }
 
-static bool find_package_try_config(Evaluator_Context *ctx,
+static bool find_package_try_config(EvalExecContext *ctx,
                                     String_View pkg,
                                     String_View names_csv,
                                     String_View configs_csv,
@@ -671,7 +671,7 @@ static int find_package_version_cmp(String_View a, String_View b) {
     }
 }
 
-static bool find_package_parse_on_option(Evaluator_Context *ctx,
+static bool find_package_parse_on_option(EvalExecContext *ctx,
                                          void *userdata,
                                          int id,
                                          SV_List values,
@@ -790,7 +790,7 @@ static bool find_package_parse_on_option(Evaluator_Context *ctx,
     }
 }
 
-static bool find_package_parse_on_positional(Evaluator_Context *ctx,
+static bool find_package_parse_on_positional(EvalExecContext *ctx,
                                              void *userdata,
                                              String_View value,
                                              size_t token_index) {
@@ -804,7 +804,7 @@ static bool find_package_parse_on_positional(Evaluator_Context *ctx,
     return true;
 }
 
-static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, SV_List args) {
+static Find_Package_Options find_package_parse_options(EvalExecContext *ctx, SV_List args) {
     Find_Package_Options out = {0};
     out.pkg = arena_arr_len(args) > 0 ? args[0] : nob_sv_from_cstr("");
     out.mode = nob_sv_from_cstr("AUTO");
@@ -858,7 +858,7 @@ static Find_Package_Options find_package_parse_options(Evaluator_Context *ctx, S
     return out;
 }
 
-static bool find_package_try_redirect(Evaluator_Context *ctx,
+static bool find_package_try_redirect(EvalExecContext *ctx,
                                       const Find_Package_Options *opt,
                                       String_View *out_path) {
     if (!ctx || !opt || !out_path) return false;
@@ -915,7 +915,7 @@ static bool find_package_try_redirect(Evaluator_Context *ctx,
                                                out_path);
 }
 
-static bool find_package_resolve(Evaluator_Context *ctx,
+static bool find_package_resolve(EvalExecContext *ctx,
                                  const Find_Package_Options *opt,
                                  String_View *out_found_path) {
     if (!ctx || !opt || !out_found_path) return false;
@@ -1004,7 +1004,7 @@ static bool find_package_resolve(Evaluator_Context *ctx,
     return found;
 }
 
-static String_View find_package_guess_version_path(Evaluator_Context *ctx,
+static String_View find_package_guess_version_path(EvalExecContext *ctx,
                                                    String_View config_path) {
     if (!ctx || config_path.count == 0) return nob_sv_from_cstr("");
     String_View dir = svu_dirname(config_path);
@@ -1041,7 +1041,7 @@ static bool find_package_requested_version_matches(const Find_Package_Options *o
     return c >= 0;
 }
 
-static void find_package_seed_find_context_vars(Evaluator_Context *ctx, const Find_Package_Options *opt) {
+static void find_package_seed_find_context_vars(EvalExecContext *ctx, const Find_Package_Options *opt) {
     if (!ctx || !opt) return;
     String_View key_required = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_REQUIRED");
     String_View key_quiet = svu_concat_suffix_temp(ctx, opt->pkg, "_FIND_QUIETLY");
@@ -1066,7 +1066,7 @@ static void find_package_seed_find_context_vars(Evaluator_Context *ctx, const Fi
     if (opt->registry_view_value.count > 0) (void)eval_var_set_current(ctx, key_registry_view, opt->registry_view_value);
 }
 
-static void find_package_publish_path_vars(Evaluator_Context *ctx,
+static void find_package_publish_path_vars(EvalExecContext *ctx,
                                            const Find_Package_Options *opt,
                                            String_View found_path) {
     if (!ctx || !opt || found_path.count == 0) return;
@@ -1077,7 +1077,7 @@ static void find_package_publish_path_vars(Evaluator_Context *ctx,
     (void)eval_var_set_current(ctx, cfg_key, found_path);
 }
 
-static bool find_package_execute_resolved_artifacts(Evaluator_Context *ctx,
+static bool find_package_execute_resolved_artifacts(EvalExecContext *ctx,
                                                     const Find_Package_Options *opt,
                                                     bool *io_found,
                                                     String_View found_path) {
@@ -1144,7 +1144,7 @@ static bool find_package_execute_resolved_artifacts(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static void find_package_finalize_found_var(Evaluator_Context *ctx,
+static void find_package_finalize_found_var(EvalExecContext *ctx,
                                             const Find_Package_Options *opt,
                                             bool *io_found) {
     if (!ctx || !opt || !io_found) return;
@@ -1158,7 +1158,7 @@ static void find_package_finalize_found_var(Evaluator_Context *ctx,
     (void)eval_var_set_current(ctx, found_key, *io_found ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
 }
 
-static bool find_package_invoke_dependency_provider(Evaluator_Context *ctx,
+static bool find_package_invoke_dependency_provider(EvalExecContext *ctx,
                                                     const Node *node,
                                                     const SV_List *resolved_args,
                                                     bool *out_found,
@@ -1204,7 +1204,7 @@ static bool find_package_invoke_dependency_provider(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static void find_package_emit_result(Evaluator_Context *ctx,
+static void find_package_emit_result(EvalExecContext *ctx,
                                      const Node *node,
                                      Cmake_Event_Origin o,
                                      const Find_Package_Options *opt,
@@ -1228,7 +1228,7 @@ static void find_package_emit_result(Evaluator_Context *ctx,
     }
 }
 
-Eval_Result eval_handle_find_package(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_find_package(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

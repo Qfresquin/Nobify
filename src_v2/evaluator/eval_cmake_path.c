@@ -9,7 +9,7 @@
 #include <ctype.h>
 #include <string.h>
 
-static void cmk_path_error(Evaluator_Context *ctx,
+static void cmk_path_error(EvalExecContext *ctx,
                            const Node *node,
                            Cmake_Event_Origin o,
                            const char *cause,
@@ -17,7 +17,7 @@ static void cmk_path_error(Evaluator_Context *ctx,
     EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr(cause), hint);
 }
 
-static bool cmk_path_set_result(Evaluator_Context *ctx,
+static bool cmk_path_set_result(EvalExecContext *ctx,
                                 String_View path_var,
                                 String_View out_var,
                                 String_View value) {
@@ -25,7 +25,7 @@ static bool cmk_path_set_result(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, dst, value);
 }
 
-static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_set(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(SET) requires <path-var> and <input>",
@@ -65,7 +65,7 @@ static bool handle_set(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
     return true;
 }
 
-static bool handle_get(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_get(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 4) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(GET) requires <path-var> <component> <out-var>",
@@ -116,7 +116,7 @@ static bool handle_get(Evaluator_Context *ctx, const Node *node, Cmake_Event_Ori
     return true;
 }
 
-static bool handle_append_like(Evaluator_Context *ctx,
+static bool handle_append_like(EvalExecContext *ctx,
                                const Node *node,
                                Cmake_Event_Origin o,
                                SV_List a,
@@ -161,7 +161,7 @@ static bool handle_append_like(Evaluator_Context *ctx,
     return true;
 }
 
-static bool handle_remove_filename(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_remove_filename(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(REMOVE_FILENAME) requires <path-var>",
@@ -189,7 +189,7 @@ static bool handle_remove_filename(Evaluator_Context *ctx, const Node *node, Cma
     return true;
 }
 
-static bool handle_replace_filename(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_replace_filename(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(REPLACE_FILENAME) requires <path-var> and <input>",
@@ -235,7 +235,7 @@ static bool handle_replace_filename(Evaluator_Context *ctx, const Node *node, Cm
     return true;
 }
 
-static bool handle_extension_common(Evaluator_Context *ctx,
+static bool handle_extension_common(EvalExecContext *ctx,
                                     const Node *node,
                                     Cmake_Event_Origin o,
                                     SV_List a,
@@ -302,7 +302,7 @@ static bool handle_extension_common(Evaluator_Context *ctx,
     return true;
 }
 
-static bool handle_normal_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_normal_path(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(NORMAL_PATH) requires <path-var>",
@@ -329,7 +329,7 @@ static bool handle_normal_path(Evaluator_Context *ctx, const Node *node, Cmake_E
     return true;
 }
 
-static bool handle_relative_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_relative_path(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(RELATIVE_PATH) requires <path-var>",
@@ -377,7 +377,7 @@ static bool handle_relative_path(Evaluator_Context *ctx, const Node *node, Cmake
     return true;
 }
 
-static bool handle_absolute_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_absolute_path(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 2) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(ABSOLUTE_PATH) requires <path-var>",
@@ -429,7 +429,7 @@ static bool handle_absolute_path(Evaluator_Context *ctx, const Node *node, Cmake
     return true;
 }
 
-static bool handle_native_path(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_native_path(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(NATIVE_PATH) requires <path-var> and output variable",
@@ -469,7 +469,7 @@ static bool handle_native_path(Evaluator_Context *ctx, const Node *node, Cmake_E
     return true;
 }
 
-static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_convert(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) < 4) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(CONVERT) requires input, mode and output variable",
@@ -554,7 +554,7 @@ static bool handle_convert(Evaluator_Context *ctx, const Node *node, Cmake_Event
     return true;
 }
 
-static bool handle_compare(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_compare(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) != 5) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(COMPARE) requires exactly 4 arguments",
@@ -582,7 +582,7 @@ static bool handle_compare(Evaluator_Context *ctx, const Node *node, Cmake_Event
     return true;
 }
 
-static bool handle_has_component(Evaluator_Context *ctx,
+static bool handle_has_component(EvalExecContext *ctx,
                                  const Node *node,
                                  Cmake_Event_Origin o,
                                  SV_List a,
@@ -613,7 +613,7 @@ static bool handle_has_component(Evaluator_Context *ctx,
     return true;
 }
 
-static bool handle_hash(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+static bool handle_hash(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (arena_arr_len(a) != 3) {
         cmk_path_error(ctx, node, o,
                        "cmake_path(HASH) requires <path-var> and <out-var>",
@@ -636,7 +636,7 @@ static bool handle_hash(Evaluator_Context *ctx, const Node *node, Cmake_Event_Or
     return true;
 }
 
-static bool handle_is_mode(Evaluator_Context *ctx,
+static bool handle_is_mode(EvalExecContext *ctx,
                            const Node *node,
                            Cmake_Event_Origin o,
                            SV_List a,
@@ -693,7 +693,7 @@ static bool handle_is_mode(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_cmake_path(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_path(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

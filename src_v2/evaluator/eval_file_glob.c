@@ -12,14 +12,14 @@
 #include <glob.h>
 #endif
 
-static bool eval_var_truthy_or_default(Evaluator_Context *ctx, const char *key, bool default_value) {
+static bool eval_var_truthy_or_default(EvalExecContext *ctx, const char *key, bool default_value) {
     if (!ctx || !key) return default_value;
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr(key));
     if (v.count == 0) return default_value;
     return eval_truthy(ctx, v);
 }
 
-Eval_Result eval_handle_aux_source_directory(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_aux_source_directory(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -160,7 +160,7 @@ static int sv_lex_cmp_qsort(const void *a, const void *b) {
 }
 
 #if !defined(_WIN32)
-static bool posix_glob_collect(Evaluator_Context *ctx,
+static bool posix_glob_collect(EvalExecContext *ctx,
                                String_View pat,
                                bool list_dirs,
                                String_View **io_items,
@@ -241,7 +241,7 @@ static String_View sv_make_relative(String_View path, String_View base, bool ci)
     return nob_sv_from_parts(path.data + off, path.count - off);
 }
 
-static void file_glob_walk(Evaluator_Context *ctx,
+static void file_glob_walk(EvalExecContext *ctx,
                            const Node *node,
                            Cmake_Event_Origin origin,
                            String_View dir_full,
@@ -310,7 +310,7 @@ static void file_glob_walk(Evaluator_Context *ctx,
     nob_dir_entry_close(dir);
 }
 
-void eval_file_handle_glob(Evaluator_Context *ctx, const Node *node, SV_List args, bool recurse) {
+void eval_file_handle_glob(EvalExecContext *ctx, const Node *node, SV_List args, bool recurse) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
         eval_file_diag_error(ctx,

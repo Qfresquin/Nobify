@@ -1,7 +1,7 @@
 #include "eval_file.h"
 #include "eval_file_internal.h"
 
-Eval_Result eval_handle_file(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_file(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);

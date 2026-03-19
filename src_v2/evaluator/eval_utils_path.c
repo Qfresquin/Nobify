@@ -6,7 +6,7 @@
 #include <ctype.h>
 #include <string.h>
 
-bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+bool eval_split_shell_like_temp(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
 
     size_t i = 0;
@@ -68,7 +68,7 @@ bool eval_split_shell_like_temp(Evaluator_Context *ctx, String_View input, SV_Li
     return true;
 }
 
-static bool eval_split_windows_command_temp(Evaluator_Context *ctx, String_View input, SV_List *out) {
+static bool eval_split_windows_command_temp(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
 
     size_t i = 0;
@@ -140,7 +140,7 @@ static Eval_Cmdline_Mode eval_cmdline_mode_normalized(Eval_Cmdline_Mode mode) {
     return mode;
 }
 
-static bool eval_split_unix_program_from_args_temp(Evaluator_Context *ctx,
+static bool eval_split_unix_program_from_args_temp(EvalExecContext *ctx,
                                                    String_View input,
                                                    String_View *out_program,
                                                    String_View *out_args) {
@@ -196,7 +196,7 @@ static bool eval_split_unix_program_from_args_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_split_windows_program_from_args_temp(Evaluator_Context *ctx,
+static bool eval_split_windows_program_from_args_temp(EvalExecContext *ctx,
                                                       String_View input,
                                                       String_View *out_program,
                                                       String_View *out_args) {
@@ -260,7 +260,7 @@ static bool eval_split_windows_program_from_args_temp(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_split_program_from_command_line_temp(Evaluator_Context *ctx,
+bool eval_split_program_from_command_line_temp(EvalExecContext *ctx,
                                                Eval_Cmdline_Mode mode,
                                                String_View input,
                                                String_View *out_program,
@@ -282,7 +282,7 @@ static bool eval_program_token_contains_path_sep(String_View value) {
     return false;
 }
 
-static bool eval_program_candidate_is_file(Evaluator_Context *ctx, String_View candidate) {
+static bool eval_program_candidate_is_file(EvalExecContext *ctx, String_View candidate) {
     if (!ctx || candidate.count == 0) return false;
     char *path_c = eval_sv_to_cstr_temp(ctx, candidate);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
@@ -295,7 +295,7 @@ static String_View eval_trim_whitespace_view(String_View input) {
     return svu_trim_ascii_ws(input);
 }
 
-bool eval_find_program_full_path_temp(Evaluator_Context *ctx,
+bool eval_find_program_full_path_temp(EvalExecContext *ctx,
                                       String_View token,
                                       String_View *out_program,
                                       bool *out_found) {
@@ -360,7 +360,7 @@ bool eval_find_program_full_path_temp(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_split_command_line_temp(Evaluator_Context *ctx,
+bool eval_split_command_line_temp(EvalExecContext *ctx,
                                   Eval_Cmdline_Mode mode,
                                   String_View input,
                                   SV_List *out_tokens) {
@@ -406,7 +406,7 @@ String_View eval_sv_path_join(Arena *arena, String_View a, String_View b) {
     return nob_sv_from_cstr(buf);
 }
 
-String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View input) {
+String_View eval_sv_path_normalize_temp(EvalExecContext *ctx, String_View input) {
     if (!ctx) return nob_sv_from_cstr("");
     if (input.count == 0) return nob_sv_from_cstr(".");
 
@@ -510,7 +510,7 @@ String_View eval_sv_path_normalize_temp(Evaluator_Context *ctx, String_View inpu
     return nob_sv_from_cstr(buf);
 }
 
-String_View eval_path_resolve_for_cmake_arg(Evaluator_Context *ctx,
+String_View eval_path_resolve_for_cmake_arg(EvalExecContext *ctx,
                                             String_View raw_path,
                                             String_View base_dir,
                                             bool preserve_generator_expressions) {

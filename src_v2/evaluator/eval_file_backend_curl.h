@@ -29,7 +29,7 @@ typedef struct {
     SV_List http_headers;
 } Eval_File_Curl_Options;
 
-bool eval_file_backend_curl_download(Evaluator_Context *ctx,
+bool eval_file_backend_curl_download(EvalExecContext *ctx,
                                      String_View url,
                                      String_View dst_path,
                                      bool has_dst_path,
@@ -37,7 +37,7 @@ bool eval_file_backend_curl_download(Evaluator_Context *ctx,
                                      int *out_status_code,
                                      String_View *out_log);
 
-bool eval_file_backend_curl_upload(Evaluator_Context *ctx,
+bool eval_file_backend_curl_upload(EvalExecContext *ctx,
                                    String_View src_path,
                                    String_View url,
                                    const Eval_File_Curl_Options *opt,

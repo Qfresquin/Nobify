@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool meta_emit_diag(Evaluator_Context *ctx,
+static bool meta_emit_diag(EvalExecContext *ctx,
                            const Node *node,
                            Cmake_Diag_Severity severity,
                            String_View cause,
@@ -17,11 +17,11 @@ static bool meta_emit_diag(Evaluator_Context *ctx,
     return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_meta"), node->as.cmd.name, eval_origin_from_node(ctx, node), cause, hint);
 }
 
-static String_View meta_current_bin_dir(Evaluator_Context *ctx) {
+static String_View meta_current_bin_dir(EvalExecContext *ctx) {
     return eval_current_binary_dir(ctx);
 }
 
-static String_View meta_concat3_temp(Evaluator_Context *ctx,
+static String_View meta_concat3_temp(EvalExecContext *ctx,
                                      const char *prefix,
                                      String_View middle,
                                      const char *suffix) {
@@ -91,7 +91,7 @@ static void meta_sb_append_include_line(Nob_String_Builder *sb,
     nob_sb_append_cstr(sb, ")\n");
 }
 
-static String_View meta_target_property_temp(Evaluator_Context *ctx,
+static String_View meta_target_property_temp(EvalExecContext *ctx,
                                              String_View target_name,
                                              String_View property_name,
                                              bool *out_set) {
@@ -110,7 +110,7 @@ static String_View meta_target_property_temp(Evaluator_Context *ctx,
     return have ? value : nob_sv_from_cstr("");
 }
 
-static String_View meta_target_export_name_temp(Evaluator_Context *ctx,
+static String_View meta_target_export_name_temp(EvalExecContext *ctx,
                                                 String_View target_name) {
     bool have = false;
     String_View export_name = meta_target_property_temp(ctx,
@@ -122,7 +122,7 @@ static String_View meta_target_export_name_temp(Evaluator_Context *ctx,
     return target_name;
 }
 
-static bool meta_sv_list_push_unique_temp(Evaluator_Context *ctx,
+static bool meta_sv_list_push_unique_temp(EvalExecContext *ctx,
                                           SV_List *list,
                                           String_View value) {
     if (!ctx || !list) return false;
@@ -133,7 +133,7 @@ static bool meta_sv_list_push_unique_temp(Evaluator_Context *ctx,
     return svu_list_push_temp(ctx, list, value);
 }
 
-static bool meta_sv_list_append_split_unique_temp(Evaluator_Context *ctx,
+static bool meta_sv_list_append_split_unique_temp(EvalExecContext *ctx,
                                                   SV_List *list,
                                                   String_View value) {
     if (!ctx || !list) return false;
@@ -148,7 +148,7 @@ static bool meta_sv_list_append_split_unique_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_target_collect_cxx_module_sets_temp(Evaluator_Context *ctx,
+static bool meta_target_collect_cxx_module_sets_temp(EvalExecContext *ctx,
                                                      String_View target_name,
                                                      SV_List *out_sets) {
     if (!ctx || !out_sets) return false;
@@ -190,7 +190,7 @@ static bool meta_target_collect_cxx_module_sets_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View meta_export_cxx_modules_name_temp(Evaluator_Context *ctx,
+static String_View meta_export_cxx_modules_name_temp(EvalExecContext *ctx,
                                                      String_View export_name,
                                                      SV_List targets) {
     if (!ctx) return nob_sv_from_cstr("");
@@ -222,7 +222,7 @@ static String_View meta_export_cxx_modules_name_temp(Evaluator_Context *ctx,
     return digest;
 }
 
-static String_View meta_export_cxx_modules_include_path_temp(Evaluator_Context *ctx,
+static String_View meta_export_cxx_modules_include_path_temp(EvalExecContext *ctx,
                                                              String_View cxx_modules_directory,
                                                              String_View cxx_modules_name) {
     if (!ctx || cxx_modules_directory.count == 0 || cxx_modules_name.count == 0) {
@@ -245,7 +245,7 @@ static String_View meta_export_cxx_modules_include_path_temp(Evaluator_Context *
                                 4);
 }
 
-static String_View meta_export_cxx_modules_abs_dir_temp(Evaluator_Context *ctx,
+static String_View meta_export_cxx_modules_abs_dir_temp(EvalExecContext *ctx,
                                                         String_View export_file_path,
                                                         String_View cxx_modules_directory) {
     if (!ctx || cxx_modules_directory.count == 0) return nob_sv_from_cstr("");
@@ -255,7 +255,7 @@ static String_View meta_export_cxx_modules_abs_dir_temp(Evaluator_Context *ctx,
     return eval_sv_path_join(eval_temp_arena(ctx), file_dir, cxx_modules_directory);
 }
 
-static String_View meta_current_list_include_temp(Evaluator_Context *ctx,
+static String_View meta_current_list_include_temp(EvalExecContext *ctx,
                                                   String_View relative_or_absolute_path) {
     if (!ctx || relative_or_absolute_path.count == 0) return nob_sv_from_cstr("");
     if (eval_sv_is_abs_path(relative_or_absolute_path)) return relative_or_absolute_path;
@@ -292,7 +292,7 @@ typedef struct {
     SV_List deps;
 } Meta_Include_External_MSProject_Request;
 
-static bool meta_export_write(Evaluator_Context *ctx,
+static bool meta_export_write(EvalExecContext *ctx,
                               String_View out_path,
                               bool append,
                               String_View mode,
@@ -326,7 +326,7 @@ static bool meta_export_write(Evaluator_Context *ctx,
     return eval_write_text_file(ctx, out_path, nob_sv_from_parts(sb.items, sb.count), append);
 }
 
-static bool meta_export_assign_last(Evaluator_Context *ctx,
+static bool meta_export_assign_last(EvalExecContext *ctx,
                                     String_View mode,
                                     String_View file_path,
                                     String_View targets,
@@ -350,7 +350,7 @@ static bool meta_export_assign_last(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_export_write_cxx_module_target_file(Evaluator_Context *ctx,
+static bool meta_export_write_cxx_module_target_file(EvalExecContext *ctx,
                                                      String_View target_file_path,
                                                      String_View target_name,
                                                      String_View target_export_name,
@@ -468,7 +468,7 @@ static bool meta_export_write_cxx_module_target_file(Evaluator_Context *ctx,
                                 false);
 }
 
-static bool meta_export_write_cxx_module_sidecars(Evaluator_Context *ctx,
+static bool meta_export_write_cxx_module_sidecars(EvalExecContext *ctx,
                                                   String_View export_file_path,
                                                   bool append,
                                                   String_View cxx_modules_directory,
@@ -559,7 +559,7 @@ static String_View meta_export_mode_sv(Meta_Export_Signature signature) {
     return nob_sv_from_cstr("");
 }
 
-static bool meta_export_parse_common_option(Evaluator_Context *ctx,
+static bool meta_export_parse_common_option(EvalExecContext *ctx,
                                             const Node *node,
                                             SV_List a,
                                             size_t *io_index,
@@ -620,7 +620,7 @@ static bool meta_export_parse_common_option(Evaluator_Context *ctx,
     return false;
 }
 
-static bool meta_export_parse_targets_signature(Evaluator_Context *ctx,
+static bool meta_export_parse_targets_signature(EvalExecContext *ctx,
                                                 const Node *node,
                                                 SV_List a,
                                                 Meta_Export_Request *out) {
@@ -655,7 +655,7 @@ static bool meta_export_parse_targets_signature(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_export_parse_export_signature(Evaluator_Context *ctx,
+static bool meta_export_parse_export_signature(EvalExecContext *ctx,
                                                const Node *node,
                                                SV_List a,
                                                Meta_Export_Request *out) {
@@ -685,7 +685,7 @@ static bool meta_export_parse_export_signature(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_export_parse_request(Evaluator_Context *ctx,
+static bool meta_export_parse_request(EvalExecContext *ctx,
                                       const Node *node,
                                       SV_List a,
                                       Meta_Export_Request *out) {
@@ -725,7 +725,7 @@ static bool meta_export_parse_request(Evaluator_Context *ctx,
     return false;
 }
 
-static bool meta_export_validate_targets(Evaluator_Context *ctx,
+static bool meta_export_validate_targets(EvalExecContext *ctx,
                                          const Node *node,
                                          SV_List targets) {
     if (!ctx || !node) return false;
@@ -750,7 +750,7 @@ static bool meta_export_validate_targets(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_export_resolve_targets(Evaluator_Context *ctx,
+static bool meta_export_resolve_targets(EvalExecContext *ctx,
                                         const Node *node,
                                         const Meta_Export_Request *req,
                                         SV_List *out_targets) {
@@ -779,7 +779,7 @@ static bool meta_export_resolve_targets(Evaluator_Context *ctx,
     return eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), targets_sv, out_targets);
 }
 
-static bool meta_export_resolve_file_path(Evaluator_Context *ctx,
+static bool meta_export_resolve_file_path(EvalExecContext *ctx,
                                           const Node *node,
                                           const Meta_Export_Request *req,
                                           String_View *out_file_path) {
@@ -818,7 +818,7 @@ static bool meta_export_resolve_file_path(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_export_execute_request(Evaluator_Context *ctx,
+static bool meta_export_execute_request(EvalExecContext *ctx,
                                         const Node *node,
                                         const Meta_Export_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -876,7 +876,7 @@ static bool meta_export_execute_request(Evaluator_Context *ctx,
                                    cxx_modules_name);
 }
 
-Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_export(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -887,7 +887,7 @@ Eval_Result eval_handle_export(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-static bool meta_msproject_parse_request(Evaluator_Context *ctx,
+static bool meta_msproject_parse_request(EvalExecContext *ctx,
                                          const Node *node,
                                          SV_List a,
                                          Meta_Include_External_MSProject_Request *out) {
@@ -955,7 +955,7 @@ static bool meta_msproject_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_msproject_execute_request(Evaluator_Context *ctx,
+static bool meta_msproject_execute_request(EvalExecContext *ctx,
                                            const Node *node,
                                            const Meta_Include_External_MSProject_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -997,7 +997,7 @@ static bool meta_msproject_execute_request(Evaluator_Context *ctx,
                                     nob_sv_from_cstr(""));
 }
 
-Eval_Result eval_handle_include_external_msproject(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_include_external_msproject(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -1036,18 +1036,18 @@ static String_View meta_file_api_kind_json_name(String_View kind) {
     return nob_sv_from_cstr("");
 }
 
-static String_View meta_file_api_root_dir(Evaluator_Context *ctx) {
+static String_View meta_file_api_root_dir(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), meta_current_bin_dir(ctx), nob_sv_from_cstr(".cmake/api/v1"));
 }
 
-static String_View meta_file_api_query_dir(Evaluator_Context *ctx) {
+static String_View meta_file_api_query_dir(EvalExecContext *ctx) {
     String_View root = meta_file_api_root_dir(ctx);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("query/client-nobify"));
 }
 
-static String_View meta_file_api_reply_dir(Evaluator_Context *ctx) {
+static String_View meta_file_api_reply_dir(EvalExecContext *ctx) {
     String_View root = meta_file_api_root_dir(ctx);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("reply"));
@@ -1096,12 +1096,12 @@ static bool meta_file_api_is_version(String_View token) {
     return saw_digit && !prev_dot;
 }
 
-static bool meta_file_api_set_path_var(Evaluator_Context *ctx, const char *key, String_View value) {
+static bool meta_file_api_set_path_var(EvalExecContext *ctx, const char *key, String_View value) {
     if (!ctx || !key) return false;
     return eval_var_set_current(ctx, nob_sv_from_cstr(key), value);
 }
 
-static String_View meta_file_api_reply_filename_temp(Evaluator_Context *ctx,
+static String_View meta_file_api_reply_filename_temp(EvalExecContext *ctx,
                                                      String_View kind_json,
                                                      String_View version) {
     if (!ctx || kind_json.count == 0 || version.count == 0) return nob_sv_from_cstr("");
@@ -1122,7 +1122,7 @@ static String_View meta_file_api_reply_filename_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, off);
 }
 
-static bool meta_file_api_write_query_file(Evaluator_Context *ctx,
+static bool meta_file_api_write_query_file(EvalExecContext *ctx,
                                            String_View query_file,
                                            const Meta_File_Api_Request_List *requests) {
     if (!ctx || !requests) return false;
@@ -1159,7 +1159,7 @@ static bool meta_file_api_write_query_file(Evaluator_Context *ctx,
     return ok;
 }
 
-static bool meta_file_api_write_reply_file(Evaluator_Context *ctx,
+static bool meta_file_api_write_reply_file(EvalExecContext *ctx,
                                            String_View reply_dir,
                                            String_View build_dir,
                                            Meta_File_Api_Request req,
@@ -1193,7 +1193,7 @@ static bool meta_file_api_write_reply_file(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_file_api_write_index_file(Evaluator_Context *ctx,
+static bool meta_file_api_write_index_file(EvalExecContext *ctx,
                                            String_View index_file,
                                            String_View build_dir,
                                            String_View query_file,
@@ -1261,7 +1261,7 @@ static bool meta_file_api_write_index_file(Evaluator_Context *ctx,
     return ok;
 }
 
-static bool meta_file_api_stage_query(Evaluator_Context *ctx, const Meta_File_Api_Request_List *requests) {
+static bool meta_file_api_stage_query(EvalExecContext *ctx, const Meta_File_Api_Request_List *requests) {
     if (!ctx || !requests) return false;
 
     String_View build_dir = meta_current_bin_dir(ctx);
@@ -1286,7 +1286,7 @@ static bool meta_file_api_stage_query(Evaluator_Context *ctx, const Meta_File_Ap
     return true;
 }
 
-static bool meta_file_api_parse_request(Evaluator_Context *ctx,
+static bool meta_file_api_parse_request(EvalExecContext *ctx,
                                         const Node *node,
                                         SV_List a,
                                         Meta_File_Api_Query_Request *out) {
@@ -1378,7 +1378,7 @@ static bool meta_file_api_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_file_api_publish_query_vars(Evaluator_Context *ctx,
+static bool meta_file_api_publish_query_vars(EvalExecContext *ctx,
                                              const Meta_File_Api_Query_Request *req) {
     if (!ctx || !req) return false;
     if (!eval_var_set_current(ctx,
@@ -1401,14 +1401,14 @@ static bool meta_file_api_publish_query_vars(Evaluator_Context *ctx,
     return true;
 }
 
-static bool meta_file_api_execute_request(Evaluator_Context *ctx,
+static bool meta_file_api_execute_request(EvalExecContext *ctx,
                                           const Meta_File_Api_Query_Request *req) {
     if (!ctx || !req) return false;
     if (!meta_file_api_publish_query_vars(ctx, req)) return false;
     return meta_file_api_stage_query(ctx, &req->requests);
 }
 
-Eval_Result eval_handle_cmake_file_api(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_file_api(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

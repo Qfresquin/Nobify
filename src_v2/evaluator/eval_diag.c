@@ -25,7 +25,7 @@ typedef enum {
     MSG_MODE_PLAIN,
 } Eval_Message_Mode;
 
-static bool msg_join_no_sep_temp(Evaluator_Context *ctx, String_View *items, size_t count, String_View *out) {
+static bool msg_join_no_sep_temp(EvalExecContext *ctx, String_View *items, size_t count, String_View *out) {
     if (!ctx || !out) return false;
     *out = nob_sv_from_cstr("");
     if (!items || count == 0) return true;
@@ -66,14 +66,14 @@ static Eval_Message_Mode msg_parse_mode(String_View head, bool *out_is_mode_toke
     return MSG_MODE_PLAIN;
 }
 
-static bool msg_check_stack_push(Evaluator_Context *ctx, String_View msg) {
+static bool msg_check_stack_push(EvalExecContext *ctx, String_View msg) {
     if (!ctx) return false;
     msg = sv_copy_to_event_arena(ctx, msg);
     if (eval_should_stop(ctx)) return false;
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->message_check_stack, msg);
 }
 
-static bool msg_check_stack_pop(Evaluator_Context *ctx, String_View *out_msg) {
+static bool msg_check_stack_pop(EvalExecContext *ctx, String_View *out_msg) {
     if (!ctx || !out_msg) return false;
     if (arena_arr_len(ctx->message_check_stack) == 0) return false;
     *out_msg = ctx->message_check_stack[arena_arr_len(ctx->message_check_stack) - 1];
@@ -115,7 +115,7 @@ static bool msg_is_cmake_false(String_View v) {
     return false;
 }
 
-bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_View msg) {
+bool eval_append_configure_log(EvalExecContext *ctx, const Node *node, String_View msg) {
     if (!ctx) return false;
 
     String_View bin = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
@@ -152,7 +152,7 @@ bool eval_append_configure_log(Evaluator_Context *ctx, const Node *node, String_
     return ok;
 }
 
-Eval_Result eval_handle_message(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_message(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);

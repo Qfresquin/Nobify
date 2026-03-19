@@ -113,7 +113,7 @@ static bool sv_is_drive_root(String_View sv) {
            sv.data[2] == '/';
 }
 
-static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in) {
+static String_View sv_path_normalize_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return in;
     char *seg_buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, seg_buf, nob_sv_from_cstr(""));
@@ -207,7 +207,7 @@ static String_View sv_path_normalize_temp(Evaluator_Context *ctx, String_View in
     return out;
 }
 
-static String_View sv_lookup_if_var(struct Evaluator_Context *ctx, String_View tok) {
+static String_View sv_lookup_if_var(struct EvalExecContext *ctx, String_View tok) {
     if (!ctx || tok.count == 0) return tok;
     String_View macro_val = {0};
     if (eval_macro_bind_get(ctx, tok, &macro_val)) return macro_val;
@@ -300,7 +300,7 @@ static bool sv_parse_positive_int(String_View sv, int *out) {
     return true;
 }
 
-static int eval_expand_limit(struct Evaluator_Context *ctx) {
+static int eval_expand_limit(struct EvalExecContext *ctx) {
     int limit = EVAL_EXPAND_MAX_RECURSION;
 
     // Priority 1: context variable (script/runtime configurable).
@@ -347,7 +347,7 @@ static bool eval_truthy_constant_only(String_View v, bool *known) {
     return false;
 }
 
-bool eval_truthy(struct Evaluator_Context *ctx, String_View v) {
+bool eval_truthy(struct EvalExecContext *ctx, String_View v) {
     bool known = false;
     bool direct = eval_truthy_constant_only(v, &known);
     if (known) return direct;
@@ -368,7 +368,7 @@ bool eval_truthy(struct Evaluator_Context *ctx, String_View v) {
     return true;
 }
 
-static String_View sb_build_sv_temp(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+static String_View sb_build_sv_temp(EvalExecContext *ctx, Nob_String_Builder *sb) {
     if (!ctx || !sb || sb->count == 0) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sb->count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -383,7 +383,7 @@ static void sb_append_sv(Nob_String_Builder *sb, String_View sv) {
     nob_sb_append_buf(sb, sv.data, sv.count);
 }
 
-static String_View expand_once(struct Evaluator_Context *ctx, String_View in) {
+static String_View expand_once(struct EvalExecContext *ctx, String_View in) {
     Arena *temp_arena = eval_temp_arena(ctx);
     if (!temp_arena) return nob_sv_from_cstr("");
 
@@ -455,7 +455,7 @@ static String_View expand_once(struct Evaluator_Context *ctx, String_View in) {
     return out;
 }
 
-String_View eval_expand_vars(struct Evaluator_Context *ctx, String_View input) {
+String_View eval_expand_vars(struct EvalExecContext *ctx, String_View input) {
     if (!ctx || eval_should_stop(ctx)) return nob_sv_from_cstr("");
 
     String_View cur = sv_copy_to_temp_arena(ctx, input);
@@ -489,7 +489,7 @@ String_View eval_expand_vars(struct Evaluator_Context *ctx, String_View input) {
 }
 
 typedef struct {
-    struct Evaluator_Context *ctx;
+    struct EvalExecContext *ctx;
     String_View *toks;
     size_t count;
     size_t pos;
@@ -808,7 +808,7 @@ static bool parse_expr(Expr *e) {
     return lhs;
 }
 
-bool eval_condition(struct Evaluator_Context *ctx, const Args *raw_condition) {
+bool eval_condition(struct EvalExecContext *ctx, const Args *raw_condition) {
     if (!ctx || !raw_condition) return false;
 
     SV_List toks = eval_resolve_args(ctx, raw_condition);

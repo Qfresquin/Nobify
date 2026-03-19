@@ -2,7 +2,7 @@
 
 #include <pcre2posix.h>
 
-Eval_Result eval_string_handle_regex(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (!ctx || !node || arena_arr_len(a) < 1 || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) < 5) {

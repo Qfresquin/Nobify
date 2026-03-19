@@ -530,7 +530,7 @@ static void string_sha3_compute(const unsigned char *msg,
     }
 }
 
-static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned char *bytes, size_t count, bool upper) {
+static String_View string_bytes_hex_temp(EvalExecContext *ctx, const unsigned char *bytes, size_t count, bool upper) {
     if (!ctx || !bytes) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), (count * 2) + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -545,7 +545,7 @@ static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned 
 }
 
 static bool __attribute__((unused))
-string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, String_View input, String_View *out_hash) {
+string_hash_compute_temp(EvalExecContext *ctx, String_View algo, String_View input, String_View *out_hash) {
     if (!ctx || !out_hash) return false;
     *out_hash = nob_sv_from_cstr("");
     const unsigned char *msg = (const unsigned char*)input.data;
@@ -613,7 +613,7 @@ string_hash_compute_temp(Evaluator_Context *ctx, String_View algo, String_View i
 }
 
 
-bool eval_hash_compute_hex_temp(Evaluator_Context *ctx,
+bool eval_hash_compute_hex_temp(EvalExecContext *ctx,
                                 String_View algo,
                                 String_View input,
                                 String_View *out_hex) {

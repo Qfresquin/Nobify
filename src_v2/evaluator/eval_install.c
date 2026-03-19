@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-static bool install_emit_diag(Evaluator_Context *ctx,
+static bool install_emit_diag(EvalExecContext *ctx,
                               const Node *node,
                               Cmake_Event_Origin o,
                               Cmake_Diag_Severity severity,
@@ -14,7 +14,7 @@ static bool install_emit_diag(Evaluator_Context *ctx,
     return EVAL_DIAG_BOOL_SEV(ctx, severity, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_install"), node->as.cmd.name, o, cause, hint);
 }
 
-static bool install_emit_rule(Evaluator_Context *ctx,
+static bool install_emit_rule(EvalExecContext *ctx,
                               Cmake_Event_Origin o,
                               Cmake_Install_Rule_Type rule_type,
                               String_View item,
@@ -88,7 +88,7 @@ static bool install_destination_from_type(String_View type, String_View *out_des
     return out_destination->count > 0;
 }
 
-static bool install_collect_destinations(Evaluator_Context *ctx,
+static bool install_collect_destinations(EvalExecContext *ctx,
                                          const Node *node,
                                          Cmake_Event_Origin o,
                                          SV_List args,
@@ -112,7 +112,7 @@ static bool install_collect_destinations(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View install_tagged_item_temp(Evaluator_Context *ctx, const char *tag, String_View payload) {
+static String_View install_tagged_item_temp(EvalExecContext *ctx, const char *tag, String_View payload) {
     if (!ctx || !tag) return nob_sv_from_cstr("");
     size_t tag_len = strlen(tag);
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), tag_len + 2 + payload.count + 1);
@@ -126,19 +126,19 @@ static String_View install_tagged_item_temp(Evaluator_Context *ctx, const char *
     return nob_sv_from_cstr(buf);
 }
 
-static String_View install_default_component_name(Evaluator_Context *ctx) {
+static String_View install_default_component_name(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("Unspecified");
     String_View configured =
         eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_INSTALL_DEFAULT_COMPONENT_NAME"));
     return configured.count > 0 ? configured : nob_sv_from_cstr("Unspecified");
 }
 
-static bool install_register_component_if_present(Evaluator_Context *ctx, String_View component) {
+static bool install_register_component_if_present(EvalExecContext *ctx, String_View component) {
     if (!ctx || component.count == 0) return true;
     return eval_install_component_register(ctx, component);
 }
 
-static bool install_register_declared_components(Evaluator_Context *ctx,
+static bool install_register_declared_components(EvalExecContext *ctx,
                                                  SV_List args,
                                                  bool allow_namelink_component) {
     if (!ctx) return false;
@@ -162,7 +162,7 @@ static bool install_register_declared_components(Evaluator_Context *ctx,
     return install_register_component_if_present(ctx, install_default_component_name(ctx));
 }
 
-static bool install_handle_files_like(Evaluator_Context *ctx,
+static bool install_handle_files_like(EvalExecContext *ctx,
                                       const Node *node,
                                       Cmake_Event_Origin o,
                                       SV_List args,
@@ -259,7 +259,7 @@ static bool install_handle_files_like(Evaluator_Context *ctx,
     return true;
 }
 
-static bool install_handle_targets_like(Evaluator_Context *ctx,
+static bool install_handle_targets_like(EvalExecContext *ctx,
                                         const Node *node,
                                         Cmake_Event_Origin o,
                                         SV_List args,
@@ -338,7 +338,7 @@ static bool install_is_script_code_option(String_View tok) {
            eval_sv_eq_ci_lit(tok, "COMPONENT");
 }
 
-static bool install_handle_script_code_block(Evaluator_Context *ctx,
+static bool install_handle_script_code_block(EvalExecContext *ctx,
                                              const Node *node,
                                              Cmake_Event_Origin o,
                                              SV_List args) {
@@ -391,7 +391,7 @@ static bool install_handle_script_code_block(Evaluator_Context *ctx,
     return true;
 }
 
-static bool install_handle_export_like(Evaluator_Context *ctx,
+static bool install_handle_export_like(EvalExecContext *ctx,
                                        const Node *node,
                                        Cmake_Event_Origin o,
                                        SV_List args,
@@ -426,7 +426,7 @@ static bool install_handle_export_like(Evaluator_Context *ctx,
     return true;
 }
 
-static bool install_handle_runtime_dependency_set(Evaluator_Context *ctx,
+static bool install_handle_runtime_dependency_set(EvalExecContext *ctx,
                                                   const Node *node,
                                                   Cmake_Event_Origin o,
                                                   SV_List args) {
@@ -460,7 +460,7 @@ static bool install_handle_runtime_dependency_set(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_install(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_install(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);

@@ -23,7 +23,7 @@ static inline bool eval_string_parse_i64(String_View sv, long long *out) {
     return true;
 }
 
-static inline String_View eval_string_join_no_sep_temp(Evaluator_Context *ctx, String_View *items, size_t count) {
+static inline String_View eval_string_join_no_sep_temp(EvalExecContext *ctx, String_View *items, size_t count) {
     if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
     return svu_join_no_sep_temp(ctx, items, count);
 }
@@ -62,9 +62,9 @@ static inline bool eval_string_is_hash_command(String_View cmd) {
            eval_sv_eq_ci_lit(cmd, "SHA3_512");
 }
 
-Eval_Result eval_string_handle_text(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
-Eval_Result eval_string_handle_regex(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
-Eval_Result eval_string_handle_json(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
-Eval_Result eval_string_handle_misc(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
+Eval_Result eval_string_handle_text(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
+Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
+Eval_Result eval_string_handle_json(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
+Eval_Result eval_string_handle_misc(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a);
 
 #endif // EVAL_STRING_INTERNAL_H_

@@ -93,14 +93,14 @@ static bool find_item_is_keyword(String_View value) {
            find_item_keyword_eq(value, "VALIDATOR");
 }
 
-static bool find_item_list_append(Evaluator_Context *ctx, SV_List *list, String_View item) {
+static bool find_item_list_append(EvalExecContext *ctx, SV_List *list, String_View item) {
     if (!ctx || !list) return false;
     if (item.count == 0) return true;
     if (!svu_list_push_temp(ctx, list, item)) return false;
     return true;
 }
 
-static bool find_item_list_append_env(Evaluator_Context *ctx, SV_List *list, String_View env_name) {
+static bool find_item_list_append_env(EvalExecContext *ctx, SV_List *list, String_View env_name) {
     if (!ctx || !list || env_name.count == 0) return false;
     char *env_key = eval_sv_to_cstr_temp(ctx, env_name);
     EVAL_OOM_RETURN_IF_NULL(ctx, env_key, false);
@@ -129,7 +129,7 @@ static bool find_item_list_append_env(Evaluator_Context *ctx, SV_List *list, Str
     return true;
 }
 
-static bool find_item_append_section_values(Evaluator_Context *ctx,
+static bool find_item_append_section_values(EvalExecContext *ctx,
                                             const Node *node,
                                             Cmake_Event_Origin origin,
                                             SV_List values,
@@ -158,7 +158,7 @@ static bool find_item_append_section_values(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_validate_out_var(Evaluator_Context *ctx,
+static bool find_item_validate_out_var(EvalExecContext *ctx,
                                        const Node *node,
                                        const SV_List args,
                                        Find_Item_Options *out_opt) {
@@ -218,7 +218,7 @@ static bool find_item_validate_out_var(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_parse_positional(Evaluator_Context *ctx,
+static bool find_item_parse_positional(EvalExecContext *ctx,
                                        void *userdata,
                                        String_View value,
                                        size_t token_index) {
@@ -239,7 +239,7 @@ static bool find_item_parse_positional(Evaluator_Context *ctx,
     return find_item_list_append(ctx, &state->out_opt->names, value);
 }
 
-static bool find_item_parse_option(Evaluator_Context *ctx,
+static bool find_item_parse_option(EvalExecContext *ctx,
                                    void *userdata,
                                    int id,
                                    SV_List values,
@@ -312,7 +312,7 @@ static bool find_item_parse_option(Evaluator_Context *ctx,
     }
 }
 
-static bool find_item_parse_options(Evaluator_Context *ctx,
+static bool find_item_parse_options(EvalExecContext *ctx,
                                     const Node *node,
                                     SV_List args,
                                     Find_Item_Options *out_opt) {
@@ -387,7 +387,7 @@ static bool find_item_parse_options(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_candidate_exists(Evaluator_Context *ctx,
+static bool find_item_candidate_exists(EvalExecContext *ctx,
                                        Find_Item_Kind kind,
                                        String_View candidate,
                                        String_View *out_value) {
@@ -413,7 +413,7 @@ static bool find_item_candidate_exists(Evaluator_Context *ctx,
     return false;
 }
 
-static bool find_item_append_prefixed_root(Evaluator_Context *ctx,
+static bool find_item_append_prefixed_root(EvalExecContext *ctx,
                                            SV_List *dirs,
                                            String_View root,
                                            String_View dir) {
@@ -433,7 +433,7 @@ static bool find_item_append_prefixed_root(Evaluator_Context *ctx,
     return find_item_list_append(ctx, dirs, eval_sv_path_join(eval_temp_arena(ctx), root, relative));
 }
 
-static bool find_item_append_package_roots(Evaluator_Context *ctx,
+static bool find_item_append_package_roots(EvalExecContext *ctx,
                                            const Find_Item_Options *opt,
                                            Find_Item_Kind kind,
                                            SV_List *out_dirs) {
@@ -484,7 +484,7 @@ static bool find_item_append_package_roots(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_append_cmake_var_paths(Evaluator_Context *ctx,
+static bool find_item_append_cmake_var_paths(EvalExecContext *ctx,
                                              const Find_Item_Options *opt,
                                              Find_Item_Kind kind,
                                              SV_List *out_dirs) {
@@ -506,7 +506,7 @@ static bool find_item_append_cmake_var_paths(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_append_env_default_paths(Evaluator_Context *ctx,
+static bool find_item_append_env_default_paths(EvalExecContext *ctx,
                                                const Find_Item_Options *opt,
                                                Find_Item_Kind kind,
                                                SV_List *out_dirs) {
@@ -522,7 +522,7 @@ static bool find_item_append_env_default_paths(Evaluator_Context *ctx,
     return find_item_list_append_env(ctx, out_dirs, nob_sv_from_cstr(env_name));
 }
 
-static bool find_item_append_system_env_paths(Evaluator_Context *ctx,
+static bool find_item_append_system_env_paths(EvalExecContext *ctx,
                                               const Find_Item_Options *opt,
                                               Find_Item_Kind kind,
                                               SV_List *out_dirs) {
@@ -533,7 +533,7 @@ static bool find_item_append_system_env_paths(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_append_install_prefix(Evaluator_Context *ctx,
+static bool find_item_append_install_prefix(EvalExecContext *ctx,
                                             const Find_Item_Options *opt,
                                             Find_Item_Kind kind,
                                             SV_List *out_dirs) {
@@ -549,7 +549,7 @@ static bool find_item_append_install_prefix(Evaluator_Context *ctx,
     return find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefix, nob_sv_from_cstr("include")));
 }
 
-static bool find_item_append_system_defaults(Evaluator_Context *ctx,
+static bool find_item_append_system_defaults(EvalExecContext *ctx,
                                              const Find_Item_Options *opt,
                                              Find_Item_Kind kind,
                                              SV_List *out_dirs) {
@@ -586,7 +586,7 @@ static bool find_item_append_system_defaults(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_build_search_dirs(Evaluator_Context *ctx,
+static bool find_item_build_search_dirs(EvalExecContext *ctx,
                                         const Find_Item_Options *opt,
                                         Find_Item_Kind kind,
                                         SV_List *out_dirs) {
@@ -608,7 +608,7 @@ static bool find_item_build_search_dirs(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_apply_root_paths(Evaluator_Context *ctx,
+static bool find_item_apply_root_paths(EvalExecContext *ctx,
                                        const Find_Item_Options *opt,
                                        const SV_List *base_dirs,
                                        SV_List *out_dirs) {
@@ -636,7 +636,7 @@ static bool find_item_apply_root_paths(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_invoke_validator(Evaluator_Context *ctx,
+static bool find_item_invoke_validator(EvalExecContext *ctx,
                                        const Find_Item_Options *opt,
                                        String_View candidate,
                                        bool *out_accept) {
@@ -671,7 +671,7 @@ static bool find_item_invoke_validator(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_make_library_name(Evaluator_Context *ctx,
+static bool find_item_make_library_name(EvalExecContext *ctx,
                                         String_View base_name,
                                         size_t variant_index,
                                         String_View *out_name) {
@@ -707,7 +707,7 @@ static bool find_item_make_library_name(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_make_program_name(Evaluator_Context *ctx,
+static bool find_item_make_program_name(EvalExecContext *ctx,
                                         String_View base_name,
                                         size_t variant_index,
                                         String_View *out_name) {
@@ -735,7 +735,7 @@ static bool find_item_make_program_name(Evaluator_Context *ctx,
 #endif
 }
 
-static bool find_item_search(Evaluator_Context *ctx,
+static bool find_item_search(EvalExecContext *ctx,
                              const Find_Item_Options *opt,
                              Find_Item_Kind kind,
                              String_View *out_found) {
@@ -829,7 +829,7 @@ static bool find_item_search(Evaluator_Context *ctx,
     return true;
 }
 
-static bool find_item_set_result(Evaluator_Context *ctx,
+static bool find_item_set_result(EvalExecContext *ctx,
                                  const Node *node,
                                  const Find_Item_Options *opt,
                                  String_View found_value) {
@@ -848,7 +848,7 @@ static bool find_item_set_result(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static Eval_Result find_item_handle(Evaluator_Context *ctx,
+static Eval_Result find_item_handle(EvalExecContext *ctx,
                                     const Node *node,
                                     Find_Item_Kind kind) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
@@ -864,18 +864,18 @@ static Eval_Result find_item_handle(Evaluator_Context *ctx,
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_find_program(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_find_program(EvalExecContext *ctx, const Node *node) {
     return find_item_handle(ctx, node, FIND_ITEM_PROGRAM);
 }
 
-Eval_Result eval_handle_find_file(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_find_file(EvalExecContext *ctx, const Node *node) {
     return find_item_handle(ctx, node, FIND_ITEM_FILE);
 }
 
-Eval_Result eval_handle_find_path(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_find_path(EvalExecContext *ctx, const Node *node) {
     return find_item_handle(ctx, node, FIND_ITEM_PATH);
 }
 
-Eval_Result eval_handle_find_library(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_find_library(EvalExecContext *ctx, const Node *node) {
     return find_item_handle(ctx, node, FIND_ITEM_LIBRARY);
 }

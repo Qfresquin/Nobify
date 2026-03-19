@@ -14,25 +14,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool file_exists_sv(Evaluator_Context *ctx, String_View path);
-bool find_package_diag_error(Evaluator_Context *ctx,
+bool file_exists_sv(EvalExecContext *ctx, String_View path);
+bool find_package_diag_error(EvalExecContext *ctx,
                              const Node *node,
                              String_View cause,
                              String_View hint);
-String_View sv_to_lower_temp(Evaluator_Context *ctx, String_View in);
-bool find_package_split_semicolon_temp(Evaluator_Context *ctx, String_View input, SV_List *out);
-void find_package_push_env_list(Evaluator_Context *ctx,
+String_View sv_to_lower_temp(EvalExecContext *ctx, String_View in);
+bool find_package_split_semicolon_temp(EvalExecContext *ctx, String_View input, SV_List *out);
+void find_package_push_env_list(EvalExecContext *ctx,
                                 String_View *items,
                                 size_t *io_count,
                                 size_t cap,
                                 const char *env_name);
 void find_package_push_prefix(String_View *items, size_t *io_count, size_t cap, String_View v);
-void find_package_push_prefix_variants(Evaluator_Context *ctx,
+void find_package_push_prefix_variants(EvalExecContext *ctx,
                                        String_View *items,
                                        size_t *io_count,
                                        size_t cap,
                                        String_View root);
-void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
+void find_package_push_package_root_prefixes(EvalExecContext *ctx,
                                              String_View pkg,
                                              String_View names_csv,
                                              bool no_default_path,
@@ -41,6 +41,6 @@ void find_package_push_package_root_prefixes(Evaluator_Context *ctx,
                                              String_View *items,
                                              size_t *io_count,
                                              size_t cap);
-String_View sv_to_upper_temp(Evaluator_Context *ctx, String_View in);
+String_View sv_to_upper_temp(EvalExecContext *ctx, String_View in);
 
 #endif // EVAL_PACKAGE_INTERNAL_H_

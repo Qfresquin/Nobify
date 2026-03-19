@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-static bool try_run_clear_run_outputs(Evaluator_Context *ctx, const Try_Run_Request *req) {
+static bool try_run_clear_run_outputs(EvalExecContext *ctx, const Try_Run_Request *req) {
     if (!ctx || !req) return false;
     if (req->run_output_var.count > 0 && !eval_var_set_current(ctx, req->run_output_var, nob_sv_from_cstr(""))) return false;
     if (req->run_stdout_var.count > 0 && !eval_var_set_current(ctx, req->run_stdout_var, nob_sv_from_cstr(""))) return false;
@@ -10,7 +10,7 @@ static bool try_run_clear_run_outputs(Evaluator_Context *ctx, const Try_Run_Requ
     return true;
 }
 
-static String_View try_run_merge_stdout_stderr_temp(Evaluator_Context *ctx,
+static String_View try_run_merge_stdout_stderr_temp(EvalExecContext *ctx,
                                                     String_View stdout_text,
                                                     String_View stderr_text) {
     if (!ctx) return nob_sv_from_cstr("");
@@ -22,7 +22,7 @@ static String_View try_run_merge_stdout_stderr_temp(Evaluator_Context *ctx,
     return out;
 }
 
-static bool try_run_set_legacy_output(Evaluator_Context *ctx,
+static bool try_run_set_legacy_output(EvalExecContext *ctx,
                                       const Try_Run_Request *req,
                                       String_View compile_output,
                                       String_View run_output) {
@@ -36,7 +36,7 @@ static bool try_run_set_legacy_output(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, req->legacy_output_var, combined);
 }
 
-static String_View try_run_cache_key_with_suffix_temp(Evaluator_Context *ctx,
+static String_View try_run_cache_key_with_suffix_temp(EvalExecContext *ctx,
                                                       String_View base,
                                                       const char *suffix) {
     if (!ctx || !suffix) return nob_sv_from_cstr("");
@@ -49,7 +49,7 @@ static String_View try_run_cache_key_with_suffix_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, base.count + suffix_len);
 }
 
-static bool try_run_cache_set_and_emit(Evaluator_Context *ctx,
+static bool try_run_cache_set_and_emit(EvalExecContext *ctx,
                                        Cmake_Event_Origin origin,
                                        String_View key,
                                        String_View value,
@@ -84,14 +84,14 @@ static void try_run_sb_append_cache_line(Nob_String_Builder *sb,
     nob_sb_append_cstr(sb, " FORCE)\n");
 }
 
-static String_View try_run_results_file_path(Evaluator_Context *ctx) {
+static String_View try_run_results_file_path(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View top_bin = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
     if (top_bin.count == 0) top_bin = ctx->binary_dir;
     return eval_sv_path_join(eval_temp_arena(ctx), top_bin, nob_sv_from_cstr("TryRunResults.cmake"));
 }
 
-static bool try_run_write_results_file(Evaluator_Context *ctx, const Try_Run_Request *req) {
+static bool try_run_write_results_file(EvalExecContext *ctx, const Try_Run_Request *req) {
     if (!ctx || !req) return false;
     String_View placeholder_run = nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN");
     String_View placeholder_output = nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND");
@@ -121,7 +121,7 @@ static bool try_run_write_results_file(Evaluator_Context *ctx, const Try_Run_Req
     return ok;
 }
 
-static bool try_run_publish_cross_compile_placeholders(Evaluator_Context *ctx,
+static bool try_run_publish_cross_compile_placeholders(EvalExecContext *ctx,
                                                        const Try_Run_Request *req,
                                                        Cmake_Event_Origin origin) {
     if (!ctx || !req) return false;
@@ -149,7 +149,7 @@ static bool try_run_publish_cross_compile_placeholders(Evaluator_Context *ctx,
     return try_run_write_results_file(ctx, req);
 }
 
-static String_View try_run_resolve_exec_path(Evaluator_Context *ctx, String_View artifact_path) {
+static String_View try_run_resolve_exec_path(EvalExecContext *ctx, String_View artifact_path) {
     if (!ctx) return nob_sv_from_cstr("");
     if (artifact_path.count == 0 || eval_sv_is_abs_path(artifact_path)) return artifact_path;
     String_View cwd = eval_process_cwd_temp(ctx);
@@ -157,7 +157,7 @@ static String_View try_run_resolve_exec_path(Evaluator_Context *ctx, String_View
     return eval_sv_path_join(eval_temp_arena(ctx), cwd, artifact_path);
 }
 
-static bool try_run_execute_compile_phase(Evaluator_Context *ctx,
+static bool try_run_execute_compile_phase(EvalExecContext *ctx,
                                           const Node *node,
                                           const Try_Run_Request *req,
                                           Try_Compile_Execution_Result *out_exec_res,
@@ -178,7 +178,7 @@ static bool try_run_execute_compile_phase(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_run_publish_compile_phase(Evaluator_Context *ctx,
+static bool try_run_publish_compile_phase(EvalExecContext *ctx,
                                           const Try_Run_Request *req,
                                           const Try_Run_Result *run_res) {
     if (!ctx || !req || !run_res) return false;
@@ -194,7 +194,7 @@ static bool try_run_publish_compile_phase(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_run_finish_without_run(Evaluator_Context *ctx,
+static bool try_run_finish_without_run(EvalExecContext *ctx,
                                        const Try_Run_Request *req,
                                        String_View compile_output) {
     if (!ctx || !req) return false;
@@ -206,7 +206,7 @@ static bool try_run_finish_without_run(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_run_emit_unrunnable_artifact_diag(Evaluator_Context *ctx,
+static bool try_run_emit_unrunnable_artifact_diag(EvalExecContext *ctx,
                                                   const Node *node,
                                                   Cmake_Event_Origin origin,
                                                   String_View hint) {
@@ -221,7 +221,7 @@ static bool try_run_emit_unrunnable_artifact_diag(Evaluator_Context *ctx,
                               hint);
 }
 
-static bool try_run_prepare_argv(Evaluator_Context *ctx,
+static bool try_run_prepare_argv(EvalExecContext *ctx,
                                  const Try_Run_Request *req,
                                  String_View exec_path,
                                  Cmake_Event_Origin origin,
@@ -257,7 +257,7 @@ static bool try_run_prepare_argv(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_run_publish_process_outputs(Evaluator_Context *ctx,
+static bool try_run_publish_process_outputs(EvalExecContext *ctx,
                                             const Try_Run_Request *req,
                                             Try_Run_Result *run_res,
                                             const Eval_Process_Run_Result *proc_res) {
@@ -279,7 +279,7 @@ static bool try_run_publish_process_outputs(Evaluator_Context *ctx,
     return try_run_set_legacy_output(ctx, req, run_res->compile_output, combined_run_output);
 }
 
-static bool try_run_execute_request(Evaluator_Context *ctx,
+static bool try_run_execute_request(EvalExecContext *ctx,
                                     const Node *node,
                                     const Try_Run_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -331,7 +331,7 @@ static bool try_run_execute_request(Evaluator_Context *ctx,
     return try_run_publish_process_outputs(ctx, req, &run_res, &proc_res);
 }
 
-Eval_Result eval_handle_try_run(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_try_run(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);

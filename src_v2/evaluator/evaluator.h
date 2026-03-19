@@ -19,10 +19,10 @@
 // Evaluator API
 // -----------------------------------------------------------------------------
 
-typedef struct Evaluator_Context Evaluator_Context;
 typedef struct EvalSession EvalSession;
 typedef struct EvalRegistry EvalRegistry;
 typedef struct EvalServices EvalServices;
+typedef struct EvalExecContext EvalExecContext;
 
 typedef enum {
     EVAL_RESULT_OK = 0,
@@ -46,7 +46,7 @@ static inline bool eval_result_is_fatal(Eval_Result r) {
     return r.kind == EVAL_RESULT_FATAL;
 }
 
-typedef Eval_Result (*Eval_Native_Command_Handler)(Evaluator_Context *ctx, const Node *node);
+typedef Eval_Result (*Eval_Native_Command_Handler)(EvalExecContext *exec, const Node *node);
 
 typedef enum {
     EVAL_PROFILE_PERMISSIVE = 0,
@@ -211,7 +211,14 @@ EvalRunResult eval_session_run(EvalSession *session,
                                Ast_Root ast);
 
 bool eval_session_set_compat_profile(EvalSession *session, Eval_Compat_Profile profile);
+bool eval_session_register_native_command(EvalSession *session,
+                                          const EvalNativeCommandDef *def);
+bool eval_session_unregister_native_command(EvalSession *session,
+                                            String_View command_name);
 bool eval_session_command_exists(const EvalSession *session, String_View command_name);
+bool eval_session_get_visible_var(const EvalSession *session,
+                                  String_View key,
+                                  String_View *out_value);
 
 EvalRegistry *eval_registry_create(Arena *arena);
 void eval_registry_destroy(EvalRegistry *registry);
@@ -224,31 +231,22 @@ bool eval_registry_get_command_capability(const EvalRegistry *registry,
                                           String_View command_name,
                                           Command_Capability *out_capability);
 
-// Legacy compatibility shim API.
-// New code should prefer EvalSession/EvalExec_Request/EvalRunResult.
-typedef struct {
-    Arena *arena;        // temporary expansions (rewound frequently)
-    Arena *event_arena;  // persistent strings + event stream storage
-    Event_Stream *stream;
-
-    String_View source_dir; // CMAKE_SOURCE_DIR
-    String_View binary_dir; // CMAKE_BINARY_DIR
-
-    const char *current_file; // for origin fallback
-    Eval_Compat_Profile compat_profile;
-} Evaluator_Init;
-
-Evaluator_Context *evaluator_create(const Evaluator_Init *init);
-void evaluator_destroy(Evaluator_Context *ctx);
-
-Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast);
-const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx);
-const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx);
-bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile);
-bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def);
-bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name);
-bool evaluator_get_command_capability(Evaluator_Context *ctx,
-                                      String_View command_name,
-                                      Command_Capability *out_capability);
+const EvalServices *eval_exec_services(const EvalExecContext *exec);
+Event_Origin eval_exec_origin_from_node(const EvalExecContext *exec, const Node *node);
+bool eval_exec_get_visible_var(const EvalExecContext *exec,
+                               String_View key,
+                               String_View *out_value);
+bool eval_exec_set_current_var(EvalExecContext *exec,
+                               String_View key,
+                               String_View value);
+bool eval_exec_unset_current_var(EvalExecContext *exec, String_View key);
+Eval_Result eval_exec_emit_diag(EvalExecContext *exec,
+                                Event_Diag_Severity severity,
+                                Eval_Diag_Code code,
+                                String_View component,
+                                String_View command,
+                                Event_Origin origin,
+                                String_View cause,
+                                String_View hint);
 
 #endif // EVALUATOR_H_

@@ -31,7 +31,7 @@ bool eval_opt_token_is_keyword(String_View tok,
     return opt_find_spec_idx(tok, specs, spec_count) >= 0;
 }
 
-static bool opt_emit_missing_value(Evaluator_Context *ctx,
+static bool opt_emit_missing_value(EvalExecContext *ctx,
                                    Eval_Opt_Parse_Config cfg,
                                    const Eval_Opt_Spec *spec,
                                    String_View option_tok) {
@@ -53,7 +53,7 @@ static bool opt_emit_missing_value(Evaluator_Context *ctx,
     return false;
 }
 
-static bool opt_emit_duplicate_option(Evaluator_Context *ctx,
+static bool opt_emit_duplicate_option(EvalExecContext *ctx,
                                       Eval_Opt_Parse_Config cfg,
                                       const Eval_Opt_Spec *spec,
                                       String_View option_tok) {
@@ -75,7 +75,7 @@ static bool opt_emit_duplicate_option(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_opt_parse_walk(Evaluator_Context *ctx,
+bool eval_opt_parse_walk(EvalExecContext *ctx,
                          SV_List args,
                          size_t start,
                          const Eval_Opt_Spec *specs,

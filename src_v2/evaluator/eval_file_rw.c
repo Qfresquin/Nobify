@@ -87,7 +87,7 @@ static void file_strings_append_utf8_codepoint(Nob_String_Builder *sb, uint32_t 
     nob_sb_append(sb, (char)(0x80 | (cp & 0x3F)));
 }
 
-static bool file_strings_decode_to_utf8_temp(Evaluator_Context *ctx,
+static bool file_strings_decode_to_utf8_temp(EvalExecContext *ctx,
                                              const char *raw,
                                              size_t raw_n,
                                              File_Strings_Encoding requested,
@@ -198,7 +198,7 @@ static bool file_strings_decode_to_utf8_temp(Evaluator_Context *ctx,
     return true;
 }
 
-void eval_file_handle_write(Evaluator_Context *ctx, const Node *node, SV_List args) {
+void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
         eval_file_diag_error(ctx,
@@ -255,7 +255,7 @@ void eval_file_handle_write(Evaluator_Context *ctx, const Node *node, SV_List ar
     (void)eval_emit_fs_write_file(ctx, o, path);
 }
 
-void eval_file_handle_make_directory(Evaluator_Context *ctx, const Node *node, SV_List args) {
+void eval_file_handle_make_directory(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
         eval_file_diag_error(ctx,
@@ -284,7 +284,7 @@ void eval_file_handle_make_directory(Evaluator_Context *ctx, const Node *node, S
     }
 }
 
-void eval_file_handle_read(Evaluator_Context *ctx, const Node *node, SV_List args) {
+void eval_file_handle_read(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
         eval_file_diag_error(ctx,
@@ -363,7 +363,7 @@ void eval_file_handle_read(Evaluator_Context *ctx, const Node *node, SV_List arg
     (void)eval_emit_fs_read_file(ctx, o, path, out_var);
 }
 
-void eval_file_handle_strings(Evaluator_Context *ctx, const Node *node, SV_List args) {
+void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
         eval_file_diag_error(ctx,
@@ -606,7 +606,7 @@ void eval_file_handle_strings(Evaluator_Context *ctx, const Node *node, SV_List 
     nob_sb_append_null(&out);
     String_View out_sv = out.items ? nob_sv_from_parts(out.items, out.count - 1) : nob_sv_from_cstr("");
     if (re_compiled) regfree(&re);
-    nob_sb_free(out);
     (void)eval_var_set_current(ctx, out_var, out_sv);
+    nob_sb_free(out);
     nob_sb_free(sb);
 }

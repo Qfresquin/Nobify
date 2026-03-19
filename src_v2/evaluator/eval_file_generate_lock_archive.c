@@ -25,7 +25,7 @@ enum {
     EVAL_FILE_LOCK_GUARD_FUNCTION = 2,
 };
 
-static bool file_cmd_append_checked(Evaluator_Context *ctx, Nob_Cmd *cmd, const char *arg) {
+static bool file_cmd_append_checked(EvalExecContext *ctx, Nob_Cmd *cmd, const char *arg) {
     if (!ctx || !cmd || !arg) return false;
     if (cmd->count == cmd->capacity) {
         size_t new_cap = cmd->capacity > 0 ? cmd->capacity * 2 : 8;
@@ -49,7 +49,7 @@ static void file_cmd_reset(Nob_Cmd *cmd) {
     cmd->capacity = 0;
 }
 
-static ssize_t eval_file_lock_find(Evaluator_Context *ctx, String_View path) {
+static ssize_t eval_file_lock_find(EvalExecContext *ctx, String_View path) {
     if (!ctx) return -1;
     for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks); i++) {
         if (eval_sv_key_eq(ctx->file_state.file_locks[i].path, path)) return (ssize_t)i;
@@ -72,7 +72,7 @@ static void eval_file_lock_close_entry(Eval_File_Lock *lock) {
 #endif
 }
 
-static void eval_file_lock_release_by_scope(Evaluator_Context *ctx, int guard_kind, size_t owner_depth) {
+static void eval_file_lock_release_by_scope(EvalExecContext *ctx, int guard_kind, size_t owner_depth) {
     if (!ctx) return;
     for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks);) {
         Eval_File_Lock *lock = &ctx->file_state.file_locks[i];
@@ -93,11 +93,11 @@ static void eval_file_lock_release_by_scope(Evaluator_Context *ctx, int guard_ki
     }
 }
 
-void eval_file_lock_release_file_scope(Evaluator_Context *ctx, size_t owner_depth) {
+void eval_file_lock_release_file_scope(EvalExecContext *ctx, size_t owner_depth) {
     eval_file_lock_release_by_scope(ctx, EVAL_FILE_LOCK_GUARD_FILE, owner_depth);
 }
 
-void eval_file_lock_release_function_scope(Evaluator_Context *ctx, size_t owner_depth) {
+void eval_file_lock_release_function_scope(EvalExecContext *ctx, size_t owner_depth) {
     eval_file_lock_release_by_scope(ctx, EVAL_FILE_LOCK_GUARD_FUNCTION, owner_depth);
 }
 
@@ -160,7 +160,7 @@ static bool file_parse_permission_token(mode_t *mode, String_View token) {
     return false;
 }
 
-void eval_file_lock_cleanup(Evaluator_Context *ctx) {
+void eval_file_lock_cleanup(EvalExecContext *ctx) {
     if (!ctx) return;
     for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks); i++) {
         eval_file_lock_close_entry(&ctx->file_state.file_locks[i]);
@@ -170,7 +170,7 @@ void eval_file_lock_cleanup(Evaluator_Context *ctx) {
     }
 }
 
-static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_t fd_or_dummy, int guard_kind) {
+static bool eval_file_lock_add(EvalExecContext *ctx, String_View path, intptr_t fd_or_dummy, int guard_kind) {
     if (!ctx) return false;
     Eval_File_Lock lock = {0};
     lock.path = sv_copy_to_event_arena(ctx, path);
@@ -185,13 +185,13 @@ static bool eval_file_lock_add(Evaluator_Context *ctx, String_View path, intptr_
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.file_locks, lock);
 }
 
-static void eval_file_lock_remove_at(Evaluator_Context *ctx, size_t idx) {
+static void eval_file_lock_remove_at(EvalExecContext *ctx, size_t idx) {
     if (!ctx || idx >= arena_arr_len(ctx->file_state.file_locks)) return;
     ctx->file_state.file_locks[idx] = ctx->file_state.file_locks[arena_arr_len(ctx->file_state.file_locks) - 1];
     arena_arr_set_len(ctx->file_state.file_locks, arena_arr_len(ctx->file_state.file_locks) - 1);
 }
 
-static String_View file_apply_newline_style_temp(Evaluator_Context *ctx, String_View in, String_View style) {
+static String_View file_apply_newline_style_temp(EvalExecContext *ctx, String_View in, String_View style) {
     if (!ctx) return nob_sv_from_cstr("");
     if (in.count == 0) return nob_sv_from_cstr("");
 
@@ -239,12 +239,12 @@ static bool file_generate_is_keyword(String_View t) {
            eval_sv_eq_ci_lit(t, "NEWLINE_STYLE");
 }
 
-static bool file_generate_enqueue_job(Evaluator_Context *ctx, const Eval_File_Generate_Job *job) {
+static bool file_generate_enqueue_job(EvalExecContext *ctx, const Eval_File_Generate_Job *job) {
     if (!ctx || !job) return false;
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.file_generate_jobs, *job);
 }
 
-static bool file_read_content_temp(Evaluator_Context *ctx, String_View path, String_View *out_content, struct stat *out_st, bool *out_have_st) {
+static bool file_read_content_temp(EvalExecContext *ctx, String_View path, String_View *out_content, struct stat *out_st, bool *out_have_st) {
     if (!ctx || !out_content) return false;
     *out_content = nob_sv_from_cstr("");
     if (out_have_st) *out_have_st = false;
@@ -265,7 +265,7 @@ static bool file_read_content_temp(Evaluator_Context *ctx, String_View path, Str
     return true;
 }
 
-static bool file_path_content_same(Evaluator_Context *ctx, String_View path, String_View content, bool *out_same) {
+static bool file_path_content_same(EvalExecContext *ctx, String_View path, String_View content, bool *out_same) {
     if (!ctx || !out_same) return false;
     *out_same = false;
 
@@ -280,7 +280,7 @@ static bool file_path_content_same(Evaluator_Context *ctx, String_View path, Str
     return true;
 }
 
-static bool handle_file_generate(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_generate(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     Eval_File_Generate_Job job = {0};
     mode_t parsed_mode = 0;
@@ -387,7 +387,7 @@ typedef struct {
     String_View content;
 } File_Generate_Output_Seen;
 
-bool eval_file_generate_flush(Evaluator_Context *ctx) {
+bool eval_file_generate_flush(EvalExecContext *ctx) {
     if (!ctx) return false;
     if (arena_arr_len(ctx->file_state.file_generate_jobs) == 0) return true;
 
@@ -468,7 +468,7 @@ bool eval_file_generate_flush(Evaluator_Context *ctx) {
     return !ctx->oom;
 }
 
-static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 2) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(LOCK) requires path"), nob_sv_from_cstr(""));
@@ -656,7 +656,7 @@ static bool handle_file_lock(Evaluator_Context *ctx, const Node *node, SV_List a
 #endif
 }
 
-static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     String_View out = nob_sv_from_cstr("");
     String_View format = nob_sv_from_cstr("tar");
@@ -881,7 +881,7 @@ static bool handle_file_archive_create(Evaluator_Context *ctx, const Node *node,
     return true;
 }
 
-static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node, SV_List args) {
+static bool handle_file_archive_extract(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     String_View in = nob_sv_from_cstr("");
     String_View dst = nob_sv_from_cstr("");
@@ -974,7 +974,7 @@ static bool handle_file_archive_extract(Evaluator_Context *ctx, const Node *node
     return true;
 }
 
-bool eval_file_handle_generate_lock_archive(Evaluator_Context *ctx, const Node *node, SV_List args) {
+bool eval_file_handle_generate_lock_archive(EvalExecContext *ctx, const Node *node, SV_List args) {
     if (!ctx || !node || arena_arr_len(args) == 0) return false;
     if (eval_sv_eq_ci_lit(args[0], "GENERATE")) return handle_file_generate(ctx, node, args);
     if (eval_sv_eq_ci_lit(args[0], "LOCK")) return handle_file_lock(ctx, node, args);

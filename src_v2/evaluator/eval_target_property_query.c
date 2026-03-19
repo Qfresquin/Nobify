@@ -58,14 +58,14 @@ typedef struct {
     String_View property_name;
 } Property_Triplet_Request;
 
-static bool target_get_declared_dir_temp(Evaluator_Context *ctx,
+static bool target_get_declared_dir_temp(EvalExecContext *ctx,
                                          String_View target_name,
                                          String_View *out_dir) {
     if (!ctx || !out_dir) return false;
     return eval_target_declared_dir(ctx, target_name, out_dir);
 }
 
-static bool property_query_request_execute(Evaluator_Context *ctx,
+static bool property_query_request_execute(EvalExecContext *ctx,
                                            const Node *node,
                                            Cmake_Event_Origin origin,
                                            const Property_Query_Request *req) {
@@ -106,7 +106,7 @@ static bool get_property_scope_from_upper(String_View scope_upper,
     return true;
 }
 
-static bool get_property_parse_scope(Evaluator_Context *ctx,
+static bool get_property_parse_scope(EvalExecContext *ctx,
                                      const Node *node,
                                      Cmake_Event_Origin origin,
                                      String_View token,
@@ -139,7 +139,7 @@ static bool get_property_parse_scope(Evaluator_Context *ctx,
     return true;
 }
 
-static bool get_property_parse_property_clause(Evaluator_Context *ctx,
+static bool get_property_parse_property_clause(EvalExecContext *ctx,
                                                const Node *node,
                                                Cmake_Event_Origin origin,
                                                SV_List args,
@@ -181,7 +181,7 @@ static bool get_property_parse_property_clause(Evaluator_Context *ctx,
     return true;
 }
 
-static bool get_property_parse_directory_scope(Evaluator_Context *ctx,
+static bool get_property_parse_directory_scope(EvalExecContext *ctx,
                                                const Node *node,
                                                Get_Property_Request *out_req) {
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
@@ -202,7 +202,7 @@ static bool get_property_parse_directory_scope(Evaluator_Context *ctx,
     return true;
 }
 
-static bool get_property_parse_source_scope(Evaluator_Context *ctx,
+static bool get_property_parse_source_scope(EvalExecContext *ctx,
                                             const Node *node,
                                             SV_List args,
                                             size_t *io_index,
@@ -294,7 +294,7 @@ static bool get_property_parse_source_scope(Evaluator_Context *ctx,
     return true;
 }
 
-static bool get_property_parse_test_scope(Evaluator_Context *ctx,
+static bool get_property_parse_test_scope(EvalExecContext *ctx,
                                           const Node *node,
                                           SV_List args,
                                           size_t *io_index,
@@ -341,7 +341,7 @@ static bool get_property_parse_test_scope(Evaluator_Context *ctx,
     return true;
 }
 
-static bool get_property_parse_request(Evaluator_Context *ctx,
+static bool get_property_parse_request(EvalExecContext *ctx,
                                        const Node *node,
                                        Cmake_Event_Origin origin,
                                        SV_List args,
@@ -406,7 +406,7 @@ static bool get_property_parse_request(Evaluator_Context *ctx,
     return get_property_parse_property_clause(ctx, node, origin, args, &i, out_req);
 }
 
-static bool get_cmake_property_parse_request(Evaluator_Context *ctx,
+static bool get_cmake_property_parse_request(EvalExecContext *ctx,
                                              const Node *node,
                                              Cmake_Event_Origin origin,
                                              SV_List args,
@@ -431,7 +431,7 @@ static bool get_cmake_property_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool get_directory_property_parse_request(Evaluator_Context *ctx,
+static bool get_directory_property_parse_request(EvalExecContext *ctx,
                                                  const Node *node,
                                                  Cmake_Event_Origin origin,
                                                  SV_List args,
@@ -545,7 +545,7 @@ static bool get_directory_property_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool property_triplet_parse_request(Evaluator_Context *ctx,
+static bool property_triplet_parse_request(EvalExecContext *ctx,
                                            const Node *node,
                                            Cmake_Event_Origin origin,
                                            SV_List args,
@@ -566,7 +566,7 @@ static bool property_triplet_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -595,7 +595,7 @@ Eval_Result eval_handle_get_property(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_cmake_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -609,7 +609,7 @@ Eval_Result eval_handle_get_cmake_property(Evaluator_Context *ctx, const Node *n
         eval_property_query_cmake(ctx, node, origin, req.out_var, req.property_name));
 }
 
-Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_directory_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -643,7 +643,7 @@ Eval_Result eval_handle_get_directory_property(Evaluator_Context *ctx, const Nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_get_source_file_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_source_file_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -679,7 +679,7 @@ Eval_Result eval_handle_get_source_file_property(Evaluator_Context *ctx, const N
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_get_target_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_target_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -726,7 +726,7 @@ Eval_Result eval_handle_get_target_property(Evaluator_Context *ctx, const Node *
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_get_test_property(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_get_test_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

@@ -26,29 +26,29 @@ static void destroy_sub_arena_cb(void *userdata) {
 // Arena helpers and origin tracking
 // -----------------------------------------------------------------------------
 
-Arena *eval_temp_arena(Evaluator_Context *ctx) { return ctx ? ctx->arena : NULL; }
-Arena *eval_event_arena(Evaluator_Context *ctx) { return ctx ? ctx->event_arena : NULL; }
-static Arena *eval_tx_arena(Evaluator_Context *ctx) { return ctx ? ctx->transaction_arena : NULL; }
+Arena *eval_temp_arena(EvalExecContext *ctx) { return ctx ? ctx->arena : NULL; }
+Arena *eval_event_arena(EvalExecContext *ctx) { return ctx ? ctx->event_arena : NULL; }
+static Arena *eval_tx_arena(EvalExecContext *ctx) { return ctx ? ctx->transaction_arena : NULL; }
 
-String_View sv_copy_to_temp_arena(Evaluator_Context *ctx, String_View sv) {
+String_View sv_copy_to_temp_arena(EvalExecContext *ctx, String_View sv) {
     String_View out = sv_copy_to_arena(ctx ? ctx->arena : NULL, sv);
     if (ctx && sv.count > 0 && out.count == 0) ctx_oom(ctx);
     return out;
 }
 
-String_View sv_copy_to_event_arena(Evaluator_Context *ctx, String_View sv) {
+String_View sv_copy_to_event_arena(EvalExecContext *ctx, String_View sv) {
     String_View out = sv_copy_to_arena(ctx ? ctx->event_arena : NULL, sv);
     if (ctx && sv.count > 0 && out.count == 0) ctx_oom(ctx);
     return out;
 }
 
-static String_View sv_copy_to_tx_arena(Evaluator_Context *ctx, String_View sv) {
+static String_View sv_copy_to_tx_arena(EvalExecContext *ctx, String_View sv) {
     String_View out = sv_copy_to_arena(eval_tx_arena(ctx), sv);
     if (ctx && sv.count > 0 && out.count == 0) ctx_oom(ctx);
     return out;
 }
 
-Event_Origin eval_origin_from_node(const Evaluator_Context *ctx, const Node *node) {
+Event_Origin eval_origin_from_node(const EvalExecContext *ctx, const Node *node) {
     Event_Origin o = {0};
     const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
     const char *current_file = exec && exec->current_file ? exec->current_file : (ctx ? ctx->current_file : NULL);
@@ -66,7 +66,7 @@ static bool eval_exec_counts_as_file_depth(Eval_Exec_Context_Kind kind) {
            kind == EVAL_EXEC_CTX_SUBDIRECTORY;
 }
 
-static void eval_exec_refresh_cached_state(Evaluator_Context *ctx) {
+static void eval_exec_refresh_cached_state(EvalExecContext *ctx) {
     if (!ctx) return;
 
     size_t file_depth = 0;
@@ -89,30 +89,84 @@ static void eval_exec_refresh_cached_state(Evaluator_Context *ctx) {
     }
 }
 
-Eval_Exec_Context *eval_exec_current(Evaluator_Context *ctx) {
+Eval_Exec_Context *eval_exec_current(EvalExecContext *ctx) {
     if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return NULL;
     return &ctx->exec_contexts[arena_arr_len(ctx->exec_contexts) - 1];
 }
 
-const Eval_Exec_Context *eval_exec_current_const(const Evaluator_Context *ctx) {
+const Eval_Exec_Context *eval_exec_current_const(const EvalExecContext *ctx) {
     if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return NULL;
     return &ctx->exec_contexts[arena_arr_len(ctx->exec_contexts) - 1];
 }
 
-bool eval_exec_push(Evaluator_Context *ctx, Eval_Exec_Context frame) {
+bool eval_exec_push(EvalExecContext *ctx, Eval_Exec_Context frame) {
     if (!ctx) return false;
     if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->exec_contexts, frame)) return false;
     eval_exec_refresh_cached_state(ctx);
     return true;
 }
 
-void eval_exec_pop(Evaluator_Context *ctx) {
+void eval_exec_pop(EvalExecContext *ctx) {
     if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return;
     arena_arr_set_len(ctx->exec_contexts, arena_arr_len(ctx->exec_contexts) - 1);
     eval_exec_refresh_cached_state(ctx);
 }
 
-bool eval_exec_has_active_kind(const Evaluator_Context *ctx, Eval_Exec_Context_Kind kind) {
+static Eval_Exec_Context *eval_exec_find_loop_target(EvalExecContext *ctx) {
+    if (!ctx) return NULL;
+    for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
+        if (ctx->exec_contexts[i].loop_depth > 0) return &ctx->exec_contexts[i];
+    }
+    return NULL;
+}
+
+bool eval_exec_request_break(EvalExecContext *ctx) {
+    Eval_Exec_Context *target = eval_exec_find_loop_target(ctx);
+    if (!target) return false;
+    target->pending_flow = EVAL_FLOW_BREAK;
+    return true;
+}
+
+bool eval_exec_request_continue(EvalExecContext *ctx) {
+    Eval_Exec_Context *target = eval_exec_find_loop_target(ctx);
+    if (!target) return false;
+    target->pending_flow = EVAL_FLOW_CONTINUE;
+    return true;
+}
+
+bool eval_exec_request_return(EvalExecContext *ctx) {
+    if (!ctx || arena_arr_len(ctx->exec_contexts) == 0) return false;
+    for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
+        ctx->exec_contexts[i].pending_flow = EVAL_FLOW_RETURN;
+        if (ctx->exec_contexts[i].kind != EVAL_EXEC_CTX_BLOCK) break;
+    }
+    return true;
+}
+
+Eval_Flow_Signal eval_exec_pending_flow(const EvalExecContext *ctx) {
+    const Eval_Exec_Context *current = eval_exec_current_const(ctx);
+    return current ? current->pending_flow : EVAL_FLOW_NONE;
+}
+
+void eval_exec_clear_pending_flow(EvalExecContext *ctx) {
+    Eval_Exec_Context *current = eval_exec_current(ctx);
+    if (current) current->pending_flow = EVAL_FLOW_NONE;
+}
+
+void eval_exec_clear_all_flow(EvalExecContext *ctx) {
+    if (!ctx) return;
+    for (size_t i = 0; i < arena_arr_len(ctx->exec_contexts); i++) {
+        ctx->exec_contexts[i].pending_flow = EVAL_FLOW_NONE;
+        ctx->exec_contexts[i].loop_depth = 0;
+    }
+}
+
+size_t eval_exec_current_loop_depth(const EvalExecContext *ctx) {
+    const Eval_Exec_Context *target = eval_exec_find_loop_target((EvalExecContext*)ctx);
+    return target ? target->loop_depth : 0;
+}
+
+bool eval_exec_has_active_kind(const EvalExecContext *ctx, Eval_Exec_Context_Kind kind) {
     if (!ctx) return false;
     for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
         if (ctx->exec_contexts[i].kind == kind) return true;
@@ -120,7 +174,7 @@ bool eval_exec_has_active_kind(const Evaluator_Context *ctx, Eval_Exec_Context_K
     return false;
 }
 
-bool eval_exec_is_file_scope(const Evaluator_Context *ctx) {
+bool eval_exec_is_file_scope(const EvalExecContext *ctx) {
     if (!ctx) return false;
     for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
         Eval_Exec_Context_Kind kind = ctx->exec_contexts[i].kind;
@@ -133,7 +187,7 @@ bool eval_exec_is_file_scope(const Evaluator_Context *ctx) {
     return true;
 }
 
-bool eval_exec_publish_current_vars(Evaluator_Context *ctx) {
+bool eval_exec_publish_current_vars(EvalExecContext *ctx) {
     if (!ctx) return false;
 
     const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
@@ -151,33 +205,33 @@ bool eval_exec_publish_current_vars(Evaluator_Context *ctx) {
     return true;
 }
 
-bool ctx_oom(Evaluator_Context *ctx) {
+bool ctx_oom(EvalExecContext *ctx) {
     if (!ctx) return true;
     ctx->oom = true;
     ctx->stop_requested = true;
     return false;
 }
 
-bool eval_continue_on_error(Evaluator_Context *ctx) {
+bool eval_continue_on_error(EvalExecContext *ctx) {
     return ctx ? ctx->runtime_state.continue_on_error_snapshot : false;
 }
 
-void eval_request_stop(Evaluator_Context *ctx) {
+void eval_request_stop(EvalExecContext *ctx) {
     if (ctx) ctx->stop_requested = true;
 }
 
-void eval_request_stop_on_error(Evaluator_Context *ctx) {
+void eval_request_stop_on_error(EvalExecContext *ctx) {
     if (!ctx) return;
     if (eval_continue_on_error(ctx)) return;
     ctx->stop_requested = true;
 }
 
-void eval_clear_stop_if_not_oom(Evaluator_Context *ctx) {
+void eval_clear_stop_if_not_oom(EvalExecContext *ctx) {
     if (!ctx || ctx->oom) return;
     ctx->stop_requested = false;
 }
 
-bool eval_should_stop(Evaluator_Context *ctx) {
+bool eval_should_stop(EvalExecContext *ctx) {
     if (!ctx) return true;
     return ctx->oom || ctx->stop_requested;
 }
@@ -186,7 +240,7 @@ bool eval_should_stop(Evaluator_Context *ctx) {
 // Command transactions
 // -----------------------------------------------------------------------------
 
-static bool eval_emit_event_direct(Evaluator_Context *ctx, Event ev) {
+static bool eval_emit_event_direct(EvalExecContext *ctx, Event ev) {
     if (!ctx || !ctx->stream) return false;
     if (ev.h.scope_depth == 0) {
         ev.h.scope_depth = (uint32_t)eval_scope_visible_depth(ctx);
@@ -200,7 +254,7 @@ static bool eval_emit_event_direct(Evaluator_Context *ctx, Event ev) {
     return true;
 }
 
-static bool eval_tx_snapshot_bytes(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_bytes(EvalExecContext *ctx,
                                    const void *src,
                                    size_t elem_size,
                                    size_t count,
@@ -216,7 +270,7 @@ static bool eval_tx_snapshot_bytes(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_snapshot_sv_array(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_sv_array(EvalExecContext *ctx,
                                       const String_View *src,
                                       size_t count,
                                       String_View **out_copy) {
@@ -250,7 +304,7 @@ static size_t eval_tx_hash_entry_count_env(Eval_Process_Env_Entry *entries) {
     return count;
 }
 
-static bool eval_tx_snapshot_var_table(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_var_table(EvalExecContext *ctx,
                                        Eval_Var_Entry *entries,
                                        Eval_Var_Table_Snapshot *out) {
     if (!out) return false;
@@ -273,7 +327,7 @@ static bool eval_tx_snapshot_var_table(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_snapshot_cache_table(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_cache_table(EvalExecContext *ctx,
                                          Eval_Cache_Entry *entries,
                                          Eval_Cache_Table_Snapshot *out) {
     if (!out) return false;
@@ -296,7 +350,7 @@ static bool eval_tx_snapshot_cache_table(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_snapshot_env_table(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_env_table(EvalExecContext *ctx,
                                        Eval_Process_Env_Entry *entries,
                                        Eval_Process_Env_Table_Snapshot *out) {
     if (!out) return false;
@@ -364,7 +418,7 @@ static bool eval_tx_restore_env_table(Eval_Process_Env_Entry **io_entries,
     return true;
 }
 
-static bool eval_tx_snapshot_directory_nodes(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_directory_nodes(EvalExecContext *ctx,
                                              Eval_Directory_Node *nodes,
                                              size_t count,
                                              Eval_Directory_Node_Snapshot **out_copy) {
@@ -401,7 +455,7 @@ static bool eval_tx_snapshot_directory_nodes(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_snapshot_deferred_dirs(Evaluator_Context *ctx,
+static bool eval_tx_snapshot_deferred_dirs(EvalExecContext *ctx,
                                            Eval_Deferred_Dir_Frame *frames,
                                            size_t count,
                                            Eval_Deferred_Dir_Frame_Snapshot **out_copy) {
@@ -430,7 +484,7 @@ static bool eval_tx_snapshot_deferred_dirs(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_restore_directory_nodes(Evaluator_Context *ctx,
+static bool eval_tx_restore_directory_nodes(EvalExecContext *ctx,
                                             Eval_Directory_Node_List *io_nodes,
                                             const Eval_Directory_Node_Snapshot *snapshot,
                                             size_t count) {
@@ -468,7 +522,7 @@ static bool eval_tx_restore_directory_nodes(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_restore_deferred_dirs(Evaluator_Context *ctx,
+static bool eval_tx_restore_deferred_dirs(EvalExecContext *ctx,
                                           Eval_Deferred_Dir_Frame_Stack *io_frames,
                                           const Eval_Deferred_Dir_Frame_Snapshot *snapshot,
                                           size_t count) {
@@ -493,14 +547,14 @@ static bool eval_tx_restore_deferred_dirs(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_tx_projection_append(Evaluator_Context *ctx, const Eval_Tx_Projection *projection) {
+static bool eval_tx_projection_append(EvalExecContext *ctx, const Eval_Tx_Projection *projection) {
     if (!ctx || !projection) return false;
     Eval_Command_Transaction *tx = ctx->active_transaction;
     if (!tx) return false;
     return EVAL_ARR_PUSH(ctx, eval_tx_arena(ctx), tx->projections, *projection);
 }
 
-static bool eval_tx_flush_diag_projection(Evaluator_Context *ctx,
+static bool eval_tx_flush_diag_projection(EvalExecContext *ctx,
                                           const Eval_Tx_Diag_Projection *diag) {
     if (!ctx || !diag) return false;
 
@@ -541,7 +595,7 @@ static bool eval_tx_projection_keep_on_failure(const Eval_Tx_Projection *project
            projection->as.event.h.kind == EVENT_COMMAND_END;
 }
 
-size_t eval_pending_warning_count(const Evaluator_Context *ctx) {
+size_t eval_pending_warning_count(const EvalExecContext *ctx) {
     if (!ctx) return 0;
 
     size_t count = ctx->runtime_state.run_report.warning_count;
@@ -551,7 +605,7 @@ size_t eval_pending_warning_count(const Evaluator_Context *ctx) {
     return count;
 }
 
-size_t eval_pending_error_count(const Evaluator_Context *ctx) {
+size_t eval_pending_error_count(const EvalExecContext *ctx) {
     if (!ctx) return 0;
 
     size_t count = ctx->runtime_state.run_report.error_count;
@@ -561,7 +615,7 @@ size_t eval_pending_error_count(const Evaluator_Context *ctx) {
     return count;
 }
 
-bool eval_command_tx_push_event(Evaluator_Context *ctx, const Event *ev, bool allow_stopped) {
+bool eval_command_tx_push_event(EvalExecContext *ctx, const Event *ev, bool allow_stopped) {
     if (!ctx || !ev) return false;
     if (!allow_stopped && eval_should_stop(ctx)) return false;
     if (allow_stopped && (ctx->oom || !ctx->stream)) return false;
@@ -588,7 +642,7 @@ bool eval_command_tx_push_event(Evaluator_Context *ctx, const Event *ev, bool al
     return eval_tx_projection_append(ctx, &projection);
 }
 
-bool eval_command_tx_push_diag(Evaluator_Context *ctx,
+bool eval_command_tx_push_diag(EvalExecContext *ctx,
                                Event_Diag_Severity input_sev,
                                Event_Diag_Severity effective_sev,
                                Eval_Diag_Code code,
@@ -636,7 +690,7 @@ bool eval_command_tx_push_diag(Evaluator_Context *ctx,
     return eval_tx_projection_append(ctx, &projection);
 }
 
-bool eval_command_tx_begin(Evaluator_Context *ctx, Eval_Command_Transaction *tx) {
+bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
     if (!ctx || !tx || !eval_tx_arena(ctx)) return false;
     memset(tx, 0, sizeof(*tx));
     tx->parent = ctx->active_transaction;
@@ -800,7 +854,12 @@ bool eval_command_tx_begin(Evaluator_Context *ctx, Eval_Command_Transaction *tx)
     return true;
 }
 
-bool eval_command_tx_finish(Evaluator_Context *ctx, Eval_Command_Transaction *tx, bool commit_state) {
+void eval_command_tx_preserve_scope_vars_on_failure(EvalExecContext *ctx) {
+    if (!ctx || !ctx->active_transaction) return;
+    ctx->active_transaction->preserve_scope_vars_on_failure = true;
+}
+
+bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, bool commit_state) {
     if (!ctx || !tx || ctx->active_transaction != tx) return false;
 
 #define EVAL_TX_RESTORE_ARRAY(arena_expr, dst, snap_items, snap_count)                                \
@@ -816,6 +875,15 @@ bool eval_command_tx_finish(Evaluator_Context *ctx, Eval_Command_Transaction *tx
             arena_arr_set_len(ctx->scope_state.scopes, tx->scope_var_count);
         }
         ctx->scope_state.visible_scope_depth = tx->visible_scope_depth;
+        if (!tx->preserve_scope_vars_on_failure) {
+            for (size_t i = 0; i < tx->scope_var_count; i++) {
+                if (!eval_tx_restore_var_table(&ctx->scope_state.scopes[i].vars, &tx->scope_vars[i])) {
+                    ctx->active_transaction = tx->parent;
+                    arena_rewind(eval_tx_arena(ctx), tx->mark);
+                    return false;
+                }
+            }
+        }
         if (!eval_tx_restore_cache_table(&ctx->scope_state.cache_entries, &tx->cache_entries)) {
             ctx->active_transaction = tx->parent;
             arena_rewind(eval_tx_arena(ctx), tx->mark);
@@ -936,7 +1004,7 @@ bool eval_command_tx_finish(Evaluator_Context *ctx, Eval_Command_Transaction *tx
 // Diagnostics (error as data)
 // -----------------------------------------------------------------------------
 
-Eval_Result eval_emit_diag(Evaluator_Context *ctx,
+Eval_Result eval_emit_diag(EvalExecContext *ctx,
                            Eval_Diag_Code code,
                            String_View component,
                            String_View command,
@@ -961,7 +1029,20 @@ static Event_Diag_Severity eval_diag_from_global_severity(Diag_Severity sev) {
     return sev == DIAG_SEV_ERROR ? EV_DIAG_ERROR : EV_DIAG_WARNING;
 }
 
-Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
+static Event_Diag_Severity eval_diag_effective_input_severity(const EvalExecContext *ctx,
+                                                              Event_Diag_Severity sev,
+                                                              Eval_Diag_Code code) {
+    Event_Diag_Severity out = eval_compat_effective_severity(ctx, sev);
+    if (!ctx) return out;
+    if (out == EV_DIAG_WARNING &&
+        eval_diag_counts_as_unsupported(code) &&
+        ctx->runtime_state.unsupported_policy == EVAL_UNSUPPORTED_ERROR) {
+        return EV_DIAG_ERROR;
+    }
+    return out;
+}
+
+Eval_Result eval_emit_diag_with_severity(EvalExecContext *ctx,
                                          Event_Diag_Severity sev,
                                          Eval_Diag_Code code,
                                          String_View component,
@@ -972,12 +1053,13 @@ Eval_Result eval_emit_diag_with_severity(Evaluator_Context *ctx,
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
 
     Eval_Error_Class cls = eval_diag_error_class(code);
-    Event_Diag_Severity compat_sev = eval_compat_effective_severity(ctx, sev);
-    Diag_Severity logger_input_sev = eval_diag_to_global_severity(compat_sev);
+    Event_Diag_Severity report_input_sev = eval_compat_effective_severity(ctx, sev);
+    Event_Diag_Severity effective_input_sev = eval_diag_effective_input_severity(ctx, sev, code);
+    Diag_Severity logger_input_sev = eval_diag_to_global_severity(effective_input_sev);
     Event_Diag_Severity effective_sev = eval_diag_from_global_severity(diag_effective_severity(logger_input_sev));
     (void)cls;
     if (!eval_command_tx_push_diag(ctx,
-                                   compat_sev,
+                                   report_input_sev,
                                    effective_sev,
                                    code,
                                    component,
@@ -1006,7 +1088,7 @@ static Eval_Cache_Entry *eval_cache_var_find(Eval_Cache_Entry *entries, String_V
     return stbds_shgetp_null(entries, nob_temp_sv_to_cstr(key));
 }
 
-static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
+static char *eval_copy_key_cstr_event(EvalExecContext *ctx, String_View key) {
     if (!ctx) return NULL;
     char *buf = (char*)arena_alloc(ctx->event_arena, key.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
@@ -1015,7 +1097,7 @@ static char *eval_copy_key_cstr_event(Evaluator_Context *ctx, String_View key) {
     return buf;
 }
 
-String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key) {
+String_View eval_var_get_visible(EvalExecContext *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return nob_sv_from_cstr("");
     Eval_Scope_State *scope = eval_scope_slice(ctx);
     for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
@@ -1028,7 +1110,7 @@ String_View eval_var_get_visible(Evaluator_Context *ctx, String_View key) {
     return nob_sv_from_cstr("");
 }
 
-static bool eval_variable_watch_notify(Evaluator_Context *ctx,
+static bool eval_variable_watch_notify(EvalExecContext *ctx,
                                        String_View key,
                                        String_View action,
                                        String_View value) {
@@ -1064,7 +1146,7 @@ static bool eval_variable_watch_notify(Evaluator_Context *ctx,
     return ok;
 }
 
-bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View value) {
+bool eval_var_set_current(EvalExecContext *ctx, String_View key, String_View value) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
     Eval_Scope_State *scope = eval_scope_slice(ctx);
     Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
@@ -1086,7 +1168,7 @@ bool eval_var_set_current(Evaluator_Context *ctx, String_View key, String_View v
     return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("SET"), value);
 }
 
-bool eval_var_unset_current(Evaluator_Context *ctx, String_View key) {
+bool eval_var_unset_current(EvalExecContext *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0 || eval_should_stop(ctx)) return false;
     Eval_Scope_State *scope = eval_scope_slice(ctx);
     Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
@@ -1097,7 +1179,7 @@ bool eval_var_unset_current(Evaluator_Context *ctx, String_View key) {
     return eval_variable_watch_notify(ctx, key, nob_sv_from_cstr("UNSET"), old_value);
 }
 
-bool eval_var_defined_visible(Evaluator_Context *ctx, String_View key) {
+bool eval_var_defined_visible(EvalExecContext *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
     Eval_Scope_State *scope = eval_scope_slice(ctx);
     for (size_t d = eval_scope_visible_depth(ctx); d-- > 0;) {
@@ -1109,7 +1191,7 @@ bool eval_var_defined_visible(Evaluator_Context *ctx, String_View key) {
     return false;
 }
 
-bool eval_var_defined_current(Evaluator_Context *ctx, String_View key) {
+bool eval_var_defined_current(EvalExecContext *ctx, String_View key) {
     if (!ctx || eval_scope_visible_depth(ctx) == 0) return false;
     Eval_Scope_State *scope = eval_scope_slice(ctx);
     Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
@@ -1117,7 +1199,7 @@ bool eval_var_defined_current(Evaluator_Context *ctx, String_View key) {
     return b != NULL;
 }
 
-bool eval_var_collect_visible_names(Evaluator_Context *ctx, SV_List *out_names) {
+bool eval_var_collect_visible_names(EvalExecContext *ctx, SV_List *out_names) {
     if (!ctx || !out_names) return false;
     *out_names = NULL;
 
@@ -1134,12 +1216,12 @@ bool eval_var_collect_visible_names(Evaluator_Context *ctx, SV_List *out_names) 
     return true;
 }
 
-bool eval_cache_defined(Evaluator_Context *ctx, String_View key) {
+bool eval_cache_defined(EvalExecContext *ctx, String_View key) {
     if (!ctx || key.count == 0) return false;
     return eval_cache_var_find(ctx->scope_state.cache_entries, key) != NULL;
 }
 
-bool eval_cache_set(Evaluator_Context *ctx,
+bool eval_cache_set(EvalExecContext *ctx,
                     String_View key,
                     String_View value,
                     String_View type,
@@ -1172,18 +1254,18 @@ bool eval_cache_set(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_macro_frame_push(Evaluator_Context *ctx) {
+bool eval_macro_frame_push(EvalExecContext *ctx) {
     if (!ctx) return false;
     Macro_Frame frame = {0};
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.macro_frames, frame);
 }
 
-void eval_macro_frame_pop(Evaluator_Context *ctx) {
+void eval_macro_frame_pop(EvalExecContext *ctx) {
     if (!ctx || arena_arr_len(ctx->scope_state.macro_frames) == 0) return;
     arena_arr_set_len(ctx->scope_state.macro_frames, arena_arr_len(ctx->scope_state.macro_frames) - 1);
 }
 
-bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View value) {
+bool eval_macro_bind_set(EvalExecContext *ctx, String_View key, String_View value) {
     if (!ctx || arena_arr_len(ctx->scope_state.macro_frames) == 0) return false;
 
     Macro_Frame *top = &ctx->scope_state.macro_frames[arena_arr_len(ctx->scope_state.macro_frames) - 1];
@@ -1204,7 +1286,7 @@ bool eval_macro_bind_set(Evaluator_Context *ctx, String_View key, String_View va
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, top->bindings, b);
 }
 
-bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *out_value) {
+bool eval_macro_bind_get(EvalExecContext *ctx, String_View key, String_View *out_value) {
     if (!ctx || !out_value) return false;
     for (size_t fi = arena_arr_len(ctx->scope_state.macro_frames); fi-- > 0;) {
         const Macro_Frame *f = &ctx->scope_state.macro_frames[fi];
@@ -1218,7 +1300,7 @@ bool eval_macro_bind_get(Evaluator_Context *ctx, String_View key, String_View *o
     return false;
 }
 
-bool eval_target_known(Evaluator_Context *ctx, String_View name) {
+bool eval_target_known(EvalExecContext *ctx, String_View name) {
     if (!ctx) return false;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
@@ -1227,7 +1309,7 @@ bool eval_target_known(Evaluator_Context *ctx, String_View name) {
     return false;
 }
 
-bool eval_target_register(Evaluator_Context *ctx, String_View name) {
+bool eval_target_register(EvalExecContext *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     Eval_Target_Record record = {0};
@@ -1242,7 +1324,7 @@ bool eval_target_register(Evaluator_Context *ctx, String_View name) {
     return eval_directory_note_target(ctx, declared_dir, record.name);
 }
 
-bool eval_target_set_imported(Evaluator_Context *ctx, String_View name, bool imported) {
+bool eval_target_set_imported(EvalExecContext *ctx, String_View name, bool imported) {
     if (!ctx) return false;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
@@ -1253,7 +1335,7 @@ bool eval_target_set_imported(Evaluator_Context *ctx, String_View name, bool imp
     return false;
 }
 
-bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_View *out_dir) {
+bool eval_target_declared_dir(EvalExecContext *ctx, String_View name, String_View *out_dir) {
     if (!out_dir) return false;
     *out_dir = nob_sv_from_cstr("");
     if (!ctx) return false;
@@ -1267,7 +1349,7 @@ bool eval_target_declared_dir(Evaluator_Context *ctx, String_View name, String_V
     return false;
 }
 
-bool eval_target_is_imported(Evaluator_Context *ctx, String_View name) {
+bool eval_target_is_imported(EvalExecContext *ctx, String_View name) {
     if (!ctx) return false;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
@@ -1277,7 +1359,7 @@ bool eval_target_is_imported(Evaluator_Context *ctx, String_View name) {
     return false;
 }
 
-bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
+bool eval_target_alias_known(EvalExecContext *ctx, String_View name) {
     if (!ctx) return false;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     for (size_t i = 0; i < arena_arr_len(targets->aliases); i++) {
@@ -1286,7 +1368,7 @@ bool eval_target_alias_known(Evaluator_Context *ctx, String_View name) {
     return false;
 }
 
-bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
+bool eval_target_alias_register(EvalExecContext *ctx, String_View name) {
     if (!ctx || eval_target_alias_known(ctx, name)) return true;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     name = sv_copy_to_event_arena(ctx, name);
@@ -1294,7 +1376,7 @@ bool eval_target_alias_register(Evaluator_Context *ctx, String_View name) {
     return EVAL_ARR_PUSH(ctx, targets->arena, targets->aliases, name);
 }
 
-bool eval_test_known(Evaluator_Context *ctx, String_View name) {
+bool eval_test_known(EvalExecContext *ctx, String_View name) {
     if (!ctx) return false;
     Eval_Test_Model *tests = &ctx->semantic_state.tests;
     for (size_t i = 0; i < arena_arr_len(tests->records); i++) {
@@ -1303,7 +1385,7 @@ bool eval_test_known(Evaluator_Context *ctx, String_View name) {
     return false;
 }
 
-bool eval_test_known_in_directory(Evaluator_Context *ctx, String_View name, String_View declared_dir) {
+bool eval_test_known_in_directory(EvalExecContext *ctx, String_View name, String_View declared_dir) {
     if (!ctx) return false;
     if (declared_dir.count == 0) declared_dir = eval_current_source_dir_for_paths(ctx);
     declared_dir = eval_sv_path_normalize_temp(ctx, declared_dir);
@@ -1317,7 +1399,7 @@ bool eval_test_known_in_directory(Evaluator_Context *ctx, String_View name, Stri
     return false;
 }
 
-bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View declared_dir) {
+bool eval_test_register(EvalExecContext *ctx, String_View name, String_View declared_dir) {
     if (!ctx) return false;
     if (declared_dir.count == 0) declared_dir = eval_current_source_dir_for_paths(ctx);
     declared_dir = eval_sv_path_normalize_temp(ctx, declared_dir);
@@ -1334,7 +1416,7 @@ bool eval_test_register(Evaluator_Context *ctx, String_View name, String_View de
     return eval_directory_note_test(ctx, declared_dir, record.name);
 }
 
-bool eval_install_component_known(Evaluator_Context *ctx, String_View name) {
+bool eval_install_component_known(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0) return false;
     Eval_Install_Model *install = &ctx->semantic_state.install;
     for (size_t i = 0; i < arena_arr_len(install->components); i++) {
@@ -1343,7 +1425,7 @@ bool eval_install_component_known(Evaluator_Context *ctx, String_View name) {
     return false;
 }
 
-bool eval_install_component_register(Evaluator_Context *ctx, String_View name) {
+bool eval_install_component_register(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0 || eval_install_component_known(ctx, name)) return true;
     Eval_Install_Model *install = &ctx->semantic_state.install;
     name = sv_copy_to_event_arena(ctx, name);
@@ -1410,7 +1492,7 @@ static bool sv_strip_cmake_bracket_arg(String_View in, String_View *out) {
     return true;
 }
 
-static String_View arg_to_sv_flat(Evaluator_Context *ctx, const Arg *arg) {
+static String_View arg_to_sv_flat(EvalExecContext *ctx, const Arg *arg) {
     if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
@@ -1432,7 +1514,7 @@ static String_View arg_to_sv_flat(Evaluator_Context *ctx, const Arg *arg) {
     return nob_sv_from_cstr(buf);
 }
 
-static SV_List eval_resolve_args_impl(Evaluator_Context *ctx,
+static SV_List eval_resolve_args_impl(EvalExecContext *ctx,
                                       const Args *raw_args,
                                       bool expand_vars,
                                       bool split_unquoted_lists) {
@@ -1487,11 +1569,11 @@ static SV_List eval_resolve_args_impl(Evaluator_Context *ctx,
     return out;
 }
 
-SV_List eval_resolve_args(Evaluator_Context *ctx, const Args *raw_args) {
+SV_List eval_resolve_args(EvalExecContext *ctx, const Args *raw_args) {
     return eval_resolve_args_impl(ctx, raw_args, true, true);
 }
 
-SV_List eval_resolve_args_literal(Evaluator_Context *ctx, const Args *raw_args) {
+SV_List eval_resolve_args_literal(EvalExecContext *ctx, const Args *raw_args) {
     return eval_resolve_args_impl(ctx, raw_args, false, false);
 }
 
@@ -1552,6 +1634,7 @@ bool eval_registry_register_internal(EvalRegistry *registry,
     if (!registry || !registry->arena || !def || !def->handler || def->name.count == 0 || !def->name.data) {
         return false;
     }
+    if (registry->mutation_blocked) return false;
     if (eval_registry_find(registry, def->name)) return false;
 
     Eval_Native_Command cmd = {0};
@@ -1572,6 +1655,7 @@ bool eval_registry_unregister_internal(EvalRegistry *registry,
                                        String_View name,
                                        bool allow_builtin_remove) {
     if (!registry || name.count == 0 || !name.data) return false;
+    if (registry->mutation_blocked) return false;
 
     char *lookup_key = sv_ascii_upper_heap(name);
     if (!lookup_key) return false;
@@ -1601,31 +1685,31 @@ bool eval_registry_unregister_internal(EvalRegistry *registry,
     return eval_registry_index_rebuild(registry);
 }
 
-const Eval_Native_Command *eval_native_cmd_find_const(const Evaluator_Context *ctx, String_View name) {
+const Eval_Native_Command *eval_native_cmd_find_const(const EvalExecContext *ctx, String_View name) {
     if (!ctx || !ctx->registry) return NULL;
     return eval_registry_find_const(ctx->registry, name);
 }
 
-Eval_Native_Command *eval_native_cmd_find(Evaluator_Context *ctx, String_View name) {
+Eval_Native_Command *eval_native_cmd_find(EvalExecContext *ctx, String_View name) {
     return (Eval_Native_Command*)eval_native_cmd_find_const(ctx, name);
 }
 
-bool eval_native_cmd_register_internal(Evaluator_Context *ctx,
+bool eval_native_cmd_register_internal(EvalExecContext *ctx,
                                        const Evaluator_Native_Command_Def *def,
                                        bool is_builtin,
                                        bool allow_during_run) {
     if (!ctx || !ctx->registry || !def || !def->handler || def->name.count == 0 || !def->name.data) return false;
-    if (!allow_during_run && ctx->file_eval_depth > 0) return false;
+    if ((!allow_during_run && ctx->file_eval_depth > 0) || ctx->registry->mutation_blocked) return false;
     if (eval_user_cmd_find(ctx, def->name)) return false;
     return eval_registry_register_internal(ctx->registry, def, is_builtin);
 }
 
-bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
+bool eval_native_cmd_unregister_internal(EvalExecContext *ctx,
                                          String_View name,
                                          bool allow_builtin_remove,
                                          bool allow_during_run) {
     if (!ctx || !ctx->registry || name.count == 0 || !name.data) return false;
-    if (!allow_during_run && ctx->file_eval_depth > 0) return false;
+    if ((!allow_during_run && ctx->file_eval_depth > 0) || ctx->registry->mutation_blocked) return false;
     return eval_registry_unregister_internal(ctx->registry, name, allow_builtin_remove);
 }
 
@@ -1633,7 +1717,7 @@ bool eval_native_cmd_unregister_internal(Evaluator_Context *ctx,
 // Scope stack management
 // -----------------------------------------------------------------------------
 
-bool eval_scope_push(Evaluator_Context *ctx) {
+bool eval_scope_push(EvalExecContext *ctx) {
     if (!ctx) return false;
     Eval_Scope_State *scope = eval_scope_slice(ctx);
     size_t depth = eval_scope_visible_depth(ctx);
@@ -1652,7 +1736,7 @@ bool eval_scope_push(Evaluator_Context *ctx) {
     return true;
 }
 
-void eval_scope_pop(Evaluator_Context *ctx) {
+void eval_scope_pop(EvalExecContext *ctx) {
     if (ctx && eval_scope_visible_depth(ctx) > 1) {
         Eval_Scope_State *scope = eval_scope_slice(ctx);
         Var_Scope *s = &scope->scopes[eval_scope_visible_depth(ctx) - 1];
@@ -1697,7 +1781,7 @@ static const char *eval_copy_cstr_to_arena(Arena *arena, const char *src) {
     return arena_strndup(arena, src, strlen(src));
 }
 
-static bool eval_push_root_exec_context(Evaluator_Context *ctx) {
+static bool eval_push_root_exec_context(EvalExecContext *ctx) {
     if (!ctx) return false;
 
     Eval_Exec_Context root = {0};
@@ -1711,20 +1795,21 @@ static bool eval_push_root_exec_context(Evaluator_Context *ctx) {
     return eval_exec_push(ctx, root);
 }
 
-static bool eval_context_bind_request(EvalSession *session,
-                                      Arena *scratch_arena,
-                                      Event_Stream *stream,
-                                      String_View source_dir,
-                                      String_View binary_dir,
-                                      const char *list_file) {
-    if (!session || !scratch_arena || !stream) return false;
+static bool eval_exec_bind_request(EvalExecContext *ctx,
+                                   EvalSession *session,
+                                   Arena *scratch_arena,
+                                   Event_Stream *stream,
+                                   String_View source_dir,
+                                   String_View binary_dir,
+                                   const char *list_file) {
+    if (!ctx || !session || !scratch_arena || !stream) return false;
 
-    Evaluator_Context *ctx = &session->ctx;
     String_View requested_source = source_dir.count > 0 ? source_dir : session->source_root;
     String_View requested_binary = binary_dir.count > 0 ? binary_dir : session->binary_root;
     if (requested_source.count == 0) requested_source = nob_sv_from_cstr(".");
     if (requested_binary.count == 0) requested_binary = requested_source;
 
+    ctx->session = session;
     ctx->arena = scratch_arena;
     ctx->stream = stream;
     ctx->source_dir = sv_copy_to_event_arena(ctx, requested_source);
@@ -1751,9 +1836,6 @@ static bool eval_context_bind_request(EvalSession *session,
     ctx->visible_policy_depth = 0;
     ctx->file_eval_depth = 0;
     ctx->function_eval_depth = 0;
-    ctx->loop_depth = 0;
-    ctx->break_requested = false;
-    ctx->continue_requested = false;
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
     ctx->active_transaction = NULL;
     eval_clear_return_state(ctx);
@@ -1785,7 +1867,40 @@ static bool eval_context_bind_request(EvalSession *session,
     return true;
 }
 
-static Eval_Result eval_context_run_prepared(Evaluator_Context *ctx, Ast_Root ast) {
+static void eval_session_snapshot_from_exec(EvalSession *session, const EvalExecContext *exec) {
+    if (!session || !exec) return;
+
+    EvalExecContext *dst = &session->persisted_exec;
+    *dst = *exec;
+    dst->session = session;
+    dst->arena = session->persistent_arena;
+    dst->stream = NULL;
+    dst->source_dir = session->source_root;
+    dst->binary_dir = session->binary_root;
+    dst->current_file = NULL;
+
+    dst->scope_state.visible_scope_depth = 1;
+    if (dst->scope_state.macro_frames) arena_arr_set_len(dst->scope_state.macro_frames, 0);
+    if (dst->scope_state.block_frames) arena_arr_set_len(dst->scope_state.block_frames, 0);
+    if (dst->scope_state.return_propagate_vars) arena_arr_set_len(dst->scope_state.return_propagate_vars, 0);
+    if (dst->message_check_stack) arena_arr_set_len(dst->message_check_stack, 0);
+    if (dst->exec_contexts) arena_arr_set_len(dst->exec_contexts, 0);
+    if (dst->file_state.deferred_dirs) arena_arr_set_len(dst->file_state.deferred_dirs, 0);
+
+    dst->visible_policy_depth = 0;
+    dst->file_eval_depth = 0;
+    dst->function_eval_depth = 0;
+    dst->return_context = EVAL_RETURN_CTX_TOPLEVEL;
+    dst->runtime_state.run_report = (Eval_Run_Report){0};
+    dst->runtime_state.continue_on_error_snapshot =
+        (dst->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE);
+    dst->runtime_state.in_variable_watch_notification = false;
+    dst->active_transaction = NULL;
+    dst->oom = false;
+    dst->stop_requested = false;
+}
+
+static Eval_Result eval_context_run_prepared(EvalExecContext *ctx, Ast_Root ast) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     if (!eval_push_root_exec_context(ctx)) return eval_result_fatal();
     if (!eval_exec_publish_current_vars(ctx)) {
@@ -1817,34 +1932,42 @@ static Eval_Result eval_context_run_prepared(Evaluator_Context *ctx, Ast_Root as
     return result;
 }
 
-static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg, Event_Stream *bootstrap_stream) {
+static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     if (!cfg || !cfg->persistent_arena) return NULL;
 
+#define EVAL_SESSION_CREATE_REQUIRE(expr, label)                                                      \
+    do {                                                                                              \
+        if (!(expr)) {                                                                                \
+            return NULL;                                                                              \
+        }                                                                                             \
+    } while (0)
+
     EvalSession *session = arena_alloc_zero(cfg->persistent_arena, sizeof(EvalSession));
-    if (!session) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(session, "alloc session");
 
     String_View source_root = cfg->source_root.count > 0 ? cfg->source_root : nob_sv_from_cstr(".");
     String_View binary_root = cfg->binary_root.count > 0 ? cfg->binary_root : source_root;
     session->persistent_arena = cfg->persistent_arena;
     session->source_root = sv_copy_to_arena(cfg->persistent_arena, source_root);
     session->binary_root = sv_copy_to_arena(cfg->persistent_arena, binary_root);
-    if (source_root.count > 0 && session->source_root.count == 0) return NULL;
-    if (binary_root.count > 0 && session->binary_root.count == 0) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(!(source_root.count > 0 && session->source_root.count == 0), "copy source_root");
+    EVAL_SESSION_CREATE_REQUIRE(!(binary_root.count > 0 && session->binary_root.count == 0), "copy binary_root");
 
-    Evaluator_Context *ctx = &session->ctx;
+    EvalExecContext *ctx = &session->persisted_exec;
+    ctx->session = session;
     ctx->arena = cfg->persistent_arena;
     ctx->event_arena = cfg->persistent_arena;
-    ctx->stream = bootstrap_stream ? bootstrap_stream : event_stream_create(cfg->persistent_arena);
-    if (!ctx->stream) return NULL;
+    ctx->stream = event_stream_create(cfg->persistent_arena);
+    EVAL_SESSION_CREATE_REQUIRE(ctx->stream, "create bootstrap stream");
 
     ctx->services = cfg->services;
     ctx->registry = cfg->registry;
     if (!ctx->registry) {
         ctx->registry = eval_registry_create(cfg->persistent_arena);
-        if (!ctx->registry) return NULL;
+        EVAL_SESSION_CREATE_REQUIRE(ctx->registry, "create registry");
         session->owns_registry = true;
     }
-    if (!eval_dispatcher_seed_builtin_commands(ctx->registry)) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(eval_dispatcher_seed_builtin_commands(ctx->registry), "seed builtins");
 
     ctx->source_dir = session->source_root;
     ctx->binary_dir = session->binary_root;
@@ -1861,30 +1984,45 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg, Even
     eval_report_reset(ctx);
     ctx->active_transaction = NULL;
 
-    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->transaction_arena)) return NULL;
-    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.targets.arena)) return NULL;
-    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.tests.arena)) return NULL;
-    if (!eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.user_commands_arena)) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->transaction_arena), "attach tx arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.targets.arena), "attach targets arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->semantic_state.tests.arena), "attach tests arena");
+    EVAL_SESSION_CREATE_REQUIRE(eval_attach_sub_arena(cfg->persistent_arena, &ctx->command_state.user_commands_arena), "attach user_commands arena");
 
-    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.scopes, ((Var_Scope){0}))) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.scopes, ((Var_Scope){0})),
+                                "push global scope");
     ctx->scope_state.visible_scope_depth = 1;
 
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir)) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir)) return NULL;
-    if (!eval_directory_register_known(ctx, ctx->source_dir)) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir),
+                                "set CMAKE_SOURCE_DIR");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir),
+                                "set CMAKE_BINARY_DIR");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_SOURCE_DIR), ctx->source_dir),
+                                "set CURRENT_SOURCE_DIR");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_BINARY_DIR), ctx->binary_dir),
+                                "set CURRENT_BINARY_DIR");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_DIR), ctx->source_dir),
+                                "set CURRENT_LIST_DIR");
+    EVAL_SESSION_CREATE_REQUIRE(eval_directory_register_known(ctx, ctx->source_dir), "register known dir");
     {
         String_View cmakefiles_dir = eval_sv_path_join(ctx->event_arena, ctx->binary_dir, nob_sv_from_cstr("CMakeFiles"));
         String_View redirects_dir = eval_sv_path_join(ctx->event_arena, cmakefiles_dir, nob_sv_from_cstr("pkgRedirects"));
-        if (eval_should_stop(ctx)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"), redirects_dir)) return NULL;
+        EVAL_SESSION_CREATE_REQUIRE(!eval_should_stop(ctx), "build redirects dir");
+        EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx,
+                                                         nob_sv_from_cstr("CMAKE_FIND_PACKAGE_REDIRECTS_DIR"),
+                                                         redirects_dir),
+                                    "set redirects dir");
     }
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr(""))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr("1"))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr(""))) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE), nob_sv_from_cstr("")),
+                                "set CURRENT_LIST_FILE");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CURRENT_LIST_LINE"), nob_sv_from_cstr("0")),
+                                "set CURRENT_LIST_LINE");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx,
+                                                     nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH),
+                                                     nob_sv_from_cstr("1")),
+                                "set POLICY_STACK_DEPTH");
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr("")),
+                                "set CMAKE_POLICY_VERSION");
 
 #if defined(_WIN32)
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("1"))) return NULL;
@@ -1929,7 +2067,8 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg, Even
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
     }
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake"))) return NULL;
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake")),
+                                "set CMAKE_COMMAND");
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;
@@ -1976,7 +2115,10 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg, Even
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
     }
 
+    ctx->stream = NULL;
     return session;
+
+#undef EVAL_SESSION_CREATE_REQUIRE
 }
 
 EvalRegistry *eval_registry_create(Arena *arena) {
@@ -2027,13 +2169,13 @@ bool eval_registry_get_command_capability(const EvalRegistry *registry,
 }
 
 EvalSession *eval_session_create(const EvalSession_Config *cfg) {
-    return eval_session_create_impl(cfg, NULL);
+    return eval_session_create_impl(cfg);
 }
 
 void eval_session_destroy(EvalSession *session) {
     if (!session) return;
 
-    Evaluator_Context *ctx = &session->ctx;
+    EvalExecContext *ctx = &session->persisted_exec;
     eval_file_lock_cleanup(ctx);
     if (ctx->scope_state.cache_entries) {
         stbds_shfree(ctx->scope_state.cache_entries);
@@ -2066,110 +2208,101 @@ EvalRunResult eval_session_run(EvalSession *session,
     if (!effective_stream) return out;
 
     size_t emitted_before = request->stream ? request->stream->count : 0;
-    if (!eval_context_bind_request(session,
-                                   request->scratch_arena,
-                                   effective_stream,
-                                   request->source_dir,
-                                   request->binary_dir,
-                                   request->list_file)) {
+    EvalExecContext exec = session->persisted_exec;
+    session->run_active = true;
+    if (session->persisted_exec.registry) session->persisted_exec.registry->mutation_blocked = true;
+    if (!eval_exec_bind_request(&exec,
+                                session,
+                                request->scratch_arena,
+                                effective_stream,
+                                request->source_dir,
+                                request->binary_dir,
+                                request->list_file)) {
+        session->run_active = false;
+        if (session->persisted_exec.registry) session->persisted_exec.registry->mutation_blocked = false;
         return out;
     }
 
-    out.result = eval_context_run_prepared(&session->ctx, ast);
-    out.report = session->ctx.runtime_state.run_report;
+    out.result = eval_context_run_prepared(&exec, ast);
+    out.report = exec.runtime_state.run_report;
     out.emitted_event_count = request->stream ? (request->stream->count - emitted_before) : 0;
+    session->last_run_report = out.report;
+    if (session->persisted_exec.registry) session->persisted_exec.registry->mutation_blocked = false;
+    session->run_active = false;
+    eval_session_snapshot_from_exec(session, &exec);
     return out;
 }
 
 bool eval_session_set_compat_profile(EvalSession *session, Eval_Compat_Profile profile) {
-    return session ? eval_compat_set_profile(&session->ctx, profile) : false;
+    return session ? eval_compat_set_profile(&session->persisted_exec, profile) : false;
+}
+
+bool eval_session_register_native_command(EvalSession *session,
+                                          const EvalNativeCommandDef *def) {
+    if (!session) return false;
+    return eval_native_cmd_register_internal(&session->persisted_exec, def, false, false);
+}
+
+bool eval_session_unregister_native_command(EvalSession *session,
+                                            String_View command_name) {
+    if (!session) return false;
+    return eval_native_cmd_unregister_internal(&session->persisted_exec, command_name, false, false);
 }
 
 bool eval_session_command_exists(const EvalSession *session, String_View command_name) {
     if (!session) return false;
-    if (eval_registry_find_const(session->ctx.registry, command_name)) return true;
-    return eval_user_cmd_find((Evaluator_Context*)&session->ctx, command_name) != NULL;
+    if (eval_registry_find_const(session->persisted_exec.registry, command_name)) return true;
+    return eval_user_cmd_find((EvalExecContext*)&session->persisted_exec, command_name) != NULL;
 }
 
-Evaluator_Context *evaluator_create(const Evaluator_Init *init) {
-    if (!init || !init->arena || !init->event_arena || !init->stream) return NULL;
-
-    EvalSession_Config cfg = {0};
-    cfg.persistent_arena = init->event_arena;
-    cfg.compat_profile = init->compat_profile;
-    cfg.source_root = init->source_dir;
-    cfg.binary_root = init->binary_dir;
-
-    EvalSession *session = eval_session_create_impl(&cfg, init->stream);
-    if (!session) return NULL;
-
-    session->compat_scratch_arena = init->arena;
-    session->compat_stream = init->stream;
-    session->compat_source_dir = init->source_dir.count > 0 ? init->source_dir : session->source_root;
-    session->compat_binary_dir = init->binary_dir.count > 0 ? init->binary_dir : session->binary_root;
-    session->compat_list_file = init->current_file;
-
-    if (!eval_context_bind_request(session,
-                                   session->compat_scratch_arena,
-                                   session->compat_stream,
-                                   session->compat_source_dir,
-                                   session->compat_binary_dir,
-                                   session->compat_list_file)) {
-        eval_session_destroy(session);
-        return NULL;
-    }
-
-    session->compat_source_dir = session->ctx.source_dir;
-    session->compat_binary_dir = session->ctx.binary_dir;
-    session->compat_list_file = session->ctx.current_file;
-    return &session->ctx;
-}
-
-void evaluator_destroy(Evaluator_Context *ctx) {
-    eval_session_destroy(eval_session_from_ctx(ctx));
-}
-
-Eval_Result evaluator_run(Evaluator_Context *ctx, Ast_Root ast) {
-    EvalSession *session = eval_session_from_ctx(ctx);
-    if (!session || !session->compat_scratch_arena || !session->compat_stream) return eval_result_fatal();
-
-    EvalExec_Request request = {0};
-    request.scratch_arena = session->compat_scratch_arena;
-    request.source_dir = session->compat_source_dir;
-    request.binary_dir = session->compat_binary_dir;
-    request.list_file = session->compat_list_file;
-    request.stream = session->compat_stream;
-    return eval_session_run(session, &request, ast).result;
-}
-
-Eval_Result eval_run_ast_inline(Evaluator_Context *ctx, Ast_Root ast) {
+Eval_Result eval_run_ast_inline(EvalExecContext *ctx, Ast_Root ast) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     return eval_execute_node_list(ctx, &ast);
 }
 
-const Eval_Run_Report *evaluator_get_run_report(const Evaluator_Context *ctx) {
-    if (!ctx) return NULL;
-    return &ctx->runtime_state.run_report;
+bool eval_session_get_visible_var(const EvalSession *session,
+                                  String_View key,
+                                  String_View *out_value) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (!session || !out_value) return false;
+    *out_value = eval_var_get_visible((EvalExecContext*)&session->persisted_exec, key);
+    return eval_var_defined_visible((EvalExecContext*)&session->persisted_exec, key);
 }
 
-const Eval_Run_Report *evaluator_get_run_report_snapshot(const Evaluator_Context *ctx) {
-    return evaluator_get_run_report(ctx);
+const EvalServices *eval_exec_services(const EvalExecContext *exec) {
+    return exec ? exec->services : NULL;
 }
 
-bool evaluator_set_compat_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile) {
-    return eval_session_set_compat_profile(eval_session_from_ctx(ctx), profile);
+Event_Origin eval_exec_origin_from_node(const EvalExecContext *exec, const Node *node) {
+    return eval_origin_from_node(exec, node);
 }
 
-bool evaluator_register_native_command(Evaluator_Context *ctx, const Evaluator_Native_Command_Def *def) {
-    return eval_native_cmd_register_internal(ctx, def, false, false);
+bool eval_exec_get_visible_var(const EvalExecContext *exec,
+                               String_View key,
+                               String_View *out_value) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (!exec || !out_value) return false;
+    *out_value = eval_var_get_visible((EvalExecContext*)exec, key);
+    return eval_var_defined_visible((EvalExecContext*)exec, key);
 }
 
-bool evaluator_unregister_native_command(Evaluator_Context *ctx, String_View command_name) {
-    return eval_native_cmd_unregister_internal(ctx, command_name, false, false);
+bool eval_exec_set_current_var(EvalExecContext *exec,
+                               String_View key,
+                               String_View value) {
+    return exec ? eval_var_set_current(exec, key, value) : false;
 }
 
-bool evaluator_get_command_capability(Evaluator_Context *ctx,
-                                      String_View command_name,
-                                      Command_Capability *out_capability) {
-    return eval_dispatcher_get_command_capability(ctx, command_name, out_capability);
+bool eval_exec_unset_current_var(EvalExecContext *exec, String_View key) {
+    return exec ? eval_var_unset_current(exec, key) : false;
+}
+
+Eval_Result eval_exec_emit_diag(EvalExecContext *exec,
+                                Event_Diag_Severity severity,
+                                Eval_Diag_Code code,
+                                String_View component,
+                                String_View command,
+                                Event_Origin origin,
+                                String_View cause,
+                                String_View hint) {
+    return eval_emit_diag_with_severity(exec, severity, code, component, command, origin, cause, hint);
 }

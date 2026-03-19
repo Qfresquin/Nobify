@@ -4,12 +4,12 @@
 #include "parser.h"
 #include "evaluator.h"
 
-struct Evaluator_Context;
+struct EvalExecContext;
 
-Eval_Result eval_handle_fetchcontent_declare(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_fetchcontent_getproperties(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_fetchcontent_makeavailable(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_fetchcontent_populate(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_fetchcontent_setpopulated(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_fetchcontent_declare(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_fetchcontent_getproperties(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_fetchcontent_makeavailable(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_fetchcontent_populate(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_fetchcontent_setpopulated(struct EvalExecContext *ctx, const Node *node);
 
 #endif // EVAL_FETCHCONTENT_H_

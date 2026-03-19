@@ -78,7 +78,7 @@ String_View eval_compat_profile_to_sv(Eval_Compat_Profile profile) {
     }
 }
 
-bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile) {
+bool eval_compat_set_profile(EvalExecContext *ctx, Eval_Compat_Profile profile) {
     if (!ctx) return false;
     if (profile != EVAL_PROFILE_STRICT &&
         profile != EVAL_PROFILE_CI_STRICT &&
@@ -98,7 +98,7 @@ bool eval_compat_set_profile(Evaluator_Context *ctx, Eval_Compat_Profile profile
                         profile == EVAL_PROFILE_PERMISSIVE ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
 }
 
-void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
+void eval_refresh_runtime_compat(EvalExecContext *ctx) {
     if (!ctx) return;
     if (eval_scope_visible_depth(ctx) == 0) return;
     Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
@@ -122,7 +122,7 @@ void eval_refresh_runtime_compat(Evaluator_Context *ctx) {
     }
 }
 
-Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx, Cmake_Diag_Severity sev) {
+Cmake_Diag_Severity eval_compat_effective_severity(const EvalExecContext *ctx, Cmake_Diag_Severity sev) {
     if (!ctx) return sev;
     if (sev == EV_DIAG_WARNING &&
         (ctx->runtime_state.compat_profile == EVAL_PROFILE_STRICT ||
@@ -132,7 +132,7 @@ Cmake_Diag_Severity eval_compat_effective_severity(const Evaluator_Context *ctx,
     return sev;
 }
 
-bool eval_compat_decide_on_diag(Evaluator_Context *ctx, Cmake_Diag_Severity effective_sev) {
+bool eval_compat_decide_on_diag(EvalExecContext *ctx, Cmake_Diag_Severity effective_sev) {
     if (!ctx) return false;
     if (effective_sev != EV_DIAG_ERROR) return true;
 

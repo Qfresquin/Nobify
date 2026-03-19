@@ -103,19 +103,24 @@ static bool codegen_build_model_from_script(const char *script,
     Event_Stream *stream = event_stream_create(event_arena);
     if (!root || !stream) return false;
 
-    Evaluator_Init eval_init = {0};
+    EvalSession_Config eval_cfg = {0};
+    EvalExec_Request eval_request = {0};
     Event_Stream *build_stream = NULL;
-    eval_init.arena = eval_arena;
-    eval_init.event_arena = event_arena;
-    eval_init.stream = stream;
-    eval_init.source_dir = nob_sv_from_cstr(".");
-    eval_init.binary_dir = nob_sv_from_cstr(".");
-    eval_init.current_file = input_path ? input_path : "CMakeLists.txt";
+    eval_cfg.persistent_arena = event_arena;
+    eval_cfg.source_root = nob_sv_from_cstr(".");
+    eval_cfg.binary_root = nob_sv_from_cstr(".");
 
-    Evaluator_Context *eval_ctx = evaluator_create(&eval_init);
-    if (!eval_ctx) return false;
-    Eval_Result run_result = evaluator_run(eval_ctx, root);
-    evaluator_destroy(eval_ctx);
+    eval_request.scratch_arena = eval_arena;
+    eval_request.source_dir = nob_sv_from_cstr(".");
+    eval_request.binary_dir = nob_sv_from_cstr(".");
+    eval_request.list_file = input_path ? input_path : "CMakeLists.txt";
+    eval_request.stream = stream;
+
+    EvalSession *eval_session = eval_session_create(&eval_cfg);
+    if (!eval_session) return false;
+    EvalRunResult eval_run = eval_session_run(eval_session, &eval_request, root);
+    Eval_Result run_result = eval_run.result;
+    eval_session_destroy(eval_session);
     if (eval_result_is_fatal(run_result) || diag_has_errors()) return false;
 
     Diag_Sink *sink = bm_diag_sink_create_default(builder_arena);
@@ -124,8 +129,8 @@ static bool codegen_build_model_from_script(const char *script,
     build_stream = codegen_wrap_stream_with_root(event_arena,
                                                  stream,
                                                  input_path,
-                                                 eval_init.source_dir,
-                                                 eval_init.binary_dir);
+                                                 eval_request.source_dir,
+                                                 eval_request.binary_dir);
     if (!build_stream) return false;
     if (!bm_builder_apply_stream(builder, build_stream)) return false;
 

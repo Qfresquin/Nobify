@@ -61,8 +61,8 @@ typedef enum {
     HOST_CPU_FEATURE_SERIAL_NUMBER,
 } Host_Cpu_Feature;
 
-static String_View host_format_size_t_temp(Evaluator_Context *ctx, size_t value);
-static String_View host_format_ull_temp(Evaluator_Context *ctx, unsigned long long value);
+static String_View host_format_size_t_temp(EvalExecContext *ctx, size_t value);
+static String_View host_format_ull_temp(EvalExecContext *ctx, unsigned long long value);
 
 static bool host_sv_eq_exact(String_View a, String_View b) {
     if (a.count != b.count) return false;
@@ -85,11 +85,11 @@ static String_View host_trim_sv(String_View value) {
     return svu_trim_ascii_ws(value);
 }
 
-static String_View host_format_bool_temp(Evaluator_Context *ctx, bool value) {
+static String_View host_format_bool_temp(EvalExecContext *ctx, bool value) {
     return host_format_size_t_temp(ctx, value ? 1u : 0u);
 }
 
-static bool host_read_optional_file_temp(Evaluator_Context *ctx,
+static bool host_read_optional_file_temp(EvalExecContext *ctx,
                                          const char *path,
                                          String_View *out_contents,
                                          bool *out_found) {
@@ -97,7 +97,7 @@ static bool host_read_optional_file_temp(Evaluator_Context *ctx,
     return eval_service_host_read_file(ctx, nob_sv_from_cstr(path), out_contents, out_found);
 }
 
-static bool host_proc_cpuinfo_temp(Evaluator_Context *ctx, String_View *out_contents, bool *out_found) {
+static bool host_proc_cpuinfo_temp(EvalExecContext *ctx, String_View *out_contents, bool *out_found) {
     return host_read_optional_file_temp(ctx, "/proc/cpuinfo", out_contents, out_found);
 }
 
@@ -116,7 +116,7 @@ static bool host_parse_long_sv(String_View value, long *out_value) {
     return true;
 }
 
-static bool host_proc_cpuinfo_first_value_temp(Evaluator_Context *ctx,
+static bool host_proc_cpuinfo_first_value_temp(EvalExecContext *ctx,
                                                const char *wanted_key,
                                                String_View *out_value) {
     if (!ctx || !wanted_key || !out_value) return false;
@@ -147,7 +147,7 @@ static bool host_proc_cpuinfo_first_value_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_proc_cpuinfo_has_flag_temp(Evaluator_Context *ctx,
+static bool host_proc_cpuinfo_has_flag_temp(EvalExecContext *ctx,
                                             const char *flag_name,
                                             bool *out_value) {
     if (!ctx || !flag_name || !out_value) return false;
@@ -174,7 +174,7 @@ static bool host_proc_cpuinfo_has_flag_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_physical_cores_temp(Evaluator_Context *ctx, size_t *out_count) {
+static bool host_physical_cores_temp(EvalExecContext *ctx, size_t *out_count) {
     if (!ctx || !out_count) return false;
     *out_count = 0;
 
@@ -295,7 +295,7 @@ static bool host_physical_cores_temp(Evaluator_Context *ctx, size_t *out_count) 
     return true;
 }
 
-static bool host_cpu_feature_temp(Evaluator_Context *ctx,
+static bool host_cpu_feature_temp(EvalExecContext *ctx,
                                   Host_Cpu_Feature feature,
                                   bool *out_value) {
     if (!out_value) return false;
@@ -381,7 +381,7 @@ static bool host_cpu_feature_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_processor_name_temp(Evaluator_Context *ctx, String_View *out_value) {
+static bool host_processor_name_temp(EvalExecContext *ctx, String_View *out_value) {
     if (!ctx || !out_value) return false;
     *out_value = nob_sv_from_cstr("");
 
@@ -416,7 +416,7 @@ static bool host_processor_name_temp(Evaluator_Context *ctx, String_View *out_va
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool host_processor_description_temp(Evaluator_Context *ctx, String_View *out_value) {
+static bool host_processor_description_temp(EvalExecContext *ctx, String_View *out_value) {
     if (!ctx || !out_value) return false;
     *out_value = nob_sv_from_cstr("");
 
@@ -463,14 +463,14 @@ static bool host_processor_description_temp(Evaluator_Context *ctx, String_View 
     return true;
 }
 
-static bool host_processor_serial_temp(Evaluator_Context *ctx, String_View *out_value) {
+static bool host_processor_serial_temp(EvalExecContext *ctx, String_View *out_value) {
     (void)ctx;
     if (!out_value) return false;
     *out_value = nob_sv_from_cstr("");
     return true;
 }
 
-static bool host_os_release_path_temp(Evaluator_Context *ctx,
+static bool host_os_release_path_temp(EvalExecContext *ctx,
                                       const char *suffix,
                                       String_View *out_path) {
     if (!ctx || !suffix || !out_path) return false;
@@ -484,7 +484,7 @@ static bool host_os_release_path_temp(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool host_parse_os_release_line_temp(Evaluator_Context *ctx,
+static bool host_parse_os_release_line_temp(EvalExecContext *ctx,
                                             String_View line,
                                             Host_Distrib_Entry *out_entry) {
     if (!ctx || !out_entry) return false;
@@ -542,7 +542,7 @@ static bool host_parse_os_release_line_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_os_release_entries_temp(Evaluator_Context *ctx,
+static bool host_os_release_entries_temp(EvalExecContext *ctx,
                                          Host_Distrib_Entry_List *out_entries) {
     if (!ctx || !out_entries) return false;
     *out_entries = NULL;
@@ -583,7 +583,7 @@ static bool host_os_release_entries_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_distrib_query_value(Evaluator_Context *ctx,
+static bool host_distrib_query_value(EvalExecContext *ctx,
                                      String_View result_var,
                                      String_View key,
                                      String_View *out_value) {
@@ -630,7 +630,7 @@ static bool host_distrib_query_value(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_capture_command_stdout(Evaluator_Context *ctx, String_View command, String_View *out_text) {
+static bool host_capture_command_stdout(EvalExecContext *ctx, String_View command, String_View *out_text) {
     if (!ctx || !out_text) return false;
     *out_text = nob_sv_from_cstr("");
     if (command.count == 0) return true;
@@ -669,7 +669,7 @@ static bool host_capture_command_stdout(Evaluator_Context *ctx, String_View comm
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static String_View host_format_size_t_temp(Evaluator_Context *ctx, size_t value) {
+static String_View host_format_size_t_temp(EvalExecContext *ctx, size_t value) {
     char buf[64];
     int n = snprintf(buf, sizeof(buf), "%zu", value);
     if (n < 0 || (size_t)n >= sizeof(buf)) {
@@ -679,7 +679,7 @@ static String_View host_format_size_t_temp(Evaluator_Context *ctx, size_t value)
     return sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
 }
 
-static String_View host_format_ull_temp(Evaluator_Context *ctx, unsigned long long value) {
+static String_View host_format_ull_temp(EvalExecContext *ctx, unsigned long long value) {
     char buf[64];
     int n = snprintf(buf, sizeof(buf), "%llu", value);
     if (n < 0 || (size_t)n >= sizeof(buf)) {
@@ -698,7 +698,7 @@ static bool host_is_makefile_generator(String_View generator) {
            eval_sv_eq_ci_lit(generator, "Borland Makefiles");
 }
 
-static bool host_build_command_parse(Evaluator_Context *ctx,
+static bool host_build_command_parse(EvalExecContext *ctx,
                                      const Node *node,
                                      const SV_List *args,
                                      Host_Build_Command_Request *out_req) {
@@ -760,7 +760,7 @@ static bool host_build_command_parse(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View host_build_command_text_temp(Evaluator_Context *ctx,
+static String_View host_build_command_text_temp(EvalExecContext *ctx,
                                                 String_View command_name,
                                                 const Build_Command_Options *opt,
                                                 bool append_make_i) {
@@ -810,7 +810,7 @@ static String_View host_build_command_text_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, off);
 }
 
-static bool host_info_query_value(Evaluator_Context *ctx,
+static bool host_info_query_value(EvalExecContext *ctx,
                                   String_View result_var,
                                   String_View key,
                                   String_View *out_value,
@@ -953,7 +953,7 @@ static bool host_info_query_value(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_parse_system_information_request(Evaluator_Context *ctx,
+static bool host_parse_system_information_request(EvalExecContext *ctx,
                                                   const Node *node,
                                                   Cmake_Event_Origin origin,
                                                   Host_System_Information_Request *out_req) {
@@ -983,7 +983,7 @@ static bool host_parse_system_information_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_parse_output_var_request(Evaluator_Context *ctx,
+static bool host_parse_output_var_request(EvalExecContext *ctx,
                                           const Node *node,
                                           Cmake_Event_Origin origin,
                                           String_View cause,
@@ -1011,7 +1011,7 @@ static bool host_parse_output_var_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool host_execute_system_information_request(Evaluator_Context *ctx,
+static bool host_execute_system_information_request(EvalExecContext *ctx,
                                                     const Node *node,
                                                     Cmake_Event_Origin origin,
                                                     const Host_System_Information_Request *req) {
@@ -1056,7 +1056,7 @@ static bool host_execute_system_information_request(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, req->result_var, result);
 }
 
-static bool host_parse_site_name_request(Evaluator_Context *ctx,
+static bool host_parse_site_name_request(EvalExecContext *ctx,
                                          const Node *node,
                                          Cmake_Event_Origin origin,
                                          Host_Output_Var_Request *out_req) {
@@ -1068,7 +1068,7 @@ static bool host_parse_site_name_request(Evaluator_Context *ctx,
                                          out_req);
 }
 
-static bool host_execute_site_name_request(Evaluator_Context *ctx,
+static bool host_execute_site_name_request(EvalExecContext *ctx,
                                            const Node *node,
                                            Cmake_Event_Origin origin,
                                            const Host_Output_Var_Request *req) {
@@ -1105,7 +1105,7 @@ static bool host_execute_site_name_request(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, req->output_var, value);
 }
 
-static bool host_parse_build_name_request(Evaluator_Context *ctx,
+static bool host_parse_build_name_request(EvalExecContext *ctx,
                                           const Node *node,
                                           Cmake_Event_Origin origin,
                                           Host_Output_Var_Request *out_req) {
@@ -1117,7 +1117,7 @@ static bool host_parse_build_name_request(Evaluator_Context *ctx,
                                          out_req);
 }
 
-static bool host_execute_build_name_request(Evaluator_Context *ctx,
+static bool host_execute_build_name_request(EvalExecContext *ctx,
                                             const Node *node,
                                             Cmake_Event_Origin origin,
                                             const Host_Output_Var_Request *req) {
@@ -1151,7 +1151,7 @@ static bool host_execute_build_name_request(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, req->output_var, nob_sv_from_parts(buf, total));
 }
 
-static bool host_parse_build_command_request(Evaluator_Context *ctx,
+static bool host_parse_build_command_request(EvalExecContext *ctx,
                                              const Node *node,
                                              Host_Build_Command_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
@@ -1160,7 +1160,7 @@ static bool host_parse_build_command_request(Evaluator_Context *ctx,
     return host_build_command_parse(ctx, node, &args, out_req);
 }
 
-static bool host_execute_build_command_request(Evaluator_Context *ctx,
+static bool host_execute_build_command_request(EvalExecContext *ctx,
                                                const Node *node,
                                                Cmake_Event_Origin origin,
                                                const Host_Build_Command_Request *req) {
@@ -1188,7 +1188,7 @@ static bool host_execute_build_command_request(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, req->output_var, value);
 }
 
-Eval_Result eval_handle_cmake_host_system_information(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_host_system_information(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1198,7 +1198,7 @@ Eval_Result eval_handle_cmake_host_system_information(Evaluator_Context *ctx, co
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_site_name(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1208,7 +1208,7 @@ Eval_Result eval_handle_site_name(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_build_name(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
@@ -1218,7 +1218,7 @@ Eval_Result eval_handle_build_name(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_build_command(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_build_command(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);

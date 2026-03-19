@@ -9,10 +9,7 @@
 #include "arena.h"
 #include "arena_dyn.h"
 #include "diagnostics.h"
-#include "eval_dispatcher.h"
-#include "eval_try_compile_internal.h"
 #include "evaluator.h"
-#include "evaluator_internal.h"
 #include "event_ir.h"
 #include "lexer.h"
 #include "parser.h"
@@ -42,8 +39,50 @@ typedef struct {
     size_t capacity;
 } Evaluator_Case_List;
 
+typedef struct {
+    Arena *arena;
+    Arena *event_arena;
+    Cmake_Event_Stream *stream;
+    String_View source_dir;
+    String_View binary_dir;
+    const char *current_file;
+    const EvalServices *services;
+    Eval_Compat_Profile compat_profile;
+    EvalRegistry *registry;
+} Eval_Test_Init;
+
+typedef struct {
+    EvalSession *session;
+    EvalRegistry *registry;
+    EvalExec_Request request;
+    EvalRunResult last_run;
+    Cmake_Event_Stream *stream;
+    const char *current_file;
+    bool owns_registry;
+} Eval_Test_Runtime;
+
 static Nob_String_Builder g_evaluator_captured_nob_logs = {0};
 static Nob_Log_Handler *g_evaluator_prev_log_handler = NULL;
+static EvalRegistry *g_evaluator_runtime_mutation_registry = NULL;
+
+static Eval_Result eval_test_result_ok(void) {
+    Eval_Result result = { .kind = EVAL_RESULT_OK };
+    return result;
+}
+
+static Eval_Result eval_test_result_soft_error(void) {
+    Eval_Result result = { .kind = EVAL_RESULT_SOFT_ERROR };
+    return result;
+}
+
+static Eval_Result eval_test_result_fatal(void) {
+    Eval_Result result = { .kind = EVAL_RESULT_FATAL };
+    return result;
+}
+
+static Eval_Result eval_test_result_from_bool(bool ok) {
+    return ok ? eval_test_result_ok() : eval_test_result_fatal();
+}
 
 static void evaluator_capture_nob_log(Nob_Log_Level level, const char *fmt, va_list args) {
     char message[4096] = {0};
@@ -302,69 +341,200 @@ static Ast_Root parse_cmake(Arena *arena, const char *script) {
     return parse_tokens(arena, toks);
 }
 
-static Eval_Result native_test_handler_set_hit(Evaluator_Context *ctx, const Node *node) {
-    (void)node;
-    return eval_result_from_bool(eval_var_set_current(ctx, nob_sv_from_cstr("NATIVE_HIT"), nob_sv_from_cstr("1")));
+static Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init) {
+    if (!init || !init->arena || !init->event_arena) return NULL;
+
+    Eval_Test_Runtime *ctx = arena_alloc_zero(init->event_arena, sizeof(*ctx));
+    if (!ctx) return NULL;
+
+    ctx->registry = init->registry;
+    if (!ctx->registry) {
+        ctx->registry = eval_registry_create(init->event_arena);
+        if (!ctx->registry) return NULL;
+        ctx->owns_registry = true;
+    }
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = init->event_arena;
+    cfg.services = init->services;
+    cfg.registry = ctx->registry;
+    cfg.compat_profile = init->compat_profile;
+    cfg.source_root = init->source_dir;
+    cfg.binary_root = init->binary_dir;
+
+    ctx->session = eval_session_create(&cfg);
+    if (!ctx->session) {
+        if (ctx->owns_registry) eval_registry_destroy(ctx->registry);
+        return NULL;
+    }
+
+    ctx->request.scratch_arena = init->arena;
+    ctx->request.source_dir = init->source_dir;
+    ctx->request.binary_dir = init->binary_dir;
+    ctx->request.list_file = init->current_file;
+    ctx->request.stream = init->stream;
+    ctx->stream = init->stream;
+    ctx->current_file = init->current_file;
+    return ctx;
 }
 
-static Eval_Result native_test_handler_runtime_mutation(Evaluator_Context *ctx, const Node *node) {
+static void eval_test_destroy(Eval_Test_Runtime *ctx) {
+    if (!ctx) return;
+    if (ctx->session) eval_session_destroy(ctx->session);
+    if (ctx->owns_registry && ctx->registry) eval_registry_destroy(ctx->registry);
+}
+
+static Eval_Result eval_test_run(Eval_Test_Runtime *ctx, Ast_Root ast) {
+    if (!ctx) return eval_test_result_fatal();
+    ctx->last_run = eval_session_run(ctx->session, &ctx->request, ast);
+    return ctx->last_run.result;
+}
+
+static const Eval_Run_Report *eval_test_report(const Eval_Test_Runtime *ctx) {
+    return ctx ? &ctx->last_run.report : NULL;
+}
+
+static const Eval_Run_Report *eval_test_report_snapshot(const Eval_Test_Runtime *ctx) {
+    return eval_test_report(ctx);
+}
+
+static bool eval_test_set_compat_profile(Eval_Test_Runtime *ctx, Eval_Compat_Profile profile) {
+    return ctx && eval_session_set_compat_profile(ctx->session, profile);
+}
+
+static bool eval_test_register_native_command(Eval_Test_Runtime *ctx, const EvalNativeCommandDef *def) {
+    return ctx && eval_session_register_native_command(ctx->session, def);
+}
+
+static bool eval_test_unregister_native_command(Eval_Test_Runtime *ctx, String_View command_name) {
+    return ctx && eval_session_unregister_native_command(ctx->session, command_name);
+}
+
+static bool eval_test_get_command_capability(const Eval_Test_Runtime *ctx,
+                                             String_View command_name,
+                                             Command_Capability *out_capability) {
+    return ctx && eval_registry_get_command_capability(ctx->registry, command_name, out_capability);
+}
+
+static String_View eval_test_var_get(const Eval_Test_Runtime *ctx, String_View key) {
+    String_View out = {0};
+    if (!ctx || !ctx->session) return out;
+    if (!eval_session_get_visible_var(ctx->session, key, &out)) return nob_sv_from_cstr("");
+    return out;
+}
+
+static String_View eval_test_session_var_get(const EvalSession *session, String_View key) {
+    String_View out = {0};
+    if (!session) return out;
+    if (!eval_session_get_visible_var(session, key, &out)) return nob_sv_from_cstr("");
+    return out;
+}
+
+static bool eval_test_var_defined(const Eval_Test_Runtime *ctx, String_View key) {
+    String_View out = {0};
+    return ctx && ctx->session && eval_session_get_visible_var(ctx->session, key, &out);
+}
+
+static bool eval_test_cache_defined(const Eval_Test_Runtime *ctx, String_View key) {
+    if (!ctx || !ctx->stream) return false;
+    for (size_t i = 0; i < ctx->stream->count; i++) {
+        const Cmake_Event *ev = &ctx->stream->items[i];
+        if (ev->h.kind != EV_VAR_SET) continue;
+        if (ev->as.var_set.target_kind != EVENT_VAR_TARGET_CACHE) continue;
+        if (nob_sv_eq(ev->as.var_set.key, key)) return true;
+    }
+    return false;
+}
+
+static bool eval_test_target_known(const Eval_Test_Runtime *ctx, String_View target_name) {
+    if (!ctx || !ctx->stream) return false;
+    for (size_t i = 0; i < ctx->stream->count; i++) {
+        const Cmake_Event *ev = &ctx->stream->items[i];
+        if (ev->h.kind != EV_TARGET_DECLARE) continue;
+        if (nob_sv_eq(ev->as.target_declare.name, target_name)) return true;
+    }
+    return false;
+}
+
+static bool eval_test_var_event_seen(const Cmake_Event_Stream *stream, String_View key) {
+    if (!stream) return false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_VAR_SET) continue;
+        if (nob_sv_eq(ev->as.var_set.key, key)) return true;
+    }
+    return false;
+}
+
+static Eval_Result native_test_handler_set_hit(EvalExecContext *ctx, const Node *node) {
+    (void)node;
+    return eval_test_result_from_bool(eval_exec_set_current_var(ctx,
+                                                                nob_sv_from_cstr("NATIVE_HIT"),
+                                                                nob_sv_from_cstr("1")));
+}
+
+static Eval_Result native_test_handler_runtime_mutation(EvalExecContext *ctx, const Node *node) {
     (void)node;
 
-    Evaluator_Native_Command_Def during_run = {
+    EvalNativeCommandDef during_run = {
         .name = nob_sv_from_cstr("native_during_run_register"),
         .handler = native_test_handler_set_hit,
         .implemented_level = EVAL_CMD_IMPL_PARTIAL,
         .fallback_behavior = EVAL_FALLBACK_NOOP_WARN,
     };
-    bool register_ok = evaluator_register_native_command(ctx, &during_run);
-    bool unregister_ok = evaluator_unregister_native_command(ctx, nob_sv_from_cstr("native_runtime_probe"));
+    bool register_ok = g_evaluator_runtime_mutation_registry &&
+                       eval_registry_register_native_command(g_evaluator_runtime_mutation_registry, &during_run);
+    bool unregister_ok = g_evaluator_runtime_mutation_registry &&
+                         eval_registry_unregister_native_command(g_evaluator_runtime_mutation_registry,
+                                                                 nob_sv_from_cstr("native_runtime_probe"));
 
-    if (!eval_var_set_current(ctx,
-                              nob_sv_from_cstr("NATIVE_REG_DURING_RUN"),
-                              register_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
-        return eval_result_fatal();
+    if (!eval_exec_set_current_var(ctx,
+                                   nob_sv_from_cstr("NATIVE_REG_DURING_RUN"),
+                                   register_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
+        return eval_test_result_fatal();
     }
-    return eval_result_from_bool(eval_var_set_current(ctx,
-                                                      nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN"),
-                                                      unregister_ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0")));
+    return eval_test_result_from_bool(eval_exec_set_current_var(ctx,
+                                                                nob_sv_from_cstr("NATIVE_UNREG_DURING_RUN"),
+                                                                unregister_ok ? nob_sv_from_cstr("1")
+                                                                              : nob_sv_from_cstr("0")));
 }
 
-static Eval_Result native_test_handler_snapshot_set_strict_and_warn(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node) return eval_result_fatal();
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"), nob_sv_from_cstr("STRICT"))) {
-        return eval_result_fatal();
+static Eval_Result native_test_handler_snapshot_set_strict_and_warn(EvalExecContext *ctx, const Node *node) {
+    if (!ctx || !node) return eval_test_result_fatal();
+    if (!eval_exec_set_current_var(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_COMPAT_PROFILE"), nob_sv_from_cstr("STRICT"))) {
+        return eval_test_result_fatal();
     }
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"), nob_sv_from_cstr("0"))) {
-        return eval_result_fatal();
+    if (!eval_exec_set_current_var(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CONTINUE_ON_ERROR"), nob_sv_from_cstr("0"))) {
+        return eval_test_result_fatal();
     }
 
-    Event_Origin o = eval_origin_from_node(ctx, node);
-    Eval_Result diag = eval_emit_diag_with_severity(ctx,
-                                                    EV_DIAG_WARNING,
-                                                    EVAL_DIAG_SCRIPT_WARNING,
-                                                    nob_sv_from_cstr("native_snapshot"),
-                                                    node->as.cmd.name,
-                                                    o,
-                                                    nob_sv_from_cstr("phase1 warning"),
-                                                    nob_sv_from_cstr(""));
+    Event_Origin o = eval_exec_origin_from_node(ctx, node);
+    Eval_Result diag = eval_exec_emit_diag(ctx,
+                                           EV_DIAG_WARNING,
+                                           EVAL_DIAG_SCRIPT_WARNING,
+                                           nob_sv_from_cstr("native_snapshot"),
+                                           node->as.cmd.name,
+                                           o,
+                                           nob_sv_from_cstr("phase1 warning"),
+                                           nob_sv_from_cstr(""));
     if (eval_result_is_fatal(diag)) return diag;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("SNAPSHOT_PHASE1_NON_FATAL"), nob_sv_from_cstr("1"))) {
-        return eval_result_fatal();
+    if (!eval_exec_set_current_var(ctx, nob_sv_from_cstr("SNAPSHOT_PHASE1_NON_FATAL"), nob_sv_from_cstr("1"))) {
+        return eval_test_result_fatal();
     }
     return diag;
 }
 
-static Eval_Result native_test_handler_snapshot_warn_only(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node) return eval_result_fatal();
-    Event_Origin o = eval_origin_from_node(ctx, node);
-    return eval_emit_diag_with_severity(ctx,
-                                        EV_DIAG_WARNING,
-                                        EVAL_DIAG_SCRIPT_WARNING,
-                                        nob_sv_from_cstr("native_snapshot"),
-                                        node->as.cmd.name,
-                                        o,
-                                        nob_sv_from_cstr("phase2 warning"),
-                                        nob_sv_from_cstr(""));
+static Eval_Result native_test_handler_snapshot_warn_only(EvalExecContext *ctx, const Node *node) {
+    if (!ctx || !node) return eval_test_result_fatal();
+    Event_Origin o = eval_exec_origin_from_node(ctx, node);
+    return eval_exec_emit_diag(ctx,
+                               EV_DIAG_WARNING,
+                               EVAL_DIAG_SCRIPT_WARNING,
+                               nob_sv_from_cstr("native_snapshot"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("phase2 warning"),
+                               nob_sv_from_cstr(""));
 }
 
 static bool evaluator_find_last_diag_for_command(const Cmake_Event_Stream *stream,
@@ -381,38 +551,15 @@ static bool evaluator_find_last_diag_for_command(const Cmake_Event_Stream *strea
     return false;
 }
 
-static Eval_Result native_test_handler_snapshot_set_unsupported_error_and_probe_inline(Evaluator_Context *ctx,
-                                                                                        const Node *node) {
-    if (!ctx || !node || !ctx->stream) return eval_result_fatal();
-    if (!eval_var_set_current(ctx,
-                              nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"),
-                              nob_sv_from_cstr("ERROR"))) {
-        return eval_result_fatal();
+static Eval_Result native_test_handler_snapshot_set_unsupported_error(EvalExecContext *ctx, const Node *node) {
+    (void)node;
+    if (!ctx) return eval_test_result_fatal();
+    if (!eval_exec_set_current_var(ctx,
+                                   nob_sv_from_cstr("CMAKE_NOBIFY_UNSUPPORTED_POLICY"),
+                                   nob_sv_from_cstr("ERROR"))) {
+        return eval_test_result_fatal();
     }
-
-    Ast_Root probe = parse_cmake(eval_temp_arena(ctx), "unknown_inline_policy_cmd()\n");
-    if (arena_arr_len(probe) == 0) return eval_result_fatal();
-
-    Eval_Result inline_result = eval_dispatch_command(ctx, &probe[0]);
-    if (eval_result_is_fatal(inline_result)) return inline_result;
-
-    String_View result_sv = eval_result_is_soft_error(inline_result)
-        ? nob_sv_from_cstr("SOFT_ERROR")
-        : nob_sv_from_cstr("OK");
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("INLINE_UNSUPPORTED_SNAPSHOT_RESULT"), result_sv)) {
-        return eval_result_fatal();
-    }
-
-    Event_Diag_Severity inline_severity = EV_DIAG_WARNING;
-    if (!evaluator_find_last_diag_for_command(ctx->stream,
-                                              nob_sv_from_cstr("unknown_inline_policy_cmd"),
-                                              &inline_severity)) {
-        return eval_result_fatal();
-    }
-    return eval_result_from_bool(eval_var_set_current(
-        ctx,
-        nob_sv_from_cstr("INLINE_UNSUPPORTED_SNAPSHOT_SEVERITY"),
-        inline_severity == EV_DIAG_ERROR ? nob_sv_from_cstr("ERROR") : nob_sv_from_cstr("WARNING")));
+    return eval_test_result_ok();
 }
 
 typedef struct {
@@ -429,31 +576,22 @@ static const char *evaluator_test_env_service_get(void *user_data,
     return arena_strndup(scratch_arena, data->value, strlen(data->value));
 }
 
-static Eval_Result native_test_handler_tx_rollback_target(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || !node) return eval_result_fatal();
+static Eval_Result native_test_handler_tx_rollback_target(EvalExecContext *ctx, const Node *node) {
+    if (!ctx || !node) return eval_test_result_fatal();
 
-    String_View name = nob_sv_from_cstr("phase_e_rollback_target");
-    Event_Origin o = eval_origin_from_node(ctx, node);
-
-    if (!eval_target_register(ctx, name)) return eval_result_fatal();
-    if (!eval_emit_target_declare(ctx,
-                                  o,
-                                  name,
-                                  EV_TARGET_EXECUTABLE,
-                                  false,
-                                  false,
-                                  nob_sv_from_cstr(""))) {
-        return eval_result_fatal();
+    Event_Origin o = eval_exec_origin_from_node(ctx, node);
+    if (!eval_exec_set_current_var(ctx, nob_sv_from_cstr("TX_ROLLBACK_HIT"), nob_sv_from_cstr("1"))) {
+        return eval_test_result_fatal();
     }
 
-    return eval_emit_diag_with_severity(ctx,
-                                        EV_DIAG_ERROR,
-                                        EVAL_DIAG_INVALID_STATE,
-                                        nob_sv_from_cstr("phase_e_tx"),
-                                        node->as.cmd.name,
-                                        o,
-                                        nob_sv_from_cstr("transaction rollback probe"),
-                                        nob_sv_from_cstr(""));
+    return eval_exec_emit_diag(ctx,
+                               EV_DIAG_ERROR,
+                               EVAL_DIAG_INVALID_STATE,
+                               nob_sv_from_cstr("phase_e_tx"),
+                               node->as.cmd.name,
+                               o,
+                               nob_sv_from_cstr("transaction rollback probe"),
+                               nob_sv_from_cstr(""));
 }
 
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
@@ -462,12 +600,29 @@ static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, St
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(path, &sb)) return false;
 
+    if (sb.count == 0) {
+        nob_sb_free(sb);
+        *out = nob_sv_from_cstr("");
+        return true;
+    }
+
     char *text = arena_strndup(arena, sb.items, sb.count);
     size_t len = sb.count;
     nob_sb_free(sb);
     if (!text) return false;
 
     *out = nob_sv_from_parts(text, len);
+    return true;
+}
+
+static bool eval_test_append_file_to_log_if_nonempty(Arena *arena,
+                                                     const char *path,
+                                                     Nob_String_Builder *log) {
+    String_View content = {0};
+    if (!arena || !path || !log) return false;
+    if (!evaluator_load_text_file_to_arena(arena, path, &content)) return false;
+    if (content.count == 0) return true;
+    nob_sb_append_buf(log, content.data, content.count);
     return true;
 }
 
@@ -912,7 +1067,7 @@ static bool evaluator_snapshot_from_ast(Ast_Root root, const char *current_file,
         return false;
     }
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -920,14 +1075,14 @@ static bool evaluator_snapshot_from_ast(Ast_Root root, const char *current_file,
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = current_file;
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     if (!ctx) {
         arena_destroy(temp_arena);
         arena_destroy(event_arena);
         return false;
     }
 
-    (void)evaluator_run(ctx, root);
+    (void)eval_test_run(ctx, root);
 
     nob_sb_append_cstr(out_sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
     size_t visible_count = 0;
@@ -943,7 +1098,7 @@ static bool evaluator_snapshot_from_ast(Ast_Root root, const char *current_file,
         append_event_line(out_sb, visible_index++, &stream->items[i]);
     }
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     return true;

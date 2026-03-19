@@ -63,7 +63,7 @@ static inline String_View svu_dirname(String_View path) {
     return nob_sv_from_cstr(".");
 }
 
-static inline String_View svu_concat_suffix_temp(Evaluator_Context *ctx, String_View base, const char *suffix) {
+static inline String_View svu_concat_suffix_temp(EvalExecContext *ctx, String_View base, const char *suffix) {
     if (!ctx || !suffix) return nob_sv_from_cstr("");
     size_t suffix_len = strlen(suffix);
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), base.count + suffix_len + 1);
@@ -74,11 +74,11 @@ static inline String_View svu_concat_suffix_temp(Evaluator_Context *ctx, String_
     return nob_sv_from_cstr(buf);
 }
 
-static inline bool svu_list_push_temp(Evaluator_Context *ctx, SV_List *list, String_View sv) {
+static inline bool svu_list_push_temp(EvalExecContext *ctx, SV_List *list, String_View sv) {
     return eval_sv_arr_push_temp(ctx, list, sv);
 }
 
-static inline String_View svu_join_space_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
+static inline String_View svu_join_space_temp(EvalExecContext *ctx, const String_View *items, size_t count) {
     if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
     size_t total = 0;
     for (size_t i = 0; i < count; i++) {
@@ -103,7 +103,7 @@ static inline String_View svu_join_space_temp(Evaluator_Context *ctx, const Stri
     return nob_sv_from_cstr(buf);
 }
 
-static inline String_View svu_join_no_sep_temp(Evaluator_Context *ctx, const String_View *items, size_t count) {
+static inline String_View svu_join_no_sep_temp(EvalExecContext *ctx, const String_View *items, size_t count) {
     if (!ctx || !items || count == 0) return nob_sv_from_cstr("");
     size_t total = 0;
     for (size_t i = 0; i < count; i++) total += items[i].count;

@@ -30,7 +30,7 @@ static bool string_is_misc_subcommand(String_View cmd) {
            eval_string_is_hash_command(cmd);
 }
 
-Eval_Result eval_handle_string(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_string(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);

@@ -42,7 +42,7 @@ static bool exec_core_parse_positive_size(String_View sv, size_t *out) {
     return true;
 }
 
-static Eval_Result eval_while_iteration_limit(Evaluator_Context *ctx,
+static Eval_Result eval_while_iteration_limit(EvalExecContext *ctx,
                                               const Node *node,
                                               size_t *out_limit) {
     const size_t default_limit = 10000;
@@ -70,12 +70,12 @@ static Eval_Result eval_while_iteration_limit(Evaluator_Context *ctx,
                                         nob_sv_from_cstr("Unset it or set it to a decimal value greater than 0"));
 }
 
-static Eval_Result eval_if(Evaluator_Context *ctx, const Node *node);
-static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node);
-static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node);
-static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node);
+static Eval_Result eval_if(EvalExecContext *ctx, const Node *node);
+static Eval_Result eval_foreach(EvalExecContext *ctx, const Node *node);
+static Eval_Result eval_while(EvalExecContext *ctx, const Node *node);
+static Eval_Result eval_node(EvalExecContext *ctx, const Node *node);
 
-static Eval_Result eval_if(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result eval_if(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     bool cond = eval_condition(ctx, &node->as.if_stmt.condition);
     if (ctx->oom) return eval_result_fatal();
@@ -102,7 +102,7 @@ static Eval_Result eval_if(Evaluator_Context *ctx, const Node *node) {
     return eval_execute_node_list(ctx, &node->as.if_stmt.else_block);
 }
 
-static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result eval_foreach(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.foreach_stmt.args);
     if (ctx->oom) return eval_result_fatal();
@@ -232,33 +232,35 @@ static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node) {
     Eval_Result aggregate = eval_result_ok();
 
     if (!eval_emit_flow_loop_begin(ctx, origin, nob_sv_from_cstr("foreach"))) return eval_result_fatal();
-    ctx->loop_depth++;
+    Eval_Exec_Context *exec = eval_exec_current(ctx);
+    if (!exec) return eval_result_fatal();
+    exec->loop_depth++;
     for (size_t ii = 0; ii < items_count; ii++) {
         iter_count++;
         if (!eval_var_set_current(ctx, var, items_ptr[ii])) {
-            ctx->loop_depth--;
+            exec->loop_depth--;
             return eval_result_fatal();
         }
         Eval_Result body = eval_execute_node_list(ctx, &node->as.foreach_stmt.body);
         if (eval_result_is_fatal(body)) {
-            ctx->loop_depth--;
+            exec->loop_depth--;
             return body;
         }
         aggregate = eval_result_merge(aggregate, body);
-        if (ctx->return_requested) {
-            ctx->loop_depth--;
+        if (exec->pending_flow == EVAL_FLOW_RETURN) {
+            exec->loop_depth--;
             return aggregate;
         }
-        if (ctx->continue_requested) {
-            ctx->continue_requested = false;
+        if (exec->pending_flow == EVAL_FLOW_CONTINUE) {
+            exec->pending_flow = EVAL_FLOW_NONE;
             continue;
         }
-        if (ctx->break_requested) {
-            ctx->break_requested = false;
+        if (exec->pending_flow == EVAL_FLOW_BREAK) {
+            exec->pending_flow = EVAL_FLOW_NONE;
             break;
         }
     }
-    ctx->loop_depth--;
+    exec->loop_depth--;
     if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("foreach"), (uint32_t)iter_count)) return eval_result_fatal();
     if (cmp0124_new) {
         if (loop_old_defined) (void)eval_var_set_current(ctx, var, loop_old);
@@ -267,52 +269,54 @@ static Eval_Result eval_foreach(Evaluator_Context *ctx, const Node *node) {
     return eval_result_merge(aggregate, eval_result_ok_if_running(ctx));
 }
 
-static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result eval_while(EvalExecContext *ctx, const Node *node) {
     size_t max_iter = 10000;
     Eval_Result aggregate = eval_while_iteration_limit(ctx, node, &max_iter);
     if (eval_result_is_fatal(aggregate) || eval_should_stop(ctx)) return eval_result_fatal();
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     size_t iter_count = 0;
     if (!eval_emit_flow_loop_begin(ctx, origin, nob_sv_from_cstr("while"))) return eval_result_fatal();
-    ctx->loop_depth++;
+    Eval_Exec_Context *exec = eval_exec_current(ctx);
+    if (!exec) return eval_result_fatal();
+    exec->loop_depth++;
     for (size_t iter = 0; iter < max_iter; iter++) {
         bool cond = eval_condition(ctx, &node->as.while_stmt.condition);
         if (ctx->oom) {
-            ctx->loop_depth--;
+            exec->loop_depth--;
             return eval_result_fatal();
         }
         if (!eval_emit_flow_if_eval(ctx, origin, cond)) {
-            ctx->loop_depth--;
+            exec->loop_depth--;
             return eval_result_fatal();
         }
         if (!cond) {
-            ctx->loop_depth--;
+            exec->loop_depth--;
             if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("while"), (uint32_t)iter_count)) return eval_result_fatal();
             return aggregate;
         }
         iter_count++;
         Eval_Result body = eval_execute_node_list(ctx, &node->as.while_stmt.body);
         if (eval_result_is_fatal(body)) {
-            ctx->loop_depth--;
+            exec->loop_depth--;
             return body;
         }
         aggregate = eval_result_merge(aggregate, body);
-        if (ctx->return_requested) {
-            ctx->loop_depth--;
+        if (exec->pending_flow == EVAL_FLOW_RETURN) {
+            exec->loop_depth--;
             return aggregate;
         }
-        if (ctx->continue_requested) {
-            ctx->continue_requested = false;
+        if (exec->pending_flow == EVAL_FLOW_CONTINUE) {
+            exec->pending_flow = EVAL_FLOW_NONE;
             continue;
         }
-        if (ctx->break_requested) {
-            ctx->break_requested = false;
-            ctx->loop_depth--;
+        if (exec->pending_flow == EVAL_FLOW_BREAK) {
+            exec->pending_flow = EVAL_FLOW_NONE;
+            exec->loop_depth--;
             if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("while"), (uint32_t)iter_count)) return eval_result_fatal();
             return aggregate;
         }
     }
-    ctx->loop_depth--;
+    exec->loop_depth--;
     Eval_Result loop_diag = EVAL_DIAG_RESULT_SEV(ctx,
                                                  EV_DIAG_ERROR,
                                                  EVAL_DIAG_OUT_OF_RANGE,
@@ -324,7 +328,7 @@ static Eval_Result eval_while(Evaluator_Context *ctx, const Node *node) {
     return eval_result_merge(eval_result_soft_error(), loop_diag);
 }
 
-static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node) {
+static Eval_Result eval_node(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
     // Compatibility variables are refreshed exactly once per command cycle here.
     // Command handlers and diagnostics then read the stable snapshot already stored
@@ -373,18 +377,19 @@ static Eval_Result eval_node(Evaluator_Context *ctx, const Node *node) {
     return eval_result_merge(result, eval_result_ok_if_running(ctx));
 }
 
-Eval_Result eval_execute_node_list(Evaluator_Context *ctx, const Node_List *list) {
+Eval_Result eval_execute_node_list(EvalExecContext *ctx, const Node_List *list) {
     if (!ctx || !list) return eval_result_fatal();
     Eval_Result aggregate = eval_result_ok();
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
         Eval_Result node_result = eval_node(ctx, &(*list)[i]);
         if (eval_result_is_fatal(node_result)) return node_result;
         aggregate = eval_result_merge(aggregate, node_result);
-        if (ctx->return_requested) {
+        Eval_Flow_Signal pending_flow = eval_exec_pending_flow(ctx);
+        if (pending_flow == EVAL_FLOW_RETURN) {
             if (!eval_unwind_blocks_for_return(ctx)) return eval_result_fatal();
             return aggregate;
         }
-        if (ctx->break_requested || ctx->continue_requested) return aggregate;
+        if (pending_flow == EVAL_FLOW_BREAK || pending_flow == EVAL_FLOW_CONTINUE) return aggregate;
     }
     return aggregate;
 }

@@ -257,16 +257,20 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
         return false;
     }
 
-    Evaluator_Init init = {0};
-    init.arena = temp_arena;
-    init.event_arena = event_arena;
-    init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
-    init.current_file = current_file;
+    EvalSession_Config cfg = {0};
+    EvalExec_Request request = {0};
+    cfg.persistent_arena = event_arena;
+    cfg.source_root = nob_sv_from_cstr(".");
+    cfg.binary_root = nob_sv_from_cstr(".");
 
-    Evaluator_Context *ctx = evaluator_create(&init);
-    if (!ctx) {
+    request.scratch_arena = temp_arena;
+    request.source_dir = nob_sv_from_cstr(".");
+    request.binary_dir = nob_sv_from_cstr(".");
+    request.list_file = current_file;
+    request.stream = stream;
+
+    EvalSession *session = eval_session_create(&cfg);
+    if (!session) {
         arena_destroy(temp_arena);
         arena_destroy(event_arena);
         arena_destroy(validate_arena);
@@ -274,7 +278,8 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
         return false;
     }
 
-    Eval_Result eval_result = evaluator_run(ctx, root);
+    EvalRunResult eval_run = eval_session_run(session, &request, root);
+    Eval_Result eval_result = eval_run.result;
     bool eval_ok = !eval_result_is_fatal(eval_result);
     bool builder_ok = false;
     bool freeze_ok = false;
@@ -284,8 +289,8 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
         build_stream = pipeline_wrap_stream_with_root(event_arena,
                                                       stream,
                                                       current_file,
-                                                      init.source_dir,
-                                                      init.binary_dir);
+                                                      request.source_dir,
+                                                      request.binary_dir);
         Build_Model_Builder *builder = builder_create(temp_arena, sink);
         const Build_Model_Draft *draft = NULL;
         if (builder && build_stream) {
@@ -310,7 +315,7 @@ static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, 
         append_model_snapshot(out_sb, model);
     }
 
-    evaluator_destroy(ctx);
+    eval_session_destroy(session);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     arena_destroy(validate_arena);

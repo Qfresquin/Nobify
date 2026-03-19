@@ -40,7 +40,7 @@ static bool string_append_sv_escaped_quotes(Nob_String_Builder *sb, String_View 
     return true;
 }
 
-static bool string_configure_expand_temp(Evaluator_Context *ctx,
+static bool string_configure_expand_temp(EvalExecContext *ctx,
                                          String_View input,
                                          bool at_only,
                                          bool escape_quotes,
@@ -101,7 +101,7 @@ static bool string_configure_expand_temp(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View string_genex_strip_temp(Evaluator_Context *ctx, String_View in) {
+static String_View string_genex_strip_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -153,7 +153,7 @@ static long long string_find_substr(String_View hay, String_View needle, bool re
     return -1;
 }
 
-static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned char *bytes, size_t count, bool upper) {
+static String_View string_bytes_hex_temp(EvalExecContext *ctx, const unsigned char *bytes, size_t count, bool upper) {
     if (!ctx || !bytes) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), (count * 2) + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -167,7 +167,7 @@ static String_View string_bytes_hex_temp(Evaluator_Context *ctx, const unsigned 
     return nob_sv_from_cstr(buf);
 }
 
-Eval_Result eval_string_handle_text(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+Eval_Result eval_string_handle_text(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (!ctx || !node || arena_arr_len(a) < 1 || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (eval_sv_eq_ci_lit(a[0], "APPEND") || eval_sv_eq_ci_lit(a[0], "PREPEND")) {

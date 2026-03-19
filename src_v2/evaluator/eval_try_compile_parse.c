@@ -136,7 +136,7 @@ static Eval_Opt_Parse_Config try_compile_opt_cfg(const Node *node,
     return cfg;
 }
 
-static bool try_compile_add_source_item(Evaluator_Context *ctx,
+static bool try_compile_add_source_item(EvalExecContext *ctx,
                                         Try_Compile_Request *req,
                                         String_View path,
                                         Try_Compile_Language forced_lang) {
@@ -147,7 +147,7 @@ static bool try_compile_add_source_item(Evaluator_Context *ctx,
     return try_compile_source_push(ctx, &req->source_items, item);
 }
 
-static bool try_compile_sv_list_append_all(Evaluator_Context *ctx,
+static bool try_compile_sv_list_append_all(EvalExecContext *ctx,
                                            SV_List *dst,
                                            SV_List src) {
     if (!ctx || !dst) return false;
@@ -157,7 +157,7 @@ static bool try_compile_sv_list_append_all(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_write_generated_source(Evaluator_Context *ctx,
+static bool try_compile_write_generated_source(EvalExecContext *ctx,
                                                Try_Compile_Request *req,
                                                String_View name,
                                                String_View content,
@@ -177,7 +177,7 @@ static bool try_compile_write_generated_source(Evaluator_Context *ctx,
     return try_compile_add_source_item(ctx, req, src_path, forced_lang);
 }
 
-static bool try_compile_emit_invalid_source_project_keyword(Evaluator_Context *ctx,
+static bool try_compile_emit_invalid_source_project_keyword(EvalExecContext *ctx,
                                                             const Node *node,
                                                             Cmake_Event_Origin origin) {
     return EVAL_DIAG_BOOL_SEV(ctx,
@@ -190,7 +190,7 @@ static bool try_compile_emit_invalid_source_project_keyword(Evaluator_Context *c
                               nob_sv_from_cstr("Use try_compile(<out-var> PROJECT ... SOURCE_DIR ...)"));
 }
 
-static bool try_compile_parse_source_option(Evaluator_Context *ctx,
+static bool try_compile_parse_source_option(EvalExecContext *ctx,
                                             void *userdata,
                                             int id,
                                             SV_List values,
@@ -305,7 +305,7 @@ static bool try_compile_parse_source_option(Evaluator_Context *ctx,
     }
 }
 
-static bool try_compile_parse_source_positional(Evaluator_Context *ctx,
+static bool try_compile_parse_source_positional(EvalExecContext *ctx,
                                                 void *userdata,
                                                 String_View value,
                                                 size_t token_index) {
@@ -315,7 +315,7 @@ static bool try_compile_parse_source_positional(Evaluator_Context *ctx,
     return try_compile_add_source_item(ctx, state->req, value, state->current_type);
 }
 
-static bool try_compile_parse_project_option(Evaluator_Context *ctx,
+static bool try_compile_parse_project_option(EvalExecContext *ctx,
                                              void *userdata,
                                              int id,
                                              SV_List values,
@@ -360,7 +360,7 @@ static bool try_compile_parse_project_option(Evaluator_Context *ctx,
     }
 }
 
-static bool try_run_parse_option(Evaluator_Context *ctx,
+static bool try_run_parse_option(EvalExecContext *ctx,
                                  void *userdata,
                                  int id,
                                  SV_List values,
@@ -407,7 +407,7 @@ static bool try_run_parse_option(Evaluator_Context *ctx,
     }
 }
 
-static bool try_run_parse_positional(Evaluator_Context *ctx,
+static bool try_run_parse_positional(EvalExecContext *ctx,
                                      void *userdata,
                                      String_View value,
                                      size_t token_index) {
@@ -417,7 +417,7 @@ static bool try_run_parse_positional(Evaluator_Context *ctx,
     return eval_sv_arr_push_temp(ctx, state->compile_args, value);
 }
 
-static void try_compile_init_request(Evaluator_Context *ctx,
+static void try_compile_init_request(EvalExecContext *ctx,
                                      String_View result_var,
                                      Try_Compile_Request *out_req) {
     if (!ctx || !out_req) return;
@@ -430,7 +430,7 @@ static void try_compile_init_request(Evaluator_Context *ctx,
     };
 }
 
-static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
+static bool try_compile_parse_source_request_core(EvalExecContext *ctx,
                                                   const Node *node,
                                                   const SV_List *args,
                                                   Try_Compile_Request *out_req) {
@@ -480,7 +480,7 @@ static bool try_compile_parse_source_request_core(Evaluator_Context *ctx,
     return true;
 }
 
-bool try_compile_parse_request(Evaluator_Context *ctx,
+bool try_compile_parse_request(EvalExecContext *ctx,
                                const Node *node,
                                const SV_List *args,
                                Try_Compile_Request *out_req) {
@@ -524,7 +524,7 @@ bool try_compile_parse_request(Evaluator_Context *ctx,
     return try_compile_parse_source_request_core(ctx, node, args, out_req);
 }
 
-bool try_run_parse_request(Evaluator_Context *ctx,
+bool try_run_parse_request(EvalExecContext *ctx,
                            const Node *node,
                            const SV_List *args,
                            Try_Run_Request *out_req) {

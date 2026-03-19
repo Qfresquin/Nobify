@@ -1,6 +1,6 @@
 #include "eval_target_internal.h"
 
-static bool target_usage_store_target_property(Evaluator_Context *ctx,
+static bool target_usage_store_target_property(EvalExecContext *ctx,
                                                Cmake_Event_Origin origin,
                                                String_View target_name,
                                                String_View key,
@@ -16,7 +16,7 @@ static bool target_usage_store_target_property(Evaluator_Context *ctx,
                                false);
 }
 
-static bool target_usage_store_and_emit_target_property(Evaluator_Context *ctx,
+static bool target_usage_store_and_emit_target_property(EvalExecContext *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View target_name,
                                                         String_View key,
@@ -97,23 +97,23 @@ typedef struct {
     Target_Sources_Entry *entries;
 } Target_Sources_Request;
 
-typedef String_View (*Target_Usage_Normalize_Fn)(Evaluator_Context *ctx, String_View item);
-typedef bool (*Target_Usage_Emit_Item_Fn)(Evaluator_Context *ctx,
+typedef String_View (*Target_Usage_Normalize_Fn)(EvalExecContext *ctx, String_View item);
+typedef bool (*Target_Usage_Emit_Item_Fn)(EvalExecContext *ctx,
                                           Cmake_Event_Origin origin,
                                           String_View target_name,
                                           const Target_Usage_Item_Entry *entry);
 
-static String_View target_usage_identity_item(Evaluator_Context *ctx, String_View item) {
+static String_View target_usage_identity_item(EvalExecContext *ctx, String_View item) {
     (void)ctx;
     return item;
 }
 
-static String_View target_compile_definition_normalize_temp(Evaluator_Context *ctx, String_View item) {
+static String_View target_compile_definition_normalize_temp(EvalExecContext *ctx, String_View item) {
     (void)ctx;
     return eval_normalize_compile_definition_item(item);
 }
 
-static String_View target_usage_resolve_path_item_temp(Evaluator_Context *ctx, String_View item) {
+static String_View target_usage_resolve_path_item_temp(EvalExecContext *ctx, String_View item) {
     if (!ctx) return item;
     return eval_path_resolve_for_cmake_arg(ctx, item, eval_current_source_dir_for_paths(ctx), true);
 }
@@ -126,7 +126,7 @@ static bool target_usage_visibility_writes_interface(Cmake_Visibility visibility
     return visibility == EV_VISIBILITY_PUBLIC || visibility == EV_VISIBILITY_INTERFACE;
 }
 
-static bool target_usage_append_item_entry(Evaluator_Context *ctx,
+static bool target_usage_append_item_entry(EvalExecContext *ctx,
                                            Target_Usage_Item_Entry **entries,
                                            Cmake_Visibility visibility,
                                            String_View item,
@@ -144,7 +144,7 @@ static bool target_usage_append_item_entry(Evaluator_Context *ctx,
     return arena_arr_push(eval_temp_arena(ctx), *entries, entry);
 }
 
-static bool target_usage_group_append_item(Evaluator_Context *ctx,
+static bool target_usage_group_append_item(EvalExecContext *ctx,
                                            Target_Usage_Visibility_Group **groups,
                                            Cmake_Visibility visibility,
                                            String_View item) {
@@ -160,7 +160,7 @@ static bool target_usage_group_append_item(Evaluator_Context *ctx,
     return svu_list_push_temp(ctx, &arena_arr_last(*groups).items, item);
 }
 
-static bool target_usage_parse_visibility_groups(Evaluator_Context *ctx,
+static bool target_usage_parse_visibility_groups(EvalExecContext *ctx,
                                                  const Node *node,
                                                  SV_List args,
                                                  size_t start,
@@ -185,7 +185,7 @@ static bool target_usage_parse_visibility_groups(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_usage_apply_visibility_groups(Evaluator_Context *ctx,
+static bool target_usage_apply_visibility_groups(EvalExecContext *ctx,
                                                  Cmake_Event_Origin origin,
                                                  String_View target_name,
                                                  const Target_Usage_Visibility_Group *groups,
@@ -223,7 +223,7 @@ static bool target_usage_apply_visibility_groups(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_usage_apply_item_entries(Evaluator_Context *ctx,
+static bool target_usage_apply_item_entries(EvalExecContext *ctx,
                                             Cmake_Event_Origin origin,
                                             String_View target_name,
                                             const Target_Usage_Item_Entry *entries,
@@ -252,14 +252,14 @@ static bool target_usage_apply_item_entries(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_usage_emit_link_libraries_entry(Evaluator_Context *ctx,
+static bool target_usage_emit_link_libraries_entry(EvalExecContext *ctx,
                                                    Cmake_Event_Origin origin,
                                                    String_View target_name,
                                                    const Target_Usage_Item_Entry *entry) {
     return eval_emit_target_link_libraries(ctx, origin, target_name, entry->visibility, entry->item);
 }
 
-static bool target_usage_emit_link_options_entry(Evaluator_Context *ctx,
+static bool target_usage_emit_link_options_entry(EvalExecContext *ctx,
                                                  Cmake_Event_Origin origin,
                                                  String_View target_name,
                                                  const Target_Usage_Item_Entry *entry) {
@@ -267,14 +267,14 @@ static bool target_usage_emit_link_options_entry(Evaluator_Context *ctx,
         ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
 }
 
-static bool target_usage_emit_link_directories_entry(Evaluator_Context *ctx,
+static bool target_usage_emit_link_directories_entry(EvalExecContext *ctx,
                                                      Cmake_Event_Origin origin,
                                                      String_View target_name,
                                                      const Target_Usage_Item_Entry *entry) {
     return eval_emit_target_link_directories(ctx, origin, target_name, entry->visibility, entry->item);
 }
 
-static bool target_usage_emit_include_directories_entry(Evaluator_Context *ctx,
+static bool target_usage_emit_include_directories_entry(EvalExecContext *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View target_name,
                                                         const Target_Usage_Item_Entry *entry) {
@@ -287,14 +287,14 @@ static bool target_usage_emit_include_directories_entry(Evaluator_Context *ctx,
                                                 entry->is_before);
 }
 
-static bool target_usage_emit_compile_definitions_entry(Evaluator_Context *ctx,
+static bool target_usage_emit_compile_definitions_entry(EvalExecContext *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View target_name,
                                                         const Target_Usage_Item_Entry *entry) {
     return eval_emit_target_compile_definitions(ctx, origin, target_name, entry->visibility, entry->item);
 }
 
-static bool target_usage_emit_compile_options_entry(Evaluator_Context *ctx,
+static bool target_usage_emit_compile_options_entry(EvalExecContext *ctx,
                                                     Cmake_Event_Origin origin,
                                                     String_View target_name,
                                                     const Target_Usage_Item_Entry *entry) {
@@ -302,7 +302,7 @@ static bool target_usage_emit_compile_options_entry(Evaluator_Context *ctx,
         ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
 }
 
-static bool target_usage_parse_item_request(Evaluator_Context *ctx,
+static bool target_usage_parse_item_request(EvalExecContext *ctx,
                                             const Node *node,
                                             Cmake_Event_Origin origin,
                                             SV_List args,
@@ -363,7 +363,7 @@ static bool target_usage_parse_item_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_compile_features_parse_request(Evaluator_Context *ctx,
+static bool target_compile_features_parse_request(EvalExecContext *ctx,
                                                   const Node *node,
                                                   Cmake_Event_Origin origin,
                                                   SV_List args,
@@ -390,7 +390,7 @@ static bool target_compile_features_parse_request(Evaluator_Context *ctx,
         ctx, node, args, 1, true, target_usage_identity_item, &out_req->groups);
 }
 
-static bool target_precompile_headers_parse_request(Evaluator_Context *ctx,
+static bool target_precompile_headers_parse_request(EvalExecContext *ctx,
                                                     const Node *node,
                                                     Cmake_Event_Origin origin,
                                                     SV_List args,
@@ -437,7 +437,7 @@ static bool target_precompile_headers_parse_request(Evaluator_Context *ctx,
         ctx, node, args, 1, true, target_pch_item_normalize_temp, &out_req->groups);
 }
 
-static bool target_link_libraries_parse_request(Evaluator_Context *ctx,
+static bool target_link_libraries_parse_request(EvalExecContext *ctx,
                                                 const Node *node,
                                                 Cmake_Event_Origin origin,
                                                 SV_List args,
@@ -516,7 +516,7 @@ static bool target_sources_file_set_kind_from_type(String_View type, Target_File
     return false;
 }
 
-static bool target_sources_append_file_set_items(Evaluator_Context *ctx,
+static bool target_sources_append_file_set_items(EvalExecContext *ctx,
                                                  SV_List args,
                                                  size_t *io_index,
                                                  String_View current_src_dir,
@@ -533,7 +533,7 @@ static bool target_sources_append_file_set_items(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_sources_parse_file_set(Evaluator_Context *ctx,
+static bool target_sources_parse_file_set(EvalExecContext *ctx,
                                           const Node *node,
                                           Cmake_Event_Origin origin,
                                           SV_List args,
@@ -661,7 +661,7 @@ static bool target_sources_parse_file_set(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_sources_parse_request(Evaluator_Context *ctx,
+static bool target_sources_parse_request(EvalExecContext *ctx,
                                          const Node *node,
                                          Cmake_Event_Origin origin,
                                          SV_List args,
@@ -720,7 +720,7 @@ static bool target_sources_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool target_sources_store_file_set(Evaluator_Context *ctx,
+static bool target_sources_store_file_set(EvalExecContext *ctx,
                                           Cmake_Event_Origin origin,
                                           String_View target_name,
                                           Cmake_Visibility vis,
@@ -811,7 +811,7 @@ static bool target_sources_store_file_set(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_dependencies(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -849,7 +849,7 @@ Eval_Result eval_handle_add_dependencies(Evaluator_Context *ctx, const Node *nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_link_libraries(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -882,7 +882,7 @@ Eval_Result eval_handle_target_link_libraries(Evaluator_Context *ctx, const Node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_link_options(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_link_options(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -917,7 +917,7 @@ Eval_Result eval_handle_target_link_options(Evaluator_Context *ctx, const Node *
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_link_directories(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_link_directories(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -952,7 +952,7 @@ Eval_Result eval_handle_target_link_directories(Evaluator_Context *ctx, const No
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_include_directories(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_include_directories(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -987,7 +987,7 @@ Eval_Result eval_handle_target_include_directories(Evaluator_Context *ctx, const
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_compile_definitions(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_compile_definitions(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -1021,7 +1021,7 @@ Eval_Result eval_handle_target_compile_definitions(Evaluator_Context *ctx, const
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_compile_options(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_compile_options(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -1055,7 +1055,7 @@ Eval_Result eval_handle_target_compile_options(Evaluator_Context *ctx, const Nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_sources(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_sources(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -1112,7 +1112,7 @@ Eval_Result eval_handle_target_sources(Evaluator_Context *ctx, const Node *node)
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_compile_features(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_compile_features(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -1134,7 +1134,7 @@ Eval_Result eval_handle_target_compile_features(Evaluator_Context *ctx, const No
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_target_precompile_headers(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_target_precompile_headers(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

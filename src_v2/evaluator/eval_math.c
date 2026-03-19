@@ -15,7 +15,7 @@ typedef struct {
     const char *s;
     size_t pos;
     Cmake_Event_Origin origin;
-    Evaluator_Context *ctx;
+    EvalExecContext *ctx;
     String_View command;
     bool ok;
 } Math_Parser;
@@ -283,7 +283,7 @@ static bool math_parse_bitor(Math_Parser *p, long long *out) {
     return true;
 }
 
-Eval_Result eval_handle_math(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_math(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);

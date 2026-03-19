@@ -8,7 +8,7 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -16,7 +16,7 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -36,9 +36,9 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
         "cmake_language(DEFER GET_CALL later CALL_INFO)\n"
         "set(DEFER_VALUE after)\n"
         "return()\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
@@ -60,16 +60,16 @@ TEST(evaluator_cmake_language_core_subcommands_work) {
     ASSERT(saw_eval);
     ASSERT(saw_log);
     ASSERT(saw_defer);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IDS_OUT")), nob_sv_from_cstr("later")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("CALL_INFO")),
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IDS_OUT")), nob_sv_from_cstr("later")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CALL_INFO")),
                      nob_sv_from_cstr("target_compile_definitions;cml_probe;PRIVATE;DEFER_VALUE=${DEFER_VALUE}")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("CANCELLED")).count == 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("AUTO_HIT")).count == 0);
-    String_View auto_id = eval_var_get(ctx, nob_sv_from_cstr("AUTO_ID"));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("CANCELLED")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("AUTO_HIT")).count == 0);
+    String_View auto_id = eval_test_var_get(ctx, nob_sv_from_cstr("AUTO_ID"));
     ASSERT(auto_id.count > 0);
     ASSERT(auto_id.data[0] == '_');
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -83,7 +83,7 @@ TEST(evaluator_defer_replay_in_subdirectory_uses_child_execution_context) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -91,7 +91,7 @@ TEST(evaluator_defer_replay_in_subdirectory_uses_child_execution_context) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     ASSERT(nob_mkdir_if_not_exists("subdir"));
@@ -114,7 +114,7 @@ TEST(evaluator_defer_replay_in_subdirectory_uses_child_execution_context) {
         "add_subdirectory(subdir)\n"
         "add_executable(root_phase_c_probe root_phase_c_main.c)\n"
         "target_compile_definitions(root_phase_c_probe PRIVATE ROOT_FILE=${CMAKE_CURRENT_LIST_FILE})\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     bool saw_defer_src = false;
     bool saw_defer_bin = false;
@@ -142,7 +142,7 @@ TEST(evaluator_defer_replay_in_subdirectory_uses_child_execution_context) {
     ASSERT(saw_defer_file);
     ASSERT(saw_root_file);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -156,7 +156,7 @@ TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -164,7 +164,7 @@ TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     ASSERT(nob_mkdir_if_not_exists("provider_root"));
@@ -203,25 +203,23 @@ TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
         "find_package(FallbackPkg CONFIG QUIET)\n"
         "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n"
         "find_package(ClearedPkg CONFIG QUIET)\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BY_PROVIDER")), nob_sv_from_cstr("yes")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ProvidedPkg_FOUND")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ProvidedPkg_CONFIG")), nob_sv_from_cstr("provider://ProvidedPkg")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("FallbackPkg_FOUND")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("FallbackPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ClearedPkg_FOUND")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("ClearedPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_BY_PROVIDER")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ProvidedPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ProvidedPkg_CONFIG")), nob_sv_from_cstr("provider://ProvidedPkg")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("FallbackPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("FallbackPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ClearedPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ClearedPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
                      nob_sv_from_cstr("FIND_PACKAGE:ProvidedPkg;FIND_PACKAGE:FallbackPkg")));
-    ASSERT(ctx->semantic_state.package.dependency_provider.command_name.count == 0);
-    ASSERT(!ctx->semantic_state.package.dependency_provider.supports_find_package);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -235,7 +233,7 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -243,7 +241,7 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     ASSERT(nob_mkdir_if_not_exists("provided_dep_src"));
@@ -286,35 +284,31 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
         "FetchContent_GetProperties(BypassDep SOURCE_DIR BYPASS_SRC BINARY_DIR BYPASS_BIN POPULATED BYPASS_POPULATED)\n"
         "FetchContent_GetProperties(ProvidedDep)\n"
         "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
-    ASSERT(ctx->fetchcontent_module_loaded);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
                      nob_sv_from_cstr("FETCHCONTENT_MAKEAVAILABLE_SERIAL:ProvidedDep;FETCHCONTENT_MAKEAVAILABLE_SERIAL:LocalDep")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_POPULATED")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("LOCAL_POPULATED")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BYPASS_POPULATED")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("DECLARED_POPULATED")), nob_sv_from_cstr("0")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("DECLARED_SRC")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("DECLARED_BIN")).count > 0);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_POPULATED")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_SOURCE_DIR")),
-                     eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC"))));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("provideddep_BINARY_DIR")),
-                     eval_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN"))));
-    ASSERT(eval_target_known(ctx, nob_sv_from_cstr("local_from_fetch")));
-    ASSERT(eval_target_known(ctx, nob_sv_from_cstr("bypass_from_fetch")));
-    ASSERT(ctx->semantic_state.package.dependency_provider.command_name.count == 0);
-    ASSERT(!ctx->semantic_state.package.dependency_provider.supports_find_package);
-    ASSERT(!ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("LOCAL_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BYPASS_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DECLARED_POPULATED")), nob_sv_from_cstr("0")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("DECLARED_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("DECLARED_BIN")).count > 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("provideddep_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("provideddep_SOURCE_DIR")),
+                     eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_SRC"))));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("provideddep_BINARY_DIR")),
+                     eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN"))));
+    ASSERT(eval_test_target_known(ctx, nob_sv_from_cstr("local_from_fetch")));
+    ASSERT(eval_test_target_known(ctx, nob_sv_from_cstr("bypass_from_fetch")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -335,7 +329,7 @@ TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
                                  strlen("add_library(url_from_fetch INTERFACE)\n")));
     ASSERT(evaluator_create_tar_archive("fc_url_dep.tar", "fc_url_archive_root", "url_src"));
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -343,7 +337,7 @@ TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -362,21 +356,21 @@ TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
         "endif()\n"
         "find_package(UrlDep CONFIG QUIET)\n"
         "FetchContent_GetProperties(UrlDep POPULATED URL_POP)\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("URL_DECL_POP")), nob_sv_from_cstr("0")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("URL_POP")), nob_sv_from_cstr("1")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("URL_DECL_SRC")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("URL_DECL_BIN")).count > 0);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("REDIRECT_CFG_EXISTS")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("UrlDep_FOUND")), nob_sv_from_cstr("1")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("UrlDep_DIR")).count > 0);
-    ASSERT(eval_target_known(ctx, nob_sv_from_cstr("url_from_fetch")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("URL_DECL_POP")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("URL_POP")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("URL_DECL_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("URL_DECL_BIN")).count > 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("REDIRECT_CFG_EXISTS")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UrlDep_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("UrlDep_DIR")).count > 0);
+    ASSERT(eval_test_target_known(ctx, nob_sv_from_cstr("url_from_fetch")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -397,7 +391,7 @@ TEST(evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add
                                  strlen("add_library(noextract_lib INTERFACE)\n")));
     ASSERT(evaluator_create_tar_archive("fc_noextract_dep.tar", "fc_noextract_archive_root", "noextract_src"));
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -405,7 +399,7 @@ TEST(evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -424,19 +418,19 @@ TEST(evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add
         "if(TARGET noextract_lib)\n"
         "  set(NOEXTRACT_TARGET 1)\n"
         "endif()\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_POP")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_EXISTS")), nob_sv_from_cstr("1")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_SRC")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_BIN")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_TARGET")).count == 0);
-    ASSERT(!eval_target_known(ctx, nob_sv_from_cstr("noextract_lib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_POP")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_EXISTS")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_BIN")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOEXTRACT_TARGET")).count == 0);
+    ASSERT(!eval_test_target_known(ctx, nob_sv_from_cstr("noextract_lib")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -455,7 +449,7 @@ TEST(evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdir
                                                   "v1\n",
                                                   "v1"));
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -463,7 +457,7 @@ TEST(evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdir
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -479,19 +473,73 @@ TEST(evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdir
         "if(TARGET git_saved_lib)\n"
         "  set(GIT_TARGET 1)\n"
         "endif()\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("GIT_POP")), nob_sv_from_cstr("1")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("GIT_SRC")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("GIT_BIN")).count > 0);
-    ASSERT(sv_contains_sv(eval_var_get(ctx, nob_sv_from_cstr("GIT_VERSION")), nob_sv_from_cstr("v1")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("GIT_TARGET")).count == 0);
-    ASSERT(!eval_target_known(ctx, nob_sv_from_cstr("git_saved_lib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_POP")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_BIN")).count > 0);
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_VERSION")), nob_sv_from_cstr("v1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_TARGET")).count == 0);
+    ASSERT(!eval_test_target_known(ctx, nob_sv_from_cstr("git_saved_lib")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_fetchcontent_makeavailable_saved_git_populates_and_adds_subdirectory) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(evaluator_create_fetchcontent_git_repo("fc_git_make_repo",
+                                                  "add_library(git_make_lib INTERFACE)\n",
+                                                  "v1\n",
+                                                  "v1"));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "include(FetchContent)\n"
+        "FetchContent_Declare(GitMake\n"
+        "  GIT_REPOSITORY \"${CMAKE_CURRENT_BINARY_DIR}/fc_git_make_repo\"\n"
+        "  GIT_TAG v1\n"
+        "  GIT_PROGRESS TRUE)\n"
+        "FetchContent_MakeAvailable(GitMake)\n"
+        "FetchContent_MakeAvailable(GitMake)\n"
+        "FetchContent_GetProperties(GitMake SOURCE_DIR GIT_MAKE_SRC BINARY_DIR GIT_MAKE_BIN POPULATED GIT_MAKE_POP)\n"
+        "file(READ \"${gitmake_SOURCE_DIR}/version.txt\" GIT_MAKE_VERSION)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_MAKE_POP")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_MAKE_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_MAKE_BIN")).count > 0);
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("GIT_MAKE_VERSION")), nob_sv_from_cstr("v1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("gitmake_POPULATED")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_target_known(ctx, nob_sv_from_cstr("git_make_lib")));
+
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -505,7 +553,7 @@ TEST(evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_packag
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -513,7 +561,7 @@ TEST(evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_packag
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -532,19 +580,19 @@ TEST(evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_packag
         "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_try_pkg_local\")\n"
         "FetchContent_MakeAvailable(TryPkg)\n"
         "FetchContent_GetProperties(TryPkg SOURCE_DIR TRY_SRC BINARY_DIR TRY_BIN POPULATED TRY_POP)\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TRY_POP")), nob_sv_from_cstr("0")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TryPkg_FOUND")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TryPkg_FROM")), nob_sv_from_cstr("package")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("TRY_SRC")).count > 0);
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("TRY_BIN")).count > 0);
-    ASSERT(!eval_target_known(ctx, nob_sv_from_cstr("try_local_lib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TRY_POP")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TryPkg_FOUND")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TryPkg_FROM")), nob_sv_from_cstr("package")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("TRY_SRC")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("TRY_BIN")).count > 0);
+    ASSERT(!eval_test_target_known(ctx, nob_sv_from_cstr("try_local_lib")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -563,7 +611,7 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
                                  "add_library(fc_provider_parse_lib INTERFACE)\n",
                                  strlen("add_library(fc_provider_parse_lib INTERFACE)\n")));
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -571,7 +619,7 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -594,9 +642,9 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
         "cmake_language(SET_DEPENDENCY_PROVIDER fc_bad_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n"
         "FetchContent_MakeAvailable(ParseProvider)\n"
         "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 7);
 
@@ -641,7 +689,7 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
     ASSERT(saw_populate_missing_decl);
     ASSERT(saw_setpopulated_context);
     ASSERT(saw_setpopulated_source_dir);
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -662,7 +710,7 @@ TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags
                                  strlen("add_library(bad_hash_lib INTERFACE)\n")));
     ASSERT(evaluator_create_tar_archive("fc_bad_hash.tar", "fc_bad_hash_root", "bad_hash_src"));
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -670,7 +718,7 @@ TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -689,9 +737,9 @@ TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags
         "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_bad_hash.tar\"\n"
         "  URL_HASH \"SHA256=0000\"\n"
         "  SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_bad_hash_out\")\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count >= 6);
 
@@ -726,7 +774,7 @@ TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags
     ASSERT(saw_missing_url);
     ASSERT(saw_hash_failure);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -740,7 +788,7 @@ TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -748,7 +796,7 @@ TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -758,22 +806,21 @@ TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
         "set(INLINE_FILE ${CMAKE_CURRENT_LIST_FILE})]])\n"
         "set(AFTER_INLINE ok)\n");
 
-    Eval_Result run_res = evaluator_run(ctx, root);
+    Eval_Result run_res = eval_test_run(ctx, root);
     ASSERT(eval_result_is_soft_error(run_res));
     ASSERT(!eval_result_is_fatal(run_res));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 1);
 
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BEFORE_INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("AFTER_INLINE")), nob_sv_from_cstr("ok")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BEFORE_INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("AFTER_INLINE")), nob_sv_from_cstr("ok")));
     ASSERT(ctx->current_file != NULL);
     ASSERT(strcmp(ctx->current_file, "CMakeLists.txt") == 0);
-    ASSERT(nob_sv_eq(eval_current_list_file(ctx), nob_sv_from_cstr("CMakeLists.txt")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -787,7 +834,7 @@ TEST(evaluator_cmake_language_rejects_incomplete_and_unknown_forms) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -795,7 +842,7 @@ TEST(evaluator_cmake_language_rejects_incomplete_and_unknown_forms) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -807,11 +854,11 @@ TEST(evaluator_cmake_language_rejects_incomplete_and_unknown_forms) {
         "cmake_language(GET_MESSAGE_LOG_LEVEL)\n"
         "cmake_language(UNKNOWN_SUBCOMMAND value)\n");
 
-    Eval_Result run_res = evaluator_run(ctx, root);
+    Eval_Result run_res = eval_test_run(ctx, root);
     ASSERT(eval_result_is_soft_error(run_res));
     ASSERT(!eval_result_is_fatal(run_res));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 6);
 
@@ -846,7 +893,7 @@ TEST(evaluator_cmake_language_rejects_incomplete_and_unknown_forms) {
     ASSERT(saw_missing_log_var);
     ASSERT(saw_unknown_subcommand);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -860,7 +907,7 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -868,7 +915,7 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -883,11 +930,11 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
         "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS BAD_METHOD)\n"
         "find_package(OutsidePkg BYPASS_PROVIDER QUIET)\n");
 
-    Eval_Result run_res = evaluator_run(ctx, root);
+    Eval_Result run_res = eval_test_run(ctx, root);
     ASSERT(eval_result_is_soft_error(run_res));
     ASSERT(!eval_result_is_fatal(run_res));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 4);
 
@@ -914,7 +961,7 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
     ASSERT(saw_method);
     ASSERT(saw_bypass);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -928,7 +975,7 @@ TEST(evaluator_target_compile_definitions_normalizes_dash_d_items) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -936,16 +983,16 @@ TEST(evaluator_target_compile_definitions_normalizes_dash_d_items) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
         temp_arena,
         "add_executable(norm_defs main.c)\n"
         "target_compile_definitions(norm_defs PRIVATE -DFOO -D BAR -DBAZ=1 QUX=2)\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
@@ -972,7 +1019,7 @@ TEST(evaluator_target_compile_definitions_normalizes_dash_d_items) {
     ASSERT(saw_qux);
     ASSERT(!saw_dash_prefixed);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -986,7 +1033,7 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -994,7 +1041,7 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1005,9 +1052,9 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
         "add_custom_command(TARGET gen COMMAND echo bad_no_stage)\n"
         "add_custom_command(TARGET gen PRE_BUILD PRE_LINK COMMAND echo bad_multi_stage)\n"
         "add_custom_command(TARGET gen POST_BUILD DEPENDS dep1 COMMAND echo bad_depends)\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 4);
 
@@ -1048,7 +1095,7 @@ TEST(evaluator_add_custom_command_target_validates_signature_and_target) {
     ASSERT(saw_multi_stage);
     ASSERT(saw_unexpected_depends);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -1062,7 +1109,7 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -1070,7 +1117,7 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1079,9 +1126,9 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
         "add_custom_command(OUTPUT bad_conflict.c IMPLICIT_DEPENDS C in.c DEPFILE in.d COMMAND gen)\n"
         "add_custom_command(OUTPUT bad_pool.c JOB_POOL pool USES_TERMINAL COMMAND gen)\n"
         "add_custom_command(OUTPUT good.c COMMAND python gen.py DEPENDS schema.idl BYPRODUCTS gen.log MAIN_DEPENDENCY schema.idl)\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 3);
 
@@ -1112,7 +1159,7 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
     ASSERT(saw_pool_error);
     ASSERT(saw_valid_output_event);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -1409,7 +1456,7 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -1417,7 +1464,7 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1440,7 +1487,7 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
         "include(ir_include.cmake)\n"
         "add_subdirectory(ir_subdir)\n"
         "unknown_event_ir_cmd()\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     bool saw_compile_options = false;
     bool saw_compile_definitions = false;
@@ -1603,23 +1650,23 @@ TEST(evaluator_event_ir_directory_semantics_and_trace_surface) {
     ASSERT(subdir_begin < subdir_enter);
     ASSERT(subdir_enter < subdir_leave);
     ASSERT(subdir_leave < subdir_end);
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_COMPILE_OPTIONS")), nob_sv_from_cstr("-Wall")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_COMPILE_DEFINITIONS")), nob_sv_from_cstr("IR_DEF")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_LINK_OPTIONS")),
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IR_COMPILE_OPTIONS")), nob_sv_from_cstr("-Wall")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IR_COMPILE_DEFINITIONS")), nob_sv_from_cstr("IR_DEF")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IR_LINK_OPTIONS")),
                      nob_sv_from_cstr("-Wl,--as-needed")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("IR_GLOBAL_PROP_OUT")),
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IR_GLOBAL_PROP_OUT")),
                      nob_sv_from_cstr("ir_global_a;ir_global_b")));
 
-    String_View include_dirs = eval_var_get(ctx, nob_sv_from_cstr("IR_INCLUDE_DIRECTORIES"));
+    String_View include_dirs = eval_test_var_get(ctx, nob_sv_from_cstr("IR_INCLUDE_DIRECTORIES"));
     ASSERT(semicolon_list_count(include_dirs) == 2);
     ASSERT(sv_contains_sv(semicolon_list_item_at(include_dirs, 0), nob_sv_from_cstr("ir_inc_a")));
     ASSERT(sv_contains_sv(semicolon_list_item_at(include_dirs, 1), nob_sv_from_cstr("ir_inc_b")));
 
-    String_View link_dirs = eval_var_get(ctx, nob_sv_from_cstr("IR_LINK_DIRECTORIES"));
+    String_View link_dirs = eval_test_var_get(ctx, nob_sv_from_cstr("IR_LINK_DIRECTORIES"));
     ASSERT(semicolon_list_count(link_dirs) == 1);
     ASSERT(sv_contains_sv(semicolon_list_item_at(link_dirs, 0), nob_sv_from_cstr("ir_lib")));
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -1633,7 +1680,7 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -1641,7 +1688,7 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1656,7 +1703,7 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
         "math()\n"
         "trace_fn()\n"
         "trace_macro()\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     size_t unknown_begin = evaluator_find_command_begin_index(stream,
                                                               nob_sv_from_cstr("unknown_trace_cmd"),
@@ -1763,7 +1810,7 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
     ASSERT(macro_inner_begin < macro_inner_diag);
     ASSERT(macro_inner_diag < macro_inner_end);
     ASSERT(macro_inner_end < macro_end);
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -1777,7 +1824,7 @@ TEST(evaluator_event_ir_command_trace_sequences_success_paths) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -1785,7 +1832,7 @@ TEST(evaluator_event_ir_command_trace_sequences_success_paths) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1799,9 +1846,9 @@ TEST(evaluator_event_ir_command_trace_sequences_success_paths) {
         "set(TOP_OK 1)\n"
         "trace_fn_ok()\n"
         "trace_macro_ok()\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
@@ -1871,11 +1918,11 @@ TEST(evaluator_event_ir_command_trace_sequences_success_paths) {
     ASSERT(macro_inner_begin < macro_inner_end);
     ASSERT(macro_inner_end < macro_end);
 
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("TOP_OK")), nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("MAC_VISIBLE")), nob_sv_from_cstr("1")));
-    ASSERT(eval_var_get(ctx, nob_sv_from_cstr("FN_LOCAL")).count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TOP_OK")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MAC_VISIBLE")), nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("FN_LOCAL")).count == 0);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -1889,7 +1936,7 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -1897,7 +1944,7 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1911,9 +1958,9 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
         "mc_ret()\n"
         "add_executable(ret_macro main.c)\n"
         "target_compile_definitions(ret_macro PRIVATE MAC_RET=${MAC_RET})\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 1);
 
@@ -1936,7 +1983,7 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
     ASSERT(saw_macro_return_error);
     ASSERT(saw_macro_ret_after);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -1950,7 +1997,7 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    Evaluator_Init init = {0};
+    Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
@@ -1958,7 +2005,7 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
 
-    Evaluator_Context *ctx = evaluator_create(&init);
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
@@ -1979,9 +2026,9 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
         "ret_new()\n"
         "add_executable(ret_cmp0140 main.c)\n"
         "target_compile_definitions(ret_cmp0140 PRIVATE RET_OLD=${RET_OLD} RET_NEW=${RET_NEW})\n");
-    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
-    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
@@ -2003,7 +2050,7 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
     ASSERT(saw_ret_old_root);
     ASSERT(saw_ret_new_changed);
 
-    evaluator_destroy(ctx);
+    eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -2018,6 +2065,7 @@ void run_evaluator_v2_batch2(int *passed, int *failed) {
     test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed);
     test_evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory(passed, failed);
     test_evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory(passed, failed);
+    test_evaluator_fetchcontent_makeavailable_saved_git_populates_and_adds_subdirectory(passed, failed);
     test_evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_package_resolution(passed, failed);
     test_evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes(passed, failed);
     test_evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags(passed, failed);

@@ -134,7 +134,7 @@ int eval_policy_known_min_id(void) { return POLICY_KNOWN_MIN_ID; }
 int eval_policy_known_max_id(void) { return POLICY_KNOWN_MAX_ID; }
 size_t eval_policy_known_count(void) { return POLICY_KNOWN_COUNT; }
 
-static bool policy_set_depth_var(Evaluator_Context *ctx) {
+static bool policy_set_depth_var(EvalExecContext *ctx) {
     if (eval_policy_visible_depth(ctx) == 0) return false;
     char depth_buf[32];
     int n = snprintf(depth_buf, sizeof(depth_buf), "%zu", eval_policy_visible_depth(ctx));
@@ -142,7 +142,7 @@ static bool policy_set_depth_var(Evaluator_Context *ctx) {
     return eval_var_set_current(ctx, nob_sv_from_cstr(EVAL_VAR_NOBIFY_POLICY_STACK_DEPTH), nob_sv_from_cstr(depth_buf));
 }
 
-static bool policy_ensure_capacity(Evaluator_Context *ctx, size_t min_capacity) {
+static bool policy_ensure_capacity(EvalExecContext *ctx, size_t min_capacity) {
     if (!ctx) return false;
     size_t old_capacity = arena_arr_cap(ctx->policy_levels);
     if (!arena_arr_reserve(ctx->event_arena, ctx->policy_levels, min_capacity)) return ctx_oom(ctx);
@@ -153,7 +153,7 @@ static bool policy_ensure_capacity(Evaluator_Context *ctx, size_t min_capacity) 
     return true;
 }
 
-static bool policy_stack_bootstrap(Evaluator_Context *ctx) {
+static bool policy_stack_bootstrap(EvalExecContext *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (ctx->visible_policy_depth == 0) {
         if (arena_arr_len(ctx->policy_levels) == 0) {
@@ -169,7 +169,7 @@ static bool policy_stack_bootstrap(Evaluator_Context *ctx) {
     return true;
 }
 
-bool eval_policy_push(Evaluator_Context *ctx) {
+bool eval_policy_push(EvalExecContext *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (!policy_stack_bootstrap(ctx)) return false;
     size_t depth = eval_policy_visible_depth(ctx);
@@ -182,7 +182,7 @@ bool eval_policy_push(Evaluator_Context *ctx) {
     return policy_set_depth_var(ctx);
 }
 
-bool eval_policy_pop(Evaluator_Context *ctx) {
+bool eval_policy_pop(EvalExecContext *ctx) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (!policy_stack_bootstrap(ctx)) return false;
     if (eval_policy_visible_depth(ctx) <= 1) return false;
@@ -191,7 +191,7 @@ bool eval_policy_pop(Evaluator_Context *ctx) {
     return policy_set_depth_var(ctx);
 }
 
-bool eval_policy_set_status(Evaluator_Context *ctx, String_View policy_id, Eval_Policy_Status status) {
+bool eval_policy_set_status(EvalExecContext *ctx, String_View policy_id, Eval_Policy_Status status) {
     if (!ctx || eval_should_stop(ctx)) return false;
     if (!eval_policy_is_known(policy_id)) return false;
     if (!(status == POLICY_STATUS_OLD || status == POLICY_STATUS_NEW || status == POLICY_STATUS_UNSET)) return false;
@@ -211,13 +211,13 @@ bool eval_policy_set_status(Evaluator_Context *ctx, String_View policy_id, Eval_
     return eval_var_set_current(ctx, nob_sv_from_cstr(legacy_key), eval_policy_status_to_sv(status));
 }
 
-bool eval_policy_set(Evaluator_Context *ctx, String_View policy_id, String_View value) {
+bool eval_policy_set(EvalExecContext *ctx, String_View policy_id, String_View value) {
     Eval_Policy_Status normalized = policy_status_from_sv(value);
     if (normalized == POLICY_STATUS_UNSET) return false;
     return eval_policy_set_status(ctx, policy_id, normalized);
 }
 
-String_View eval_policy_get_effective(Evaluator_Context *ctx, String_View policy_id) {
+String_View eval_policy_get_effective(EvalExecContext *ctx, String_View policy_id) {
     if (!ctx || eval_should_stop(ctx)) return nob_sv_from_cstr("");
     if (!eval_policy_is_known(policy_id)) return nob_sv_from_cstr("");
     if (!policy_stack_bootstrap(ctx)) return nob_sv_from_cstr("");

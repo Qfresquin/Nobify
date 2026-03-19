@@ -178,7 +178,7 @@ static bool copy_path_is_symlink(const char *path) {
 #endif
 }
 
-static bool copy_read_symlink_target_temp(Evaluator_Context *ctx, const char *path, String_View *out_target) {
+static bool copy_read_symlink_target_temp(EvalExecContext *ctx, const char *path, String_View *out_target) {
     if (!ctx || !path || !out_target) return false;
 #if defined(_WIN32)
     HANDLE h = CreateFileA(path,
@@ -253,7 +253,7 @@ static bool copy_create_symlink_like(const char *target, const char *link_path) 
 }
 #endif
 
-static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
+static bool copy_follow_symlink_chain(EvalExecContext *ctx,
                                       const Node *node,
                                       Cmake_Event_Origin o,
                                       String_View src,
@@ -345,7 +345,7 @@ static bool copy_follow_symlink_chain(Evaluator_Context *ctx,
     return false;
 }
 
-static bool copy_filter_matches(Evaluator_Context *ctx, Copy_Filter *f, String_View src, String_View base) {
+static bool copy_filter_matches(EvalExecContext *ctx, Copy_Filter *f, String_View src, String_View base) {
     if (!ctx || !f) return false;
     if (!f->is_regex) {
         return eval_file_glob_match_sv(f->expr, base, false) || eval_file_glob_match_sv(f->expr, src, false);
@@ -355,7 +355,7 @@ static bool copy_filter_matches(Evaluator_Context *ctx, Copy_Filter *f, String_V
     return regexec(&f->regex, src_c, 0, NULL, 0) == 0;
 }
 
-static bool copy_should_include(Evaluator_Context *ctx,
+static bool copy_should_include(EvalExecContext *ctx,
                                 Copy_Filter *filters,
                                 size_t filter_count,
                                 bool files_matching,
@@ -384,7 +384,7 @@ typedef struct {
     Copy_Permissions perms;
 } Copy_Parse_State;
 
-static bool copy_parse_on_option(Evaluator_Context *ctx,
+static bool copy_parse_on_option(EvalExecContext *ctx,
                                  void *userdata,
                                  int id,
                                  SV_List values,
@@ -466,7 +466,7 @@ static bool copy_parse_on_option(Evaluator_Context *ctx,
     return true;
 }
 
-static bool copy_parse_on_positional(Evaluator_Context *ctx,
+static bool copy_parse_on_positional(EvalExecContext *ctx,
                                      void *userdata,
                                      String_View value,
                                      size_t token_index) {
@@ -477,7 +477,7 @@ static bool copy_parse_on_positional(Evaluator_Context *ctx,
     return true;
 }
 
-void eval_file_handle_copy(Evaluator_Context *ctx, const Node *node, SV_List args) {
+void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 4) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(COPY) requires sources and DESTINATION"), nob_sv_from_cstr("Usage: file(COPY <src>... DESTINATION <dir>)"));

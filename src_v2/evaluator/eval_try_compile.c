@@ -2,13 +2,13 @@
 
 #include <sys/stat.h>
 
-bool try_compile_file_exists_sv(Evaluator_Context *ctx, String_View path) {
+bool try_compile_file_exists_sv(EvalExecContext *ctx, String_View path) {
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
     return nob_file_exists(path_c) != 0;
 }
 
-bool try_compile_mkdir_p_local(Evaluator_Context *ctx, const char *path) {
+bool try_compile_mkdir_p_local(EvalExecContext *ctx, const char *path) {
     if (!ctx || !path) return false;
     size_t len0 = strlen(path);
     char *tmp = (char*)arena_alloc(eval_temp_arena(ctx), len0 + 1);
@@ -36,15 +36,15 @@ bool try_compile_mkdir_p_local(Evaluator_Context *ctx, const char *path) {
     return nob_mkdir_if_not_exists(tmp);
 }
 
-String_View try_compile_current_src_dir(Evaluator_Context *ctx) {
+String_View try_compile_current_src_dir(EvalExecContext *ctx) {
     return eval_current_source_dir(ctx);
 }
 
-String_View try_compile_current_bin_dir(Evaluator_Context *ctx) {
+String_View try_compile_current_bin_dir(EvalExecContext *ctx) {
     return eval_current_binary_dir(ctx);
 }
 
-String_View try_compile_concat_prefix_temp(Evaluator_Context *ctx, const char *prefix, String_View tail) {
+String_View try_compile_concat_prefix_temp(EvalExecContext *ctx, const char *prefix, String_View tail) {
     if (!ctx || !prefix) return nob_sv_from_cstr("");
     size_t prefix_len = strlen(prefix);
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), prefix_len + tail.count + 1);
@@ -77,7 +77,7 @@ bool try_compile_is_false(String_View v) {
            (v.count >= 9 && eval_sv_eq_ci_lit(nob_sv_from_parts(v.data + v.count - 9, 9), "-NOTFOUND"));
 }
 
-bool try_compile_source_push(Evaluator_Context *ctx,
+bool try_compile_source_push(EvalExecContext *ctx,
                              Try_Compile_Source_List *list,
                              Try_Compile_Source_Item item) {
     if (!ctx || !list) return false;
@@ -152,7 +152,7 @@ Try_Compile_Language try_compile_detect_language(String_View path) {
     return TRY_COMPILE_LANG_AUTO;
 }
 
-String_View try_compile_make_scratch_dir(Evaluator_Context *ctx, String_View current_bin) {
+String_View try_compile_make_scratch_dir(EvalExecContext *ctx, String_View current_bin) {
     static size_t s_scratch_counter = 0;
     s_scratch_counter++;
     String_View base = eval_sv_path_join(eval_temp_arena(ctx),
@@ -167,13 +167,13 @@ String_View try_compile_make_scratch_dir(Evaluator_Context *ctx, String_View cur
     return eval_sv_path_join(eval_temp_arena(ctx), base, name);
 }
 
-String_View try_compile_resolve_in_dir(Evaluator_Context *ctx, String_View path, String_View base_dir) {
+String_View try_compile_resolve_in_dir(EvalExecContext *ctx, String_View path, String_View base_dir) {
     if (path.count == 0) return path;
     if (eval_sv_is_abs_path(path)) return path;
     return eval_sv_path_join(eval_temp_arena(ctx), base_dir, path);
 }
 
-bool try_compile_append_file_to_log(Evaluator_Context *ctx,
+bool try_compile_append_file_to_log(EvalExecContext *ctx,
                                     const char *path,
                                     Nob_String_Builder *log) {
     if (!ctx || !path || !log) return false;
@@ -199,7 +199,7 @@ static bool try_compile_append_text_to_log(Nob_String_Builder *log, String_View 
     return true;
 }
 
-bool try_compile_run_command_captured(Evaluator_Context *ctx,
+bool try_compile_run_command_captured(EvalExecContext *ctx,
                                       Nob_Cmd *cmd,
                                       String_View bindir,
                                       Nob_String_Builder *log,
@@ -221,7 +221,7 @@ bool try_compile_run_command_captured(Evaluator_Context *ctx,
     return true;
 }
 
-String_View try_compile_finish_log(Evaluator_Context *ctx, Nob_String_Builder *log) {
+String_View try_compile_finish_log(EvalExecContext *ctx, Nob_String_Builder *log) {
     if (!ctx || !log || log->count == 0) return nob_sv_from_cstr("");
     String_View out = sv_copy_to_arena(eval_temp_arena(ctx), nob_sv_from_parts(log->items, log->count));
     nob_sb_free(*log);
@@ -229,7 +229,7 @@ String_View try_compile_finish_log(Evaluator_Context *ctx, Nob_String_Builder *l
     return out;
 }
 
-Eval_Result eval_handle_try_compile(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_try_compile(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node || eval_should_stop(ctx)) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);

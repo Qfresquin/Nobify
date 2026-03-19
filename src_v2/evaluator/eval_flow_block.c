@@ -1,11 +1,11 @@
 #include "eval_flow_internal.h"
 
-static bool block_frame_push(Evaluator_Context *ctx, Block_Frame frame) {
+static bool block_frame_push(EvalExecContext *ctx, Block_Frame frame) {
     if (!ctx) return false;
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->scope_state.block_frames, frame);
 }
 
-static size_t block_active_exec_depth(Evaluator_Context *ctx) {
+static size_t block_active_exec_depth(EvalExecContext *ctx) {
     if (!ctx) return 0;
     size_t depth = 0;
     for (size_t i = arena_arr_len(ctx->exec_contexts); i-- > 0;) {
@@ -15,7 +15,7 @@ static size_t block_active_exec_depth(Evaluator_Context *ctx) {
     return depth;
 }
 
-static bool block_parse_options(Evaluator_Context *ctx,
+static bool block_parse_options(EvalExecContext *ctx,
                                 const Node *node,
                                 SV_List args,
                                 Block_Frame *out_frame) {
@@ -86,7 +86,7 @@ static bool block_parse_options(Evaluator_Context *ctx,
     return true;
 }
 
-static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_Frame *frame) {
+static bool block_propagate_to_parent_scope(EvalExecContext *ctx, const Block_Frame *frame) {
     if (!ctx || !frame || !frame->propagate_vars) return true;
     if (!frame->variable_scope_pushed) return true;
     if (eval_scope_visible_depth(ctx) <= 1) return true;
@@ -106,7 +106,7 @@ static bool block_propagate_to_parent_scope(Evaluator_Context *ctx, const Block_
     return true;
 }
 
-static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_return, Block_Frame *out_frame) {
+static bool block_pop_frame(EvalExecContext *ctx, const Node *node, bool for_return, Block_Frame *out_frame) {
     if (!ctx || arena_arr_len(ctx->scope_state.block_frames) == 0) return true;
     if (!eval_exec_current(ctx) || eval_exec_current(ctx)->kind != EVAL_EXEC_CTX_BLOCK) {
         (void)EVAL_DIAG_EMIT_SEV(ctx,
@@ -146,7 +146,7 @@ static bool block_pop_frame(Evaluator_Context *ctx, const Node *node, bool for_r
     return true;
 }
 
-bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
+bool eval_unwind_blocks_for_return(EvalExecContext *ctx) {
     if (!ctx) return false;
     while (block_active_exec_depth(ctx) > 0) {
         Block_Frame ended = {0};
@@ -161,31 +161,39 @@ bool eval_unwind_blocks_for_return(Evaluator_Context *ctx) {
     return true;
 }
 
-Eval_Result eval_handle_break(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_break(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: break()"))) return eval_result_from_ctx(ctx);
-    if (ctx->loop_depth == 0) {
+    if (eval_exec_current_loop_depth(ctx) == 0) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("break() used outside of a loop"), nob_sv_from_cstr("Use break() only inside foreach()/while()"));
         return eval_result_from_ctx(ctx);
     }
-    ctx->break_requested = true;
-    if (!eval_emit_flow_break(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return eval_result_fatal();
+    if (!eval_exec_request_break(ctx)) return eval_result_fatal();
+    if (!eval_emit_flow_break(ctx,
+                              eval_origin_from_node(ctx, node),
+                              (uint32_t)eval_exec_current_loop_depth(ctx))) {
+        return eval_result_fatal();
+    }
     return eval_result_ok();
 }
 
-Eval_Result eval_handle_continue(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_continue(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: continue()"))) return eval_result_from_ctx(ctx);
-    if (ctx->loop_depth == 0) {
+    if (eval_exec_current_loop_depth(ctx) == 0) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("continue() used outside of a loop"), nob_sv_from_cstr("Use continue() only inside foreach()/while()"));
         return eval_result_from_ctx(ctx);
     }
-    ctx->continue_requested = true;
-    if (!eval_emit_flow_continue(ctx, eval_origin_from_node(ctx, node), (uint32_t)ctx->loop_depth)) return eval_result_fatal();
+    if (!eval_exec_request_continue(ctx)) return eval_result_fatal();
+    if (!eval_emit_flow_continue(ctx,
+                                 eval_origin_from_node(ctx, node),
+                                 (uint32_t)eval_exec_current_loop_depth(ctx))) {
+        return eval_result_fatal();
+    }
     return eval_result_ok();
 }
 
-Eval_Result eval_handle_return(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_return(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -224,11 +232,11 @@ Eval_Result eval_handle_return(Evaluator_Context *ctx, const Node *node) {
             ctx->scope_state.block_frames[bi].propagate_on_return = true;
         }
     }
-    ctx->return_requested = true;
+    if (!eval_exec_request_return(ctx)) return eval_result_fatal();
     return eval_result_ok();
 }
 
-Eval_Result eval_handle_block(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_block(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -275,7 +283,7 @@ Eval_Result eval_handle_block(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_endblock(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_endblock(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx)) return eval_result_fatal();
     if (!flow_require_no_args(ctx, node, nob_sv_from_cstr("Usage: endblock()"))) return eval_result_from_ctx(ctx);
 

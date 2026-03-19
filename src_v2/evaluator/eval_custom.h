@@ -6,9 +6,9 @@
 #include "parser.h"
 #include "evaluator.h"
 
-struct Evaluator_Context;
+struct EvalExecContext;
 
-Eval_Result eval_handle_add_custom_target(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_add_custom_command(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_add_custom_target(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_add_custom_command(struct EvalExecContext *ctx, const Node *node);
 
 #endif // EVAL_CUSTOM_H_

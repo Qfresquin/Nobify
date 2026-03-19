@@ -31,7 +31,7 @@ static void eval_process_sleep_millis(unsigned millis) {
 #endif
 }
 
-static String_View eval_process_sb_to_owned_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+static String_View eval_process_sb_to_owned_sv(EvalExecContext *ctx, Nob_String_Builder *sb) {
     if (!ctx || !sb || sb->count == 0) return nob_sv_from_cstr("");
     char *copy = arena_strndup(eval_temp_arena(ctx), sb->items, sb->count);
     EVAL_OOM_RETURN_IF_NULL(ctx, copy, nob_sv_from_cstr(""));
@@ -54,28 +54,28 @@ static String_View eval_process_env_key_sv_copy(Arena *arena, String_View name) 
     return nob_sv_from_parts(buf, name.count);
 }
 
-static char *eval_process_env_key_cstr_temp(Evaluator_Context *ctx, const char *name) {
+static char *eval_process_env_key_cstr_temp(EvalExecContext *ctx, const char *name) {
     if (!ctx || !name || name[0] == '\0') return NULL;
     String_View key = eval_process_env_key_sv_copy(eval_temp_arena(ctx), nob_sv_from_cstr(name));
     EVAL_OOM_RETURN_IF_NULL(ctx, key.data, NULL);
     return (char*)key.data;
 }
 
-static String_View eval_process_env_key_sv_temp(Evaluator_Context *ctx, String_View name) {
+static String_View eval_process_env_key_sv_temp(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0) return nob_sv_from_cstr("");
     String_View key = eval_process_env_key_sv_copy(eval_temp_arena(ctx), name);
     EVAL_OOM_RETURN_IF_NULL(ctx, key.data, nob_sv_from_cstr(""));
     return key;
 }
 
-static String_View eval_process_env_key_sv_event(Evaluator_Context *ctx, String_View name) {
+static String_View eval_process_env_key_sv_event(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0) return nob_sv_from_cstr("");
     String_View key = eval_process_env_key_sv_copy(eval_event_arena(ctx), name);
     EVAL_OOM_RETURN_IF_NULL(ctx, key.data, nob_sv_from_cstr(""));
     return key;
 }
 
-static Eval_Process_Env_Entry *eval_process_env_find_sv(Evaluator_Context *ctx, String_View name) {
+static Eval_Process_Env_Entry *eval_process_env_find_sv(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0) return NULL;
     Eval_Process_State *process = eval_process_slice(ctx);
     if (!process || !process->env_overrides) return NULL;
@@ -84,7 +84,7 @@ static Eval_Process_Env_Entry *eval_process_env_find_sv(Evaluator_Context *ctx, 
     return stbds_shgetp_null(process->env_overrides, lookup.data);
 }
 
-static Eval_Process_Env_Entry *eval_process_env_find_cstr(Evaluator_Context *ctx, const char *name) {
+static Eval_Process_Env_Entry *eval_process_env_find_cstr(EvalExecContext *ctx, const char *name) {
     if (!ctx || !name || name[0] == '\0') return NULL;
     Eval_Process_State *process = eval_process_slice(ctx);
     if (!process || !process->env_overrides) return NULL;
@@ -93,7 +93,7 @@ static Eval_Process_Env_Entry *eval_process_env_find_cstr(Evaluator_Context *ctx
     return stbds_shgetp_null(process->env_overrides, lookup);
 }
 
-static const Eval_Process_Env_Entry *eval_process_env_find_cstr_const(const Evaluator_Context *ctx,
+static const Eval_Process_Env_Entry *eval_process_env_find_cstr_const(const EvalExecContext *ctx,
                                                                       const char *name) {
     if (!ctx || !name || name[0] == '\0') return NULL;
     if (!ctx->process_state.env_overrides) return NULL;
@@ -102,7 +102,7 @@ static const Eval_Process_Env_Entry *eval_process_env_find_cstr_const(const Eval
     return stbds_shgetp_null(entries, (char*)name);
 }
 
-bool eval_process_env_set(Evaluator_Context *ctx, String_View name, String_View value) {
+bool eval_process_env_set(EvalExecContext *ctx, String_View name, String_View value) {
     if (!ctx || name.count == 0) return false;
 
     Eval_Process_State *process = eval_process_slice(ctx);
@@ -129,7 +129,7 @@ bool eval_process_env_set(Evaluator_Context *ctx, String_View name, String_View 
     return true;
 }
 
-bool eval_process_env_unset(Evaluator_Context *ctx, String_View name) {
+bool eval_process_env_unset(EvalExecContext *ctx, String_View name) {
     if (!ctx || name.count == 0) return false;
 
     Eval_Process_State *process = eval_process_slice(ctx);
@@ -155,7 +155,7 @@ bool eval_process_env_unset(Evaluator_Context *ctx, String_View name) {
     return true;
 }
 
-String_View eval_process_cwd_temp(Evaluator_Context *ctx) {
+String_View eval_process_cwd_temp(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
 
     if (ctx->services && ctx->services->process_get_cwd) {
@@ -175,7 +175,7 @@ String_View eval_process_cwd_temp(Evaluator_Context *ctx) {
     return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(cwd_buf));
 }
 
-static const char *eval_getenv_temp_platform(Evaluator_Context *ctx, const char *name) {
+static const char *eval_getenv_temp_platform(EvalExecContext *ctx, const char *name) {
     if (!name || name[0] == '\0') return NULL;
 
 #if defined(_WIN32)
@@ -219,7 +219,7 @@ static const char *eval_getenv_temp_platform(Evaluator_Context *ctx, const char 
 #endif
 }
 
-const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name) {
+const char *eval_getenv_temp(EvalExecContext *ctx, const char *name) {
     if (!name || name[0] == '\0') return NULL;
 
     Eval_Process_Env_Entry *entry = eval_process_env_find_cstr(ctx, name);
@@ -233,7 +233,7 @@ const char *eval_getenv_temp(Evaluator_Context *ctx, const char *name) {
     return eval_getenv_temp_platform(ctx, name);
 }
 
-bool eval_has_env(Evaluator_Context *ctx, const char *name) {
+bool eval_has_env(EvalExecContext *ctx, const char *name) {
     return eval_getenv_temp(ctx, name) != NULL;
 }
 
@@ -246,7 +246,7 @@ static bool eval_process_seen_key_contains(const SV_List *seen_keys, const char 
     return false;
 }
 
-static bool eval_process_make_env_assignment(Evaluator_Context *ctx,
+static bool eval_process_make_env_assignment(EvalExecContext *ctx,
                                              const char *key,
                                              String_View value,
                                              const char **out_assignment) {
@@ -265,7 +265,7 @@ static bool eval_process_make_env_assignment(Evaluator_Context *ctx,
     return true;
 }
 
-static const char *eval_process_strdup_temp(Evaluator_Context *ctx, const char *text) {
+static const char *eval_process_strdup_temp(EvalExecContext *ctx, const char *text) {
     if (!ctx || !text) return NULL;
 
     size_t len = strlen(text);
@@ -275,7 +275,7 @@ static const char *eval_process_strdup_temp(Evaluator_Context *ctx, const char *
     return copy;
 }
 
-static bool eval_process_env_append_effective(Evaluator_Context *ctx,
+static bool eval_process_env_append_effective(EvalExecContext *ctx,
                                               const char *entry_text,
                                               const char ***io_envp,
                                               SV_List *seen_keys) {
@@ -313,7 +313,7 @@ static bool eval_process_env_append_effective(Evaluator_Context *ctx,
     return arena_arr_push(eval_temp_arena(ctx), *io_envp, copy);
 }
 
-static bool eval_process_collect_envp(Evaluator_Context *ctx, const char ***out_envp) {
+static bool eval_process_collect_envp(EvalExecContext *ctx, const char ***out_envp) {
     if (!ctx || !out_envp) return false;
     *out_envp = NULL;
 
@@ -357,7 +357,7 @@ static bool eval_process_collect_envp(Evaluator_Context *ctx, const char ***out_
     return true;
 }
 
-bool eval_process_run_capture(Evaluator_Context *ctx,
+bool eval_process_run_capture(EvalExecContext *ctx,
                               const Eval_Process_Run_Request *req,
                               Eval_Process_Run_Result *out) {
     if (!ctx || !req || !out || !req->argv || req->argc == 0) return false;
@@ -538,7 +538,7 @@ bool eval_process_run_capture(Evaluator_Context *ctx,
     return true;
 }
 
-bool eval_process_run_nob_cmd_capture(Evaluator_Context *ctx,
+bool eval_process_run_nob_cmd_capture(EvalExecContext *ctx,
                                       const Nob_Cmd *cmd,
                                       String_View working_directory,
                                       String_View stdin_data,

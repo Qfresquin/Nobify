@@ -5,9 +5,9 @@
 #include "evaluator.h"
 
 // Handlers da "biblioteca padrão" do CMake.
-Eval_Result eval_handle_list(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_string(struct Evaluator_Context *ctx, const Node *node);
-Eval_Result eval_handle_math(struct Evaluator_Context *ctx, const Node *node);
+Eval_Result eval_handle_list(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_string(struct EvalExecContext *ctx, const Node *node);
+Eval_Result eval_handle_math(struct EvalExecContext *ctx, const Node *node);
 
 #endif // EVAL_STDLIB_H_
 

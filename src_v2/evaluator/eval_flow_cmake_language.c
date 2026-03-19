@@ -55,12 +55,12 @@ static bool flow_deferred_call_list_remove_at(Eval_Deferred_Call_List *calls, si
     return true;
 }
 
-static Eval_Deferred_Dir_Frame *flow_current_defer_dir(Evaluator_Context *ctx) {
+static Eval_Deferred_Dir_Frame *flow_current_defer_dir(EvalExecContext *ctx) {
     if (!ctx || arena_arr_len(ctx->file_state.deferred_dirs) == 0) return NULL;
     return &ctx->file_state.deferred_dirs[arena_arr_len(ctx->file_state.deferred_dirs) - 1];
 }
 
-static Eval_Deferred_Dir_Frame *flow_find_defer_dir(Evaluator_Context *ctx, String_View path) {
+static Eval_Deferred_Dir_Frame *flow_find_defer_dir(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return NULL;
     for (size_t i = arena_arr_len(ctx->file_state.deferred_dirs); i-- > 0;) {
         Eval_Deferred_Dir_Frame *frame = &ctx->file_state.deferred_dirs[i];
@@ -88,7 +88,7 @@ static bool flow_deferred_id_is_valid(String_View id) {
     return true;
 }
 
-static String_View flow_make_deferred_id(Evaluator_Context *ctx) {
+static String_View flow_make_deferred_id(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     char buf[64];
     ctx->file_state.next_deferred_call_id++;
@@ -100,7 +100,7 @@ static String_View flow_make_deferred_id(Evaluator_Context *ctx) {
     return sv_copy_to_event_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
 }
 
-static Eval_Deferred_Dir_Frame *flow_resolve_defer_directory(Evaluator_Context *ctx,
+static Eval_Deferred_Dir_Frame *flow_resolve_defer_directory(EvalExecContext *ctx,
                                                              const Node *node,
                                                              bool has_directory,
                                                              String_View raw_directory) {
@@ -122,14 +122,14 @@ static Eval_Deferred_Dir_Frame *flow_resolve_defer_directory(Evaluator_Context *
     return NULL;
 }
 
-static bool flow_append_defer_queue(Evaluator_Context *ctx,
+static bool flow_append_defer_queue(EvalExecContext *ctx,
                                     Eval_Deferred_Dir_Frame *frame,
                                     Eval_Deferred_Call call) {
     if (!ctx || !frame) return false;
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, frame->calls, call);
 }
 
-bool eval_defer_push_directory(Evaluator_Context *ctx, String_View source_dir, String_View binary_dir) {
+bool eval_defer_push_directory(EvalExecContext *ctx, String_View source_dir, String_View binary_dir) {
     if (!ctx) return false;
     Eval_Deferred_Dir_Frame frame = {0};
     frame.source_dir = sv_copy_to_event_arena(ctx, source_dir);
@@ -138,14 +138,14 @@ bool eval_defer_push_directory(Evaluator_Context *ctx, String_View source_dir, S
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.deferred_dirs, frame);
 }
 
-bool eval_defer_pop_directory(Evaluator_Context *ctx) {
+bool eval_defer_pop_directory(EvalExecContext *ctx) {
     if (!ctx) return false;
     if (arena_arr_len(ctx->file_state.deferred_dirs) == 0) return true;
     arena_arr_set_len(ctx->file_state.deferred_dirs, arena_arr_len(ctx->file_state.deferred_dirs) - 1);
     return true;
 }
 
-bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
+bool eval_defer_flush_current_directory(EvalExecContext *ctx) {
     Eval_Deferred_Dir_Frame *frame = flow_current_defer_dir(ctx);
     if (!ctx || !frame) return true;
     if (arena_arr_len(frame->calls) > 0) {
@@ -193,7 +193,7 @@ bool eval_defer_flush_current_directory(Evaluator_Context *ctx) {
     return true;
 }
 
-static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_List *args) {
+static bool flow_run_call(EvalExecContext *ctx, const Node *node, const SV_List *args) {
     if (!ctx || !node || !args || arena_arr_len(*args) < 2) {
         return false;
     }
@@ -222,12 +222,13 @@ static bool flow_run_call(Evaluator_Context *ctx, const Node *node, const SV_Lis
 
     Ast_Root ast = NULL;
     if (!flow_parse_inline_script(ctx, script, &ast)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    eval_command_tx_preserve_scope_vars_on_failure(ctx);
     Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
     if (eval_result_is_fatal(inline_result)) return false;
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const SV_List *args) {
+static bool flow_run_eval_code(EvalExecContext *ctx, const Node *node, const SV_List *args) {
     if (!ctx || !node || !args || arena_arr_len(*args) < 3) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("cmake_language(EVAL CODE ...) requires code text"), nob_sv_from_cstr("Usage: cmake_language(EVAL CODE <code>...)"));
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
@@ -249,6 +250,7 @@ static bool flow_run_eval_code(Evaluator_Context *ctx, const Node *node, const S
 
     Ast_Root ast = NULL;
     if (!flow_parse_inline_script(ctx, code, &ast)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    eval_command_tx_preserve_scope_vars_on_failure(ctx);
     Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
     if (eval_result_is_fatal(inline_result)) return false;
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
@@ -261,16 +263,16 @@ static String_View flow_cmake_language_find_defer_call_command_name(SV_List args
     return nob_sv_from_cstr("");
 }
 
-static bool flow_cmake_language_is_file_scope(Evaluator_Context *ctx) {
+static bool flow_cmake_language_is_file_scope(EvalExecContext *ctx) {
     return eval_exec_is_file_scope(ctx);
 }
 
-static bool flow_cmake_language_provider_command_exists(Evaluator_Context *ctx, String_View command_name) {
+static bool flow_cmake_language_provider_command_exists(EvalExecContext *ctx, String_View command_name) {
     if (!ctx || command_name.count == 0) return false;
     return eval_user_cmd_find(ctx, command_name) != NULL;
 }
 
-static bool flow_cmake_language_set_dependency_provider(Evaluator_Context *ctx,
+static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                                         const Node *node,
                                                         const SV_List *args) {
     if (!ctx || !node || !args) return false;
@@ -399,7 +401,7 @@ static bool flow_cmake_language_set_dependency_provider(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
+static bool flow_set_var_to_deferred_ids(EvalExecContext *ctx,
                                          Eval_Deferred_Dir_Frame *frame,
                                          String_View out_var) {
     if (!ctx || !frame) return false;
@@ -413,7 +415,7 @@ static bool flow_set_var_to_deferred_ids(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, out_var, eval_sv_join_semi_temp(ctx, ids, arena_arr_len(frame->calls)));
 }
 
-static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
+static bool flow_set_var_to_deferred_call(EvalExecContext *ctx,
                                           Eval_Deferred_Call *call,
                                           String_View out_var) {
     if (!ctx || !call) return false;
@@ -438,7 +440,7 @@ static bool flow_set_var_to_deferred_call(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, out_var, nob_sv_from_parts(copy, strlen(copy)));
 }
 
-static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
+static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
     if (!ctx || !node) return false;
 
     const Args *raw = &node->as.cmd.args;
@@ -582,7 +584,7 @@ static bool flow_handle_defer(Evaluator_Context *ctx, const Node *node) {
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool flow_parse_cmake_language_request(Evaluator_Context *ctx,
+static bool flow_parse_cmake_language_request(EvalExecContext *ctx,
                                               const Node *node,
                                               Cmake_Event_Origin origin,
                                               Flow_Cmake_Language_Request *out_req) {
@@ -650,7 +652,7 @@ static bool flow_parse_cmake_language_request(Evaluator_Context *ctx,
     return false;
 }
 
-static bool flow_execute_cmake_language_request(Evaluator_Context *ctx,
+static bool flow_execute_cmake_language_request(EvalExecContext *ctx,
                                                 const Node *node,
                                                 Cmake_Event_Origin origin,
                                                 const Flow_Cmake_Language_Request *req) {
@@ -692,7 +694,7 @@ static bool flow_execute_cmake_language_request(Evaluator_Context *ctx,
     }
 }
 
-Eval_Result eval_handle_cmake_language(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_language(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
 
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);

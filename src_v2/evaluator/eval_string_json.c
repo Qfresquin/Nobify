@@ -51,7 +51,7 @@ static bool string_json_parse_string_token(String_View json,
     return false;
 }
 
-static bool string_json_decode_string_temp(Evaluator_Context *ctx,
+static bool string_json_decode_string_temp(EvalExecContext *ctx,
                                            String_View raw,
                                            String_View *out) {
     if (!ctx || !out) return false;
@@ -174,7 +174,7 @@ typedef struct {
     size_t path_prefix_count;
 } String_Json_Error;
 
-static String_View string_sb_to_temp_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+static String_View string_sb_to_temp_sv(EvalExecContext *ctx, Nob_String_Builder *sb) {
     if (!ctx || !sb) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), sb->count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -183,7 +183,7 @@ static String_View string_sb_to_temp_sv(Evaluator_Context *ctx, Nob_String_Build
     return nob_sv_from_parts(buf, sb->count);
 }
 
-static String_View string_json_notfound_temp(Evaluator_Context *ctx, String_View *path, size_t path_count) {
+static String_View string_json_notfound_temp(EvalExecContext *ctx, String_View *path, size_t path_count) {
     if (!ctx || path_count == 0) return nob_sv_from_cstr("NOTFOUND");
     Nob_String_Builder sb = {0};
     for (size_t i = 0; i < path_count; i++) {
@@ -196,7 +196,7 @@ static String_View string_json_notfound_temp(Evaluator_Context *ctx, String_View
     return out;
 }
 
-static String_View string_json_message_with_token_temp(Evaluator_Context *ctx, const char *prefix, String_View token) {
+static String_View string_json_message_with_token_temp(EvalExecContext *ctx, const char *prefix, String_View token) {
     if (!ctx) return nob_sv_from_cstr("");
     Nob_String_Builder sb = {0};
     if (prefix) nob_sb_append_cstr(&sb, prefix);
@@ -209,7 +209,7 @@ static String_View string_json_message_with_token_temp(Evaluator_Context *ctx, c
     return out;
 }
 
-static bool string_json_emit_or_store_error(Evaluator_Context *ctx,
+static bool string_json_emit_or_store_error(EvalExecContext *ctx,
                                             const Node *node,
                                             Cmake_Event_Origin o,
                                             bool has_error_var,
@@ -228,7 +228,7 @@ static bool string_json_emit_or_store_error(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static String_Json_Value *string_jsonv_new(Evaluator_Context *ctx, String_Json_Type type) {
+static String_Json_Value *string_jsonv_new(EvalExecContext *ctx, String_Json_Type type) {
     if (!ctx) return NULL;
     String_Json_Value *v = (String_Json_Value*)arena_alloc(eval_temp_arena(ctx), sizeof(*v));
     EVAL_OOM_RETURN_IF_NULL(ctx, v, NULL);
@@ -237,7 +237,7 @@ static String_Json_Value *string_jsonv_new(Evaluator_Context *ctx, String_Json_T
     return v;
 }
 
-static bool string_jsonv_array_push(Evaluator_Context *ctx, String_Json_Value *arr, String_Json_Value *item) {
+static bool string_jsonv_array_push(EvalExecContext *ctx, String_Json_Value *arr, String_Json_Value *item) {
     if (!ctx || !arr || arr->type != STRING_JSON_ARRAY || !item) return false;
     if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), arr->array_items, item)) return false;
     arr->array_count = arena_arr_len(arr->array_items);
@@ -245,7 +245,7 @@ static bool string_jsonv_array_push(Evaluator_Context *ctx, String_Json_Value *a
     return true;
 }
 
-static bool string_jsonv_object_push(Evaluator_Context *ctx, String_Json_Value *obj, String_View key, String_Json_Value *item) {
+static bool string_jsonv_object_push(EvalExecContext *ctx, String_Json_Value *obj, String_View key, String_Json_Value *item) {
     if (!ctx || !obj || obj->type != STRING_JSON_OBJECT || !item) return false;
     if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), obj->object_items, ((String_Json_Object_Entry){ .key = key, .value = item }))) {
         return false;
@@ -255,13 +255,13 @@ static bool string_jsonv_object_push(Evaluator_Context *ctx, String_Json_Value *
     return true;
 }
 
-static bool string_jsonv_parse_value_temp(Evaluator_Context *ctx,
+static bool string_jsonv_parse_value_temp(EvalExecContext *ctx,
                                           String_View json,
                                           size_t *io,
                                           String_Json_Value **out,
                                           String_View *err_msg);
 
-static bool string_jsonv_parse_object_temp(Evaluator_Context *ctx,
+static bool string_jsonv_parse_object_temp(EvalExecContext *ctx,
                                            String_View json,
                                            size_t *io,
                                            String_Json_Value **out,
@@ -323,7 +323,7 @@ static bool string_jsonv_parse_object_temp(Evaluator_Context *ctx,
     }
 }
 
-static bool string_jsonv_parse_array_temp(Evaluator_Context *ctx,
+static bool string_jsonv_parse_array_temp(EvalExecContext *ctx,
                                           String_View json,
                                           size_t *io,
                                           String_Json_Value **out,
@@ -366,7 +366,7 @@ static bool string_jsonv_parse_array_temp(Evaluator_Context *ctx,
     }
 }
 
-static bool string_jsonv_parse_value_temp(Evaluator_Context *ctx,
+static bool string_jsonv_parse_value_temp(EvalExecContext *ctx,
                                           String_View json,
                                           size_t *io,
                                           String_Json_Value **out,
@@ -449,7 +449,7 @@ static bool string_jsonv_parse_value_temp(Evaluator_Context *ctx,
     return false;
 }
 
-static bool string_jsonv_parse_root_temp(Evaluator_Context *ctx,
+static bool string_jsonv_parse_root_temp(EvalExecContext *ctx,
                                          String_View json,
                                          String_Json_Value **out,
                                          String_View *err_msg) {
@@ -489,7 +489,7 @@ static bool string_jsonv_resolve_path(String_Json_Value *root,
                                       size_t path_count,
                                       String_Json_Value **out,
                                       String_Json_Error *err,
-                                      Evaluator_Context *ctx) {
+                                      EvalExecContext *ctx) {
     if (!root || !out || !err || !ctx) return false;
     String_Json_Value *current = root;
     for (size_t i = 0; i < path_count; i++) {
@@ -633,7 +633,7 @@ static void string_jsonv_serialize_append(Nob_String_Builder *sb, const String_J
     }
 }
 
-static String_View string_jsonv_serialize_temp(Evaluator_Context *ctx, const String_Json_Value *v) {
+static String_View string_jsonv_serialize_temp(EvalExecContext *ctx, const String_Json_Value *v) {
     if (!ctx || !v) return nob_sv_from_cstr("");
     Nob_String_Builder sb = {0};
     string_jsonv_serialize_append(&sb, v, 0);
@@ -642,7 +642,7 @@ static String_View string_jsonv_serialize_temp(Evaluator_Context *ctx, const Str
     return out;
 }
 
-static bool string_handle_json_command(Evaluator_Context *ctx,
+static bool string_handle_json_command(EvalExecContext *ctx,
                                        const Node *node,
                                        Cmake_Event_Origin o,
                                        SV_List a) {
@@ -869,6 +869,6 @@ static bool string_handle_json_command(Evaluator_Context *ctx,
                                            path, 0);
 }
 
-Eval_Result eval_string_handle_json(Evaluator_Context *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
+Eval_Result eval_string_handle_json(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     return eval_result_from_bool(string_handle_json_command(ctx, node, o, a));
 }

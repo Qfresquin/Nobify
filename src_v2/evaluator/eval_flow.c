@@ -3,7 +3,7 @@
 #include <string.h>
 #include <time.h>
 
-bool flow_require_no_args(Evaluator_Context *ctx, const Node *node, String_View usage_hint) {
+bool flow_require_no_args(EvalExecContext *ctx, const Node *node, String_View usage_hint) {
     if (!ctx || !node) return false;
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -19,7 +19,7 @@ static bool flow_token_list_append(Arena *arena, Token_List *list, Token token) 
     return arena_arr_push(arena, *list, token);
 }
 
-bool flow_parse_inline_script(Evaluator_Context *ctx, String_View script, Ast_Root *out_ast) {
+bool flow_parse_inline_script(EvalExecContext *ctx, String_View script, Ast_Root *out_ast) {
     if (!ctx || !out_ast) return false;
     *out_ast = NULL;
 
@@ -88,7 +88,7 @@ bool flow_append_sv(Nob_String_Builder *sb, String_View sv) {
     return true;
 }
 
-bool flow_build_call_script(Evaluator_Context *ctx,
+bool flow_build_call_script(EvalExecContext *ctx,
                             String_View command_name,
                             const SV_List *args,
                             String_View *out_script) {
@@ -134,21 +134,21 @@ bool flow_arg_exact_ci(String_View value, const char *lit) {
     return eval_sv_eq_ci_lit(value, lit);
 }
 
-String_View flow_current_binary_dir(Evaluator_Context *ctx) {
+String_View flow_current_binary_dir(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
     if (dir.count == 0) dir = ctx->binary_dir;
     return dir;
 }
 
-String_View flow_current_source_dir(Evaluator_Context *ctx) {
+String_View flow_current_source_dir(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     String_View dir = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
     if (dir.count == 0) dir = ctx->source_dir;
     return dir;
 }
 
-String_View flow_resolve_binary_relative_path(Evaluator_Context *ctx, String_View path) {
+String_View flow_resolve_binary_relative_path(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return nob_sv_from_cstr("");
     return eval_path_resolve_for_cmake_arg(ctx, path, flow_current_binary_dir(ctx), false);
 }
@@ -159,7 +159,7 @@ double flow_now_seconds(void) {
     return (double)ts.tv_sec + ((double)ts.tv_nsec / 1000000000.0);
 }
 
-String_View flow_sb_to_temp_sv(Evaluator_Context *ctx, Nob_String_Builder *sb) {
+String_View flow_sb_to_temp_sv(EvalExecContext *ctx, Nob_String_Builder *sb) {
     if (!ctx || !sb) return nob_sv_from_cstr("");
     if (sb->count == 0) return nob_sv_from_cstr("");
     char *copy = arena_strndup(ctx->arena, sb->items, sb->count);
@@ -203,7 +203,7 @@ static bool flow_strip_bracket_arg(String_View in, String_View *out) {
     return true;
 }
 
-static String_View flow_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
+static String_View flow_arg_flat(EvalExecContext *ctx, const Arg *arg) {
     if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
 
     size_t total = 0;
@@ -224,7 +224,7 @@ static String_View flow_arg_flat(Evaluator_Context *ctx, const Arg *arg) {
     return nob_sv_from_parts(buf, off);
 }
 
-String_View flow_eval_arg_single(Evaluator_Context *ctx, const Arg *arg, bool expand_vars) {
+String_View flow_eval_arg_single(EvalExecContext *ctx, const Arg *arg, bool expand_vars) {
     if (!ctx || !arg) return nob_sv_from_cstr("");
 
     String_View flat = flow_arg_flat(ctx, arg);
@@ -245,7 +245,7 @@ String_View flow_eval_arg_single(Evaluator_Context *ctx, const Arg *arg, bool ex
     return value;
 }
 
-bool flow_clone_args_to_event_range(Evaluator_Context *ctx,
+bool flow_clone_args_to_event_range(EvalExecContext *ctx,
                                     const Args *src,
                                     size_t begin,
                                     Args *dst) {

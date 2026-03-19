@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-static bool emit_target_prop_set(Evaluator_Context *ctx,
+static bool emit_target_prop_set(EvalExecContext *ctx,
                                  Cmake_Event_Origin o,
                                  String_View target_name,
                                  String_View key,
@@ -46,7 +46,7 @@ typedef struct {
     SV_List sources;
 } Add_Custom_Target_Opts;
 
-static bool add_custom_target_on_option(Evaluator_Context *ctx,
+static bool add_custom_target_on_option(EvalExecContext *ctx,
                                         void *userdata,
                                         int id,
                                         SV_List values,
@@ -107,7 +107,7 @@ static bool add_custom_target_on_option(Evaluator_Context *ctx,
     }
 }
 
-static bool add_custom_noop_positional(Evaluator_Context *ctx,
+static bool add_custom_noop_positional(EvalExecContext *ctx,
                                        void *userdata,
                                        String_View value,
                                        size_t token_index) {
@@ -118,7 +118,7 @@ static bool add_custom_noop_positional(Evaluator_Context *ctx,
     return true;
 }
 
-static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
+static bool apply_subdir_system_default_to_target(EvalExecContext *ctx,
                                                   Cmake_Event_Origin o,
                                                   String_View target_name) {
     String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
@@ -198,7 +198,7 @@ typedef struct {
     bool had_positional_error;
 } Add_Custom_Command_Parse_Context;
 
-static bool add_custom_command_on_option(Evaluator_Context *ctx,
+static bool add_custom_command_on_option(EvalExecContext *ctx,
                                          void *userdata,
                                          int id,
                                          SV_List values,
@@ -307,7 +307,7 @@ static bool add_custom_command_on_option(Evaluator_Context *ctx,
     }
 }
 
-static bool add_custom_command_on_option_parse_ctx(Evaluator_Context *ctx,
+static bool add_custom_command_on_option_parse_ctx(EvalExecContext *ctx,
                                                    void *userdata,
                                                    int id,
                                                    SV_List values,
@@ -318,7 +318,7 @@ static bool add_custom_command_on_option_parse_ctx(Evaluator_Context *ctx,
     return add_custom_command_on_option(ctx, st->opt, id, values, token_index);
 }
 
-static bool add_custom_error_positional_parse_ctx(Evaluator_Context *ctx,
+static bool add_custom_error_positional_parse_ctx(EvalExecContext *ctx,
                                                   void *userdata,
                                                   String_View value,
                                                   size_t token_index) {
@@ -330,7 +330,7 @@ static bool add_custom_error_positional_parse_ctx(Evaluator_Context *ctx,
     return false;
 }
 
-Eval_Result eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_custom_target(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -428,7 +428,7 @@ Eval_Result eval_handle_add_custom_target(Evaluator_Context *ctx, const Node *no
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_custom_command(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_custom_command(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

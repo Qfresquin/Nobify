@@ -116,49 +116,49 @@ typedef struct {
     String_View value;
 } Try_Compile_Target_Artifact;
 
-bool try_compile_file_exists_sv(Evaluator_Context *ctx, String_View path);
-bool try_compile_mkdir_p_local(Evaluator_Context *ctx, const char *path);
-String_View try_compile_current_src_dir(Evaluator_Context *ctx);
-String_View try_compile_current_bin_dir(Evaluator_Context *ctx);
-String_View try_compile_concat_prefix_temp(Evaluator_Context *ctx, const char *prefix, String_View tail);
+bool try_compile_file_exists_sv(EvalExecContext *ctx, String_View path);
+bool try_compile_mkdir_p_local(EvalExecContext *ctx, const char *path);
+String_View try_compile_current_src_dir(EvalExecContext *ctx);
+String_View try_compile_current_bin_dir(EvalExecContext *ctx);
+String_View try_compile_concat_prefix_temp(EvalExecContext *ctx, const char *prefix, String_View tail);
 String_View try_compile_basename(String_View path);
 bool try_compile_is_false(String_View v);
-bool try_compile_source_push(Evaluator_Context *ctx,
+bool try_compile_source_push(EvalExecContext *ctx,
                              Try_Compile_Source_List *list,
                              Try_Compile_Source_Item item);
 bool try_compile_keyword_is_standard(String_View tok);
 bool try_compile_is_keyword(String_View tok);
 Try_Compile_Language try_compile_language_from_sources_type(String_View tok);
 Try_Compile_Language try_compile_detect_language(String_View path);
-String_View try_compile_make_scratch_dir(Evaluator_Context *ctx, String_View current_bin);
-String_View try_compile_resolve_in_dir(Evaluator_Context *ctx, String_View path, String_View base_dir);
-bool try_compile_append_file_to_log(Evaluator_Context *ctx,
+String_View try_compile_make_scratch_dir(EvalExecContext *ctx, String_View current_bin);
+String_View try_compile_resolve_in_dir(EvalExecContext *ctx, String_View path, String_View base_dir);
+bool try_compile_append_file_to_log(EvalExecContext *ctx,
                                     const char *path,
                                     Nob_String_Builder *log);
-bool try_compile_run_command_captured(Evaluator_Context *ctx,
+bool try_compile_run_command_captured(EvalExecContext *ctx,
                                       Nob_Cmd *cmd,
                                       String_View bindir,
                                       Nob_String_Builder *log,
                                       bool *out_ok);
-String_View try_compile_finish_log(Evaluator_Context *ctx, Nob_String_Builder *log);
+String_View try_compile_finish_log(EvalExecContext *ctx, Nob_String_Builder *log);
 
-bool try_compile_parse_request(Evaluator_Context *ctx,
+bool try_compile_parse_request(EvalExecContext *ctx,
                                const Node *node,
                                const SV_List *args,
                                Try_Compile_Request *out_req);
-bool try_run_parse_request(Evaluator_Context *ctx,
+bool try_run_parse_request(EvalExecContext *ctx,
                            const Node *node,
                            const SV_List *args,
                            Try_Run_Request *out_req);
 
-bool try_compile_execute_source_request(Evaluator_Context *ctx,
+bool try_compile_execute_source_request(EvalExecContext *ctx,
                                         const Try_Compile_Request *req,
                                         Try_Compile_Execution_Result *out_res);
-bool try_compile_execute_project_request(Evaluator_Context *ctx,
+bool try_compile_execute_project_request(EvalExecContext *ctx,
                                          const Node *node,
                                          const Try_Compile_Request *req,
                                          Try_Compile_Execution_Result *out_res);
-Eval_Result try_compile_execute_and_publish(Evaluator_Context *ctx,
+Eval_Result try_compile_execute_and_publish(EvalExecContext *ctx,
                                             const Node *node,
                                             const Try_Compile_Request *req);
 

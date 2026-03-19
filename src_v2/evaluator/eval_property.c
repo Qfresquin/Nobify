@@ -10,7 +10,7 @@ static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 static const char *k_global_link_opts_var = "NOBIFY_GLOBAL_LINK_OPTIONS";
 
-static String_View merge_property_value_temp(Evaluator_Context *ctx,
+static String_View merge_property_value_temp(EvalExecContext *ctx,
                                              String_View current,
                                              String_View incoming,
                                              Cmake_Target_Property_Op op) {
@@ -33,7 +33,7 @@ static String_View merge_property_value_temp(Evaluator_Context *ctx,
     return nob_sv_from_cstr(buf);
 }
 
-static bool is_current_directory_object(Evaluator_Context *ctx, String_View object_id) {
+static bool is_current_directory_object(EvalExecContext *ctx, String_View object_id) {
     if (!ctx) return false;
     if (object_id.count == 0) return true;
     if (eval_sv_eq_ci_lit(object_id, ".")) return true;
@@ -45,11 +45,11 @@ static bool is_current_directory_object(Evaluator_Context *ctx, String_View obje
     return false;
 }
 
-static bool set_output_var_value(Evaluator_Context *ctx, String_View out_var, String_View value) {
+static bool set_output_var_value(EvalExecContext *ctx, String_View out_var, String_View value) {
     return eval_var_set_current(ctx, out_var, value);
 }
 
-static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var) {
+static bool set_output_var_notfound(EvalExecContext *ctx, String_View out_var) {
     String_View suffix = nob_sv_from_cstr("-NOTFOUND");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), out_var.count + suffix.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
@@ -59,11 +59,11 @@ static bool set_output_var_notfound(Evaluator_Context *ctx, String_View out_var)
     return eval_var_set_current(ctx, out_var, nob_sv_from_cstr(buf));
 }
 
-static bool set_output_var_literal_notfound(Evaluator_Context *ctx, String_View out_var) {
+static bool set_output_var_literal_notfound(EvalExecContext *ctx, String_View out_var) {
     return eval_var_set_current(ctx, out_var, nob_sv_from_cstr("NOTFOUND"));
 }
 
-static String_View property_ascii_lower_temp(Evaluator_Context *ctx, String_View value) {
+static String_View property_ascii_lower_temp(EvalExecContext *ctx, String_View value) {
     if (!ctx || value.count == 0) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), value.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
@@ -83,7 +83,7 @@ static Event_Property_Mutate_Op property_mutate_op_from_legacy(Cmake_Target_Prop
     return EVENT_PROPERTY_MUTATE_SET;
 }
 
-static bool emit_property_write_semantic_event(Evaluator_Context *ctx,
+static bool emit_property_write_semantic_event(EvalExecContext *ctx,
                                                Event_Origin origin,
                                                String_View scope_upper,
                                                String_View object_id,
@@ -120,12 +120,12 @@ static bool emit_property_write_semantic_event(Evaluator_Context *ctx,
                                             arena_arr_len(items));
 }
 
-static bool target_get_declared_dir_temp(Evaluator_Context *ctx, String_View target_name, String_View *out_dir) {
+static bool target_get_declared_dir_temp(EvalExecContext *ctx, String_View target_name, String_View *out_dir) {
     if (!ctx || !out_dir) return false;
     return eval_target_declared_dir(ctx, target_name, out_dir);
 }
 
-static bool property_append_unique_temp(Evaluator_Context *ctx, SV_List *list, String_View value) {
+static bool property_append_unique_temp(EvalExecContext *ctx, SV_List *list, String_View value) {
     if (!ctx || !list) return false;
     if (value.count == 0) return true;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
@@ -134,7 +134,7 @@ static bool property_append_unique_temp(Evaluator_Context *ctx, SV_List *list, S
     return svu_list_push_temp(ctx, list, value);
 }
 
-static String_View eval_property_store_key_temp(Evaluator_Context *ctx,
+static String_View eval_property_store_key_temp(EvalExecContext *ctx,
                                                 String_View scope_upper,
                                                 String_View object_id,
                                                 String_View prop_upper) {
@@ -167,7 +167,7 @@ static String_View eval_property_store_key_temp(Evaluator_Context *ctx,
     return nob_sv_from_cstr(buf);
 }
 
-static Eval_Property_Record *property_engine_record(Evaluator_Context *ctx,
+static Eval_Property_Record *property_engine_record(EvalExecContext *ctx,
                                                     String_View scope_upper,
                                                     String_View object_id,
                                                     String_View property_upper) {
@@ -183,7 +183,7 @@ static Eval_Property_Record *property_engine_record(Evaluator_Context *ctx,
     return NULL;
 }
 
-bool eval_property_engine_set(Evaluator_Context *ctx,
+bool eval_property_engine_set(EvalExecContext *ctx,
                               String_View scope_upper,
                               String_View object_id,
                               String_View property_upper,
@@ -208,7 +208,7 @@ bool eval_property_engine_set(Evaluator_Context *ctx,
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->semantic_state.properties.records, new_record);
 }
 
-bool eval_property_engine_get(Evaluator_Context *ctx,
+bool eval_property_engine_get(EvalExecContext *ctx,
                               String_View scope_upper,
                               String_View object_id,
                               String_View property_upper,
@@ -225,7 +225,7 @@ bool eval_property_engine_get(Evaluator_Context *ctx,
     return true;
 }
 
-static const Eval_Property_Definition *eval_property_definition_find_impl(Evaluator_Context *ctx,
+static const Eval_Property_Definition *eval_property_definition_find_impl(EvalExecContext *ctx,
                                                                           String_View scope_upper,
                                                                           String_View property_upper) {
     if (!ctx) return NULL;
@@ -238,7 +238,7 @@ static const Eval_Property_Definition *eval_property_definition_find_impl(Evalua
     return NULL;
 }
 
-const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context *ctx,
+const Eval_Property_Definition *eval_property_definition_find(EvalExecContext *ctx,
                                                               String_View scope_upper,
                                                               String_View property_name) {
     if (!ctx) return NULL;
@@ -255,7 +255,7 @@ const Eval_Property_Definition *eval_property_definition_find(Evaluator_Context 
     return NULL;
 }
 
-bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition *definition) {
+bool eval_property_define(EvalExecContext *ctx, const Eval_Property_Definition *definition) {
     if (!ctx || !definition) return false;
     if (eval_property_definition_find_impl(ctx, definition->scope_upper, definition->property_upper)) {
         return true;
@@ -274,14 +274,14 @@ bool eval_property_define(Evaluator_Context *ctx, const Eval_Property_Definition
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->property_definitions, stored);
 }
 
-bool eval_property_is_defined(Evaluator_Context *ctx, String_View scope_upper, String_View property_name) {
+bool eval_property_is_defined(EvalExecContext *ctx, String_View scope_upper, String_View property_name) {
     if (!ctx) return false;
     String_View property_upper = eval_property_upper_name_temp(ctx, property_name);
     if (eval_should_stop(ctx)) return false;
     return eval_property_definition_find_impl(ctx, scope_upper, property_upper) != NULL;
 }
 
-bool eval_target_apply_defined_initializers(Evaluator_Context *ctx,
+bool eval_target_apply_defined_initializers(EvalExecContext *ctx,
                                             Event_Origin origin,
                                             String_View target_name) {
     if (!ctx || eval_should_stop(ctx)) return false;
@@ -304,7 +304,7 @@ bool eval_target_apply_defined_initializers(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-bool eval_property_write(Evaluator_Context *ctx,
+bool eval_property_write(EvalExecContext *ctx,
                          Event_Origin origin,
                          String_View scope_upper,
                          String_View object_id,
@@ -360,7 +360,7 @@ bool eval_property_write(Evaluator_Context *ctx,
     return true;
 }
 
-static bool property_parent_directory_temp(Evaluator_Context *ctx,
+static bool property_parent_directory_temp(EvalExecContext *ctx,
                                            String_View dir,
                                            String_View *out_parent) {
     if (!ctx || !out_parent) return false;
@@ -368,7 +368,7 @@ static bool property_parent_directory_temp(Evaluator_Context *ctx,
     return eval_directory_parent(ctx, dir, out_parent);
 }
 
-static String_View property_value_from_store_temp(Evaluator_Context *ctx,
+static String_View property_value_from_store_temp(EvalExecContext *ctx,
                                                   String_View scope_upper,
                                                   String_View object_id,
                                                   String_View prop_upper,
@@ -392,7 +392,7 @@ static String_View property_value_from_store_temp(Evaluator_Context *ctx,
     return have ? value : nob_sv_from_cstr("");
 }
 
-static String_View property_value_from_directory_chain_temp(Evaluator_Context *ctx,
+static String_View property_value_from_directory_chain_temp(EvalExecContext *ctx,
                                                             String_View start_dir,
                                                             String_View prop_upper,
                                                             bool *out_set) {
@@ -430,7 +430,7 @@ static String_View property_value_from_directory_chain_temp(Evaluator_Context *c
     return have_global ? value : nob_sv_from_cstr("");
 }
 
-static String_View resolve_property_value_temp(Evaluator_Context *ctx,
+static String_View resolve_property_value_temp(EvalExecContext *ctx,
                                                String_View scope_upper,
                                                String_View object_id,
                                                String_View prop_name,
@@ -472,7 +472,7 @@ static String_View resolve_property_value_temp(Evaluator_Context *ctx,
     return nob_sv_from_cstr("");
 }
 
-static bool property_known_for_scope(Evaluator_Context *ctx,
+static bool property_known_for_scope(EvalExecContext *ctx,
                                      String_View scope_upper,
                                      String_View object_id,
                                      String_View prop_name,
@@ -496,7 +496,7 @@ static bool property_known_for_scope(Evaluator_Context *ctx,
     return have;
 }
 
-bool eval_property_query_mode_parse(Evaluator_Context *ctx,
+bool eval_property_query_mode_parse(EvalExecContext *ctx,
                                     const Node *node,
                                     Event_Origin origin,
                                     String_View token,
@@ -530,7 +530,7 @@ bool eval_property_query_mode_parse(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_property_query(Evaluator_Context *ctx,
+bool eval_property_query(EvalExecContext *ctx,
                          const Node *node,
                          Event_Origin origin,
                          String_View out_var,
@@ -638,7 +638,7 @@ bool eval_property_query(Evaluator_Context *ctx,
     return set_output_var_value(ctx, out_var, value);
 }
 
-bool eval_property_query_cmake(Evaluator_Context *ctx,
+bool eval_property_query_cmake(EvalExecContext *ctx,
                                const Node *node,
                                Event_Origin origin,
                                String_View out_var,

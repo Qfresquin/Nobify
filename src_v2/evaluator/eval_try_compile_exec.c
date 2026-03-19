@@ -1,6 +1,6 @@
 #include "eval_try_compile_internal.h"
 
-static bool try_compile_cache_upsert(Evaluator_Context *ctx, String_View key, String_View value) {
+static bool try_compile_cache_upsert(EvalExecContext *ctx, String_View key, String_View value) {
     if (!ctx) return false;
     Eval_Cache_Entry *entry = NULL;
     if (ctx->scope_state.cache_entries) entry = stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
@@ -28,7 +28,7 @@ static bool try_compile_cache_upsert(Evaluator_Context *ctx, String_View key, St
     return true;
 }
 
-static bool try_compile_publish_result(Evaluator_Context *ctx,
+static bool try_compile_publish_result(EvalExecContext *ctx,
                                        Cmake_Event_Origin origin,
                                        const Try_Compile_Request *req,
                                        String_View result,
@@ -46,7 +46,7 @@ static bool try_compile_publish_result(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_append_define_arg(Evaluator_Context *ctx, Nob_Cmd *cmd, String_View def, bool msvc) {
+static bool try_compile_append_define_arg(EvalExecContext *ctx, Nob_Cmd *cmd, String_View def, bool msvc) {
     if (!ctx || !cmd) return false;
     if (def.count == 0) return true;
     if (nob_sv_starts_with(def, nob_sv_from_cstr("-D")) || nob_sv_starts_with(def, nob_sv_from_cstr("/D"))) {
@@ -59,7 +59,7 @@ static bool try_compile_append_define_arg(Evaluator_Context *ctx, Nob_Cmd *cmd, 
     return true;
 }
 
-static bool try_compile_append_include_arg(Evaluator_Context *ctx, Nob_Cmd *cmd, String_View dir, bool msvc) {
+static bool try_compile_append_include_arg(EvalExecContext *ctx, Nob_Cmd *cmd, String_View dir, bool msvc) {
     if (!ctx || !cmd) return false;
     if (dir.count == 0) return true;
     String_View resolved = try_compile_resolve_in_dir(ctx, dir, try_compile_current_src_dir(ctx));
@@ -70,7 +70,7 @@ static bool try_compile_append_include_arg(Evaluator_Context *ctx, Nob_Cmd *cmd,
     return true;
 }
 
-static bool try_compile_append_link_dir_arg(Evaluator_Context *ctx, Nob_Cmd *cmd, String_View dir, bool msvc) {
+static bool try_compile_append_link_dir_arg(EvalExecContext *ctx, Nob_Cmd *cmd, String_View dir, bool msvc) {
     if (!ctx || !cmd) return false;
     if (dir.count == 0) return true;
     String_View resolved = try_compile_resolve_in_dir(ctx, dir, try_compile_current_src_dir(ctx));
@@ -81,7 +81,7 @@ static bool try_compile_append_link_dir_arg(Evaluator_Context *ctx, Nob_Cmd *cmd
     return true;
 }
 
-static bool try_compile_append_tokenized_flags(Evaluator_Context *ctx,
+static bool try_compile_append_tokenized_flags(EvalExecContext *ctx,
                                                Nob_Cmd *cmd,
                                                String_View raw_flags) {
     if (!ctx || !cmd) return false;
@@ -100,7 +100,7 @@ static bool try_compile_append_tokenized_flags(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_append_required_compile_settings(Evaluator_Context *ctx,
+static bool try_compile_append_required_compile_settings(EvalExecContext *ctx,
                                                          Nob_Cmd *cmd,
                                                          const Try_Compile_Request *req,
                                                          Try_Compile_Language lang,
@@ -157,7 +157,7 @@ static bool try_compile_append_required_compile_settings(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_append_link_library_arg(Evaluator_Context *ctx,
+static bool try_compile_append_link_library_arg(EvalExecContext *ctx,
                                                 Nob_Cmd *cmd,
                                                 String_View lib,
                                                 const Try_Compile_Target_Artifact *artifacts,
@@ -200,7 +200,7 @@ static bool try_compile_append_link_library_arg(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
+static bool try_compile_append_required_link_settings(EvalExecContext *ctx,
                                                       Nob_Cmd *cmd,
                                                       const Try_Compile_Request *req,
                                                       const Try_Compile_Target_Artifact *artifacts,
@@ -252,7 +252,7 @@ static bool try_compile_append_required_link_settings(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_materialize_output_path(Evaluator_Context *ctx,
+static bool try_compile_materialize_output_path(EvalExecContext *ctx,
                                                 String_View bindir,
                                                 String_View base_name,
                                                 const char *ext,
@@ -266,7 +266,7 @@ static bool try_compile_materialize_output_path(Evaluator_Context *ctx,
     return true;
 }
 
-static bool try_compile_append_cmake_cache_arg(Evaluator_Context *ctx,
+static bool try_compile_append_cmake_cache_arg(EvalExecContext *ctx,
                                                Nob_Cmd *cmd,
                                                const char *key,
                                                String_View value) {
@@ -336,7 +336,7 @@ typedef struct {
 } Try_Compile_Project_Artifact_Search;
 
 typedef struct {
-    Evaluator_Context *ctx;
+    EvalExecContext *ctx;
     const char *binary_dir_c;
     Try_Compile_Source_List *sources;
 } Try_Compile_Project_Source_Search;
@@ -362,7 +362,7 @@ static bool try_compile_project_artifact_visit(Nob_Walk_Entry entry) {
     return true;
 }
 
-static String_View try_compile_project_find_named_artifact(Evaluator_Context *ctx,
+static String_View try_compile_project_find_named_artifact(EvalExecContext *ctx,
                                                            String_View binary_dir,
                                                            String_View target_name) {
     if (!ctx || binary_dir.count == 0 || target_name.count == 0) return nob_sv_from_cstr("");
@@ -418,7 +418,7 @@ static bool try_compile_project_source_visit(Nob_Walk_Entry entry) {
                                    });
 }
 
-static bool try_compile_execute_project_request_fallback(Evaluator_Context *ctx,
+static bool try_compile_execute_project_request_fallback(EvalExecContext *ctx,
                                                          const Try_Compile_Request *req,
                                                          Try_Compile_Execution_Result *out_res) {
     if (!ctx || !req || !out_res) return false;
@@ -455,7 +455,7 @@ static bool try_compile_execute_project_request_fallback(Evaluator_Context *ctx,
     return try_compile_execute_source_request(ctx, &source_req, out_res);
 }
 
-bool try_compile_execute_source_request(Evaluator_Context *ctx,
+bool try_compile_execute_source_request(EvalExecContext *ctx,
                                         const Try_Compile_Request *req,
                                         Try_Compile_Execution_Result *out_res) {
     if (!ctx || !req || !out_res) return false;
@@ -677,7 +677,7 @@ bool try_compile_execute_source_request(Evaluator_Context *ctx,
     return true;
 }
 
-bool try_compile_execute_project_request(Evaluator_Context *ctx,
+bool try_compile_execute_project_request(EvalExecContext *ctx,
                                          const Node *node,
                                          const Try_Compile_Request *req,
                                          Try_Compile_Execution_Result *out_res) {
@@ -777,7 +777,7 @@ bool try_compile_execute_project_request(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result try_compile_execute_and_publish(Evaluator_Context *ctx,
+Eval_Result try_compile_execute_and_publish(EvalExecContext *ctx,
                                             const Node *node,
                                             const Try_Compile_Request *req) {
     if (!ctx || !node || !req || eval_should_stop(ctx)) return eval_result_fatal();

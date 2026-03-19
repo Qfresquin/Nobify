@@ -24,12 +24,12 @@ typedef struct {
     bool touch;
 } Eval_File_Archive_Extract_Options;
 
-bool eval_file_backend_archive_create(Evaluator_Context *ctx,
+bool eval_file_backend_archive_create(EvalExecContext *ctx,
                                       const Eval_File_Archive_Create_Options *opt,
                                       int *out_status_code,
                                       String_View *out_log);
 
-bool eval_file_backend_archive_extract(Evaluator_Context *ctx,
+bool eval_file_backend_archive_extract(EvalExecContext *ctx,
                                        const Eval_File_Archive_Extract_Options *opt,
                                        int *out_status_code,
                                        String_View *out_log);

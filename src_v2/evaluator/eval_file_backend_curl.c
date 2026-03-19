@@ -12,7 +12,7 @@ static void curl_append_log_line(Nob_String_Builder *sb, const char *text) {
     nob_sb_append_cstr(sb, text);
 }
 
-static bool curl_finalize_log(Evaluator_Context *ctx, Nob_String_Builder *sb, String_View *out_log) {
+static bool curl_finalize_log(EvalExecContext *ctx, Nob_String_Builder *sb, String_View *out_log) {
     if (!ctx || !sb || !out_log) return false;
     if (sb->count == 0) {
         *out_log = nob_sv_from_cstr("");
@@ -54,7 +54,7 @@ static int curl_xferinfo_cb(void *clientp,
     return 0;
 }
 
-static bool curl_apply_common_opts(Evaluator_Context *ctx,
+static bool curl_apply_common_opts(EvalExecContext *ctx,
                                    CURL *h,
                                    const Eval_File_Curl_Options *opt,
                                    Curl_Callback_State *cb_state,
@@ -142,7 +142,7 @@ static bool curl_apply_common_opts(Evaluator_Context *ctx,
     return true;
 }
 
-static bool curl_exec(Evaluator_Context *ctx,
+static bool curl_exec(EvalExecContext *ctx,
                       CURL *h,
                       Nob_String_Builder *log_sb,
                       char errbuf[CURL_ERROR_SIZE],
@@ -171,7 +171,7 @@ static bool curl_exec(Evaluator_Context *ctx,
     return curl_finalize_log(ctx, log_sb, out_log);
 }
 
-bool eval_file_backend_curl_download(Evaluator_Context *ctx,
+bool eval_file_backend_curl_download(EvalExecContext *ctx,
                                      String_View url,
                                      String_View dst_path,
                                      bool has_dst_path,
@@ -233,7 +233,7 @@ bool eval_file_backend_curl_download(Evaluator_Context *ctx,
     return ok;
 }
 
-bool eval_file_backend_curl_upload(Evaluator_Context *ctx,
+bool eval_file_backend_curl_upload(EvalExecContext *ctx,
                                    String_View src_path,
                                    String_View url,
                                    const Eval_File_Curl_Options *opt,
@@ -295,7 +295,7 @@ bool eval_file_backend_curl_upload(Evaluator_Context *ctx,
 
 #else
 
-bool eval_file_backend_curl_download(Evaluator_Context *ctx,
+bool eval_file_backend_curl_download(EvalExecContext *ctx,
                                      String_View url,
                                      String_View dst_path,
                                      bool has_dst_path,
@@ -312,7 +312,7 @@ bool eval_file_backend_curl_download(Evaluator_Context *ctx,
     return false;
 }
 
-bool eval_file_backend_curl_upload(Evaluator_Context *ctx,
+bool eval_file_backend_curl_upload(EvalExecContext *ctx,
                                    String_View src_path,
                                    String_View url,
                                    const Eval_File_Curl_Options *opt,

@@ -11,7 +11,7 @@
 #include <ctype.h>
 #include "stb_ds.h"
 
-static bool load_cache_emit_diag(Evaluator_Context *ctx,
+static bool load_cache_emit_diag(EvalExecContext *ctx,
                                  const Node *node,
                                  Cmake_Diag_Severity severity,
                                  String_View cause,
@@ -51,13 +51,13 @@ static bool load_cache_is_keyword(String_View token) {
            eval_sv_eq_ci_lit(token, "INCLUDE_INTERNALS");
 }
 
-static bool load_cache_push_temp(Evaluator_Context *ctx, SV_List *list, String_View value) {
+static bool load_cache_push_temp(EvalExecContext *ctx, SV_List *list, String_View value) {
     if (!ctx || !list) return false;
     if (value.count == 0) return true;
     return eval_sv_arr_push_temp(ctx, list, value);
 }
 
-static bool load_cache_collect_until_keyword(Evaluator_Context *ctx,
+static bool load_cache_collect_until_keyword(EvalExecContext *ctx,
                                              SV_List args,
                                              size_t *io_index,
                                              SV_List *out_list) {
@@ -69,7 +69,7 @@ static bool load_cache_collect_until_keyword(Evaluator_Context *ctx,
     return true;
 }
 
-static String_View load_cache_prefixed_name_temp(Evaluator_Context *ctx,
+static String_View load_cache_prefixed_name_temp(EvalExecContext *ctx,
                                                  String_View prefix,
                                                  String_View key) {
     if (!ctx) return nob_sv_from_cstr("");
@@ -82,7 +82,7 @@ static String_View load_cache_prefixed_name_temp(Evaluator_Context *ctx,
     return nob_sv_from_parts(buf, total);
 }
 
-static bool load_cache_apply_prefixed_entry(Evaluator_Context *ctx,
+static bool load_cache_apply_prefixed_entry(EvalExecContext *ctx,
                                             String_View prefix,
                                             String_View key,
                                             String_View value) {
@@ -93,7 +93,7 @@ static bool load_cache_apply_prefixed_entry(Evaluator_Context *ctx,
     return eval_var_set_current(ctx, prefixed, value);
 }
 
-static bool load_cache_process_contents(Evaluator_Context *ctx,
+static bool load_cache_process_contents(EvalExecContext *ctx,
                                         const Node *node,
                                         bool read_with_prefix,
                                         String_View prefix,
@@ -150,7 +150,7 @@ static bool load_cache_process_contents(Evaluator_Context *ctx,
     return true;
 }
 
-static bool load_cache_resolve_path(Evaluator_Context *ctx, String_View raw_path, String_View *out_path) {
+static bool load_cache_resolve_path(EvalExecContext *ctx, String_View raw_path, String_View *out_path) {
     if (!ctx || !out_path) return false;
     String_View path = raw_path;
     if (!eval_sv_is_abs_path(path)) {
@@ -167,7 +167,7 @@ static bool load_cache_resolve_path(Evaluator_Context *ctx, String_View raw_path
     return true;
 }
 
-static bool load_cache_parse_read_with_prefix_request(Evaluator_Context *ctx,
+static bool load_cache_parse_read_with_prefix_request(EvalExecContext *ctx,
                                                       const Node *node,
                                                       SV_List args,
                                                       Load_Cache_Request *out_req) {
@@ -194,7 +194,7 @@ static bool load_cache_parse_read_with_prefix_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool load_cache_parse_legacy_request(Evaluator_Context *ctx,
+static bool load_cache_parse_legacy_request(EvalExecContext *ctx,
                                             const Node *node,
                                             SV_List args,
                                             Load_Cache_Request *out_req) {
@@ -229,7 +229,7 @@ static bool load_cache_parse_legacy_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool load_cache_parse_request(Evaluator_Context *ctx,
+static bool load_cache_parse_request(EvalExecContext *ctx,
                                      const Node *node,
                                      SV_List args,
                                      Load_Cache_Request *out_req) {
@@ -251,7 +251,7 @@ static bool load_cache_parse_request(Evaluator_Context *ctx,
     return load_cache_parse_legacy_request(ctx, node, args, out_req);
 }
 
-static bool load_cache_execute_request(Evaluator_Context *ctx,
+static bool load_cache_execute_request(EvalExecContext *ctx,
                                        const Node *node,
                                        const Load_Cache_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -367,7 +367,7 @@ static bool cache_type_is_path_like(String_View cache_type) {
     return eval_sv_eq_ci_lit(cache_type, "PATH") || eval_sv_eq_ci_lit(cache_type, "FILEPATH");
 }
 
-static bool cache_promote_untyped_path_value_if_needed(Evaluator_Context *ctx,
+static bool cache_promote_untyped_path_value_if_needed(EvalExecContext *ctx,
                                                         Eval_Cache_Entry *entry,
                                                         String_View cache_type) {
     if (!ctx || !entry) return false;
@@ -386,18 +386,18 @@ static bool cache_promote_untyped_path_value_if_needed(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static Eval_Cache_Entry *cache_find(Evaluator_Context *ctx, String_View key) {
+static Eval_Cache_Entry *cache_find(EvalExecContext *ctx, String_View key) {
     if (!ctx || !ctx->scope_state.cache_entries) return NULL;
     return stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
 }
 
-static bool cache_remove(Evaluator_Context *ctx, String_View key) {
+static bool cache_remove(EvalExecContext *ctx, String_View key) {
     if (!ctx || !ctx->scope_state.cache_entries) return true;
     (void)stbds_shdel(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
     return true;
 }
 
-static char *cache_copy_key_cstr(Evaluator_Context *ctx, String_View key) {
+static char *cache_copy_key_cstr(EvalExecContext *ctx, String_View key) {
     if (!ctx) return NULL;
     char *buf = (char*)arena_alloc(eval_event_arena(ctx), key.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, NULL);
@@ -406,7 +406,7 @@ static char *cache_copy_key_cstr(Evaluator_Context *ctx, String_View key) {
     return buf;
 }
 
-static bool cache_upsert(Evaluator_Context *ctx,
+static bool cache_upsert(EvalExecContext *ctx,
                          String_View key,
                          String_View value,
                          String_View type,
@@ -435,7 +435,7 @@ static bool cache_upsert(Evaluator_Context *ctx,
     return true;
 }
 
-static bool visible_scope_has_normal_binding(Evaluator_Context *ctx, String_View key) {
+static bool visible_scope_has_normal_binding(EvalExecContext *ctx, String_View key) {
     if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
     for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
         Var_Scope *scope = &ctx->scope_state.scopes[depth];
@@ -445,7 +445,7 @@ static bool visible_scope_has_normal_binding(Evaluator_Context *ctx, String_View
     return false;
 }
 
-static bool unset_visible_normal_binding(Evaluator_Context *ctx, String_View key) {
+static bool unset_visible_normal_binding(EvalExecContext *ctx, String_View key) {
     if (eval_scope_visible_depth(ctx) == 0 || key.count == 0) return false;
     for (size_t depth = eval_scope_visible_depth(ctx); depth-- > 0;) {
         Var_Scope *scope = &ctx->scope_state.scopes[depth];
@@ -457,14 +457,14 @@ static bool unset_visible_normal_binding(Evaluator_Context *ctx, String_View key
     return true;
 }
 
-static bool emit_cache_entry_write(Evaluator_Context *ctx,
+static bool emit_cache_entry_write(EvalExecContext *ctx,
                                    Cmake_Event_Origin origin,
                                    String_View key,
                                    String_View value) {
     return eval_emit_var_set_cache(ctx, origin, key, value);
 }
 
-static bool option_cache_write(Evaluator_Context *ctx,
+static bool option_cache_write(EvalExecContext *ctx,
                                Cmake_Event_Origin origin,
                                String_View key,
                                String_View value,
@@ -473,7 +473,7 @@ static bool option_cache_write(Evaluator_Context *ctx,
     return emit_cache_entry_write(ctx, origin, key, value);
 }
 
-static bool mark_as_advanced_apply(Evaluator_Context *ctx,
+static bool mark_as_advanced_apply(EvalExecContext *ctx,
                                    String_View var_name,
                                    bool clear_mode) {
     if (!ctx || var_name.count == 0) return false;
@@ -535,7 +535,7 @@ typedef struct {
     SV_List vars;
 } Mark_As_Advanced_Request;
 
-static bool set_parse_request(Evaluator_Context *ctx,
+static bool set_parse_request(EvalExecContext *ctx,
                               const Node *node,
                               SV_List args,
                               Set_Request *out_req) {
@@ -619,7 +619,7 @@ static bool set_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool set_execute_env_request(Evaluator_Context *ctx,
+static bool set_execute_env_request(EvalExecContext *ctx,
                                     const Node *node,
                                     const Set_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -637,7 +637,7 @@ static bool set_execute_env_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool set_execute_cache_request(Evaluator_Context *ctx,
+static bool set_execute_cache_request(EvalExecContext *ctx,
                                       const Node *node,
                                       const Set_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -665,7 +665,7 @@ static bool set_execute_cache_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool set_execute_normal_request(Evaluator_Context *ctx,
+static bool set_execute_normal_request(EvalExecContext *ctx,
                                        const Node *node,
                                        const Set_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -690,7 +690,7 @@ static bool set_execute_normal_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool set_execute_request(Evaluator_Context *ctx,
+static bool set_execute_request(EvalExecContext *ctx,
                                 const Node *node,
                                 const Set_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -711,7 +711,7 @@ static bool set_execute_request(Evaluator_Context *ctx,
     return false;
 }
 
-static bool unset_parse_request(Evaluator_Context *ctx,
+static bool unset_parse_request(EvalExecContext *ctx,
                                 const Node *node,
                                 SV_List args,
                                 Unset_Request *out_req) {
@@ -755,7 +755,7 @@ static bool unset_parse_request(Evaluator_Context *ctx,
     return false;
 }
 
-static bool unset_execute_request(Evaluator_Context *ctx,
+static bool unset_execute_request(EvalExecContext *ctx,
                                   const Node *node,
                                   const Unset_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -792,7 +792,7 @@ static bool unset_execute_request(Evaluator_Context *ctx,
     return false;
 }
 
-static bool option_parse_request(Evaluator_Context *ctx,
+static bool option_parse_request(EvalExecContext *ctx,
                                  const Node *node,
                                  SV_List args,
                                  Option_Request *out_req) {
@@ -818,7 +818,7 @@ static bool option_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool option_execute_request(Evaluator_Context *ctx,
+static bool option_execute_request(EvalExecContext *ctx,
                                    const Node *node,
                                    const Option_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -839,7 +839,7 @@ static bool option_execute_request(Evaluator_Context *ctx,
     return option_cache_write(ctx, o, req->var, req->value, req->doc);
 }
 
-static bool mark_as_advanced_parse_request(Evaluator_Context *ctx,
+static bool mark_as_advanced_parse_request(EvalExecContext *ctx,
                                            const Node *node,
                                            SV_List args,
                                            Mark_As_Advanced_Request *out_req) {
@@ -868,7 +868,7 @@ static bool mark_as_advanced_parse_request(Evaluator_Context *ctx,
     return true;
 }
 
-static bool mark_as_advanced_execute_request(Evaluator_Context *ctx,
+static bool mark_as_advanced_execute_request(EvalExecContext *ctx,
                                              const Node *node,
                                              const Mark_As_Advanced_Request *req) {
     if (!ctx || !node || !req) return false;
@@ -897,7 +897,7 @@ static bool mark_as_advanced_execute_request(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_set(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_set(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -908,7 +908,7 @@ Eval_Result eval_handle_set(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_unset(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -919,7 +919,7 @@ Eval_Result eval_handle_unset(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_option(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_option(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -930,7 +930,7 @@ Eval_Result eval_handle_option(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_mark_as_advanced(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -941,7 +941,7 @@ Eval_Result eval_handle_mark_as_advanced(Evaluator_Context *ctx, const Node *nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_load_cache(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_load_cache(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

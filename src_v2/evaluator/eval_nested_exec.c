@@ -26,11 +26,11 @@ typedef struct {
     bool defer_pushed;
 } External_Eval_State;
 
-static bool nested_exec_publish_current_vars(Evaluator_Context *ctx) {
+static bool nested_exec_publish_current_vars(EvalExecContext *ctx) {
     return eval_exec_publish_current_vars(ctx);
 }
 
-static bool eval_read_external_source(Evaluator_Context *ctx,
+static bool eval_read_external_source(EvalExecContext *ctx,
                                       String_View file_path,
                                       char **out_path_c,
                                       String_View *out_source_code) {
@@ -54,7 +54,7 @@ static bool eval_read_external_source(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_lex_external_tokens(Evaluator_Context *ctx,
+static bool eval_lex_external_tokens(EvalExecContext *ctx,
                                      const char *path_c,
                                      String_View source_code,
                                      Token_List *out_tokens) {
@@ -89,7 +89,7 @@ static bool eval_lex_external_tokens(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool eval_parse_external_ast(Evaluator_Context *ctx,
+static bool eval_parse_external_ast(EvalExecContext *ctx,
                                     const Token_List *tokens,
                                     Ast_Root *out_ast) {
     if (!ctx || !tokens || !out_ast) return false;
@@ -97,7 +97,7 @@ static bool eval_parse_external_ast(Evaluator_Context *ctx,
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool eval_push_external_context(Evaluator_Context *ctx,
+static bool eval_push_external_context(EvalExecContext *ctx,
                                        String_View file_path,
                                        const char *path_c,
                                        bool is_add_subdirectory,
@@ -145,7 +145,7 @@ static bool eval_push_external_context(Evaluator_Context *ctx,
     return true;
 }
 
-static bool eval_pop_external_context(Evaluator_Context *ctx, External_Eval_State *state) {
+static bool eval_pop_external_context(EvalExecContext *ctx, External_Eval_State *state) {
     if (!ctx || !state) return false;
     if (state->scope_pushed) {
         eval_scope_pop(ctx);
@@ -155,7 +155,7 @@ static bool eval_pop_external_context(Evaluator_Context *ctx, External_Eval_Stat
     return nested_exec_publish_current_vars(ctx);
 }
 
-Eval_Result eval_execute_file(Evaluator_Context *ctx,
+Eval_Result eval_execute_file(EvalExecContext *ctx,
                               String_View file_path,
                               bool is_add_subdirectory,
                               String_View explicit_bin_dir) {

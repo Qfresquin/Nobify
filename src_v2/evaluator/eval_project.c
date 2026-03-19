@@ -10,7 +10,7 @@
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 
-static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
+static bool apply_subdir_system_default_to_target(EvalExecContext *ctx,
                                                   Cmake_Event_Origin o,
                                                   String_View target_name) {
     String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_SUBDIR_SYSTEM_DEFAULT"));
@@ -26,7 +26,7 @@ static bool apply_subdir_system_default_to_target(Evaluator_Context *ctx,
                                      EV_PROP_SET);
 }
 
-static bool emit_items_from_list(Evaluator_Context *ctx,
+static bool emit_items_from_list(EvalExecContext *ctx,
                                  Cmake_Event_Origin o,
                                  String_View target_name,
                                  String_View list_text,
@@ -65,7 +65,7 @@ static bool emit_items_from_list(Evaluator_Context *ctx,
     return true;
 }
 
-static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
+static bool apply_global_compile_state_to_target(EvalExecContext *ctx,
                                                  Cmake_Event_Origin o,
                                                  String_View target_name) {
     String_View defs = eval_var_get_visible(ctx, nob_sv_from_cstr(k_global_defs_var));
@@ -75,7 +75,7 @@ static bool apply_global_compile_state_to_target(Evaluator_Context *ctx,
     return true;
 }
 
-static bool emit_bool_target_prop_true(Evaluator_Context *ctx,
+static bool emit_bool_target_prop_true(EvalExecContext *ctx,
                                        Cmake_Event_Origin o,
                                        String_View target_name,
                                        const char *key) {
@@ -87,7 +87,7 @@ static bool emit_bool_target_prop_true(Evaluator_Context *ctx,
                                      EV_PROP_SET);
 }
 
-static bool add_target_name_must_be_new(Evaluator_Context *ctx,
+static bool add_target_name_must_be_new(EvalExecContext *ctx,
                                         String_View cmd_name,
                                         Cmake_Event_Origin o,
                                         String_View target_name) {
@@ -96,7 +96,7 @@ static bool add_target_name_must_be_new(Evaluator_Context *ctx,
     return false;
 }
 
-static bool add_alias_target_validate(Evaluator_Context *ctx,
+static bool add_alias_target_validate(EvalExecContext *ctx,
                                       String_View cmd_name,
                                       Cmake_Event_Origin o,
                                       String_View alias_name,
@@ -114,7 +114,7 @@ static bool add_alias_target_validate(Evaluator_Context *ctx,
     return true;
 }
 
-static bool add_library_default_shared(Evaluator_Context *ctx) {
+static bool add_library_default_shared(EvalExecContext *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("BUILD_SHARED_LIBS"));
     if (v.count == 0) return false;
     if (eval_sv_eq_ci_lit(v, "0") ||
@@ -166,7 +166,7 @@ static bool policy_parse_version_range_strict(String_View token,
     return true;
 }
 
-static bool policy_apply_version_defaults(Evaluator_Context *ctx, Eval_Semver policy_version) {
+static bool policy_apply_version_defaults(EvalExecContext *ctx, Eval_Semver policy_version) {
     if (!ctx || eval_should_stop(ctx)) return false;
     int first = eval_policy_known_min_id();
     int last = eval_policy_known_max_id();
@@ -187,7 +187,7 @@ static bool policy_apply_version_defaults(Evaluator_Context *ctx, Eval_Semver po
     return true;
 }
 
-Eval_Result eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_minimum_required(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -242,7 +242,7 @@ Eval_Result eval_handle_cmake_minimum_required(Evaluator_Context *ctx, const Nod
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_cmake_policy(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_cmake_policy(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -390,7 +390,7 @@ static bool project_parse_version_token(String_View token, Project_Version_Info 
     return true;
 }
 
-static bool project_set_prefixed_var(Evaluator_Context *ctx,
+static bool project_set_prefixed_var(EvalExecContext *ctx,
                                      String_View prefix,
                                      const char *suffix,
                                      String_View value) {
@@ -424,7 +424,7 @@ static bool enabled_languages_contains(SV_List langs, String_View candidate) {
     return false;
 }
 
-static String_View language_compiler_loaded_var_temp(Evaluator_Context *ctx, String_View lang) {
+static String_View language_compiler_loaded_var_temp(EvalExecContext *ctx, String_View lang) {
     static const char prefix[] = "CMAKE_";
     static const char suffix[] = "_COMPILER_LOADED";
     size_t total = (sizeof(prefix) - 1) + lang.count + (sizeof(suffix) - 1);
@@ -442,7 +442,7 @@ static String_View language_compiler_loaded_var_temp(Evaluator_Context *ctx, Str
     return nob_sv_from_cstr(buf);
 }
 
-static bool apply_enabled_languages(Evaluator_Context *ctx,
+static bool apply_enabled_languages(EvalExecContext *ctx,
                                     Cmake_Event_Origin o,
                                     String_View cmd_name,
                                     const SV_List *requested) {
@@ -486,7 +486,7 @@ static bool apply_enabled_languages(Evaluator_Context *ctx,
     return true;
 }
 
-Eval_Result eval_handle_enable_language(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_enable_language(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -529,7 +529,7 @@ Eval_Result eval_handle_enable_language(Evaluator_Context *ctx, const Node *node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_project(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -712,7 +712,7 @@ Eval_Result eval_handle_project(Evaluator_Context *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_executable(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
@@ -832,7 +832,7 @@ Eval_Result eval_handle_add_executable(Evaluator_Context *ctx, const Node *node)
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_add_library(Evaluator_Context *ctx, const Node *node) {
+Eval_Result eval_handle_add_library(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

@@ -29,22 +29,22 @@ typedef struct {
 
 size_t list_count_items(String_View list_sv);
 bool list_item_in_set(String_View item, String_View *set, size_t set_count);
-bool list_split_semicolon_preserve_empty(Evaluator_Context *ctx, String_View input, SV_List *out);
+bool list_split_semicolon_preserve_empty(EvalExecContext *ctx, String_View input, SV_List *out);
 bool list_sv_parse_i64(String_View sv, long long *out);
-String_View list_join_items_temp(Evaluator_Context *ctx, String_View *items, size_t count);
-bool list_set_var_from_items(Evaluator_Context *ctx, String_View var, String_View *items, size_t count);
-bool list_load_var_items(Evaluator_Context *ctx, String_View var, SV_List *out);
+String_View list_join_items_temp(EvalExecContext *ctx, String_View *items, size_t count);
+bool list_set_var_from_items(EvalExecContext *ctx, String_View var, String_View *items, size_t count);
+bool list_load_var_items(EvalExecContext *ctx, String_View var, SV_List *out);
 bool list_normalize_index(size_t item_count, long long raw_index, bool allow_end, size_t *out_index);
-String_View list_concat_temp(Evaluator_Context *ctx, String_View a, String_View b);
-String_View list_to_case_temp(Evaluator_Context *ctx, String_View in, bool upper);
+String_View list_concat_temp(EvalExecContext *ctx, String_View a, String_View b);
+String_View list_to_case_temp(EvalExecContext *ctx, String_View in, bool upper);
 String_View list_strip_ws_view(String_View in);
-String_View list_genex_strip_temp(Evaluator_Context *ctx, String_View in);
-bool list_compile_regex(Evaluator_Context *ctx,
+String_View list_genex_strip_temp(EvalExecContext *ctx, String_View in);
+bool list_compile_regex(EvalExecContext *ctx,
                         const Node *node,
                         Cmake_Event_Origin o,
                         String_View pattern,
                         regex_t *out_re);
-bool list_regex_replace_one_temp(Evaluator_Context *ctx,
+bool list_regex_replace_one_temp(EvalExecContext *ctx,
                                  regex_t *re,
                                  String_View replacement,
                                  String_View input,

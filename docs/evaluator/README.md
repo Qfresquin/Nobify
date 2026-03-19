@@ -5,11 +5,14 @@
 This directory contains the canonical target documentation for the evaluator
 refactor.
 
-As of March 14, 2026:
+As of March 19, 2026:
 - `evaluator_v2_spec.md` is the top-level evaluator contract
 - `evaluator_architecture_target.md` is the canonical architecture companion
-- `Evaluator_Context` remains implementation-current only and is not the target
-  public boundary
+- the public evaluator boundary is the session/request model documented in the
+  v2 specs
+- `Evaluator_Context` is no longer part of the public API surface
+- `eval_session_run(...)` now executes each run inside a fresh
+  `EvalExecContext` linked back to a persistent `EvalSession`
 - downstream contracts may depend on `Event_Stream`, but any evaluator API
   references must use the target `EvalSession` / `EvalExec_Request` /
   `EvalRunResult` boundary
@@ -31,8 +34,9 @@ The canonical evaluator boundary is:
 - [Diagnostics](./evaluator_diagnostics.md)
 - [Command capabilities](./evaluator_command_capabilities.md)
 
-These documents define the target contract for new evaluator work. They are
-allowed to lead the implementation during migration.
+These documents define the active evaluator contract for new work. Remaining
+implementation gaps are semantic-coverage gaps, not public-boundary drift back
+toward the legacy create/run API.
 
 ## Implementation Audits
 
@@ -51,5 +55,5 @@ they do not redefine the target public API or runtime ownership model.
 - [Build model docs](../build_model/README.md)
 
 Those downstream documents should treat `Event_Stream` as the stable
-evaluator-output contract and should not depend on the legacy
-`Evaluator_Context` create/run API shape.
+evaluator-output contract and should depend only on the session/request/runtime
+surface, not evaluator internals.
