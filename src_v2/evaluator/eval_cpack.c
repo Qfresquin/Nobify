@@ -17,10 +17,11 @@ enum {
 };
 
 typedef struct {
+    String_View name;
     Cmake_Event_Origin origin;
     String_View command_name;
     String_View display_name;
-} Cpack_Install_Type_Opts;
+} Cpack_Install_Type_Request;
 
 static bool cpack_install_type_on_option(Evaluator_Context *ctx,
                                          void *userdata,
@@ -30,7 +31,7 @@ static bool cpack_install_type_on_option(Evaluator_Context *ctx,
     (void)ctx;
     (void)token_index;
     if (!userdata) return false;
-    Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
+    Cpack_Install_Type_Request *st = (Cpack_Install_Type_Request*)userdata;
     if (id == CPACK_INSTALL_TYPE_OPT_DISPLAY_NAME && arena_arr_len(values) > 0) st->display_name = values[0];
     return true;
 }
@@ -41,7 +42,7 @@ static bool cpack_install_type_on_positional(Evaluator_Context *ctx,
                                              size_t token_index) {
     (void)token_index;
     if (!ctx || !userdata) return false;
-    Cpack_Install_Type_Opts *st = (Cpack_Install_Type_Opts*)userdata;
+    Cpack_Install_Type_Request *st = (Cpack_Install_Type_Request*)userdata;
     EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_install_type() unexpected argument"), value);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
@@ -55,6 +56,7 @@ enum {
 };
 
 typedef struct {
+    String_View name;
     Cmake_Event_Origin origin;
     String_View command_name;
     String_View display_name;
@@ -62,7 +64,7 @@ typedef struct {
     String_View parent_group;
     bool expanded;
     bool bold_title;
-} Cpack_Group_Opts;
+} Cpack_Component_Group_Request;
 
 static bool cpack_group_on_option(Evaluator_Context *ctx,
                                   void *userdata,
@@ -72,7 +74,7 @@ static bool cpack_group_on_option(Evaluator_Context *ctx,
     (void)ctx;
     (void)token_index;
     if (!userdata) return false;
-    Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
+    Cpack_Component_Group_Request *st = (Cpack_Component_Group_Request*)userdata;
     switch (id) {
     case CPACK_GROUP_OPT_DISPLAY_NAME:
         if (arena_arr_len(values) > 0) st->display_name = values[0];
@@ -100,7 +102,7 @@ static bool cpack_group_on_positional(Evaluator_Context *ctx,
                                       size_t token_index) {
     (void)token_index;
     if (!ctx || !userdata) return false;
-    Cpack_Group_Opts *st = (Cpack_Group_Opts*)userdata;
+    Cpack_Component_Group_Request *st = (Cpack_Component_Group_Request*)userdata;
     EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_component_group() unexpected argument"), value);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
@@ -120,6 +122,7 @@ enum {
 };
 
 typedef struct {
+    String_View name;
     Cmake_Event_Origin origin;
     String_View command_name;
     String_View display_name;
@@ -133,7 +136,7 @@ typedef struct {
     bool hidden;
     bool disabled;
     bool downloaded;
-} Cpack_Component_Opts;
+} Cpack_Component_Request;
 
 static bool cpack_component_on_option(Evaluator_Context *ctx,
                                       void *userdata,
@@ -142,7 +145,7 @@ static bool cpack_component_on_option(Evaluator_Context *ctx,
                                       size_t token_index) {
     (void)token_index;
     if (!ctx || !userdata) return false;
-    Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
+    Cpack_Component_Request *st = (Cpack_Component_Request*)userdata;
     switch (id) {
     case CPACK_COMPONENT_OPT_DISPLAY_NAME:
         if (arena_arr_len(values) > 0) st->display_name = values[0];
@@ -188,24 +191,28 @@ static bool cpack_component_on_positional(Evaluator_Context *ctx,
                                           size_t token_index) {
     (void)token_index;
     if (!ctx || !userdata) return false;
-    Cpack_Component_Opts *st = (Cpack_Component_Opts*)userdata;
+    Cpack_Component_Request *st = (Cpack_Component_Request*)userdata;
     EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"), value);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return eval_result_from_ctx(ctx);
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_install_type() missing name"), nob_sv_from_cstr(""));
-        return eval_result_from_ctx(ctx);
+static bool cpack_parse_install_type_request(Evaluator_Context *ctx,
+                                             const Node *node,
+                                             Cmake_Event_Origin origin,
+                                             Cpack_Install_Type_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, origin)) return false;
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (arena_arr_len(args) < 1) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_install_type() missing name"), nob_sv_from_cstr(""));
+        return false;
     }
 
-    String_View name = a[0];
-    Cpack_Install_Type_Opts opt = {
-        .origin = o,
+    *out_req = (Cpack_Install_Type_Request){
+        .name = args[0],
+        .origin = origin,
         .command_name = node->as.cmd.name,
         .display_name = nob_sv_from_cstr(""),
     };
@@ -218,36 +225,41 @@ Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Nod
         .unknown_as_positional = true,
         .warn_unknown = false,
     };
-    cfg.origin = o;
-    if (!eval_opt_parse_walk(ctx,
-                             a,
-                             1,
-                             k_specs,
-                             NOB_ARRAY_LEN(k_specs),
-                             cfg,
-                             cpack_install_type_on_option,
-                             cpack_install_type_on_positional,
-                             &opt)) {
-        return eval_result_from_ctx(ctx);
-    }
-
-    if (!eval_emit_cpack_add_install_type(ctx, o, name, opt.display_name)) return eval_result_fatal();
-    return eval_result_from_ctx(ctx);
+    cfg.origin = origin;
+    return eval_opt_parse_walk(ctx,
+                               args,
+                               1,
+                               k_specs,
+                               NOB_ARRAY_LEN(k_specs),
+                               cfg,
+                               cpack_install_type_on_option,
+                               cpack_install_type_on_positional,
+                               out_req);
 }
 
-Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return eval_result_from_ctx(ctx);
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_component_group() missing name"), nob_sv_from_cstr(""));
-        return eval_result_from_ctx(ctx);
+static bool cpack_execute_install_type_request(Evaluator_Context *ctx,
+                                               const Cpack_Install_Type_Request *req) {
+    if (!ctx || !req) return false;
+    return eval_emit_cpack_add_install_type(ctx, req->origin, req->name, req->display_name);
+}
+
+static bool cpack_parse_component_group_request(Evaluator_Context *ctx,
+                                                const Node *node,
+                                                Cmake_Event_Origin origin,
+                                                Cpack_Component_Group_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, origin)) return false;
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (arena_arr_len(args) < 1) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_component_group() missing name"), nob_sv_from_cstr(""));
+        return false;
     }
 
-    String_View name = a[0];
-    Cpack_Group_Opts opt = {
-        .origin = o,
+    *out_req = (Cpack_Component_Group_Request){
+        .name = args[0],
+        .origin = origin,
         .command_name = node->as.cmd.name,
         .display_name = nob_sv_from_cstr(""),
         .description = nob_sv_from_cstr(""),
@@ -268,45 +280,48 @@ Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const 
         .unknown_as_positional = true,
         .warn_unknown = false,
     };
-    cfg.origin = o;
-    if (!eval_opt_parse_walk(ctx,
-                             a,
-                             1,
-                             k_specs,
-                             NOB_ARRAY_LEN(k_specs),
-                             cfg,
-                             cpack_group_on_option,
-                             cpack_group_on_positional,
-                             &opt)) {
-        return eval_result_from_ctx(ctx);
-    }
-
-    if (!eval_emit_cpack_add_component_group(ctx,
-                                             o,
-                                             name,
-                                             opt.display_name,
-                                             opt.description,
-                                             opt.parent_group,
-                                             opt.expanded,
-                                             opt.bold_title)) {
-        return eval_result_fatal();
-    }
-    return eval_result_from_ctx(ctx);
+    cfg.origin = origin;
+    return eval_opt_parse_walk(ctx,
+                               args,
+                               1,
+                               k_specs,
+                               NOB_ARRAY_LEN(k_specs),
+                               cfg,
+                               cpack_group_on_option,
+                               cpack_group_on_positional,
+                               out_req);
 }
 
-Eval_Result eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
-    Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    if (!require_cpack_component_module(ctx, node->as.cmd.name, o)) return eval_result_from_ctx(ctx);
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 1) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_component() missing name"), nob_sv_from_cstr(""));
-        return eval_result_from_ctx(ctx);
+static bool cpack_execute_component_group_request(Evaluator_Context *ctx,
+                                                  const Cpack_Component_Group_Request *req) {
+    if (!ctx || !req) return false;
+    return eval_emit_cpack_add_component_group(ctx,
+                                               req->origin,
+                                               req->name,
+                                               req->display_name,
+                                               req->description,
+                                               req->parent_group,
+                                               req->expanded,
+                                               req->bold_title);
+}
+
+static bool cpack_parse_component_request(Evaluator_Context *ctx,
+                                          const Node *node,
+                                          Cmake_Event_Origin origin,
+                                          Cpack_Component_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (!require_cpack_component_module(ctx, node->as.cmd.name, origin)) return false;
+
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (arena_arr_len(args) < 1) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("cpack_add_component() missing name"), nob_sv_from_cstr(""));
+        return false;
     }
 
-    String_View name = a[0];
-    Cpack_Component_Opts opt = {
-        .origin = o,
+    *out_req = (Cpack_Component_Request){
+        .name = args[0],
+        .origin = origin,
         .command_name = node->as.cmd.name,
         .display_name = nob_sv_from_cstr(""),
         .description = nob_sv_from_cstr(""),
@@ -339,34 +354,63 @@ Eval_Result eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *
         .unknown_as_positional = true,
         .warn_unknown = false,
     };
-    cfg.origin = o;
-    if (!eval_opt_parse_walk(ctx,
-                             a,
-                             1,
-                             k_specs,
-                             NOB_ARRAY_LEN(k_specs),
-                             cfg,
-                             cpack_component_on_option,
-                             cpack_component_on_positional,
-                             &opt)) {
-        return eval_result_from_ctx(ctx);
-    }
+    cfg.origin = origin;
+    return eval_opt_parse_walk(ctx,
+                               args,
+                               1,
+                               k_specs,
+                               NOB_ARRAY_LEN(k_specs),
+                               cfg,
+                               cpack_component_on_option,
+                               cpack_component_on_positional,
+                               out_req);
+}
 
-    if (!eval_emit_cpack_add_component(ctx,
-                                       o,
-                                       name,
-                                       opt.display_name,
-                                       opt.description,
-                                       opt.group,
-                                       opt.depends,
-                                       opt.install_types,
-                                       opt.archive_file,
-                                       opt.plist,
-                                       opt.required,
-                                       opt.hidden,
-                                       opt.disabled,
-                                       opt.downloaded)) {
-        return eval_result_fatal();
-    }
+static bool cpack_execute_component_request(Evaluator_Context *ctx,
+                                            const Cpack_Component_Request *req) {
+    if (!ctx || !req) return false;
+    return eval_emit_cpack_add_component(ctx,
+                                         req->origin,
+                                         req->name,
+                                         req->display_name,
+                                         req->description,
+                                         req->group,
+                                         req->depends,
+                                         req->install_types,
+                                         req->archive_file,
+                                         req->plist,
+                                         req->required,
+                                         req->hidden,
+                                         req->disabled,
+                                         req->downloaded);
+}
+
+Eval_Result eval_handle_cpack_add_install_type(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    Cpack_Install_Type_Request req = {0};
+    if (!cpack_parse_install_type_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
+    if (!cpack_execute_install_type_request(ctx, &req)) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_cpack_add_component_group(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    Cpack_Component_Group_Request req = {0};
+    if (!cpack_parse_component_group_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
+    if (!cpack_execute_component_group_request(ctx, &req)) return eval_result_fatal();
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_cpack_add_component(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    Cpack_Component_Request req = {0};
+    if (!cpack_parse_component_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
+    if (!cpack_execute_component_request(ctx, &req)) return eval_result_fatal();
     return eval_result_from_ctx(ctx);
 }

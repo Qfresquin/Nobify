@@ -114,24 +114,80 @@ Eval_Result eval_handle_variable_requires(Evaluator_Context *ctx, const Node *no
     return eval_result_from_bool(legacy_metadata_only(ctx, node, 3, nob_sv_from_cstr("variable_requires")));
 }
 
-Eval_Result eval_handle_make_directory(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) == 0) {
+typedef struct {
+    SV_List directories;
+} Make_Directory_Request;
+
+typedef struct {
+    String_View path;
+    String_View contents;
+    bool append;
+} Write_File_Request;
+
+typedef struct {
+    String_View variable;
+    SV_List values;
+} Remove_Request;
+
+typedef struct {
+    String_View output_var;
+    SV_List headers;
+} Qt_Wrap_Cpp_Request;
+
+typedef struct {
+    String_View headers_var;
+    String_View sources_var;
+    SV_List ui_files;
+} Qt_Wrap_Ui_Request;
+
+typedef struct {
+    String_View target_name;
+    SV_List ui_files;
+} Fltk_Wrap_Ui_Request;
+
+typedef struct {
+    String_View variable;
+    String_View command;
+} Variable_Watch_Request;
+
+static bool legacy_collect_temp_args(Evaluator_Context *ctx,
+                                     SV_List args,
+                                     size_t begin,
+                                     SV_List *out) {
+    if (!ctx || !out) return false;
+    *out = NULL;
+    for (size_t i = begin; i < arena_arr_len(args); i++) {
+        if (!svu_list_push_temp(ctx, out, args[i])) return false;
+    }
+    return true;
+}
+
+static bool legacy_parse_make_directory_request(Evaluator_Context *ctx,
+                                                const Node *node,
+                                                SV_List args,
+                                                Make_Directory_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    if (arena_arr_len(args) == 0) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("make_directory() requires at least one directory"),
                                nob_sv_from_cstr("Usage: make_directory(<dir>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
-    for (size_t i = 0; i < arena_arr_len(a); i++) {
-        String_View path = legacy_resolve_binary_path(ctx, a[i]);
-        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-        if (!eval_mkdirs_for_parent(ctx, path)) return eval_result_from_ctx(ctx);
+    return legacy_collect_temp_args(ctx, args, 0, &out_req->directories);
+}
+
+static bool legacy_execute_make_directory_request(Evaluator_Context *ctx,
+                                                  const Node *node,
+                                                  const Make_Directory_Request *req) {
+    if (!ctx || !node || !req) return false;
+    for (size_t i = 0; i < arena_arr_len(req->directories); i++) {
+        String_View path = legacy_resolve_binary_path(ctx, req->directories[i]);
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_mkdirs_for_parent(ctx, path)) return false;
         char *path_c = eval_sv_to_cstr_temp(ctx, path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, path_c, eval_result_fatal());
+        EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
         if (!nob_mkdir_if_not_exists(path_c)) {
             (void)legacy_emit_diag(ctx,
                                    node,
@@ -140,26 +196,28 @@ Eval_Result eval_handle_make_directory(Evaluator_Context *ctx, const Node *node)
                                    path);
         }
     }
-    return eval_result_from_ctx(ctx);
+    return true;
 }
 
-Eval_Result eval_handle_write_file(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 2) {
+static bool legacy_parse_write_file_request(Evaluator_Context *ctx,
+                                            const Node *node,
+                                            SV_List args,
+                                            Write_File_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    *out_req = (Write_File_Request){0};
+
+    if (arena_arr_len(args) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("write_file() requires a path and at least one content argument"),
                                nob_sv_from_cstr("Usage: write_file(<file> <content>... [APPEND])"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
-    bool append = false;
-    size_t content_end = arena_arr_len(a);
-    if (eval_sv_eq_ci_lit(a[arena_arr_len(a) - 1], "APPEND")) {
-        append = true;
+    size_t content_end = arena_arr_len(args);
+    if (eval_sv_eq_ci_lit(args[arena_arr_len(args) - 1], "APPEND")) {
+        out_req->append = true;
         content_end--;
         if (content_end < 2) {
             (void)legacy_emit_diag(ctx,
@@ -167,60 +225,73 @@ Eval_Result eval_handle_write_file(Evaluator_Context *ctx, const Node *node) {
                                    EV_DIAG_ERROR,
                                    nob_sv_from_cstr("write_file(APPEND) still requires content"),
                                    nob_sv_from_cstr("Usage: write_file(<file> <content>... [APPEND])"));
-            return eval_result_from_ctx(ctx);
+            return false;
         }
     }
 
-    Nob_String_Builder sb = {0};
-    for (size_t i = 1; i < content_end; i++) {
-        nob_sb_append_buf(&sb, a[i].data, a[i].count);
-    }
-    String_View path = legacy_resolve_binary_path(ctx, a[0]);
-    if (!eval_write_text_file(ctx, path, nob_sv_from_parts(sb.items, sb.count), append)) {
+    out_req->path = legacy_resolve_binary_path(ctx, args[0]);
+    if (eval_should_stop(ctx)) return false;
+    size_t content_count = content_end - 1;
+    out_req->contents = (content_count == 1) ? args[1] : svu_join_no_sep_temp(ctx, &args[1], content_count);
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool legacy_execute_write_file_request(Evaluator_Context *ctx,
+                                              const Node *node,
+                                              const Write_File_Request *req) {
+    if (!ctx || !node || !req) return false;
+    if (!eval_write_text_file(ctx, req->path, req->contents, req->append)) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("write_file() failed to write the requested file"),
-                               path);
+                               req->path);
     }
-    return eval_result_from_ctx(ctx);
+    return true;
 }
 
-Eval_Result eval_handle_remove(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 2) {
+static bool legacy_parse_remove_request(Evaluator_Context *ctx,
+                                        const Node *node,
+                                        SV_List args,
+                                        Remove_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    *out_req = (Remove_Request){0};
+    if (arena_arr_len(args) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("remove() requires a variable and one or more values"),
                                nob_sv_from_cstr("Usage: remove(<variable> <value>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
+    out_req->variable = args[0];
+    return legacy_collect_temp_args(ctx, args, 1, &out_req->values);
+}
 
-    String_View current = eval_var_get_visible(ctx, a[0]);
+static bool legacy_execute_remove_request(Evaluator_Context *ctx,
+                                          const Remove_Request *req) {
+    if (!ctx || !req) return false;
+
+    String_View current = eval_var_get_visible(ctx, req->variable);
     SV_List items = NULL;
     if (current.count > 0 && !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), current, &items)) {
-        return eval_result_from_ctx(ctx);
+        return false;
     }
 
     SV_List kept = NULL;
     for (size_t i = 0; i < arena_arr_len(items); i++) {
         bool drop = false;
-        for (size_t j = 1; j < arena_arr_len(a); j++) {
-            if (nob_sv_eq(items[i], a[j])) {
+        for (size_t j = 0; j < arena_arr_len(req->values); j++) {
+            if (nob_sv_eq(items[i], req->values[j])) {
                 drop = true;
                 break;
             }
         }
-        if (!drop && !svu_list_push_temp(ctx, &kept, items[i])) return eval_result_from_ctx(ctx);
+        if (!drop && !svu_list_push_temp(ctx, &kept, items[i])) return false;
     }
 
-    if (!eval_var_set_current(ctx, a[0], eval_sv_join_semi_temp(ctx, kept, arena_arr_len(kept)))) {
-        return eval_result_from_ctx(ctx);
-    }
-    return eval_result_from_ctx(ctx);
+    return eval_var_set_current(ctx, req->variable, eval_sv_join_semi_temp(ctx, kept, arena_arr_len(kept)));
 }
 
 Eval_Result eval_handle_install_files(Evaluator_Context *ctx, const Node *node) {
@@ -297,120 +368,232 @@ Eval_Result eval_handle_install_targets(Evaluator_Context *ctx, const Node *node
     return eval_result_from_ctx(ctx);
 }
 
-Eval_Result eval_handle_qt_wrap_cpp(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 3) {
+static bool legacy_parse_qt_wrap_cpp_request(Evaluator_Context *ctx,
+                                             const Node *node,
+                                             SV_List args,
+                                             Qt_Wrap_Cpp_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    *out_req = (Qt_Wrap_Cpp_Request){0};
+    if (arena_arr_len(args) < 3) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("qt_wrap_cpp() requires a library, output variable and one or more headers"),
                                nob_sv_from_cstr("Usage: qt_wrap_cpp(<lib> <out-var> <header>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
-    SV_List generated = NULL;
-    for (size_t i = 2; i < arena_arr_len(a); i++) {
-        String_View stem = legacy_stem_from_path(a[i]);
-        if (!svu_list_push_temp(ctx, &generated, legacy_generated_name_temp(ctx, "moc_", stem, ".cxx"))) {
-            return eval_result_from_ctx(ctx);
-        }
-    }
-    if (!eval_var_set_current(ctx, a[1], eval_sv_join_semi_temp(ctx, generated, arena_arr_len(generated)))) {
-        return eval_result_from_ctx(ctx);
-    }
-    return eval_result_from_ctx(ctx);
+    out_req->output_var = args[1];
+    return legacy_collect_temp_args(ctx, args, 2, &out_req->headers);
 }
 
-Eval_Result eval_handle_qt_wrap_ui(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 4) {
+static bool legacy_execute_qt_wrap_cpp_request(Evaluator_Context *ctx,
+                                               const Qt_Wrap_Cpp_Request *req) {
+    if (!ctx || !req) return false;
+    SV_List generated = NULL;
+    for (size_t i = 0; i < arena_arr_len(req->headers); i++) {
+        String_View stem = legacy_stem_from_path(req->headers[i]);
+        if (!svu_list_push_temp(ctx, &generated, legacy_generated_name_temp(ctx, "moc_", stem, ".cxx"))) {
+            return false;
+        }
+    }
+    return eval_var_set_current(ctx, req->output_var, eval_sv_join_semi_temp(ctx, generated, arena_arr_len(generated)));
+}
+
+static bool legacy_parse_qt_wrap_ui_request(Evaluator_Context *ctx,
+                                            const Node *node,
+                                            SV_List args,
+                                            Qt_Wrap_Ui_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    *out_req = (Qt_Wrap_Ui_Request){0};
+    if (arena_arr_len(args) < 4) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("qt_wrap_ui() requires a library, header var, source var and one or more UI files"),
                                nob_sv_from_cstr("Usage: qt_wrap_ui(<lib> <headers-var> <sources-var> <ui>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
-    SV_List headers = NULL;
-    SV_List sources = NULL;
-    for (size_t i = 3; i < arena_arr_len(a); i++) {
-        String_View stem = legacy_stem_from_path(a[i]);
-        if (!svu_list_push_temp(ctx, &headers, legacy_generated_name_temp(ctx, "ui_", stem, ".h"))) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!svu_list_push_temp(ctx, &sources, legacy_generated_name_temp(ctx, "ui_", stem, ".cxx"))) {
-            return eval_result_from_ctx(ctx);
-        }
-    }
-    if (!eval_var_set_current(ctx, a[1], eval_sv_join_semi_temp(ctx, headers, arena_arr_len(headers)))) return eval_result_from_ctx(ctx);
-    if (!eval_var_set_current(ctx, a[2], eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)))) return eval_result_from_ctx(ctx);
-    return eval_result_from_ctx(ctx);
+    out_req->headers_var = args[1];
+    out_req->sources_var = args[2];
+    return legacy_collect_temp_args(ctx, args, 3, &out_req->ui_files);
 }
 
-Eval_Result eval_handle_fltk_wrap_ui(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) < 2) {
+static bool legacy_execute_qt_wrap_ui_request(Evaluator_Context *ctx,
+                                              const Qt_Wrap_Ui_Request *req) {
+    if (!ctx || !req) return false;
+    SV_List headers = NULL;
+    SV_List sources = NULL;
+    for (size_t i = 0; i < arena_arr_len(req->ui_files); i++) {
+        String_View stem = legacy_stem_from_path(req->ui_files[i]);
+        if (!svu_list_push_temp(ctx, &headers, legacy_generated_name_temp(ctx, "ui_", stem, ".h"))) {
+            return false;
+        }
+        if (!svu_list_push_temp(ctx, &sources, legacy_generated_name_temp(ctx, "ui_", stem, ".cxx"))) {
+            return false;
+        }
+    }
+    if (!eval_var_set_current(ctx, req->headers_var, eval_sv_join_semi_temp(ctx, headers, arena_arr_len(headers)))) {
+        return false;
+    }
+    return eval_var_set_current(ctx, req->sources_var, eval_sv_join_semi_temp(ctx, sources, arena_arr_len(sources)));
+}
+
+static bool legacy_parse_fltk_wrap_ui_request(Evaluator_Context *ctx,
+                                              const Node *node,
+                                              SV_List args,
+                                              Fltk_Wrap_Ui_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    *out_req = (Fltk_Wrap_Ui_Request){0};
+    if (arena_arr_len(args) < 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("fltk_wrap_ui() requires a target name and one or more UI files"),
                                nob_sv_from_cstr("Usage: fltk_wrap_ui(<lib> <ui>...)"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
-
-    SV_List outputs = NULL;
-    for (size_t i = 1; i < arena_arr_len(a); i++) {
-        String_View stem = legacy_stem_from_path(a[i]);
-        if (!svu_list_push_temp(ctx, &outputs, legacy_generated_name_temp(ctx, "fluid_", stem, ".cxx"))) {
-            return eval_result_from_ctx(ctx);
-        }
-        if (!svu_list_push_temp(ctx, &outputs, legacy_generated_name_temp(ctx, "fluid_", stem, ".h"))) {
-            return eval_result_from_ctx(ctx);
-        }
-    }
-
-    size_t total = a[0].count + sizeof("_FLTK_UI_SRCS") - 1;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, eval_result_fatal());
-    memcpy(buf, a[0].data, a[0].count);
-    memcpy(buf + a[0].count, "_FLTK_UI_SRCS", sizeof("_FLTK_UI_SRCS"));
-    if (!eval_var_set_current(ctx, nob_sv_from_parts(buf, total), eval_sv_join_semi_temp(ctx, outputs, arena_arr_len(outputs)))) {
-        return eval_result_from_ctx(ctx);
-    }
-    return eval_result_from_ctx(ctx);
+    out_req->target_name = args[0];
+    return legacy_collect_temp_args(ctx, args, 1, &out_req->ui_files);
 }
 
-Eval_Result eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-    if (arena_arr_len(a) == 0 || arena_arr_len(a) > 2) {
+static bool legacy_execute_fltk_wrap_ui_request(Evaluator_Context *ctx,
+                                                const Fltk_Wrap_Ui_Request *req) {
+    if (!ctx || !req) return false;
+
+    SV_List outputs = NULL;
+    for (size_t i = 0; i < arena_arr_len(req->ui_files); i++) {
+        String_View stem = legacy_stem_from_path(req->ui_files[i]);
+        if (!svu_list_push_temp(ctx, &outputs, legacy_generated_name_temp(ctx, "fluid_", stem, ".cxx"))) {
+            return false;
+        }
+        if (!svu_list_push_temp(ctx, &outputs, legacy_generated_name_temp(ctx, "fluid_", stem, ".h"))) {
+            return false;
+        }
+    }
+
+    size_t total = req->target_name.count + sizeof("_FLTK_UI_SRCS") - 1;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    memcpy(buf, req->target_name.data, req->target_name.count);
+    memcpy(buf + req->target_name.count, "_FLTK_UI_SRCS", sizeof("_FLTK_UI_SRCS"));
+    return eval_var_set_current(ctx,
+                                nob_sv_from_parts(buf, total),
+                                eval_sv_join_semi_temp(ctx, outputs, arena_arr_len(outputs)));
+}
+
+static bool legacy_parse_variable_watch_request(Evaluator_Context *ctx,
+                                                const Node *node,
+                                                SV_List args,
+                                                Variable_Watch_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    *out_req = (Variable_Watch_Request){0};
+    if (arena_arr_len(args) == 0 || arena_arr_len(args) > 2) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("variable_watch() requires a variable and an optional command"),
                                nob_sv_from_cstr("Usage: variable_watch(<var> [command])"));
-        return eval_result_from_ctx(ctx);
+        return false;
     }
+    out_req->variable = args[0];
+    out_req->command = arena_arr_len(args) > 1 ? args[1] : nob_sv_from_cstr("");
+    return true;
+}
+
+static bool legacy_execute_variable_watch_request(Evaluator_Context *ctx,
+                                                  const Variable_Watch_Request *req) {
+    if (!ctx || !req) return false;
 
     Eval_Command_State *commands = eval_command_slice(ctx);
     for (size_t i = 0; i < arena_arr_len(commands->watched_variables); i++) {
-        if (!eval_sv_key_eq(commands->watched_variables[i], a[0])) continue;
+        if (!eval_sv_key_eq(commands->watched_variables[i], req->variable)) continue;
         if (i < arena_arr_len(commands->watched_variable_commands)) {
-            commands->watched_variable_commands[i] = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
+            commands->watched_variable_commands[i] = sv_copy_to_event_arena(ctx, req->command);
         }
-        return eval_result_from_ctx(ctx);
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
-    String_View stable_var = sv_copy_to_event_arena(ctx, a[0]);
-    String_View stable_cmd = sv_copy_to_event_arena(ctx, arena_arr_len(a) > 1 ? a[1] : nob_sv_from_cstr(""));
-    if (eval_should_stop(ctx)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->watched_variables, stable_var)) return eval_result_fatal();
-    if (!EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->watched_variable_commands, stable_cmd)) return eval_result_fatal();
+    String_View stable_var = sv_copy_to_event_arena(ctx, req->variable);
+    String_View stable_cmd = sv_copy_to_event_arena(ctx, req->command);
+    if (eval_should_stop(ctx)) return false;
+    if (!EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->watched_variables, stable_var)) return false;
+    if (!EVAL_ARR_PUSH(ctx, commands->user_commands_arena, commands->watched_variable_commands, stable_cmd)) return false;
+    return true;
+}
+
+Eval_Result eval_handle_make_directory(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Make_Directory_Request req = {0};
+    if (!legacy_parse_make_directory_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_make_directory_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_write_file(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Write_File_Request req = {0};
+    if (!legacy_parse_write_file_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_write_file_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_remove(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Remove_Request req = {0};
+    if (!legacy_parse_remove_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_remove_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_qt_wrap_cpp(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Qt_Wrap_Cpp_Request req = {0};
+    if (!legacy_parse_qt_wrap_cpp_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_qt_wrap_cpp_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_qt_wrap_ui(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Qt_Wrap_Ui_Request req = {0};
+    if (!legacy_parse_qt_wrap_ui_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_qt_wrap_ui_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_fltk_wrap_ui(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Fltk_Wrap_Ui_Request req = {0};
+    if (!legacy_parse_fltk_wrap_ui_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_fltk_wrap_ui_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+Eval_Result eval_handle_variable_watch(Evaluator_Context *ctx, const Node *node) {
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+    Variable_Watch_Request req = {0};
+    if (!legacy_parse_variable_watch_request(ctx, node, args, &req)) return eval_result_from_ctx(ctx);
+    if (!legacy_execute_variable_watch_request(ctx, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }

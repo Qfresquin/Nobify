@@ -1246,6 +1246,88 @@ TEST(evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_
     TEST_PASS();
 }
 
+TEST(evaluator_cpack_commands_reject_missing_names_and_warn_on_extra_args) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(CPackDiag)\n"
+        "include(CPackComponent)\n"
+        "cpack_add_install_type()\n"
+        "cpack_add_component_group()\n"
+        "cpack_add_component()\n"
+        "cpack_add_install_type(Full EXTRA)\n"
+        "cpack_add_component_group(base STRAY)\n"
+        "cpack_add_component(core EXTRA)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 3);
+    ASSERT(report->error_count == 3);
+
+    bool saw_install_type_missing = false;
+    bool saw_group_missing = false;
+    bool saw_component_missing = false;
+    bool saw_install_type_extra = false;
+    bool saw_group_extra = false;
+    bool saw_component_extra = false;
+
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cpack_add_install_type() missing name"))) {
+                saw_install_type_missing = true;
+            } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cpack_add_component_group() missing name"))) {
+                saw_group_missing = true;
+            } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cpack_add_component() missing name"))) {
+                saw_component_missing = true;
+            }
+            continue;
+        }
+        if (ev->as.diag.severity != EV_DIAG_WARNING) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cpack_add_install_type() unexpected argument")) &&
+            nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("EXTRA"))) {
+            saw_install_type_extra = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cpack_add_component_group() unexpected argument")) &&
+                   nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("STRAY"))) {
+            saw_group_extra = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cpack_add_component() unsupported/extra argument")) &&
+                   nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("EXTRA"))) {
+            saw_component_extra = true;
+        }
+    }
+
+    ASSERT(saw_install_type_missing);
+    ASSERT(saw_group_missing);
+    ASSERT(saw_component_missing);
+    ASSERT(saw_install_type_extra);
+    ASSERT(saw_group_extra);
+    ASSERT(saw_component_extra);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2432,6 +2514,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed) {
     test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
+    test_evaluator_cpack_commands_reject_missing_names_and_warn_on_extra_args(passed, failed);
     test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
     test_evaluator_string_text_regex_and_misc_dispatch_events(passed, failed);

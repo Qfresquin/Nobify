@@ -693,14 +693,61 @@ TEST(evaluator_batch8_legacy_commands_reject_invalid_forms) {
         temp_arena,
         "make_directory()\n"
         "write_file()\n"
+        "write_file(legacy.txt APPEND)\n"
         "remove(ONLY_VAR)\n"
         "variable_watch(A B C)\n"
-        "qt_wrap_cpp(LegacyLib ONLY_OUT)\n");
+        "qt_wrap_cpp(LegacyLib ONLY_OUT)\n"
+        "qt_wrap_ui(LegacyLib ONLY_HDRS ONLY_SRCS)\n"
+        "fltk_wrap_ui()\n");
     ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
 
     const Eval_Run_Report *report = evaluator_get_run_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 5);
+    ASSERT(report->error_count == 8);
+
+    bool saw_make_directory = false;
+    bool saw_write_file = false;
+    bool saw_write_file_append = false;
+    bool saw_remove = false;
+    bool saw_variable_watch = false;
+    bool saw_qt_wrap_cpp = false;
+    bool saw_qt_wrap_ui = false;
+    bool saw_fltk_wrap_ui = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("make_directory() requires at least one directory"))) {
+            saw_make_directory = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("write_file() requires a path and at least one content argument"))) {
+            saw_write_file = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("write_file(APPEND) still requires content"))) {
+            saw_write_file_append = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("remove() requires a variable and one or more values"))) {
+            saw_remove = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("variable_watch() requires a variable and an optional command"))) {
+            saw_variable_watch = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("qt_wrap_cpp() requires a library, output variable and one or more headers"))) {
+            saw_qt_wrap_cpp = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("qt_wrap_ui() requires a library, header var, source var and one or more UI files"))) {
+            saw_qt_wrap_ui = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("fltk_wrap_ui() requires a target name and one or more UI files"))) {
+            saw_fltk_wrap_ui = true;
+        }
+    }
+
+    ASSERT(saw_make_directory);
+    ASSERT(saw_write_file);
+    ASSERT(saw_write_file_append);
+    ASSERT(saw_remove);
+    ASSERT(saw_variable_watch);
+    ASSERT(saw_qt_wrap_cpp);
+    ASSERT(saw_qt_wrap_ui);
+    ASSERT(saw_fltk_wrap_ui);
 
     evaluator_destroy(ctx);
     arena_destroy(temp_arena);
