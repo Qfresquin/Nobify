@@ -2106,6 +2106,152 @@ TEST(evaluator_execute_process_captures_output_and_models_3_28_fatal_mode) {
     TEST_PASS();
 }
 
+TEST(evaluator_execute_process_rejects_incomplete_and_invalid_option_forms) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+#if defined(_WIN32)
+    const char *script =
+        "execute_process()\n"
+        "execute_process(COMMAND)\n"
+        "execute_process(COMMAND cmd /C echo ok OUTPUT_VARIABLE)\n"
+        "execute_process(COMMAND cmd /C echo ok COMMAND_ECHO MAYBE)\n"
+        "execute_process(COMMAND cmd /C echo ok COMMAND_ERROR_IS_FATAL NONE)\n";
+#else
+    const char *script =
+        "execute_process()\n"
+        "execute_process(COMMAND)\n"
+        "execute_process(COMMAND /bin/sh -c \"printf ok\" OUTPUT_VARIABLE)\n"
+        "execute_process(COMMAND /bin/sh -c \"printf ok\" COMMAND_ECHO MAYBE)\n"
+        "execute_process(COMMAND /bin/sh -c \"printf ok\" COMMAND_ERROR_IS_FATAL NONE)\n";
+#endif
+
+    Ast_Root root = parse_cmake(temp_arena, script);
+    Eval_Result run_res = evaluator_run(ctx, root);
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 5);
+
+    bool saw_missing_command_clause = false;
+    bool saw_missing_command_arg = false;
+    bool saw_missing_output_var = false;
+    bool saw_invalid_command_echo = false;
+    bool saw_invalid_fatal_none = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process() requires at least one COMMAND clause"))) {
+            saw_missing_command_clause = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process(COMMAND) requires at least one argument"))) {
+            saw_missing_command_arg = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process(OUTPUT_VARIABLE) requires an output variable"))) {
+            saw_missing_output_var = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process(COMMAND_ECHO) received an invalid value"))) {
+            saw_invalid_command_echo = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process(COMMAND_ERROR_IS_FATAL NONE) is not part of the CMake 3.28 baseline"))) {
+            saw_invalid_fatal_none = true;
+        }
+    }
+
+    ASSERT(saw_missing_command_clause);
+    ASSERT(saw_missing_command_arg);
+    ASSERT(saw_missing_output_var);
+    ASSERT(saw_invalid_command_echo);
+    ASSERT(saw_invalid_fatal_none);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_directory_option_commands_expand_shell_and_linker_tokens_once) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_compile_options(\"SHELL:-Wall -Winvalid-pch\" -Winvalid-pch)\n"
+        "add_link_options(\"LINKER:-z,defs\" \"SHELL:-pthread -pthread\" \"LINKER:-z,defs\")\n"
+        "get_property(COMPILE_OPTS DIRECTORY PROPERTY COMPILE_OPTIONS)\n"
+        "get_property(LINK_OPTS DIRECTORY PROPERTY LINK_OPTIONS)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    String_View compile_opts = eval_var_get(ctx, nob_sv_from_cstr("COMPILE_OPTS"));
+    String_View link_opts = eval_var_get(ctx, nob_sv_from_cstr("LINK_OPTS"));
+    ASSERT(semicolon_list_count(compile_opts) == 2);
+    ASSERT(nob_sv_eq(semicolon_list_item_at(compile_opts, 0), nob_sv_from_cstr("-Wall")));
+    ASSERT(nob_sv_eq(semicolon_list_item_at(compile_opts, 1), nob_sv_from_cstr("-Winvalid-pch")));
+    ASSERT(semicolon_list_count(link_opts) == 3);
+    ASSERT(nob_sv_eq(semicolon_list_item_at(link_opts, 0), nob_sv_from_cstr("LINKER:-z")));
+    ASSERT(nob_sv_eq(semicolon_list_item_at(link_opts, 1), nob_sv_from_cstr("LINKER:defs")));
+    ASSERT(nob_sv_eq(semicolon_list_item_at(link_opts, 2), nob_sv_from_cstr("-pthread")));
+
+    bool saw_compile_mutation = false;
+    bool saw_link_mutation = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+            nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("COMPILE_OPTIONS"))) {
+            saw_compile_mutation =
+                ev->as.directory_property_mutate.item_count == 2 &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("-Wall")) &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[1], nob_sv_from_cstr("-Winvalid-pch"));
+        } else if (ev->h.kind == EVENT_DIRECTORY_PROPERTY_MUTATE &&
+                   nob_sv_eq(ev->as.directory_property_mutate.property_name, nob_sv_from_cstr("LINK_OPTIONS"))) {
+            saw_link_mutation =
+                ev->as.directory_property_mutate.item_count == 3 &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[0], nob_sv_from_cstr("LINKER:-z")) &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[1], nob_sv_from_cstr("LINKER:defs")) &&
+                nob_sv_eq(ev->as.directory_property_mutate.items[2], nob_sv_from_cstr("-pthread"));
+        }
+    }
+
+    ASSERT(saw_compile_mutation);
+    ASSERT(saw_link_mutation);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_batch1(int *passed, int *failed) {
     test_evaluator_golden_all_cases(passed, failed);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
@@ -2140,5 +2286,7 @@ void run_evaluator_v2_batch1(int *passed, int *failed) {
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
     test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed);
+    test_evaluator_directory_option_commands_expand_shell_and_linker_tokens_once(passed, failed);
+    test_evaluator_execute_process_rejects_incomplete_and_invalid_option_forms(passed, failed);
     test_evaluator_execute_process_captures_output_and_models_3_28_fatal_mode(passed, failed);
 }

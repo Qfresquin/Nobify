@@ -1636,6 +1636,75 @@ TEST(evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms) {
     TEST_PASS();
 }
 
+TEST(evaluator_cmake_parse_arguments_rejects_invalid_shapes_and_contexts) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_parse_arguments()\n"
+        "cmake_parse_arguments(PARSE_ARGV 0 BAD \"\" \"\")\n"
+        "cmake_parse_arguments(PARSE_ARGV 0 BAD \"\" \"\" \"\")\n"
+        "function(parse_bad_index)\n"
+        "  cmake_parse_arguments(PARSE_ARGV nope BAD \"\" \"\" \"\")\n"
+        "endfunction()\n"
+        "parse_bad_index(alpha)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 4);
+
+    bool saw_requires_four = false;
+    bool saw_parse_argv_shape = false;
+    bool saw_parse_argv_context = false;
+    bool saw_parse_argv_index = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("cmake_parse_arguments"))) continue;
+
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_parse_arguments() requires at least four arguments"))) {
+            saw_requires_four = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires index, prefix and three keyword lists"))) {
+            saw_parse_argv_shape = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) may only be used in function() scope"))) {
+            saw_parse_argv_context = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                              nob_sv_from_cstr("cmake_parse_arguments(PARSE_ARGV ...) requires a non-negative integer index"))) {
+            saw_parse_argv_index = true;
+        }
+    }
+
+    ASSERT(saw_requires_four);
+    ASSERT(saw_parse_argv_shape);
+    ASSERT(saw_parse_argv_context);
+    ASSERT(saw_parse_argv_index);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_unset_env_rejects_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1809,6 +1878,82 @@ TEST(evaluator_set_cache_policy_version_defaults_cmp0126_to_new) {
     TEST_PASS();
 }
 
+TEST(evaluator_var_commands_reject_invalid_option_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(BAD_CACHE value CACHE STRING)\n"
+        "set(BAD_TYPE value CACHE INVALID \"doc\")\n"
+        "set(BAD_TAIL value CACHE STRING \"doc\" EXTRA)\n"
+        "option()\n"
+        "option(\"\" \"doc\")\n"
+        "mark_as_advanced(FORCE)\n"
+        "unset(BAD_VAR BAD_OPTION)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 7);
+
+    bool saw_set_missing_doc = false;
+    bool saw_set_invalid_type = false;
+    bool saw_set_trailing = false;
+    bool saw_option_shape = false;
+    bool saw_option_empty_name = false;
+    bool saw_mark_missing = false;
+    bool saw_unset_unsupported = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set(... CACHE ...) requires <type> and <docstring>"))) {
+            saw_set_missing_doc = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set(... CACHE ...) received invalid cache type"))) {
+            saw_set_invalid_type = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("set(... CACHE ...) received unsupported trailing arguments"))) {
+            saw_set_trailing = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("option() requires <variable> <help_text> [value]"))) {
+            saw_option_shape = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("option() requires a non-empty variable name"))) {
+            saw_option_empty_name = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("mark_as_advanced() requires at least one variable name"))) {
+            saw_mark_missing = true;
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("unset() received unsupported option"))) {
+            saw_unset_unsupported = true;
+        }
+    }
+
+    ASSERT(saw_set_missing_doc);
+    ASSERT(saw_set_invalid_type);
+    ASSERT(saw_set_trailing);
+    ASSERT(saw_option_shape);
+    ASSERT(saw_option_empty_name);
+    ASSERT(saw_mark_missing);
+    ASSERT(saw_unset_unsupported);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 
 void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset(passed, failed);
@@ -1829,7 +1974,9 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_set_and_unset_env_forms(passed, failed);
     test_evaluator_process_env_service_overlays_execute_process_and_timestamp(passed, failed);
     test_evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms(passed, failed);
+    test_evaluator_cmake_parse_arguments_rejects_invalid_shapes_and_contexts(passed, failed);
     test_evaluator_unset_env_rejects_options(passed, failed);
     test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
     test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
+    test_evaluator_var_commands_reject_invalid_option_shapes(passed, failed);
 }

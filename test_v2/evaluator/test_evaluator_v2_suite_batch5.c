@@ -416,6 +416,78 @@ TEST(evaluator_get_filename_component_covers_documented_modes) {
     TEST_PASS();
 }
 
+TEST(evaluator_get_filename_component_rejects_invalid_option_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "get_filename_component(ONLY_TWO file)\n"
+        "get_filename_component(BAD_DIR a/b DIRECTORY EXTRA)\n"
+        "get_filename_component(BAD_ABS foo ABSOLUTE BASE_DIR)\n"
+        "get_filename_component(BAD_PROG foo PROGRAM PROGRAM_ARGS)\n"
+        "get_filename_component(BAD_MODE foo UNKNOWN)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 5);
+
+    bool saw_missing_core_args = false;
+    bool saw_bad_directory_extra = false;
+    bool saw_missing_base_dir = false;
+    bool saw_missing_program_args_var = false;
+    bool saw_bad_mode = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("get_filename_component() requires <var> <file> <component>"))) {
+            saw_missing_core_args = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_filename_component(DIRECTORY) received unexpected argument"))) {
+            saw_bad_directory_extra = true;
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("EXTRA")));
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_filename_component(BASE_DIR) requires a value"))) {
+            saw_missing_base_dir = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_filename_component(PROGRAM_ARGS) requires an output variable"))) {
+            saw_missing_program_args_var = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("get_filename_component() unsupported component"))) {
+            saw_bad_mode = true;
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("UNKNOWN")));
+        }
+    }
+
+    ASSERT(saw_missing_core_args);
+    ASSERT(saw_bad_directory_extra);
+    ASSERT(saw_missing_base_dir);
+    ASSERT(saw_missing_program_args_var);
+    ASSERT(saw_bad_mode);
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2349,6 +2421,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed) {
     test_evaluator_find_item_command_rejects_missing_registry_or_validator_values(passed, failed);
     test_evaluator_find_item_command_rejects_malformed_env_clause(passed, failed);
     test_evaluator_get_filename_component_covers_documented_modes(passed, failed);
+    test_evaluator_get_filename_component_rejects_invalid_option_shapes(passed, failed);
     test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);
     test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed);
     test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed);

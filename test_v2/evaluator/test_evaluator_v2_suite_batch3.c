@@ -1746,6 +1746,97 @@ TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
     TEST_PASS();
 }
 
+TEST(evaluator_host_build_commands_reject_invalid_shapes_and_warn_on_ignored_project_name) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Evaluator_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Evaluator_Context *ctx = evaluator_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "site_name()\n"
+        "build_name()\n"
+        "build_command()\n"
+        "build_command(BC_KEY CONFIGURATION)\n"
+        "build_command(BC_TOO_MANY a b c d)\n"
+        "build_command(BC_BAD TARGET demo UNKNOWN value)\n"
+        "build_command(BC_WARN PROJECT_NAME demo)\n");
+    ASSERT(!eval_result_is_fatal(evaluator_run(ctx, root)));
+
+    const Eval_Run_Report *report = evaluator_get_run_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 6);
+    ASSERT(report->warning_count == 1);
+
+    bool saw_site_name_shape = false;
+    bool saw_build_name_shape = false;
+    bool saw_build_command_missing = false;
+    bool saw_build_command_missing_value = false;
+    bool saw_build_command_too_many = false;
+    bool saw_build_command_bad_arg = false;
+    bool saw_project_name_warning = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC) continue;
+        if (ev->as.diag.severity == EV_DIAG_ERROR) {
+            if (nob_sv_eq(ev->as.diag.cause,
+                          nob_sv_from_cstr("site_name() requires exactly one output variable"))) {
+                saw_site_name_shape = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("build_name() requires exactly one output variable"))) {
+                saw_build_name_shape = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("build_command() requires an output variable"))) {
+                saw_build_command_missing = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("build_command() keyword requires a value"))) {
+                saw_build_command_missing_value = true;
+                ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("CONFIGURATION")));
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("build_command() received too many positional arguments"))) {
+                saw_build_command_too_many = true;
+            } else if (nob_sv_eq(ev->as.diag.cause,
+                                 nob_sv_from_cstr("build_command() received an unsupported argument"))) {
+                saw_build_command_bad_arg = true;
+                ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("UNKNOWN")));
+            }
+        } else if (ev->as.diag.severity == EV_DIAG_WARNING &&
+                   nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("build_command(PROJECT_NAME ...) is parsed but ignored by evaluator v2"))) {
+            saw_project_name_warning = true;
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("demo")));
+        }
+    }
+
+    ASSERT(saw_site_name_shape);
+    ASSERT(saw_build_name_shape);
+    ASSERT(saw_build_command_missing);
+    ASSERT(saw_build_command_missing_value);
+    ASSERT(saw_build_command_too_many);
+    ASSERT(saw_build_command_bad_arg);
+    ASSERT(saw_project_name_warning);
+    ASSERT(nob_sv_eq(eval_var_get(ctx, nob_sv_from_cstr("BC_WARN")),
+                     nob_sv_from_cstr("cmake --build .")));
+
+    evaluator_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_try_run_new_signature_accepts_no_log_and_runs) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2426,6 +2517,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
     test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
+    test_evaluator_host_build_commands_reject_invalid_shapes_and_warn_on_ignored_project_name(passed, failed);
     test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed);
     test_evaluator_try_run_executes_native_artifacts_and_reports_partial_limits(passed, failed);
     test_evaluator_try_run_uses_crosscompiling_emulator_when_available(passed, failed);
