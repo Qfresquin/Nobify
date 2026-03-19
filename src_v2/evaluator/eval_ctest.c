@@ -1,8 +1,10 @@
 #include "eval_ctest.h"
 
+#include "eval_hash.h"
 #include "evaluator_internal.h"
 #include "sv_utils.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -107,6 +109,22 @@ typedef struct {
     String_View build_dir;
     String_View parts;
     String_View files;
+    String_View submit_url;
+    String_View build_id_var;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    String_View http_headers;
+    SV_List http_header_items;
+    String_View cdash_upload_file;
+    String_View cdash_upload_type;
+    size_t retry_count;
+    size_t retry_delay_sec;
+    size_t inactivity_timeout_sec;
+    bool has_inactivity_timeout;
+    bool has_tls_verify;
+    bool tls_verify;
+    bool quiet;
+    bool is_cdash_upload;
 } Ctest_Submit_Request;
 
 typedef struct {
@@ -193,7 +211,8 @@ static const Ctest_Parse_Spec s_ctest_start_parse_spec = {
 };
 
 static const char *const s_ctest_submit_single_keywords[] = {
-    "RETRY_COUNT", "RETRY_DELAY", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
+    "SUBMIT_URL", "BUILD_ID", "HTTPHEADER", "RETRY_COUNT", "RETRY_DELAY",
+    "RETURN_VALUE", "CAPTURE_CMAKE_ERROR", "CDASH_UPLOAD", "CDASH_UPLOAD_TYPE"
 };
 static const char *const s_ctest_submit_multi_keywords[] = {"PARTS", "FILES"};
 static const char *const s_ctest_submit_flag_keywords[] = {"QUIET"};
@@ -252,6 +271,14 @@ static const Ctest_Parse_Spec s_ctest_upload_parse_spec = {
 
 static String_View ctest_current_binary_dir(EvalExecContext *ctx);
 static String_View ctest_binary_root(EvalExecContext *ctx);
+static bool ctest_resolve_files(EvalExecContext *ctx,
+                                const Node *node,
+                                String_View command_name,
+                                String_View raw_files,
+                                String_View base_dir,
+                                bool required,
+                                bool validate_exists,
+                                String_View *out_resolved);
 static size_t s_ctest_session_tag_counter = 0;
 
 static bool ctest_emit_diag(EvalExecContext *ctx,
@@ -297,6 +324,141 @@ static String_View ctest_parsed_field_value(const Ctest_Parse_Result *parsed, co
     return nob_sv_from_cstr("");
 }
 
+static bool ctest_list_push_unique_temp(EvalExecContext *ctx, SV_List *out_list, String_View value) {
+    if (!ctx || !out_list || value.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(*out_list); i++) {
+        if (nob_sv_eq((*out_list)[i], value)) return true;
+    }
+    return svu_list_push_temp(ctx, out_list, value);
+}
+
+static bool ctest_collect_parsed_field_values(EvalExecContext *ctx,
+                                              const Ctest_Parse_Result *parsed,
+                                              const char *field_name,
+                                              SV_List *out_values) {
+    if (!ctx || !parsed || !field_name || !out_values) return false;
+    for (size_t i = 0; i < arena_arr_len(parsed->fields); i++) {
+        if (!eval_sv_eq_ci_lit(parsed->fields[i].key, field_name)) continue;
+        if (parsed->fields[i].value.count == 0) continue;
+        if (!svu_list_push_temp(ctx, out_values, parsed->fields[i].value)) return false;
+    }
+    return true;
+}
+
+static String_View ctest_join_parsed_field_values(EvalExecContext *ctx,
+                                                  const Ctest_Parse_Result *parsed,
+                                                  const char *field_name) {
+    if (!ctx || !parsed || !field_name) return nob_sv_from_cstr("");
+    SV_List values = {0};
+    if (!ctest_collect_parsed_field_values(ctx, parsed, field_name, &values)) return nob_sv_from_cstr("");
+    if (arena_arr_len(values) == 0) return nob_sv_from_cstr("");
+    return eval_sv_join_semi_temp(ctx, values, arena_arr_len(values));
+}
+
+static bool ctest_parse_size_value_sv(String_View value, size_t *out_value) {
+    if (!out_value || value.count == 0) return false;
+
+    size_t result = 0;
+    for (size_t i = 0; i < value.count; i++) {
+        unsigned char ch = (unsigned char)value.data[i];
+        if (!isdigit(ch)) return false;
+        result = (result * 10U) + (size_t)(ch - '0');
+    }
+
+    *out_value = result;
+    return true;
+}
+
+static String_View ctest_submit_visible_var(EvalExecContext *ctx,
+                                            const char *primary_name,
+                                            const char *fallback_name) {
+    if (!ctx || !primary_name) return nob_sv_from_cstr("");
+
+    String_View value = eval_var_get_visible(ctx, nob_sv_from_cstr(primary_name));
+    if (value.count > 0 || !fallback_name) return value;
+    return eval_var_get_visible(ctx, nob_sv_from_cstr(fallback_name));
+}
+
+static bool ctest_submit_resolve_numeric_setting(EvalExecContext *ctx,
+                                                 const Node *node,
+                                                 const Ctest_Parse_Result *parsed,
+                                                 const char *field_name,
+                                                 const char *fallback_var,
+                                                 size_t *out_value) {
+    if (!ctx || !node || !parsed || !out_value) return false;
+    *out_value = 0;
+
+    String_View raw = field_name ? ctest_parsed_field_value(parsed, field_name) : nob_sv_from_cstr("");
+    if (raw.count == 0 && fallback_var) {
+        raw = eval_var_get_visible(ctx, nob_sv_from_cstr(fallback_var));
+    }
+    if (raw.count == 0) return true;
+
+    if (!ctest_parse_size_value_sv(raw, out_value)) {
+        const char *label = field_name ? field_name : fallback_var;
+        Nob_String_Builder sb = {0};
+        nob_sb_append_cstr(&sb, "ctest_submit() received an invalid ");
+        nob_sb_append_cstr(&sb, label ? label : "numeric value");
+        String_View cause = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+        nob_sb_free(sb);
+        if (eval_should_stop(ctx)) return false;
+        (void)ctest_emit_diag(ctx, node, EV_DIAG_ERROR, cause, raw);
+        return false;
+    }
+
+    return true;
+}
+
+static bool ctest_submit_resolve_tls_verify(EvalExecContext *ctx,
+                                            bool *out_has_tls_verify,
+                                            bool *out_tls_verify) {
+    if (!out_has_tls_verify || !out_tls_verify) return false;
+    *out_has_tls_verify = false;
+    *out_tls_verify = true;
+    if (!ctx) return false;
+
+    String_View curl_options = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_CURL_OPTIONS"));
+    if (curl_options.count == 0) return true;
+
+    SV_List items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), curl_options, &items)) return false;
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        if (eval_sv_eq_ci_lit(items[i], "CURLOPT_SSL_VERIFYPEER_OFF") ||
+            eval_sv_eq_ci_lit(items[i], "CURLOPT_SSL_VERIFYHOST_OFF")) {
+            *out_has_tls_verify = true;
+            *out_tls_verify = false;
+            break;
+        }
+    }
+
+    return true;
+}
+
+static String_View ctest_submit_format_size_temp(EvalExecContext *ctx, size_t value) {
+    if (!ctx) return nob_sv_from_cstr("");
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(nob_temp_sprintf("%zu", value)));
+}
+
+static String_View ctest_submit_format_long_temp(EvalExecContext *ctx, long value) {
+    if (!ctx) return nob_sv_from_cstr("");
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(nob_temp_sprintf("%ld", value)));
+}
+
+static String_View ctest_submit_make_assignment_temp(EvalExecContext *ctx,
+                                                     const char *name,
+                                                     String_View value) {
+    if (!ctx || !name) return nob_sv_from_cstr("");
+
+    size_t name_len = strlen(name);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name_len + 1 + value.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    memcpy(buf, name, name_len);
+    buf[name_len] = '=';
+    if (value.count > 0) memcpy(buf + name_len + 1, value.data, value.count);
+    buf[name_len + 1 + value.count] = '\0';
+    return nob_sv_from_parts(buf, name_len + 1 + value.count);
+}
+
 static bool ctest_keyword_in_list(String_View tok, const char *const *items, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (eval_sv_eq_ci_lit(tok, items[i])) return true;
@@ -318,6 +480,9 @@ static bool ctest_publish_var_keyword(EvalExecContext *ctx, String_View key, Str
         eval_sv_eq_ci_lit(key, "NUMBER_WARNINGS") ||
         eval_sv_eq_ci_lit(key, "DEFECT_COUNT")) {
         return eval_var_set_current(ctx, value, nob_sv_from_cstr("0"));
+    }
+    if (eval_sv_eq_ci_lit(key, "BUILD_ID")) {
+        return eval_var_set_current(ctx, value, nob_sv_from_cstr(""));
     }
     return true;
 }
@@ -449,6 +614,49 @@ static bool ctest_write_manifest(EvalExecContext *ctx,
     nob_sb_append_buf(&sb, parts.data ? parts.data : "", parts.count);
     nob_sb_append_cstr(&sb, "\nFILES=");
     nob_sb_append_buf(&sb, files.data ? files.data : "", files.count);
+    nob_sb_append_cstr(&sb, "\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, manifest_path, contents, false);
+}
+
+static bool ctest_write_submit_manifest(EvalExecContext *ctx,
+                                        String_View manifest_path,
+                                        String_View tag,
+                                        String_View track,
+                                        const Ctest_Submit_Request *req) {
+    if (!ctx || manifest_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "COMMAND=ctest_submit\n");
+    nob_sb_append_cstr(&sb, "SIGNATURE=");
+    nob_sb_append_cstr(&sb, req->is_cdash_upload ? "CDASH_UPLOAD" : "DEFAULT");
+    nob_sb_append_cstr(&sb, "\nTAG=");
+    nob_sb_append_buf(&sb, tag.data ? tag.data : "", tag.count);
+    nob_sb_append_cstr(&sb, "\nTRACK=");
+    nob_sb_append_buf(&sb, track.data ? track.data : "", track.count);
+    nob_sb_append_cstr(&sb, "\nPARTS=");
+    nob_sb_append_buf(&sb, req->parts.data ? req->parts.data : "", req->parts.count);
+    nob_sb_append_cstr(&sb, "\nFILES=");
+    nob_sb_append_buf(&sb, req->files.data ? req->files.data : "", req->files.count);
+    nob_sb_append_cstr(&sb, "\nSUBMIT_URL=");
+    nob_sb_append_buf(&sb, req->submit_url.data ? req->submit_url.data : "", req->submit_url.count);
+    nob_sb_append_cstr(&sb, "\nHTTPHEADERS=");
+    nob_sb_append_buf(&sb, req->http_headers.data ? req->http_headers.data : "", req->http_headers.count);
+    nob_sb_append_cstr(&sb, "\nRETRY_COUNT=");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", req->retry_count));
+    nob_sb_append_cstr(&sb, "\nRETRY_DELAY=");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", req->retry_delay_sec));
+    nob_sb_append_cstr(&sb, "\nINACTIVITY_TIMEOUT=");
+    if (req->has_inactivity_timeout) {
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", req->inactivity_timeout_sec));
+    }
+    nob_sb_append_cstr(&sb, "\nCDASH_UPLOAD=");
+    nob_sb_append_buf(&sb, req->cdash_upload_file.data ? req->cdash_upload_file.data : "", req->cdash_upload_file.count);
+    nob_sb_append_cstr(&sb, "\nCDASH_UPLOAD_TYPE=");
+    nob_sb_append_buf(&sb, req->cdash_upload_type.data ? req->cdash_upload_type.data : "", req->cdash_upload_type.count);
     nob_sb_append_cstr(&sb, "\n");
 
     String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
@@ -784,6 +992,656 @@ static String_View ctest_current_binary_dir(EvalExecContext *ctx) {
 static String_View ctest_binary_root(EvalExecContext *ctx) {
     String_View v = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"));
     return v.count > 0 ? v : ctx->binary_dir;
+}
+
+typedef struct {
+    const char *name;
+    const char *status_command;
+} Ctest_Submit_Part_Def;
+
+static const Ctest_Submit_Part_Def s_ctest_submit_part_defs[] = {
+    {"Start", "ctest_start"},
+    {"Update", "ctest_update"},
+    {"Configure", "ctest_configure"},
+    {"Build", "ctest_build"},
+    {"Test", "ctest_test"},
+    {"Coverage", "ctest_coverage"},
+    {"MemCheck", "ctest_memcheck"},
+    {"Notes", NULL},
+    {"ExtraFiles", NULL},
+    {"Upload", "ctest_upload"},
+    {"Submit", NULL},
+    {"Done", NULL},
+};
+
+static String_View ctest_get_command_status(EvalExecContext *ctx, const char *command_name) {
+    if (!ctx || !command_name) return nob_sv_from_cstr("");
+
+    size_t total = sizeof("NOBIFY_CTEST::") - 1 + strlen(command_name) + sizeof("::STATUS") - 1;
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    int n = snprintf(buf, total + 1, "NOBIFY_CTEST::%s::STATUS", command_name);
+    if (n < 0) {
+        (void)ctx_oom(ctx);
+        return nob_sv_from_cstr("");
+    }
+    return eval_var_get_visible(ctx, nob_sv_from_cstr(buf));
+}
+
+static String_View ctest_submit_canonical_part(String_View raw_part) {
+    for (size_t i = 0; i < sizeof(s_ctest_submit_part_defs) / sizeof(s_ctest_submit_part_defs[0]); i++) {
+        if (eval_sv_eq_ci_lit(raw_part, s_ctest_submit_part_defs[i].name)) {
+            return nob_sv_from_cstr(s_ctest_submit_part_defs[i].name);
+        }
+    }
+    return nob_sv_from_cstr("");
+}
+
+static bool ctest_submit_part_is_available(EvalExecContext *ctx, const Ctest_Submit_Part_Def *part_def) {
+    if (!ctx || !part_def || !part_def->name) return false;
+    if (part_def->status_command) return ctest_get_command_status(ctx, part_def->status_command).count > 0;
+    if (strcmp(part_def->name, "Notes") == 0) {
+        return eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_NOTES_FILES")).count > 0;
+    }
+    if (strcmp(part_def->name, "ExtraFiles") == 0) {
+        return eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_EXTRA_SUBMIT_FILES")).count > 0;
+    }
+    return false;
+}
+
+static bool ctest_append_joined_list_unique(EvalExecContext *ctx, String_View joined, SV_List *out_items) {
+    if (!ctx || !out_items) return false;
+    if (joined.count == 0) return true;
+
+    SV_List items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), joined, &items)) return false;
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        if (items[i].count == 0) continue;
+        if (!ctest_list_push_unique_temp(ctx, out_items, items[i])) return false;
+    }
+    return true;
+}
+
+static bool ctest_submit_resolve_parts(EvalExecContext *ctx,
+                                       const Node *node,
+                                       const Ctest_Parse_Result *parsed,
+                                       String_View *out_parts) {
+    if (!ctx || !node || !parsed || !out_parts) return false;
+    *out_parts = nob_sv_from_cstr("");
+
+    String_View raw_parts = ctest_join_parsed_field_values(ctx, parsed, "PARTS");
+    if (eval_should_stop(ctx)) return false;
+
+    SV_List resolved_parts = {0};
+    if (raw_parts.count > 0) {
+        SV_List input_parts = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw_parts, &input_parts)) return false;
+        for (size_t i = 0; i < arena_arr_len(input_parts); i++) {
+            if (input_parts[i].count == 0) continue;
+            String_View canonical = ctest_submit_canonical_part(input_parts[i]);
+            if (canonical.count == 0) {
+                (void)ctest_emit_diag(ctx,
+                                      node,
+                                      EV_DIAG_ERROR,
+                                      nob_sv_from_cstr("ctest_submit() received an invalid PARTS value"),
+                                      input_parts[i]);
+                return false;
+            }
+            if (!ctest_list_push_unique_temp(ctx, &resolved_parts, canonical)) return false;
+        }
+    } else {
+        for (size_t i = 0; i < sizeof(s_ctest_submit_part_defs) / sizeof(s_ctest_submit_part_defs[0]); i++) {
+            if (!ctest_submit_part_is_available(ctx, &s_ctest_submit_part_defs[i])) continue;
+            if (!ctest_list_push_unique_temp(ctx,
+                                             &resolved_parts,
+                                             nob_sv_from_cstr(s_ctest_submit_part_defs[i].name))) {
+                return false;
+            }
+        }
+    }
+
+    *out_parts = eval_sv_join_semi_temp(ctx, resolved_parts, arena_arr_len(resolved_parts));
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
+static bool ctest_submit_append_resolved_files(EvalExecContext *ctx,
+                                               const Node *node,
+                                               String_View command_name,
+                                               String_View raw_files,
+                                               String_View base_dir,
+                                               bool required,
+                                               SV_List *out_files) {
+    if (!ctx || !node || !out_files) return false;
+
+    String_View joined = nob_sv_from_cstr("");
+    if (!ctest_resolve_files(ctx, node, command_name, raw_files, base_dir, required, true, &joined)) return false;
+    return ctest_append_joined_list_unique(ctx, joined, out_files);
+}
+
+static String_View ctest_submit_resolve_legacy_url(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View method = ctest_submit_visible_var(ctx, "DROP_METHOD", "CTEST_DROP_METHOD");
+    String_View site = ctest_submit_visible_var(ctx, "DROP_SITE", "CTEST_DROP_SITE");
+    String_View location = ctest_submit_visible_var(ctx, "DROP_LOCATION", "CTEST_DROP_LOCATION");
+    if (method.count == 0 || site.count == 0 || location.count == 0) return nob_sv_from_cstr("");
+
+    String_View user = ctest_submit_visible_var(ctx, "DROP_SITE_USER", "CTEST_DROP_SITE_USER");
+    String_View password = ctest_submit_visible_var(ctx, "DROP_SITE_PASSWORD", "CTEST_DROP_SITE_PASSWORD");
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_buf(&sb, method.data, method.count);
+    nob_sb_append_cstr(&sb, "://");
+    if (user.count > 0) {
+        nob_sb_append_buf(&sb, user.data, user.count);
+        if (password.count > 0) {
+            nob_sb_append_cstr(&sb, ":");
+            nob_sb_append_buf(&sb, password.data, password.count);
+        }
+        nob_sb_append_cstr(&sb, "@");
+    }
+    nob_sb_append_buf(&sb, site.data, site.count);
+    if (location.count > 0 && location.data[0] != '/') nob_sb_append_cstr(&sb, "/");
+    nob_sb_append_buf(&sb, location.data, location.count);
+
+    String_View url = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    return url;
+}
+
+static String_View ctest_submit_resolve_url(EvalExecContext *ctx, const Ctest_Parse_Result *parsed) {
+    if (!ctx || !parsed) return nob_sv_from_cstr("");
+
+    String_View submit_url = ctest_parsed_field_value(parsed, "SUBMIT_URL");
+    if (submit_url.count > 0) return submit_url;
+
+    submit_url = ctest_submit_visible_var(ctx, "SUBMIT_URL", "CTEST_SUBMIT_URL");
+    if (submit_url.count > 0) return submit_url;
+
+    return ctest_submit_resolve_legacy_url(ctx);
+}
+
+typedef struct {
+    bool started;
+    bool timed_out;
+    int exit_code;
+    long http_code;
+    String_View body;
+    String_View stderr_text;
+    String_View result_text;
+} Ctest_Submit_Curl_Result;
+
+static bool ctest_submit_run_curl(EvalExecContext *ctx,
+                                  SV_List argv,
+                                  Ctest_Submit_Curl_Result *out_result) {
+    if (!ctx || !out_result) return false;
+    memset(out_result, 0, sizeof(*out_result));
+
+    Eval_Process_Run_Request req = {
+        .argv = argv,
+        .argc = arena_arr_len(argv),
+        .working_directory = ctest_current_binary_dir(ctx),
+    };
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &req, &proc)) return false;
+
+    out_result->started = proc.started;
+    out_result->timed_out = proc.timed_out;
+    out_result->exit_code = proc.exit_code;
+    out_result->stderr_text = proc.stderr_text;
+    out_result->result_text = proc.result_text;
+    out_result->body = proc.stdout_text;
+    out_result->http_code = 0;
+
+    static const char *marker = "\n__NOBIFY_HTTP_CODE=";
+    size_t marker_len = strlen(marker);
+    if (proc.stdout_text.count >= marker_len) {
+        for (size_t i = proc.stdout_text.count - marker_len + 1; i-- > 0;) {
+            if (memcmp(proc.stdout_text.data + i, marker, marker_len) != 0) continue;
+
+            size_t value_start = i + marker_len;
+            size_t value_end = value_start;
+            while (value_end < proc.stdout_text.count &&
+                   proc.stdout_text.data[value_end] != '\n' &&
+                   proc.stdout_text.data[value_end] != '\r') {
+                value_end++;
+            }
+
+            String_View raw_code = nob_sv_from_parts(proc.stdout_text.data + value_start, value_end - value_start);
+            if (raw_code.count > 0) {
+                char buf[32];
+                if (raw_code.count < sizeof(buf)) {
+                    memcpy(buf, raw_code.data, raw_code.count);
+                    buf[raw_code.count] = '\0';
+                    out_result->http_code = strtol(buf, NULL, 10);
+                }
+            }
+
+            out_result->body = nob_sv_from_parts(proc.stdout_text.data, i);
+            while (out_result->body.count > 0) {
+                char tail = out_result->body.data[out_result->body.count - 1];
+                if (tail != '\n' && tail != '\r') break;
+                out_result->body.count--;
+            }
+            break;
+        }
+    }
+
+    return true;
+}
+
+static bool ctest_submit_append_curl_common_args(EvalExecContext *ctx,
+                                                 const Ctest_Submit_Request *req,
+                                                 SV_List *out_argv) {
+    if (!ctx || !req || !out_argv) return false;
+
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("curl"))) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--silent"))) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--show-error"))) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--location"))) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--fail"))) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--request"))) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("POST"))) return false;
+
+    if (req->has_inactivity_timeout) {
+        if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--speed-time"))) return false;
+        if (!svu_list_push_temp(ctx, out_argv, ctest_submit_format_size_temp(ctx, req->inactivity_timeout_sec))) {
+            return false;
+        }
+        if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--speed-limit"))) return false;
+        if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("1"))) return false;
+    }
+
+    if (req->has_tls_verify && !req->tls_verify) {
+        if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--insecure"))) return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(req->http_header_items); i++) {
+        if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--header"))) return false;
+        if (!svu_list_push_temp(ctx, out_argv, req->http_header_items[i])) return false;
+    }
+
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--write-out"))) return false;
+    if (!svu_list_push_temp(ctx,
+                            out_argv,
+                            nob_sv_from_cstr("\n__NOBIFY_HTTP_CODE=%{http_code}\n"))) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool ctest_submit_read_file_temp(EvalExecContext *ctx,
+                                        String_View path,
+                                        String_View *out_contents) {
+    if (!ctx || !out_contents) return false;
+    *out_contents = nob_sv_from_cstr("");
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+    Nob_String_Builder sb = {0};
+    if (!nob_read_entire_file(path_c, &sb)) return false;
+    *out_contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
+static String_View ctest_submit_lower_ascii_temp(EvalExecContext *ctx, String_View input) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), input.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < input.count; i++) {
+        unsigned char ch = (unsigned char)input.data[i];
+        buf[i] = (char)tolower(ch);
+    }
+    buf[input.count] = '\0';
+    return nob_sv_from_parts(buf, input.count);
+}
+
+static bool ctest_submit_contains_sv(String_View haystack, String_View needle) {
+    if (needle.count == 0) return true;
+    if (haystack.count < needle.count) return false;
+    for (size_t i = 0; i + needle.count <= haystack.count; i++) {
+        if (memcmp(haystack.data + i, needle.data, needle.count) == 0) return true;
+    }
+    return false;
+}
+
+static String_View ctest_submit_extract_build_id(EvalExecContext *ctx, String_View body) {
+    if (!ctx || body.count == 0) return nob_sv_from_cstr("");
+
+    static const char *const keys[] = {"buildid", "build_id", "build-id"};
+    String_View lower = ctest_submit_lower_ascii_temp(ctx, body);
+    if (lower.count == 0 && body.count > 0) return nob_sv_from_cstr("");
+
+    for (size_t k = 0; k < NOB_ARRAY_LEN(keys); k++) {
+        size_t key_len = strlen(keys[k]);
+        for (size_t i = 0; i + key_len <= lower.count; i++) {
+            if (memcmp(lower.data + i, keys[k], key_len) != 0) continue;
+
+            size_t j = i + key_len;
+            while (j < lower.count &&
+                   (lower.data[j] == '"' ||
+                    lower.data[j] == '\'' ||
+                    isspace((unsigned char)lower.data[j]))) {
+                j++;
+            }
+            if (j >= lower.count ||
+                (lower.data[j] != ':' && lower.data[j] != '=' && lower.data[j] != '>')) {
+                continue;
+            }
+            j++;
+            while (j < lower.count &&
+                   (lower.data[j] == '"' ||
+                    lower.data[j] == '\'' ||
+                    isspace((unsigned char)lower.data[j]))) {
+                j++;
+            }
+
+            size_t start = j;
+            while (j < lower.count && isdigit((unsigned char)lower.data[j])) j++;
+            if (j > start) return nob_sv_from_parts(body.data + start, j - start);
+        }
+    }
+
+    return nob_sv_from_cstr("");
+}
+
+static bool ctest_submit_response_requests_upload(EvalExecContext *ctx, String_View body) {
+    if (!ctx || body.count == 0) return true;
+    String_View lower = ctest_submit_lower_ascii_temp(ctx, body);
+    if (ctest_submit_contains_sv(lower, nob_sv_from_cstr("upload=0")) ||
+        ctest_submit_contains_sv(lower, nob_sv_from_cstr("\"upload\":0")) ||
+        ctest_submit_contains_sv(lower, nob_sv_from_cstr("upload=false")) ||
+        ctest_submit_contains_sv(lower, nob_sv_from_cstr("\"upload\":false")) ||
+        ctest_submit_contains_sv(lower, nob_sv_from_cstr("already_present=1")) ||
+        ctest_submit_contains_sv(lower, nob_sv_from_cstr("\"already_present\":true"))) {
+        return false;
+    }
+    return true;
+}
+
+static bool ctest_submit_sleep_retry_delay(size_t seconds) {
+    if (seconds == 0) return true;
+#if defined(_WIN32)
+    Sleep((DWORD)(seconds * 1000U));
+#else
+    sleep(seconds);
+#endif
+    return true;
+}
+
+typedef struct {
+    bool success;
+    size_t attempts;
+    int exit_code;
+    long http_code;
+    String_View response_body;
+    String_View response_detail;
+    String_View build_id;
+} Ctest_Submit_Remote_Result;
+
+static String_View ctest_submit_best_response_detail(const Ctest_Submit_Curl_Result *curl_result) {
+    if (!curl_result) return nob_sv_from_cstr("");
+    if (curl_result->stderr_text.count > 0) return curl_result->stderr_text;
+    if (curl_result->result_text.count > 0) return curl_result->result_text;
+    return curl_result->body;
+}
+
+static bool ctest_submit_append_text_form_arg(EvalExecContext *ctx,
+                                              SV_List *out_argv,
+                                              const char *name,
+                                              String_View value) {
+    if (!ctx || !out_argv || !name) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--form-string"))) return false;
+    return svu_list_push_temp(ctx, out_argv, ctest_submit_make_assignment_temp(ctx, name, value));
+}
+
+static bool ctest_submit_append_file_form_arg(EvalExecContext *ctx,
+                                              SV_List *out_argv,
+                                              const char *name,
+                                              String_View path) {
+    if (!ctx || !out_argv || !name) return false;
+    if (!svu_list_push_temp(ctx, out_argv, nob_sv_from_cstr("--form"))) return false;
+
+    size_t name_len = strlen(name);
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), name_len + 2 + path.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    memcpy(buf, name, name_len);
+    buf[name_len] = '=';
+    buf[name_len + 1] = '@';
+    if (path.count > 0) memcpy(buf + name_len + 2, path.data, path.count);
+    buf[name_len + 2 + path.count] = '\0';
+    return svu_list_push_temp(ctx, out_argv, nob_sv_from_parts(buf, name_len + 2 + path.count));
+}
+
+static bool ctest_submit_append_file_list_form_args(EvalExecContext *ctx,
+                                                    SV_List *out_argv,
+                                                    String_View files) {
+    if (!ctx || !out_argv) return false;
+    if (files.count == 0) return true;
+
+    SV_List file_items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), files, &file_items)) return false;
+    for (size_t i = 0; i < arena_arr_len(file_items); i++) {
+        if (file_items[i].count == 0) continue;
+        if (!ctest_submit_append_file_form_arg(ctx, out_argv, "file", file_items[i])) return false;
+    }
+    return true;
+}
+
+static bool ctest_submit_run_request_with_retry(EvalExecContext *ctx,
+                                                const Ctest_Submit_Request *req,
+                                                SV_List argv,
+                                                size_t *io_attempts,
+                                                Ctest_Submit_Curl_Result *out_result) {
+    if (!ctx || !req || !io_attempts || !out_result) return false;
+    memset(out_result, 0, sizeof(*out_result));
+
+    size_t max_attempts = req->retry_count + 1;
+    for (size_t attempt = 0; attempt < max_attempts; attempt++) {
+        Ctest_Submit_Curl_Result curl_result = {0};
+        if (!ctest_submit_run_curl(ctx, argv, &curl_result)) return false;
+        (*io_attempts)++;
+
+        bool timed_out = curl_result.timed_out || curl_result.exit_code == 28;
+        if (curl_result.exit_code == 0 || !timed_out || attempt + 1 >= max_attempts) {
+            *out_result = curl_result;
+            return true;
+        }
+
+        ctest_submit_sleep_retry_delay(req->retry_delay_sec);
+    }
+
+    return true;
+}
+
+static bool ctest_submit_execute_default_remote(EvalExecContext *ctx,
+                                                const Ctest_Submit_Request *req,
+                                                String_View tag,
+                                                String_View track,
+                                                String_View manifest,
+                                                Ctest_Submit_Remote_Result *out_result) {
+    if (!ctx || !req || !out_result) return false;
+    memset(out_result, 0, sizeof(*out_result));
+
+    SV_List argv = {0};
+    if (!ctest_submit_append_curl_common_args(ctx, req, &argv)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &argv, "command", nob_sv_from_cstr("ctest_submit"))) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &argv, "signature", nob_sv_from_cstr("DEFAULT"))) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &argv, "model", req->model)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &argv, "tag", tag)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &argv, "track", track)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &argv, "parts", req->parts)) return false;
+    if (!ctest_submit_append_file_form_arg(ctx, &argv, "manifest", manifest)) return false;
+    if (!ctest_submit_append_file_list_form_args(ctx, &argv, req->files)) return false;
+    if (!svu_list_push_temp(ctx, &argv, req->submit_url)) return false;
+
+    Ctest_Submit_Curl_Result curl_result = {0};
+    if (!ctest_submit_run_request_with_retry(ctx, req, argv, &out_result->attempts, &curl_result)) return false;
+
+    out_result->success = curl_result.exit_code == 0;
+    out_result->exit_code = curl_result.exit_code;
+    out_result->http_code = curl_result.http_code;
+    out_result->response_body = curl_result.body;
+    out_result->response_detail = ctest_submit_best_response_detail(&curl_result);
+    out_result->build_id = ctest_submit_extract_build_id(ctx, curl_result.body);
+    return true;
+}
+
+static bool ctest_submit_execute_cdash_upload_remote(EvalExecContext *ctx,
+                                                     const Ctest_Submit_Request *req,
+                                                     Ctest_Submit_Remote_Result *out_result) {
+    if (!ctx || !req || !out_result) return false;
+    memset(out_result, 0, sizeof(*out_result));
+
+    SV_List file_items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req->files, &file_items)) return false;
+    if (arena_arr_len(file_items) != 1 || file_items[0].count == 0) {
+        out_result->success = false;
+        out_result->exit_code = 1;
+        out_result->response_detail = nob_sv_from_cstr("ctest_submit(CDASH_UPLOAD ...) requires exactly one file");
+        return true;
+    }
+
+    String_View payload = nob_sv_from_cstr("");
+    if (!ctest_submit_read_file_temp(ctx, file_items[0], &payload)) {
+        out_result->success = false;
+        out_result->exit_code = 1;
+        out_result->response_detail = nob_sv_from_cstr("failed to read CDASH_UPLOAD file");
+        return true;
+    }
+
+    String_View hash = nob_sv_from_cstr("");
+    if (!eval_hash_compute_hex_temp(ctx, nob_sv_from_cstr("MD5"), payload, &hash)) return false;
+
+    SV_List probe_argv = {0};
+    if (!ctest_submit_append_curl_common_args(ctx, req, &probe_argv)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "command", nob_sv_from_cstr("ctest_submit"))) {
+        return false;
+    }
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "signature", nob_sv_from_cstr("CDASH_UPLOAD"))) {
+        return false;
+    }
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "phase", nob_sv_from_cstr("probe"))) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "type", req->cdash_upload_type)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "filename", file_items[0])) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "hash_algo", nob_sv_from_cstr("MD5"))) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &probe_argv, "hash", hash)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx,
+                                           &probe_argv,
+                                           "size",
+                                           ctest_submit_format_size_temp(ctx, payload.count))) {
+        return false;
+    }
+    if (!svu_list_push_temp(ctx, &probe_argv, req->submit_url)) return false;
+
+    Ctest_Submit_Curl_Result probe_result = {0};
+    if (!ctest_submit_run_request_with_retry(ctx, req, probe_argv, &out_result->attempts, &probe_result)) {
+        return false;
+    }
+    if (probe_result.exit_code != 0) {
+        out_result->success = false;
+        out_result->exit_code = probe_result.exit_code;
+        out_result->http_code = probe_result.http_code;
+        out_result->response_body = probe_result.body;
+        out_result->response_detail = ctest_submit_best_response_detail(&probe_result);
+        return true;
+    }
+
+    out_result->build_id = ctest_submit_extract_build_id(ctx, probe_result.body);
+    if (!ctest_submit_response_requests_upload(ctx, probe_result.body)) {
+        out_result->success = true;
+        out_result->exit_code = 0;
+        out_result->http_code = probe_result.http_code;
+        out_result->response_body = probe_result.body;
+        out_result->response_detail = probe_result.body;
+        return true;
+    }
+
+    SV_List upload_argv = {0};
+    if (!ctest_submit_append_curl_common_args(ctx, req, &upload_argv)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "command", nob_sv_from_cstr("ctest_submit"))) {
+        return false;
+    }
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "signature", nob_sv_from_cstr("CDASH_UPLOAD"))) {
+        return false;
+    }
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "phase", nob_sv_from_cstr("upload"))) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "type", req->cdash_upload_type)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "filename", file_items[0])) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "hash_algo", nob_sv_from_cstr("MD5"))) return false;
+    if (!ctest_submit_append_text_form_arg(ctx, &upload_argv, "hash", hash)) return false;
+    if (!ctest_submit_append_text_form_arg(ctx,
+                                           &upload_argv,
+                                           "size",
+                                           ctest_submit_format_size_temp(ctx, payload.count))) {
+        return false;
+    }
+    if (!ctest_submit_append_file_form_arg(ctx, &upload_argv, "file", file_items[0])) return false;
+    if (!svu_list_push_temp(ctx, &upload_argv, req->submit_url)) return false;
+
+    Ctest_Submit_Curl_Result upload_result = {0};
+    if (!ctest_submit_run_request_with_retry(ctx, req, upload_argv, &out_result->attempts, &upload_result)) {
+        return false;
+    }
+
+    out_result->success = upload_result.exit_code == 0;
+    out_result->exit_code = upload_result.exit_code;
+    out_result->http_code = upload_result.http_code;
+    out_result->response_body = upload_result.body;
+    out_result->response_detail = ctest_submit_best_response_detail(&upload_result);
+    if (out_result->build_id.count == 0) {
+        out_result->build_id = ctest_submit_extract_build_id(ctx, upload_result.body);
+    }
+    return true;
+}
+
+static bool ctest_submit_append_part_files(EvalExecContext *ctx,
+                                           const Node *node,
+                                           String_View parts,
+                                           String_View build_dir,
+                                           SV_List *out_files) {
+    if (!ctx || !node || !out_files) return false;
+    if (parts.count == 0) return true;
+
+    SV_List part_items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), parts, &part_items)) return false;
+
+    String_View base_dir = build_dir.count > 0 ? build_dir : ctest_current_binary_dir(ctx);
+    for (size_t i = 0; i < arena_arr_len(part_items); i++) {
+        if (eval_sv_eq_ci_lit(part_items[i], "Notes")) {
+            if (!ctest_submit_append_resolved_files(ctx,
+                                                    node,
+                                                    nob_sv_from_cstr("ctest_submit"),
+                                                    eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_NOTES_FILES")),
+                                                    base_dir,
+                                                    false,
+                                                    out_files)) {
+                return false;
+            }
+        } else if (eval_sv_eq_ci_lit(part_items[i], "ExtraFiles")) {
+            if (!ctest_submit_append_resolved_files(ctx,
+                                                    node,
+                                                    nob_sv_from_cstr("ctest_submit"),
+                                                    eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_EXTRA_SUBMIT_FILES")),
+                                                    base_dir,
+                                                    false,
+                                                    out_files)) {
+                return false;
+            }
+        } else if (eval_sv_eq_ci_lit(part_items[i], "Upload")) {
+            if (!ctest_append_joined_list_unique(ctx,
+                                                 eval_var_get_visible(ctx,
+                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::RESOLVED_FILES")),
+                                                 out_files)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 static bool ctest_path_is_within(String_View path, String_View root) {
@@ -1299,19 +2157,115 @@ static bool ctest_parse_submit_request(EvalExecContext *ctx,
     out_req->model = ctest_get_session_field(ctx, "MODEL");
     if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
     out_req->build_dir = ctest_session_resolved_build_dir(ctx);
-    out_req->parts = ctest_parsed_field_value(&out_req->parsed, "PARTS");
-    return ctest_resolve_files(ctx,
-                               node,
-                               nob_sv_from_cstr("ctest_submit"),
-                               ctest_parsed_field_value(&out_req->parsed, "FILES"),
-                               out_req->build_dir.count > 0 ? out_req->build_dir : ctest_current_binary_dir(ctx),
-                               false,
-                               true,
-                               &out_req->files);
+    out_req->submit_url = ctest_submit_resolve_url(ctx, &out_req->parsed);
+    out_req->build_id_var = ctest_parsed_field_value(&out_req->parsed, "BUILD_ID");
+    out_req->return_var = ctest_parsed_field_value(&out_req->parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->http_headers = ctest_join_parsed_field_values(ctx, &out_req->parsed, "HTTPHEADER");
+    if (!ctest_collect_parsed_field_values(ctx, &out_req->parsed, "HTTPHEADER", &out_req->http_header_items)) {
+        return false;
+    }
+    out_req->cdash_upload_file = ctest_parsed_field_value(&out_req->parsed, "CDASH_UPLOAD");
+    out_req->cdash_upload_type = ctest_parsed_field_value(&out_req->parsed, "CDASH_UPLOAD_TYPE");
+    out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
+    out_req->is_cdash_upload = out_req->cdash_upload_file.count > 0;
+    if (!ctest_submit_resolve_numeric_setting(ctx,
+                                              node,
+                                              &out_req->parsed,
+                                              "RETRY_COUNT",
+                                              "CTEST_SUBMIT_RETRY_COUNT",
+                                              &out_req->retry_count)) {
+        return false;
+    }
+    if (!ctest_submit_resolve_numeric_setting(ctx,
+                                              node,
+                                              &out_req->parsed,
+                                              "RETRY_DELAY",
+                                              "CTEST_SUBMIT_RETRY_DELAY",
+                                              &out_req->retry_delay_sec)) {
+        return false;
+    }
+    if (!ctest_submit_resolve_numeric_setting(ctx,
+                                              node,
+                                              &out_req->parsed,
+                                              NULL,
+                                              "CTEST_SUBMIT_INACTIVITY_TIMEOUT",
+                                              &out_req->inactivity_timeout_sec)) {
+        return false;
+    }
+    out_req->has_inactivity_timeout =
+        eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_SUBMIT_INACTIVITY_TIMEOUT")).count > 0;
+    if (!ctest_submit_resolve_tls_verify(ctx, &out_req->has_tls_verify, &out_req->tls_verify)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    String_View explicit_parts = ctest_join_parsed_field_values(ctx, &out_req->parsed, "PARTS");
+    String_View explicit_files = ctest_join_parsed_field_values(ctx, &out_req->parsed, "FILES");
+    if (eval_should_stop(ctx)) return false;
+
+    String_View base_dir = out_req->build_dir.count > 0 ? out_req->build_dir : ctest_current_binary_dir(ctx);
+
+    if (out_req->is_cdash_upload) {
+        if (explicit_parts.count > 0 || explicit_files.count > 0) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_submit(CDASH_UPLOAD ...) does not accept PARTS or FILES"),
+                                  nob_sv_from_cstr("Use the documented CDASH_UPLOAD signature"));
+            return false;
+        }
+
+        SV_List resolved_files = {0};
+        if (!ctest_submit_append_resolved_files(ctx,
+                                                node,
+                                                nob_sv_from_cstr("ctest_submit"),
+                                                out_req->cdash_upload_file,
+                                                base_dir,
+                                                true,
+                                                &resolved_files)) {
+            return false;
+        }
+        out_req->files = eval_sv_join_semi_temp(ctx, resolved_files, arena_arr_len(resolved_files));
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    if (out_req->cdash_upload_type.count > 0) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_submit() only accepts CDASH_UPLOAD_TYPE with CDASH_UPLOAD"),
+                              out_req->cdash_upload_type);
+        return false;
+    }
+
+    if (!ctest_submit_resolve_parts(ctx, node, &out_req->parsed, &out_req->parts)) return false;
+
+    SV_List resolved_files = {0};
+    if (!ctest_submit_append_resolved_files(ctx,
+                                            node,
+                                            nob_sv_from_cstr("ctest_submit"),
+                                            explicit_files,
+                                            base_dir,
+                                            false,
+                                            &resolved_files)) {
+        return false;
+    }
+    if (!ctest_submit_append_part_files(ctx, node, out_req->parts, out_req->build_dir, &resolved_files)) {
+        return false;
+    }
+
+    out_req->files = eval_sv_join_semi_temp(ctx, resolved_files, arena_arr_len(resolved_files));
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool ctest_execute_submit_request(EvalExecContext *ctx, const Ctest_Submit_Request *req) {
-    if (!ctx || !req) return false;
+static bool ctest_submit_set_optional_var(EvalExecContext *ctx, String_View var_name, String_View value) {
+    if (!ctx || var_name.count == 0) return true;
+    return eval_var_set_current(ctx, var_name, value);
+}
+
+static bool ctest_execute_submit_request(EvalExecContext *ctx,
+                                         const Node *node,
+                                         const Ctest_Submit_Request *req) {
+    if (!ctx || !node || !req) return false;
 
     String_View tag = nob_sv_from_cstr("");
     String_View testing_dir = nob_sv_from_cstr("");
@@ -1321,29 +2275,120 @@ static bool ctest_execute_submit_request(EvalExecContext *ctx, const Ctest_Submi
         return false;
     }
 
-    String_View manifest = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("SubmitManifest.txt"));
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View manifest_name = req->is_cdash_upload ? nob_sv_from_cstr("CDashUploadManifest.txt")
+                                                     : nob_sv_from_cstr("SubmitManifest.txt");
+    String_View manifest = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, manifest_name);
     if (eval_should_stop(ctx)) return false;
-    if (!ctest_write_manifest(ctx,
-                              nob_sv_from_cstr("ctest_submit"),
-                              manifest,
-                              tag,
-                              ctest_get_session_field(ctx, "TRACK"),
-                              req->parts,
-                              req->files)) {
+    if (!ctest_write_submit_manifest(ctx, manifest, tag, track, req)) {
         return false;
     }
 
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_submit"),
+                         "SIGNATURE",
+                         req->is_cdash_upload ? nob_sv_from_cstr("CDASH_UPLOAD")
+                                              : nob_sv_from_cstr("DEFAULT"))) {
+        return false;
+    }
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TAG", tag)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TAG_FILE", tag_file)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "TESTING_DIR", testing_dir)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "MANIFEST", manifest)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "SUBMIT_URL", req->submit_url)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "HTTPHEADER", req->http_headers)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "CDASH_UPLOAD", req->cdash_upload_file)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "CDASH_UPLOAD_TYPE", req->cdash_upload_type)) {
+        return false;
+    }
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESOLVED_PARTS", req->parts)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESOLVED_FILES", req->files)) return false;
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_submit"),
+                         "RETRY_COUNT_RESOLVED",
+                         ctest_submit_format_size_temp(ctx, req->retry_count))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_submit"),
+                         "RETRY_DELAY_RESOLVED",
+                         ctest_submit_format_size_temp(ctx, req->retry_delay_sec))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_submit"),
+                         "INACTIVITY_TIMEOUT",
+                         req->has_inactivity_timeout
+                             ? ctest_submit_format_size_temp(ctx, req->inactivity_timeout_sec)
+                             : nob_sv_from_cstr(""))) {
+        return false;
+    }
 
-    return eval_ctest_publish_metadata(ctx,
-                                       nob_sv_from_cstr("ctest_submit"),
-                                       &req->argv,
-                                       nob_sv_from_cstr("STAGED"));
+    Ctest_Submit_Remote_Result remote = {0};
+    if (req->submit_url.count == 0) {
+        remote.success = false;
+        remote.exit_code = 1;
+        remote.response_detail =
+            nob_sv_from_cstr("ctest_submit() requires SUBMIT_URL, CTEST_SUBMIT_URL, or legacy drop-site settings");
+    } else if (req->is_cdash_upload) {
+        if (!ctest_submit_execute_cdash_upload_remote(ctx, req, &remote)) return false;
+    } else {
+        if (!ctest_submit_execute_default_remote(ctx, req, tag, track, manifest, &remote)) return false;
+    }
+
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_submit"),
+                         "ATTEMPTS",
+                         ctest_submit_format_size_temp(ctx, remote.attempts))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_submit"),
+                         "HTTP_CODE",
+                         ctest_submit_format_long_temp(ctx, remote.http_code))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESPONSE", remote.response_body)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "RESPONSE_DETAIL", remote.response_detail)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_submit"), "BUILD_ID_RESULT", remote.build_id)) {
+        return false;
+    }
+
+    String_View rv_value = remote.success ? nob_sv_from_cstr("0")
+                                          : ctest_submit_format_size_temp(ctx,
+                                                                          remote.exit_code > 0
+                                                                              ? (size_t)remote.exit_code
+                                                                              : 1U);
+    if (!ctest_submit_set_optional_var(ctx, req->return_var, rv_value)) return false;
+    if (!ctest_submit_set_optional_var(ctx,
+                                       req->build_id_var,
+                                       remote.success ? remote.build_id : nob_sv_from_cstr(""))) {
+        return false;
+    }
+
+    if (remote.success) {
+        return eval_ctest_publish_metadata(ctx,
+                                           nob_sv_from_cstr("ctest_submit"),
+                                           &req->argv,
+                                           nob_sv_from_cstr("SUBMITTED"));
+    }
+
+    if (req->capture_cmake_error_var.count > 0) {
+        if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+        return eval_ctest_publish_metadata(ctx,
+                                           nob_sv_from_cstr("ctest_submit"),
+                                           &req->argv,
+                                           nob_sv_from_cstr("FAILED"));
+    }
+
+    (void)ctest_emit_diag(ctx,
+                          node,
+                          EV_DIAG_ERROR,
+                          nob_sv_from_cstr("ctest_submit() failed to submit dashboard data"),
+                          remote.response_detail.count > 0 ? remote.response_detail : req->submit_url);
+    return false;
 }
 
 static bool ctest_parse_upload_request(EvalExecContext *ctx,
@@ -1439,7 +2484,7 @@ Eval_Result eval_handle_ctest_submit(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Ctest_Submit_Request req = {0};
     if (!ctest_parse_submit_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (!ctest_execute_submit_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_submit_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
 

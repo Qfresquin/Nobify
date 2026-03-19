@@ -1,5 +1,124 @@
 #include "test_evaluator_v2_common.h"
 
+typedef enum {
+    CTEST_SUBMIT_MOCK_REMOTE_SUCCESS_AFTER_TIMEOUT = 0,
+    CTEST_SUBMIT_MOCK_CDASH_UPLOAD_SUCCESS,
+    CTEST_SUBMIT_MOCK_FAILURE,
+} Ctest_Submit_Mock_Mode;
+
+typedef struct {
+    Ctest_Submit_Mock_Mode mode;
+    size_t timeout_failures_remaining;
+    size_t call_count;
+    size_t file_form_count;
+    bool saw_auth_header;
+    bool saw_extra_header;
+    bool saw_manifest_form;
+    bool saw_parts_form;
+    bool saw_probe_phase;
+    bool saw_upload_phase;
+    bool saw_hash_form;
+    bool saw_type_form;
+    bool saw_legacy_url;
+    bool saw_submit_url;
+    char last_url[512];
+} Ctest_Submit_Mock_Process_Data;
+
+static bool ctest_submit_mock_has_prefix(String_View value, const char *prefix) {
+    size_t prefix_len = strlen(prefix);
+    return value.count >= prefix_len && memcmp(value.data, prefix, prefix_len) == 0;
+}
+
+static bool ctest_submit_mock_process_run(void *user_data,
+                                          Arena *scratch_arena,
+                                          const Eval_Process_Run_Request *request,
+                                          Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Submit_Mock_Process_Data *data = (Ctest_Submit_Mock_Process_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+    data->call_count++;
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("curl"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    if (request->argc > 0) {
+        String_View url = request->argv[request->argc - 1];
+        size_t n = url.count < sizeof(data->last_url) - 1 ? url.count : sizeof(data->last_url) - 1;
+        memcpy(data->last_url, url.data, n);
+        data->last_url[n] = '\0';
+        if (ctest_submit_mock_has_prefix(url, "https://submit.example.test/submit.php?project=Nobify")) {
+            data->saw_legacy_url = true;
+        }
+        if (ctest_submit_mock_has_prefix(url, "https://cdash.example.test/api/v1")) {
+            data->saw_submit_url = true;
+        }
+        if (ctest_submit_mock_has_prefix(url, "https://fail.example.test/submit")) {
+            data->saw_submit_url = true;
+        }
+    }
+
+    for (size_t i = 1; i < request->argc; i++) {
+        String_View arg = request->argv[i];
+        if (nob_sv_eq(arg, nob_sv_from_cstr("--header")) && i + 1 < request->argc) {
+            String_View header = request->argv[++i];
+            if (nob_sv_eq(header, nob_sv_from_cstr("Authorization: Bearer one"))) data->saw_auth_header = true;
+            if (nob_sv_eq(header, nob_sv_from_cstr("X-Nobify: yes"))) data->saw_extra_header = true;
+            continue;
+        }
+        if ((nob_sv_eq(arg, nob_sv_from_cstr("--form")) ||
+             nob_sv_eq(arg, nob_sv_from_cstr("--form-string"))) &&
+            i + 1 < request->argc) {
+            String_View form = request->argv[++i];
+            if (ctest_submit_mock_has_prefix(form, "manifest=@")) data->saw_manifest_form = true;
+            if (ctest_submit_mock_has_prefix(form, "file=@")) data->file_form_count++;
+            if (ctest_submit_mock_has_prefix(form, "parts=")) data->saw_parts_form = true;
+            if (nob_sv_eq(form, nob_sv_from_cstr("phase=probe"))) data->saw_probe_phase = true;
+            if (nob_sv_eq(form, nob_sv_from_cstr("phase=upload"))) data->saw_upload_phase = true;
+            if (ctest_submit_mock_has_prefix(form, "hash=")) data->saw_hash_form = true;
+            if (ctest_submit_mock_has_prefix(form, "type=")) data->saw_type_form = true;
+        }
+    }
+
+    if (data->mode == CTEST_SUBMIT_MOCK_REMOTE_SUCCESS_AFTER_TIMEOUT &&
+        data->timeout_failures_remaining > 0) {
+        data->timeout_failures_remaining--;
+        out_result->exit_code = 28;
+        out_result->stderr_text = nob_sv_from_cstr("Operation timed out");
+        out_result->result_text = nob_sv_from_cstr("28");
+        return true;
+    }
+
+    if (data->mode == CTEST_SUBMIT_MOCK_CDASH_UPLOAD_SUCCESS) {
+        if (data->saw_probe_phase && !data->saw_upload_phase) {
+            out_result->exit_code = 0;
+            out_result->stdout_text = nob_sv_from_cstr("upload=1\nbuildid=88\n__NOBIFY_HTTP_CODE=200\n");
+            return true;
+        }
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("buildid=88\n__NOBIFY_HTTP_CODE=200\n");
+        return true;
+    }
+
+    if (data->mode == CTEST_SUBMIT_MOCK_FAILURE) {
+        out_result->exit_code = 6;
+        out_result->stderr_text = nob_sv_from_cstr("Could not resolve host");
+        out_result->result_text = nob_sv_from_cstr("6");
+        return true;
+    }
+
+    out_result->exit_code = 0;
+    out_result->stdout_text = nob_sv_from_cstr("buildid=321\n__NOBIFY_HTTP_CODE=200\n");
+    return true;
+}
+
 TEST(evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -435,6 +554,350 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
 
     ASSERT(!nob_file_exists("ctest_bin/wipe/sub/junk.txt"));
     ASSERT(nob_file_exists("ctest_bin/wipe"));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_submit_models_documented_local_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_submit_defaults_bin"));
+    ASSERT(nob_write_entire_file("ctest_submit_defaults_bin/notes.md",
+                                 "notes\n",
+                                 strlen("notes\n")));
+    ASSERT(nob_write_entire_file("ctest_submit_defaults_bin/extra.log",
+                                 "extra\n",
+                                 strlen("extra\n")));
+    ASSERT(nob_write_entire_file("ctest_submit_defaults_bin/upload.bin",
+                                 "upload\n",
+                                 strlen("upload\n")));
+
+    Ctest_Submit_Mock_Process_Data mock = {
+        .mode = CTEST_SUBMIT_MOCK_REMOTE_SUCCESS_AFTER_TIMEOUT,
+        .timeout_failures_remaining = 1,
+    };
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_submit_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_submit_defaults_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_submit_defaults_bin)\n"
+        "set(CTEST_DROP_METHOD https)\n"
+        "set(CTEST_DROP_SITE submit.example.test)\n"
+        "set(CTEST_DROP_LOCATION submit.php?project=Nobify)\n"
+        "set(CTEST_SUBMIT_INACTIVITY_TIMEOUT 9)\n"
+        "set(CTEST_NOTES_FILES notes.md)\n"
+        "set(CTEST_EXTRA_SUBMIT_FILES extra.log)\n"
+        "ctest_start(Experimental . . TRACK Nightly)\n"
+        "ctest_build()\n"
+        "ctest_upload(FILES upload.bin)\n"
+        "ctest_submit(HTTPHEADER \"Authorization: Bearer one\" HTTPHEADER \"X-Nobify: yes\" RETRY_COUNT 1 RETRY_DELAY 0 RETURN_VALUE SUBMIT_RV BUILD_ID SUBMIT_BUILD_ID)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUBMIT_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUBMIT_BUILD_ID")), nob_sv_from_cstr("321")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::SIGNATURE")),
+                     nob_sv_from_cstr("DEFAULT")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::SUBMIT_URL")),
+                     nob_sv_from_cstr("https://submit.example.test/submit.php?project=Nobify")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::HTTPHEADER")),
+                     nob_sv_from_cstr("Authorization: Bearer one;X-Nobify: yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                     nob_sv_from_cstr("Start;Build;Notes;ExtraFiles;Upload")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("SUBMITTED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::ATTEMPTS")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::HTTP_CODE")),
+                     nob_sv_from_cstr("200")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::BUILD_ID_RESULT")),
+                     nob_sv_from_cstr("321")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RETRY_COUNT_RESOLVED")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RETRY_DELAY_RESOLVED")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::INACTIVITY_TIMEOUT")),
+                     nob_sv_from_cstr("9")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_submit_defaults_bin/notes.md")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_submit_defaults_bin/extra.log")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_submit_defaults_bin/upload.bin")));
+
+    String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::MANIFEST"));
+    char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
+    ASSERT(manifest_c != NULL);
+    ASSERT(nob_file_exists(manifest_c));
+
+    Nob_String_Builder submit_sb = {0};
+    ASSERT(nob_read_entire_file(manifest_c, &submit_sb));
+    ASSERT(strstr(submit_sb.items, "SIGNATURE=DEFAULT") != NULL);
+    ASSERT(strstr(submit_sb.items, "SUBMIT_URL=https://submit.example.test/submit.php?project=Nobify") != NULL);
+    ASSERT(strstr(submit_sb.items, "HTTPHEADERS=Authorization: Bearer one;X-Nobify: yes") != NULL);
+    ASSERT(strstr(submit_sb.items, "RETRY_COUNT=1") != NULL);
+    ASSERT(strstr(submit_sb.items, "INACTIVITY_TIMEOUT=9") != NULL);
+    ASSERT(strstr(submit_sb.items, "PARTS=Start;Build;Notes;ExtraFiles;Upload") != NULL);
+    ASSERT(strstr(submit_sb.items, "notes.md") != NULL);
+    ASSERT(strstr(submit_sb.items, "extra.log") != NULL);
+    ASSERT(strstr(submit_sb.items, "upload.bin") != NULL);
+    nob_sb_free(submit_sb);
+
+    ASSERT(mock.call_count == 2);
+    ASSERT(mock.saw_auth_header);
+    ASSERT(mock.saw_extra_header);
+    ASSERT(mock.saw_manifest_form);
+    ASSERT(mock.saw_parts_form);
+    ASSERT(mock.file_form_count == 6);
+    ASSERT(mock.saw_legacy_url);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_submit_models_cdash_upload_signature) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_submit_upload_api_bin"));
+    ASSERT(nob_write_entire_file("ctest_submit_upload_api_bin/artifact.dat",
+                                 "artifact\n",
+                                 strlen("artifact\n")));
+
+    Ctest_Submit_Mock_Process_Data mock = {
+        .mode = CTEST_SUBMIT_MOCK_CDASH_UPLOAD_SUCCESS,
+    };
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_submit_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_submit_upload_api_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_submit_upload_api_bin)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_submit(CDASH_UPLOAD artifact.dat CDASH_UPLOAD_TYPE CoverageData SUBMIT_URL https://cdash.example.test/api/v1 HTTPHEADER \"Authorization: Bearer two\" RETURN_VALUE UPLOAD_API_RV BUILD_ID UPLOAD_API_BUILD_ID)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPLOAD_API_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPLOAD_API_BUILD_ID")), nob_sv_from_cstr("88")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::SIGNATURE")),
+                     nob_sv_from_cstr("CDASH_UPLOAD")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::CDASH_UPLOAD_TYPE")),
+                     nob_sv_from_cstr("CoverageData")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::SUBMIT_URL")),
+                     nob_sv_from_cstr("https://cdash.example.test/api/v1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("SUBMITTED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::ATTEMPTS")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::BUILD_ID_RESULT")),
+                     nob_sv_from_cstr("88")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_submit_upload_api_bin/artifact.dat")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")).count == 0);
+
+    String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::MANIFEST"));
+    char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
+    ASSERT(manifest_c != NULL);
+    ASSERT(nob_file_exists(manifest_c));
+
+    Nob_String_Builder submit_sb = {0};
+    ASSERT(nob_read_entire_file(manifest_c, &submit_sb));
+    ASSERT(strstr(submit_sb.items, "SIGNATURE=CDASH_UPLOAD") != NULL);
+    ASSERT(strstr(submit_sb.items, "CDASH_UPLOAD=artifact.dat") != NULL);
+    ASSERT(strstr(submit_sb.items, "CDASH_UPLOAD_TYPE=CoverageData") != NULL);
+    ASSERT(strstr(submit_sb.items, "FILES=") != NULL);
+    ASSERT(strstr(submit_sb.items, "artifact.dat") != NULL);
+    nob_sb_free(submit_sb);
+
+    ASSERT(mock.call_count == 2);
+    ASSERT(mock.saw_probe_phase);
+    ASSERT(mock.saw_upload_phase);
+    ASSERT(mock.saw_hash_form);
+    ASSERT(mock.saw_type_form);
+    ASSERT(mock.file_form_count == 1);
+    ASSERT(mock.saw_submit_url);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_submit_captures_remote_failures) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_submit_failure_bin"));
+
+    Ctest_Submit_Mock_Process_Data mock = {
+        .mode = CTEST_SUBMIT_MOCK_FAILURE,
+    };
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_submit_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_submit_failure_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_submit_failure_bin)\n"
+        "set(CTEST_SUBMIT_URL https://fail.example.test/submit)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_submit(RETURN_VALUE FAIL_RV BUILD_ID FAIL_BUILD_ID CAPTURE_CMAKE_ERROR FAIL_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("FAIL_RV")), nob_sv_from_cstr("6")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("FAIL_BUILD_ID")).count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("FAIL_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::ATTEMPTS")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::HTTP_CODE")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESPONSE_DETAIL")),
+                          nob_sv_from_cstr("Could not resolve host")));
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_manifest_form);
+    ASSERT(mock.saw_submit_url);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_submit_rejects_invalid_parts_and_mixed_signatures) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_submit_invalid_bin"));
+    ASSERT(nob_write_entire_file("ctest_submit_invalid_bin/artifact.dat",
+                                 "artifact\n",
+                                 strlen("artifact\n")));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_submit_invalid_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_submit_invalid_bin)\n"
+        "ctest_submit(PARTS Bogus)\n"
+        "ctest_submit(CDASH_UPLOAD artifact.dat FILES artifact.dat)\n"
+        "ctest_submit(CDASH_UPLOAD_TYPE Logs)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 3);
+
+    bool saw_invalid_part = false;
+    bool saw_mixed_signature = false;
+    bool saw_type_without_upload = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("ctest_submit() received an invalid PARTS value"))) {
+            saw_invalid_part = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_submit(CDASH_UPLOAD ...) does not accept PARTS or FILES"))) {
+            saw_mixed_signature = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_submit() only accepts CDASH_UPLOAD_TYPE with CDASH_UPLOAD"))) {
+            saw_type_without_upload = true;
+        }
+    }
+
+    ASSERT(saw_invalid_part);
+    ASSERT(saw_mixed_signature);
+    ASSERT(saw_type_without_upload);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2006,6 +2469,10 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file(passed, failed);
     test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
+    test_evaluator_ctest_submit_models_documented_local_surface(passed, failed);
+    test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed);
+    test_evaluator_ctest_submit_captures_remote_failures(passed, failed);
+    test_evaluator_ctest_submit_rejects_invalid_parts_and_mixed_signatures(passed, failed);
     test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
     test_evaluator_ctest_entrypoints_reject_incomplete_argument_shapes(passed, failed);
     test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed);
