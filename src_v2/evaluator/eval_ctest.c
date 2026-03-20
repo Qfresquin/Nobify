@@ -96,8 +96,9 @@ typedef struct {
     SV_List argv;
     Ctest_Parse_Result parsed;
     String_View model;
-    String_View track;
+    String_View group;
     bool append_mode;
+    bool quiet;
     String_View resolved_source;
     String_View resolved_build;
 } Ctest_Start_Request;
@@ -133,6 +134,8 @@ typedef struct {
     String_View model;
     String_View build_dir;
     String_View files;
+    String_View capture_cmake_error_var;
+    bool quiet;
 } Ctest_Upload_Request;
 
 static const char *const s_ctest_build_single_keywords[] = {
@@ -197,8 +200,8 @@ static const Ctest_Parse_Spec s_ctest_memcheck_parse_spec = {
     0,
 };
 
-static const char *const s_ctest_start_single_keywords[] = {"TRACK"};
-static const char *const s_ctest_start_flag_keywords[] = {"APPEND"};
+static const char *const s_ctest_start_single_keywords[] = {"GROUP", "TRACK"};
+static const char *const s_ctest_start_flag_keywords[] = {"APPEND", "QUIET"};
 static const Ctest_Parse_Spec s_ctest_start_parse_spec = {
     s_ctest_start_single_keywords,
     sizeof(s_ctest_start_single_keywords) / sizeof(s_ctest_start_single_keywords[0]),
@@ -206,7 +209,7 @@ static const Ctest_Parse_Spec s_ctest_start_parse_spec = {
     0,
     s_ctest_start_flag_keywords,
     sizeof(s_ctest_start_flag_keywords) / sizeof(s_ctest_start_flag_keywords[0]),
-    1,
+    0,
     3,
 };
 
@@ -258,13 +261,14 @@ static const Ctest_Parse_Spec s_ctest_update_parse_spec = {
 
 static const char *const s_ctest_upload_single_keywords[] = {"CAPTURE_CMAKE_ERROR"};
 static const char *const s_ctest_upload_multi_keywords[] = {"FILES"};
+static const char *const s_ctest_upload_flag_keywords[] = {"QUIET"};
 static const Ctest_Parse_Spec s_ctest_upload_parse_spec = {
     s_ctest_upload_single_keywords,
     sizeof(s_ctest_upload_single_keywords) / sizeof(s_ctest_upload_single_keywords[0]),
     s_ctest_upload_multi_keywords,
     sizeof(s_ctest_upload_multi_keywords) / sizeof(s_ctest_upload_multi_keywords[0]),
-    NULL,
-    0,
+    s_ctest_upload_flag_keywords,
+    sizeof(s_ctest_upload_flag_keywords) / sizeof(s_ctest_upload_flag_keywords[0]),
     0,
     0,
 };
@@ -571,20 +575,46 @@ static String_View ctest_tag_dir(EvalExecContext *ctx, String_View testing_dir, 
     return eval_sv_path_join(eval_temp_arena(ctx), testing_dir, tag);
 }
 
-static bool ctest_read_first_line_temp(EvalExecContext *ctx, String_View path, String_View *out_line) {
-    if (!ctx || !out_line) return false;
-    *out_line = nob_sv_from_cstr("");
+typedef struct {
+    bool exists;
+    String_View tag;
+    String_View model;
+    String_View group;
+} Ctest_Tag_File_Details;
+
+static bool ctest_read_tag_file_details_temp(EvalExecContext *ctx,
+                                             String_View path,
+                                             Ctest_Tag_File_Details *out_details) {
+    if (!ctx || !out_details) return false;
+    memset(out_details, 0, sizeof(*out_details));
 
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    if (!nob_file_exists(path_c) || nob_get_file_type(path_c) == NOB_FILE_DIRECTORY) return true;
 
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(path_c, &sb)) return false;
 
-    size_t end = 0;
-    while (end < sb.count && sb.items[end] != '\n' && sb.items[end] != '\r') end++;
-    *out_line = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, end));
+    out_details->exists = true;
+
+    size_t line_start = 0;
+    size_t line_index = 0;
+    while (line_start <= sb.count && line_index < 3) {
+        size_t line_end = line_start;
+        while (line_end < sb.count && sb.items[line_end] != '\n' && sb.items[line_end] != '\r') line_end++;
+
+        String_View line = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items + line_start, line_end - line_start));
+        if (line_index == 0) out_details->tag = line;
+        else if (line_index == 1) out_details->model = line;
+        else out_details->group = line;
+
+        while (line_end < sb.count && (sb.items[line_end] == '\n' || sb.items[line_end] == '\r')) line_end++;
+        line_start = line_end;
+        line_index++;
+    }
+
     nob_sb_free(sb);
+    if (out_details->group.count == 0) out_details->group = out_details->model;
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
@@ -592,6 +622,77 @@ static String_View ctest_generate_tag_temp(EvalExecContext *ctx) {
     (void)ctx;
     s_ctest_session_tag_counter++;
     return nob_sv_from_cstr(nob_temp_sprintf("cmk2nob-ctest-%zu", s_ctest_session_tag_counter));
+}
+
+static String_View ctest_start_canonical_model(String_View model) {
+    if (eval_sv_eq_ci_lit(model, "Experimental")) return nob_sv_from_cstr("Experimental");
+    if (eval_sv_eq_ci_lit(model, "Continuous")) return nob_sv_from_cstr("Continuous");
+    if (eval_sv_eq_ci_lit(model, "Nightly")) return nob_sv_from_cstr("Nightly");
+    return nob_sv_from_cstr("");
+}
+
+static String_View ctest_start_checkout_command(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    String_View command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_CHECKOUT_COMMAND"));
+    if (command.count > 0) return command;
+    return eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_CVS_CHECKOUT"));
+}
+
+static bool ctest_start_run_checkout_command(EvalExecContext *ctx,
+                                             const Node *node,
+                                             String_View source_dir,
+                                             String_View *out_working_directory) {
+    if (!ctx || !node) return false;
+    if (out_working_directory) *out_working_directory = nob_sv_from_cstr("");
+
+    String_View command = ctest_start_checkout_command(ctx);
+    if (command.count == 0) return true;
+
+    SV_List argv = {0};
+    if (!eval_split_command_line_temp(ctx, EVAL_CMDLINE_NATIVE, command, &argv)) return false;
+    if (arena_arr_len(argv) == 0) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_start() checkout command did not produce an executable"),
+                              command);
+        return false;
+    }
+
+    String_View working_directory = eval_sv_path_normalize_temp(ctx, svu_dirname(source_dir));
+    if (working_directory.count == 0) working_directory = source_dir;
+    if (eval_should_stop(ctx)) return false;
+
+    if (!ctest_ensure_directory(ctx, working_directory)) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_start() failed to create checkout working directory"),
+                              working_directory);
+        return false;
+    }
+
+    Eval_Process_Run_Request req = {
+        .argv = argv,
+        .argc = arena_arr_len(argv),
+        .working_directory = working_directory,
+    };
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &req, &proc)) return false;
+    if (!proc.started || proc.exit_code != 0) {
+        String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
+                            : proc.result_text.count > 0 ? proc.result_text
+                            : command;
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_start() checkout command failed"),
+                              detail);
+        return false;
+    }
+
+    if (out_working_directory) *out_working_directory = working_directory;
+    return true;
 }
 
 static bool ctest_write_manifest(EvalExecContext *ctx,
@@ -620,6 +721,49 @@ static bool ctest_write_manifest(EvalExecContext *ctx,
     nob_sb_free(sb);
     if (eval_should_stop(ctx)) return false;
     return eval_write_text_file(ctx, manifest_path, contents, false);
+}
+
+static void ctest_xml_append_escaped(Nob_String_Builder *sb, String_View value) {
+    if (!sb || value.count == 0) return;
+
+    for (size_t i = 0; i < value.count; i++) {
+        char ch = value.data[i];
+        switch (ch) {
+            case '&': nob_sb_append_cstr(sb, "&amp;"); break;
+            case '<': nob_sb_append_cstr(sb, "&lt;"); break;
+            case '>': nob_sb_append_cstr(sb, "&gt;"); break;
+            case '"': nob_sb_append_cstr(sb, "&quot;"); break;
+            case '\'': nob_sb_append_cstr(sb, "&apos;"); break;
+            default: nob_sb_append_buf(sb, &ch, 1); break;
+        }
+    }
+}
+
+static bool ctest_write_upload_xml(EvalExecContext *ctx, String_View upload_xml_path, String_View files) {
+    if (!ctx || upload_xml_path.count == 0) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Upload>\n");
+
+    SV_List file_items = {0};
+    if (files.count > 0 && !eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), files, &file_items)) {
+        nob_sb_free(sb);
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(file_items); i++) {
+        if (file_items[i].count == 0) continue;
+        nob_sb_append_cstr(&sb, "  <File>");
+        ctest_xml_append_escaped(&sb, file_items[i]);
+        nob_sb_append_cstr(&sb, "</File>\n");
+    }
+
+    nob_sb_append_cstr(&sb, "</Upload>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, upload_xml_path, contents, false);
 }
 
 static bool ctest_write_submit_manifest(EvalExecContext *ctx,
@@ -667,6 +811,7 @@ static bool ctest_write_submit_manifest(EvalExecContext *ctx,
 
 static bool ctest_ensure_session_tag(EvalExecContext *ctx,
                                      String_View model,
+                                     String_View group,
                                      bool append_mode,
                                      String_View *out_tag,
                                      String_View *out_testing_dir,
@@ -684,7 +829,9 @@ static bool ctest_ensure_session_tag(EvalExecContext *ctx,
 
     String_View tag = ctest_get_session_field(ctx, "TAG");
     if (tag.count == 0 && append_mode && ctest_path_exists(ctx, tag_file)) {
-        if (!ctest_read_first_line_temp(ctx, tag_file, &tag)) return false;
+        Ctest_Tag_File_Details details = {0};
+        if (!ctest_read_tag_file_details_temp(ctx, tag_file, &details)) return false;
+        tag = details.tag;
     }
     if (tag.count == 0) tag = ctest_generate_tag_temp(ctx);
 
@@ -698,6 +845,8 @@ static bool ctest_ensure_session_tag(EvalExecContext *ctx,
     nob_sb_append_buf(&sb, tag.data, tag.count);
     nob_sb_append_cstr(&sb, "\n");
     nob_sb_append_buf(&sb, model.data ? model.data : "", model.count);
+    nob_sb_append_cstr(&sb, "\n");
+    nob_sb_append_buf(&sb, group.data ? group.data : "", group.count);
     nob_sb_append_cstr(&sb, "\n");
     String_View tag_contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
     nob_sb_free(sb);
@@ -1634,6 +1783,12 @@ static bool ctest_submit_append_part_files(EvalExecContext *ctx,
         } else if (eval_sv_eq_ci_lit(part_items[i], "Upload")) {
             if (!ctest_append_joined_list_unique(ctx,
                                                  eval_var_get_visible(ctx,
+                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::UPLOAD_XML")),
+                                                 out_files)) {
+                return false;
+            }
+            if (!ctest_append_joined_list_unique(ctx,
+                                                 eval_var_get_visible(ctx,
                                                                       nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::RESOLVED_FILES")),
                                                  out_files)) {
                 return false;
@@ -2089,42 +2244,137 @@ static bool ctest_parse_start_request(EvalExecContext *ctx,
         return false;
     }
 
-    out_req->model = out_req->parsed.positionals[0];
+    out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
+    out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
+    if (arena_arr_len(out_req->parsed.positionals) == 0) {
+        if (!out_req->append_mode) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest command received an invalid number of positional arguments"),
+                                  nob_sv_from_cstr("ctest_start"));
+            return false;
+        }
+        out_req->model = nob_sv_from_cstr("");
+    } else {
+        out_req->model = out_req->parsed.positionals[0];
+    }
+
+    if (out_req->model.count > 0) {
+        String_View canonical_model = ctest_start_canonical_model(out_req->model);
+        if (canonical_model.count == 0) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_start() requires Experimental, Continuous, or Nightly as the dashboard model"),
+                                  out_req->model);
+            return false;
+        }
+        out_req->model = canonical_model;
+    }
+
     String_View source = arena_arr_len(out_req->parsed.positionals) >= 2
         ? out_req->parsed.positionals[1]
-        : ctest_source_root(ctx);
+        : eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_SOURCE_DIRECTORY"));
+    if (source.count == 0) source = ctest_source_root(ctx);
     String_View build = arena_arr_len(out_req->parsed.positionals) >= 3
         ? out_req->parsed.positionals[2]
-        : ctest_binary_root(ctx);
-    out_req->track = ctest_parsed_field_value(&out_req->parsed, "TRACK");
-    out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
+        : eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BINARY_DIRECTORY"));
+    if (build.count == 0) build = ctest_binary_root(ctx);
+    out_req->group = ctest_parsed_field_value(&out_req->parsed, "GROUP");
+    if (out_req->group.count == 0) out_req->group = ctest_parsed_field_value(&out_req->parsed, "TRACK");
     out_req->resolved_source = ctest_resolve_source_dir(ctx, source);
     out_req->resolved_build = ctest_resolve_binary_dir(ctx, build);
     return !eval_result_is_fatal(eval_result_from_ctx(ctx));
 }
 
-static bool ctest_execute_start_request(EvalExecContext *ctx, const Ctest_Start_Request *req) {
-    if (!ctx || !req) return false;
+static bool ctest_execute_start_request(EvalExecContext *ctx,
+                                        const Node *node,
+                                        const Ctest_Start_Request *req) {
+    if (!ctx || !node || !req) return false;
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "MODEL", req->model)) return false;
+    String_View testing_dir_guess = ctest_get_session_field(ctx, "TESTING_DIR");
+    if (testing_dir_guess.count == 0) testing_dir_guess = ctest_testing_root(ctx, req->resolved_build);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View tag_file_guess = eval_sv_path_join(eval_temp_arena(ctx), testing_dir_guess, nob_sv_from_cstr("TAG"));
+    if (eval_should_stop(ctx)) return false;
+
+    Ctest_Tag_File_Details existing = {0};
+    if (req->append_mode && ctest_path_exists(ctx, tag_file_guess)) {
+        if (!ctest_read_tag_file_details_temp(ctx, tag_file_guess, &existing)) return false;
+    }
+
+    String_View effective_model = req->model;
+    if (effective_model.count == 0 && existing.model.count > 0) {
+        effective_model = ctest_start_canonical_model(existing.model);
+    }
+    if (effective_model.count == 0) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_start() requires Experimental, Continuous, or Nightly as the dashboard model"),
+                              nob_sv_from_cstr("Use APPEND with an existing TAG file or pass an explicit model"));
+        return false;
+    }
+
+    String_View existing_group = existing.group.count > 0 ? existing.group : existing.model;
+    String_View effective_group = req->group;
+    if (effective_group.count == 0 && existing_group.count > 0) effective_group = existing_group;
+    if (effective_group.count == 0) effective_group = effective_model;
+
+    if (req->append_mode &&
+        existing.exists &&
+        ((req->model.count > 0 && existing.model.count > 0 && !nob_sv_eq(effective_model, existing.model)) ||
+         (req->group.count > 0 && existing_group.count > 0 && !nob_sv_eq(effective_group, existing_group)))) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_WARNING,
+                              nob_sv_from_cstr("ctest_start(APPEND) overriding model/group from existing TAG file"),
+                              tag_file_guess);
+    }
+
+    String_View checkout_command = ctest_start_checkout_command(ctx);
+    String_View checkout_working_directory = nob_sv_from_cstr("");
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "CHECKOUT_COMMAND", checkout_command)) return false;
+    if (!ctest_start_run_checkout_command(ctx, node, req->resolved_source, &checkout_working_directory)) return false;
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_start"),
+                         "CHECKOUT_WORKING_DIRECTORY",
+                         checkout_working_directory)) {
+        return false;
+    }
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "MODEL", effective_model)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "GROUP", effective_group)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TRACK", effective_group)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_SOURCE", req->resolved_source)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "RESOLVED_BUILD", req->resolved_build)) return false;
 
-    if (!ctest_set_session_field(ctx, "MODEL", req->model)) return false;
+    if (!ctest_set_session_field(ctx, "MODEL", effective_model)) return false;
+    if (!ctest_set_session_field(ctx, "GROUP", effective_group)) return false;
     if (!ctest_set_session_field(ctx, "SOURCE", req->resolved_source)) return false;
     if (!ctest_set_session_field(ctx, "BUILD", req->resolved_build)) return false;
-    if (!ctest_set_session_field(ctx, "TRACK", req->track)) return false;
+    if (!ctest_set_session_field(ctx, "TRACK", effective_group)) return false;
 
     String_View tag = nob_sv_from_cstr("");
     String_View testing_dir = nob_sv_from_cstr("");
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
-    if (!ctest_ensure_session_tag(ctx, req->model, req->append_mode, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
+    if (!ctest_ensure_session_tag(ctx,
+                                  effective_model,
+                                  effective_group,
+                                  req->append_mode,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
         return false;
     }
 
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_MODEL"), req->model)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_TRACK"), req->track)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_MODEL"), effective_model)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_GROUP"), effective_group)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_TRACK"), effective_group)) return false;
     if (!ctest_publish_common_dirs(ctx, req->resolved_source, req->resolved_build)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG", tag)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TESTING_DIR", testing_dir)) return false;
@@ -2271,7 +2521,14 @@ static bool ctest_execute_submit_request(EvalExecContext *ctx,
     String_View testing_dir = nob_sv_from_cstr("");
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
-    if (!ctest_ensure_session_tag(ctx, req->model, false, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->model,
+                                  ctest_get_session_field(ctx, "TRACK"),
+                                  false,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
         return false;
     }
 
@@ -2411,6 +2668,8 @@ static bool ctest_parse_upload_request(EvalExecContext *ctx,
     out_req->model = ctest_get_session_field(ctx, "MODEL");
     if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
     out_req->build_dir = ctest_session_resolved_build_dir(ctx);
+    out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
     return ctest_resolve_files(ctx,
                                node,
                                nob_sv_from_cstr("ctest_upload"),
@@ -2428,9 +2687,20 @@ static bool ctest_execute_upload_request(EvalExecContext *ctx, const Ctest_Uploa
     String_View testing_dir = nob_sv_from_cstr("");
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
-    if (!ctest_ensure_session_tag(ctx, req->model, false, &tag, &testing_dir, &tag_file, &tag_dir_path)) {
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->model,
+                                  ctest_get_session_field(ctx, "TRACK"),
+                                  false,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
         return false;
     }
+
+    String_View upload_xml = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("Upload.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_upload_xml(ctx, upload_xml, req->files)) return false;
 
     String_View manifest = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("UploadManifest.txt"));
     if (eval_should_stop(ctx)) return false;
@@ -2447,6 +2717,7 @@ static bool ctest_execute_upload_request(EvalExecContext *ctx, const Ctest_Uploa
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG", tag)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG_FILE", tag_file)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TESTING_DIR", testing_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "UPLOAD_XML", upload_xml)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "MANIFEST", manifest)) return false;
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "RESOLVED_FILES", req->files)) return false;
 
@@ -2476,7 +2747,7 @@ Eval_Result eval_handle_ctest_start(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Ctest_Start_Request req = {0};
     if (!ctest_parse_start_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (!ctest_execute_start_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_start_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
 

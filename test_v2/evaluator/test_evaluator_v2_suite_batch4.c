@@ -21,12 +21,31 @@ typedef struct {
     bool saw_type_form;
     bool saw_legacy_url;
     bool saw_submit_url;
+    bool saw_upload_xml_form;
+    bool saw_upload_payload_form;
     char last_url[512];
 } Ctest_Submit_Mock_Process_Data;
+
+typedef struct {
+    size_t call_count;
+    bool saw_checkout_tool;
+    bool saw_flag;
+    bool saw_value_with_space;
+    char working_directory[512];
+} Ctest_Start_Mock_Process_Data;
 
 static bool ctest_submit_mock_has_prefix(String_View value, const char *prefix) {
     size_t prefix_len = strlen(prefix);
     return value.count >= prefix_len && memcmp(value.data, prefix, prefix_len) == 0;
+}
+
+static bool ctest_submit_mock_contains(String_View value, const char *needle) {
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0 || value.count < needle_len) return false;
+    for (size_t i = 0; i + needle_len <= value.count; i++) {
+        if (memcmp(value.data + i, needle, needle_len) == 0) return true;
+    }
+    return false;
 }
 
 static bool ctest_submit_mock_process_run(void *user_data,
@@ -78,7 +97,11 @@ static bool ctest_submit_mock_process_run(void *user_data,
             i + 1 < request->argc) {
             String_View form = request->argv[++i];
             if (ctest_submit_mock_has_prefix(form, "manifest=@")) data->saw_manifest_form = true;
-            if (ctest_submit_mock_has_prefix(form, "file=@")) data->file_form_count++;
+            if (ctest_submit_mock_has_prefix(form, "file=@")) {
+                data->file_form_count++;
+                if (ctest_submit_mock_contains(form, "/Upload.xml")) data->saw_upload_xml_form = true;
+                if (ctest_submit_mock_contains(form, "/upload.bin")) data->saw_upload_payload_form = true;
+            }
             if (ctest_submit_mock_has_prefix(form, "parts=")) data->saw_parts_form = true;
             if (nob_sv_eq(form, nob_sv_from_cstr("phase=probe"))) data->saw_probe_phase = true;
             if (nob_sv_eq(form, nob_sv_from_cstr("phase=upload"))) data->saw_upload_phase = true;
@@ -116,6 +139,44 @@ static bool ctest_submit_mock_process_run(void *user_data,
 
     out_result->exit_code = 0;
     out_result->stdout_text = nob_sv_from_cstr("buildid=321\n__NOBIFY_HTTP_CODE=200\n");
+    return true;
+}
+
+static bool ctest_start_mock_process_run(void *user_data,
+                                         Arena *scratch_arena,
+                                         const Eval_Process_Run_Request *request,
+                                         Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Start_Mock_Process_Data *data = (Ctest_Start_Mock_Process_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+    data->call_count++;
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("checkout-tool"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    data->saw_checkout_tool = true;
+    if (request->argc >= 2 && nob_sv_eq(request->argv[1], nob_sv_from_cstr("--flag"))) data->saw_flag = true;
+    if (request->argc >= 3 &&
+        nob_sv_eq(request->argv[2], nob_sv_from_cstr("value with space"))) {
+        data->saw_value_with_space = true;
+    }
+    if (request->working_directory.count > 0) {
+        size_t n = request->working_directory.count < sizeof(data->working_directory) - 1
+            ? request->working_directory.count
+            : sizeof(data->working_directory) - 1;
+        memcpy(data->working_directory, request->working_directory.data, n);
+        data->working_directory[n] = '\0';
+    }
+
+    out_result->exit_code = 0;
     return true;
 }
 
@@ -425,7 +486,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         temp_arena,
         "set(CMAKE_BINARY_DIR ctest_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR ctest_bin)\n"
-        "ctest_start(Experimental ctest_src . TRACK Nightly APPEND)\n"
+        "ctest_start(Experimental ctest_src . GROUP Nightly QUIET APPEND)\n"
         "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
         "ctest_build(TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
         "ctest_test(RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE PARALLEL_LEVEL 2 SCHEDULE_RANDOM)\n"
@@ -457,12 +518,16 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND")),
                      nob_sv_from_cstr("ctest_sleep")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::GROUP")),
+                     nob_sv_from_cstr("Nightly")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TRACK")),
                      nob_sv_from_cstr("Nightly")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::MODEL")),
                      nob_sv_from_cstr("Experimental")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_MODEL")),
                      nob_sv_from_cstr("Experimental")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::GROUP")),
+                     nob_sv_from_cstr("Nightly")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_TRACK")),
                      nob_sv_from_cstr("Nightly")));
     String_View ctest_tag = eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_TAG"));
@@ -523,6 +588,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     Nob_String_Builder tag_sb = {0};
     ASSERT(nob_read_entire_file(tag_file_c, &tag_sb));
     ASSERT(strstr(tag_sb.items, "Experimental") != NULL);
+    ASSERT(strstr(tag_sb.items, "Nightly") != NULL);
     ASSERT(strstr(tag_sb.items, tag_file_c) == NULL);
     ASSERT(memmem(tag_sb.items, tag_sb.count, ctest_tag.data, ctest_tag.count) != NULL);
     nob_sb_free(tag_sb);
@@ -558,6 +624,202 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_start_models_documented_group_append_and_checkout_flow) {
+    ASSERT(nob_mkdir_if_not_exists("ctest_start_checkout_parent"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_start_checkout_bin"));
+
+    char first_tag_buf[256] = {0};
+
+    {
+        Arena *temp_arena = arena_create(2 * 1024 * 1024);
+        Arena *event_arena = arena_create(2 * 1024 * 1024);
+        ASSERT(temp_arena && event_arena);
+
+        Cmake_Event_Stream *stream = event_stream_create(event_arena);
+        ASSERT(stream != NULL);
+
+        Ctest_Start_Mock_Process_Data mock = {0};
+        EvalServices services = {
+            .user_data = &mock,
+            .process_run_capture = ctest_start_mock_process_run,
+        };
+
+        Eval_Test_Init init = {0};
+        init.arena = temp_arena;
+        init.event_arena = event_arena;
+        init.stream = stream;
+        init.source_dir = nob_sv_from_cstr(".");
+        init.binary_dir = nob_sv_from_cstr(".");
+        init.current_file = "CMakeLists.txt";
+        init.services = &services;
+
+        Eval_Test_Runtime *ctx = eval_test_create(&init);
+        ASSERT(ctx != NULL);
+
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "set(CMAKE_BINARY_DIR ctest_start_checkout_bin)\n"
+            "set(CMAKE_CURRENT_BINARY_DIR ctest_start_checkout_bin)\n"
+            "set(CTEST_SOURCE_DIRECTORY ctest_start_checkout_parent/source_tree)\n"
+            "set(CTEST_BINARY_DIRECTORY .)\n"
+            "set(CTEST_CHECKOUT_COMMAND [=[checkout-tool --flag \"value with space\"]=])\n"
+            "ctest_start(Experimental GROUP GroupExperimental QUIET)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        ASSERT(report != NULL);
+        ASSERT(report->error_count == 0);
+        ASSERT(report->warning_count == 0);
+
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::MODEL")),
+                         nob_sv_from_cstr("Experimental")));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::GROUP")),
+                         nob_sv_from_cstr("GroupExperimental")));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TRACK")),
+                         nob_sv_from_cstr("GroupExperimental")));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::GROUP")),
+                         nob_sv_from_cstr("GroupExperimental")));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::QUIET")),
+                         nob_sv_from_cstr("1")));
+        ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::CHECKOUT_COMMAND")),
+                              nob_sv_from_cstr("checkout-tool --flag")));
+        ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::CHECKOUT_WORKING_DIRECTORY")),
+                              nob_sv_from_cstr("ctest_start_checkout_parent")));
+
+        ASSERT(mock.call_count == 1);
+        ASSERT(mock.saw_checkout_tool);
+        ASSERT(mock.saw_flag);
+        ASSERT(mock.saw_value_with_space);
+        ASSERT(strstr(mock.working_directory, "ctest_start_checkout_parent") != NULL);
+
+        const char *tag_file_c = "ctest_start_checkout_bin/Testing/TAG";
+        ASSERT(nob_file_exists(tag_file_c));
+
+        Nob_String_Builder tag_sb = {0};
+        ASSERT(nob_read_entire_file(tag_file_c, &tag_sb));
+        ASSERT(strstr(tag_sb.items, "Experimental") != NULL);
+        ASSERT(strstr(tag_sb.items, "GroupExperimental") != NULL);
+        size_t first_tag_len = 0;
+        while (first_tag_len < tag_sb.count &&
+               tag_sb.items[first_tag_len] != '\n' &&
+               tag_sb.items[first_tag_len] != '\r') {
+            first_tag_len++;
+        }
+        ASSERT(first_tag_len > 0 && first_tag_len < sizeof(first_tag_buf));
+        memcpy(first_tag_buf, tag_sb.items, first_tag_len);
+        first_tag_buf[first_tag_len] = '\0';
+        nob_sb_free(tag_sb);
+
+        eval_test_destroy(ctx);
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+    }
+
+    {
+        Arena *temp_arena = arena_create(2 * 1024 * 1024);
+        Arena *event_arena = arena_create(2 * 1024 * 1024);
+        ASSERT(temp_arena && event_arena);
+
+        Cmake_Event_Stream *stream = event_stream_create(event_arena);
+        ASSERT(stream != NULL);
+
+        Eval_Test_Init init = {0};
+        init.arena = temp_arena;
+        init.event_arena = event_arena;
+        init.stream = stream;
+        init.source_dir = nob_sv_from_cstr(".");
+        init.binary_dir = nob_sv_from_cstr(".");
+        init.current_file = "CMakeLists.txt";
+
+        Eval_Test_Runtime *ctx = eval_test_create(&init);
+        ASSERT(ctx != NULL);
+
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "set(CMAKE_BINARY_DIR ctest_start_checkout_bin)\n"
+            "set(CMAKE_CURRENT_BINARY_DIR ctest_start_checkout_bin)\n"
+            "set(CTEST_SOURCE_DIRECTORY ctest_start_checkout_parent/source_tree)\n"
+            "set(CTEST_BINARY_DIRECTORY .)\n"
+            "ctest_start(APPEND)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        ASSERT(report != NULL);
+        ASSERT(report->error_count == 0);
+        ASSERT(report->warning_count == 0);
+
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG")),
+                         nob_sv_from_cstr(first_tag_buf)));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::MODEL")),
+                         nob_sv_from_cstr("Experimental")));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::GROUP")),
+                         nob_sv_from_cstr("GroupExperimental")));
+
+        eval_test_destroy(ctx);
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+    }
+
+    {
+        Arena *temp_arena = arena_create(2 * 1024 * 1024);
+        Arena *event_arena = arena_create(2 * 1024 * 1024);
+        ASSERT(temp_arena && event_arena);
+
+        Cmake_Event_Stream *stream = event_stream_create(event_arena);
+        ASSERT(stream != NULL);
+
+        Eval_Test_Init init = {0};
+        init.arena = temp_arena;
+        init.event_arena = event_arena;
+        init.stream = stream;
+        init.source_dir = nob_sv_from_cstr(".");
+        init.binary_dir = nob_sv_from_cstr(".");
+        init.current_file = "CMakeLists.txt";
+
+        Eval_Test_Runtime *ctx = eval_test_create(&init);
+        ASSERT(ctx != NULL);
+
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "set(CMAKE_BINARY_DIR ctest_start_checkout_bin)\n"
+            "set(CMAKE_CURRENT_BINARY_DIR ctest_start_checkout_bin)\n"
+            "set(CTEST_SOURCE_DIRECTORY ctest_start_checkout_parent/source_tree)\n"
+            "set(CTEST_BINARY_DIRECTORY .)\n"
+            "ctest_start(APPEND Continuous GROUP OverrideGroup)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        ASSERT(report != NULL);
+        ASSERT(report->error_count == 0);
+        ASSERT(report->warning_count == 1);
+
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG")),
+                         nob_sv_from_cstr(first_tag_buf)));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::MODEL")),
+                         nob_sv_from_cstr("Continuous")));
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::GROUP")),
+                         nob_sv_from_cstr("OverrideGroup")));
+
+        bool saw_append_warning = false;
+        for (size_t i = 0; i < stream->count; i++) {
+            const Cmake_Event *ev = &stream->items[i];
+            if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_WARNING) continue;
+            if (nob_sv_eq(ev->as.diag.cause,
+                          nob_sv_from_cstr("ctest_start(APPEND) overriding model/group from existing TAG file"))) {
+                saw_append_warning = true;
+                break;
+            }
+        }
+        ASSERT(saw_append_warning);
+
+        eval_test_destroy(ctx);
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+    }
+
     TEST_PASS();
 }
 
@@ -651,6 +913,8 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
                           nob_sv_from_cstr("ctest_submit_defaults_bin/extra.log")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("ctest_submit_defaults_bin/upload.bin")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/Upload.xml")));
 
     String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::MANIFEST"));
     char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
@@ -675,8 +939,10 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(mock.saw_extra_header);
     ASSERT(mock.saw_manifest_form);
     ASSERT(mock.saw_parts_form);
-    ASSERT(mock.file_form_count == 6);
+    ASSERT(mock.file_form_count == 8);
     ASSERT(mock.saw_legacy_url);
+    ASSERT(mock.saw_upload_xml_form);
+    ASSERT(mock.saw_upload_payload_form);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -833,6 +1099,90 @@ TEST(evaluator_ctest_submit_captures_remote_failures) {
     ASSERT(mock.call_count == 1);
     ASSERT(mock.saw_manifest_form);
     ASSERT(mock.saw_submit_url);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_upload_stages_upload_xml_and_submit_part) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_upload_remote_bin"));
+    ASSERT(nob_write_entire_file("ctest_upload_remote_bin/upload.bin",
+                                 "upload\n",
+                                 strlen("upload\n")));
+
+    Ctest_Submit_Mock_Process_Data mock = {
+        .mode = CTEST_SUBMIT_MOCK_REMOTE_SUCCESS_AFTER_TIMEOUT,
+    };
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_submit_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_upload_remote_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_upload_remote_bin)\n"
+        "set(CTEST_SUBMIT_URL https://cdash.example.test/api/v1)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_upload(FILES upload.bin QUIET CAPTURE_CMAKE_ERROR UPLOAD_CE)\n"
+        "ctest_submit(PARTS Upload RETURN_VALUE UPLOAD_PART_RV BUILD_ID UPLOAD_PART_BUILD_ID)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPLOAD_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPLOAD_PART_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPLOAD_PART_BUILD_ID")), nob_sv_from_cstr("321")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::QUIET")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                     nob_sv_from_cstr("Upload")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("ctest_upload_remote_bin/upload.bin")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/Upload.xml")));
+
+    String_View upload_xml = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::UPLOAD_XML"));
+    char *upload_xml_c = arena_strndup(temp_arena, upload_xml.data, upload_xml.count);
+    ASSERT(upload_xml_c != NULL);
+    ASSERT(nob_file_exists(upload_xml_c));
+
+    Nob_String_Builder upload_xml_sb = {0};
+    ASSERT(nob_read_entire_file(upload_xml_c, &upload_xml_sb));
+    ASSERT(strstr(upload_xml_sb.items, "<Upload>") != NULL);
+    ASSERT(strstr(upload_xml_sb.items, "ctest_upload_remote_bin/upload.bin") != NULL);
+    nob_sb_free(upload_xml_sb);
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_submit_url);
+    ASSERT(mock.saw_manifest_form);
+    ASSERT(mock.saw_parts_form);
+    ASSERT(mock.file_form_count == 2);
+    ASSERT(mock.saw_upload_xml_form);
+    ASSERT(mock.saw_upload_payload_form);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2469,9 +2819,11 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file(passed, failed);
     test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
+    test_evaluator_ctest_start_models_documented_group_append_and_checkout_flow(passed, failed);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed);
     test_evaluator_ctest_submit_captures_remote_failures(passed, failed);
+    test_evaluator_ctest_upload_stages_upload_xml_and_submit_part(passed, failed);
     test_evaluator_ctest_submit_rejects_invalid_parts_and_mixed_signatures(passed, failed);
     test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
     test_evaluator_ctest_entrypoints_reject_incomplete_argument_shapes(passed, failed);
