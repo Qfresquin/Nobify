@@ -13,10 +13,14 @@ typedef struct {
     char suite_copy[_TINYDIR_PATH_MAX];
 } Test_Workspace;
 
+#define CMK2NOB_TEST_REPO_ROOT_ENV "CMK2NOB_TEST_REPO_ROOT"
+
 bool test_ws_prepare(Test_Workspace *ws, const char *suite_name);
 bool test_ws_enter(const Test_Workspace *ws, char prev_cwd[], size_t prev_cwd_cap);
 bool test_ws_leave(const char *prev_cwd);
 bool test_ws_cleanup(const Test_Workspace *ws);
+bool test_ws_should_update_golden(void);
+bool test_ws_update_golden_file(const char *expected_path, const void *data, size_t size);
 const char *test_ws_root(const Test_Workspace *ws);
 const char *test_ws_work(const Test_Workspace *ws);
 const char *test_ws_bin(const Test_Workspace *ws);

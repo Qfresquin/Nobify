@@ -1268,9 +1268,8 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
 
     String_View actual_norm = evaluator_normalize_newlines_to_arena(arena, actual);
 
-    const char *update = getenv("CMK2NOB_UPDATE_GOLDEN");
-    if (update && strcmp(update, "1") == 0) {
-        if (!nob_write_entire_file(expected_path, actual_norm.data, actual_norm.count)) {
+    if (test_ws_should_update_golden()) {
+        if (!test_ws_update_golden_file(expected_path, actual_norm.data, actual_norm.count)) {
             nob_log(NOB_ERROR, "golden: failed to update expected: %s", expected_path);
             ok = false;
         }

@@ -1,4 +1,5 @@
 #include "test_evaluator_v2_common.h"
+#include "test_fs.h"
 
 typedef enum {
     CTEST_SUBMIT_MOCK_REMOTE_SUCCESS_AFTER_TIMEOUT = 0,
@@ -1108,6 +1109,29 @@ TEST(evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_test_workspace_golden_updates_target_repo_root) {
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    const char *probe_rel = "Temp_tests/golden_update_probe.txt";
+    const char *probe_text = "probe\n";
+    char probe_abs[_TINYDIR_PATH_MAX] = {0};
+    int n = 0;
+
+    if (!repo_root || repo_root[0] == '\0') {
+        TEST_PASS();
+        return;
+    }
+
+    n = snprintf(probe_abs, sizeof(probe_abs), "%s/%s", repo_root, probe_rel);
+    ASSERT(n > 0 && n < (int)sizeof(probe_abs));
+    ASSERT(test_fs_delete_file_like(probe_abs));
+
+    ASSERT(test_ws_update_golden_file(probe_rel, probe_text, strlen(probe_text)));
+    ASSERT(nob_file_exists(probe_abs));
+    ASSERT(!nob_file_exists(probe_rel));
+    ASSERT(test_fs_delete_file_like(probe_abs));
     TEST_PASS();
 }
 
@@ -3111,6 +3135,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed);
     test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed);
     test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed);
+    test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed);
     test_evaluator_ctest_submit_captures_remote_failures(passed, failed);

@@ -649,6 +649,23 @@ static void set_env_or_unset(const char *name, const char *value) {
 #endif
 }
 
+static char *dup_env_value(const char *name) {
+    const char *value = getenv(name);
+    size_t len = 0;
+    char *copy = NULL;
+
+    if (!value) return NULL;
+    len = strlen(value);
+    copy = (char*)malloc(len + 1);
+    if (!copy) {
+        nob_log(NOB_ERROR, "failed to preserve environment variable %s", name);
+        return NULL;
+    }
+
+    memcpy(copy, value, len + 1);
+    return copy;
+}
+
 static bool ensure_temp_tests_layout(void) {
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_ROOT)) return false;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_WORK)) return false;
@@ -670,17 +687,34 @@ static bool cleanup_temp_tests_workspace(void) {
 
 static bool run_binary_in_workspace(const char *bin_rel_path) {
     char cwd[_TINYDIR_PATH_MAX] = {0};
+    char *prev_reuse_cwd = NULL;
+    char *prev_repo_root = NULL;
     Nob_Cmd cmd = {0};
     bool ok = false;
 
     if (!test_fs_save_current_dir(cwd)) return false;
-    if (!nob_set_current_dir(TEMP_TESTS_WORK)) return false;
+    prev_reuse_cwd = dup_env_value("CMK2NOB_TEST_WS_REUSE_CWD");
+    if (getenv("CMK2NOB_TEST_WS_REUSE_CWD") && !prev_reuse_cwd) return false;
+    prev_repo_root = dup_env_value("CMK2NOB_TEST_REPO_ROOT");
+    if (getenv("CMK2NOB_TEST_REPO_ROOT") && !prev_repo_root) {
+        free(prev_reuse_cwd);
+        return false;
+    }
+    if (!nob_set_current_dir(TEMP_TESTS_WORK)) {
+        free(prev_reuse_cwd);
+        free(prev_repo_root);
+        return false;
+    }
     set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", "1");
+    set_env_or_unset("CMK2NOB_TEST_REPO_ROOT", cwd);
 
     nob_cmd_append(&cmd, bin_rel_path);
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
-    set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", NULL);
+    set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", prev_reuse_cwd);
+    set_env_or_unset("CMK2NOB_TEST_REPO_ROOT", prev_repo_root);
+    free(prev_reuse_cwd);
+    free(prev_repo_root);
 
     if (!nob_set_current_dir(cwd)) {
         nob_log(NOB_ERROR, "failed to restore current directory to %s", cwd);

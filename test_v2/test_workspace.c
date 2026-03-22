@@ -36,6 +36,43 @@ static bool build_abs_path(const char *cwd, const char *rel, char out[_TINYDIR_P
     return true;
 }
 
+static bool test_ws_is_absolute_path(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    if (path[0] == '/' || path[0] == '\\') return true;
+    return strlen(path) >= 3 &&
+           ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+           path[1] == ':' &&
+           (path[2] == '/' || path[2] == '\\');
+#else
+    return path[0] == '/';
+#endif
+}
+
+static bool test_ws_resolve_repo_path(const char *path, char out[_TINYDIR_PATH_MAX]) {
+    if (!path || !out) return false;
+
+    if (test_ws_is_absolute_path(path)) {
+        int n = snprintf(out, _TINYDIR_PATH_MAX, "%s", path);
+        if (n < 0 || n >= _TINYDIR_PATH_MAX) {
+            nob_log(NOB_ERROR, "path too long while copying '%s'", path);
+            return false;
+        }
+        return true;
+    }
+
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    if (!repo_root || repo_root[0] == '\0') {
+        repo_root = nob_get_current_dir_temp();
+    }
+    if (!repo_root || repo_root[0] == '\0') {
+        nob_log(NOB_ERROR, "workspace: could not resolve repository root for %s", path);
+        return false;
+    }
+
+    return build_abs_path(repo_root, path, out);
+}
+
 bool test_ws_prepare(Test_Workspace *ws, const char *suite_name) {
     if (!ws || !suite_name || suite_name[0] == '\0') return false;
     memset(ws, 0, sizeof(*ws));
@@ -131,6 +168,18 @@ bool test_ws_cleanup(const Test_Workspace *ws) {
     (void)test_fs_delete_dir_like(TEMP_TESTS_BASE);
     nob_log(NOB_INFO, "workspace cleaned: %s", ws->root);
     return true;
+}
+
+bool test_ws_should_update_golden(void) {
+    const char *update = getenv("CMK2NOB_UPDATE_GOLDEN");
+    return update && strcmp(update, "1") == 0;
+}
+
+bool test_ws_update_golden_file(const char *expected_path, const void *data, size_t size) {
+    char repo_path[_TINYDIR_PATH_MAX] = {0};
+    if (!expected_path) return false;
+    if (!test_ws_resolve_repo_path(expected_path, repo_path)) return false;
+    return nob_write_entire_file(repo_path, data, size);
 }
 
 const char *test_ws_root(const Test_Workspace *ws) {
