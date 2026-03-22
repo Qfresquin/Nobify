@@ -148,6 +148,117 @@ TEST(evaluator_defer_replay_in_subdirectory_uses_child_execution_context) {
     TEST_PASS();
 }
 
+TEST(evaluator_cmake_language_defer_allows_duplicate_ids_and_missing_get_call_returns_empty) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_language(DEFER ID shared CALL set FIRST deferred_one)\n"
+        "cmake_language(DEFER ID shared CALL set SECOND deferred_two)\n"
+        "cmake_language(DEFER GET_CALL shared SHARED_CALL)\n"
+        "cmake_language(DEFER GET_CALL missing MISSING_CALL)\n"
+        "cmake_language(DEFER GET_CALL_IDS IDS_BEFORE_CANCEL)\n"
+        "cmake_language(DEFER CANCEL_CALL shared)\n"
+        "cmake_language(DEFER GET_CALL_IDS IDS_AFTER_CANCEL)\n"
+        "return()\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SHARED_CALL")),
+                     nob_sv_from_cstr("set;FIRST;deferred_one")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("MISSING_CALL")).count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IDS_BEFORE_CANCEL")),
+                     nob_sv_from_cstr("shared;shared")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("IDS_AFTER_CANCEL")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("FIRST")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("SECOND")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_language_defer_only_allows_leading_underscore_for_generated_ids) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_language(DEFER ID_VAR AUTO_ID CALL set AUTO_ONE deferred_one)\n"
+        "cmake_language(DEFER ID ${AUTO_ID} CALL set AUTO_TWO deferred_two)\n"
+        "cmake_language(DEFER ID _manual CALL set MANUAL nope)\n"
+        "return()\n");
+
+    Eval_Result run_res = eval_test_run(ctx, root);
+    ASSERT(eval_result_is_soft_error(run_res));
+    ASSERT(!eval_result_is_fatal(run_res));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    String_View auto_id = eval_test_var_get(ctx, nob_sv_from_cstr("AUTO_ID"));
+    ASSERT(auto_id.count > 0);
+    ASSERT(auto_id.data[0] == '_');
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("AUTO_ONE")),
+                     nob_sv_from_cstr("deferred_one")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("AUTO_TWO")),
+                     nob_sv_from_cstr("deferred_two")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("MANUAL")).count == 0);
+
+    bool saw_bad_manual_id = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("cmake_language(DEFER ID) only allows a leading '_' for ids generated earlier by ID_VAR"))) {
+            saw_bad_manual_id = true;
+            break;
+        }
+    }
+    ASSERT(saw_bad_manual_id);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2060,6 +2171,8 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
 void run_evaluator_v2_batch2(int *passed, int *failed) {
     test_evaluator_cmake_language_core_subcommands_work(passed, failed);
     test_evaluator_defer_replay_in_subdirectory_uses_child_execution_context(passed, failed);
+    test_evaluator_cmake_language_defer_allows_duplicate_ids_and_missing_get_call_returns_empty(passed, failed);
+    test_evaluator_cmake_language_defer_only_allows_leading_underscore_for_generated_ids(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed);
     test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed);

@@ -12,6 +12,13 @@ typedef enum {
     FLOW_CMAKE_LANGUAGE_REQUEST_SET_DEPENDENCY_PROVIDER,
 } Flow_Cmake_Language_Request_Kind;
 
+typedef enum {
+    FLOW_DEFERRED_ID_VALID = 0,
+    FLOW_DEFERRED_ID_INVALID_EMPTY,
+    FLOW_DEFERRED_ID_INVALID_CAPITAL,
+    FLOW_DEFERRED_ID_INVALID_UNDERSCORE,
+} Flow_Deferred_Id_Validation;
+
 typedef struct {
     Flow_Cmake_Language_Request_Kind kind;
     union {
@@ -81,11 +88,55 @@ static Eval_Deferred_Call *flow_find_deferred_call(Eval_Deferred_Dir_Frame *fram
     return NULL;
 }
 
-static bool flow_deferred_id_is_valid(String_View id) {
-    if (id.count == 0 || !id.data) return false;
-    char c0 = id.data[0];
-    if (c0 >= 'A' && c0 <= 'Z') return false;
+static bool flow_remove_all_deferred_calls_with_id(Eval_Deferred_Dir_Frame *frame, String_View id) {
+    if (!frame || id.count == 0) return false;
+    for (size_t i = arena_arr_len(frame->calls); i-- > 0;) {
+        if (!flow_sv_eq_exact(frame->calls[i].id, id)) continue;
+        if (!flow_deferred_call_list_remove_at(&frame->calls, i)) return false;
+    }
     return true;
+}
+
+static bool flow_generated_deferred_id_exists(EvalExecContext *ctx, String_View id) {
+    if (!ctx || id.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(ctx->file_state.generated_deferred_ids); i++) {
+        if (flow_sv_eq_exact(ctx->file_state.generated_deferred_ids[i], id)) return true;
+    }
+    return false;
+}
+
+static bool flow_record_generated_deferred_id(EvalExecContext *ctx, String_View id) {
+    if (!ctx || id.count == 0) return false;
+    if (flow_generated_deferred_id_exists(ctx, id)) return true;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.generated_deferred_ids, id);
+}
+
+static Flow_Deferred_Id_Validation flow_validate_deferred_id(EvalExecContext *ctx,
+                                                             String_View id,
+                                                             bool allow_generated_prefix) {
+    if (id.count == 0 || !id.data) return FLOW_DEFERRED_ID_INVALID_EMPTY;
+
+    char c0 = id.data[0];
+    if (c0 >= 'A' && c0 <= 'Z') return FLOW_DEFERRED_ID_INVALID_CAPITAL;
+    if (c0 == '_' && !allow_generated_prefix && !flow_generated_deferred_id_exists(ctx, id)) {
+        return FLOW_DEFERRED_ID_INVALID_UNDERSCORE;
+    }
+
+    return FLOW_DEFERRED_ID_VALID;
+}
+
+static String_View flow_deferred_id_validation_cause(Flow_Deferred_Id_Validation validation) {
+    switch (validation) {
+    case FLOW_DEFERRED_ID_INVALID_EMPTY:
+        return nob_sv_from_cstr("cmake_language(DEFER ID) requires a non-empty id");
+    case FLOW_DEFERRED_ID_INVALID_CAPITAL:
+        return nob_sv_from_cstr("cmake_language(DEFER ID) requires an id that does not start with A-Z");
+    case FLOW_DEFERRED_ID_INVALID_UNDERSCORE:
+        return nob_sv_from_cstr("cmake_language(DEFER ID) only allows a leading '_' for ids generated earlier by ID_VAR");
+    case FLOW_DEFERRED_ID_VALID:
+    default:
+        return nob_sv_from_cstr("");
+    }
 }
 
 static String_View flow_make_deferred_id(EvalExecContext *ctx) {
@@ -97,7 +148,10 @@ static String_View flow_make_deferred_id(EvalExecContext *ctx) {
         ctx_oom(ctx);
         return nob_sv_from_cstr("");
     }
-    return sv_copy_to_event_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+    String_View id = sv_copy_to_event_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (!flow_record_generated_deferred_id(ctx, id)) return nob_sv_from_cstr("");
+    return id;
 }
 
 static Eval_Deferred_Dir_Frame *flow_resolve_defer_directory(EvalExecContext *ctx,
@@ -496,8 +550,7 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
         if (eval_should_stop(ctx)) return false;
         Eval_Deferred_Call *call = flow_find_deferred_call(frame, id, NULL);
         if (!call) {
-            (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER GET_CALL) requires a known deferred call id"), id);
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            return eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
         }
         (void)flow_set_var_to_deferred_call(ctx, call, out_var);
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
@@ -511,9 +564,7 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
         for (size_t k = i + 1; k < arena_arr_len(*raw); k++) {
             String_View id = flow_eval_arg_single(ctx, &(*raw)[k], true);
             if (eval_should_stop(ctx)) return false;
-            size_t idx = 0;
-            if (!flow_find_deferred_call(frame, id, &idx)) continue;
-            (void)flow_deferred_call_list_remove_at(&frame->calls, idx);
+            if (!flow_remove_all_deferred_calls_with_id(frame, id)) return false;
         }
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
@@ -561,14 +612,19 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 
-    String_View id = explicit_id.count > 0 ? explicit_id : flow_make_deferred_id(ctx);
+    bool generated_id = explicit_id.count == 0;
+    String_View id = generated_id ? flow_make_deferred_id(ctx) : explicit_id;
     if (eval_should_stop(ctx)) return false;
-    if (!flow_deferred_id_is_valid(id)) {
-        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER ID) requires an id that does not start with A-Z"), id);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
-    }
-    if (flow_find_deferred_call(frame, id, NULL)) {
-        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER ID) requires a unique id in the target directory"), id);
+    Flow_Deferred_Id_Validation id_validation = flow_validate_deferred_id(ctx, id, generated_id);
+    if (id_validation != FLOW_DEFERRED_ID_VALID) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_MISSING_REQUIRED,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 flow_deferred_id_validation_cause(id_validation),
+                                 id);
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 

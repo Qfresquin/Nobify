@@ -133,6 +133,20 @@ typedef struct {
     Ctest_Parse_Result parsed;
     String_View model;
     String_View build_dir;
+    String_View coverage_command;
+    String_View coverage_extra_flags;
+    String_View labels;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    bool append_mode;
+    bool quiet;
+} Ctest_Coverage_Request;
+
+typedef struct {
+    SV_List argv;
+    Ctest_Parse_Result parsed;
+    String_View model;
+    String_View build_dir;
     String_View files;
     String_View capture_cmake_error_var;
     bool quiet;
@@ -173,7 +187,7 @@ static const char *const s_ctest_coverage_single_keywords[] = {
     "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
 };
 static const char *const s_ctest_coverage_multi_keywords[] = {"LABELS"};
-static const char *const s_ctest_coverage_flag_keywords[] = {"QUIET"};
+static const char *const s_ctest_coverage_flag_keywords[] = {"APPEND", "QUIET"};
 static const Ctest_Parse_Spec s_ctest_coverage_parse_spec = {
     s_ctest_coverage_single_keywords,
     sizeof(s_ctest_coverage_single_keywords) / sizeof(s_ctest_coverage_single_keywords[0]),
@@ -766,6 +780,70 @@ static bool ctest_write_upload_xml(EvalExecContext *ctx, String_View upload_xml_
     return eval_write_text_file(ctx, upload_xml_path, contents, false);
 }
 
+static bool ctest_write_coverage_xml(EvalExecContext *ctx,
+                                     String_View coverage_xml_path,
+                                     const Ctest_Coverage_Request *req,
+                                     String_View stdout_text,
+                                     String_View stderr_text,
+                                     int exit_code) {
+    if (!ctx || coverage_xml_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Coverage>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildDirectory>");
+    ctest_xml_append_escaped(&sb, req->build_dir);
+    nob_sb_append_cstr(&sb, "</BuildDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <Command>");
+    ctest_xml_append_escaped(&sb, req->coverage_command);
+    nob_sb_append_cstr(&sb, "</Command>\n");
+
+    nob_sb_append_cstr(&sb, "  <ExtraFlags>");
+    ctest_xml_append_escaped(&sb, req->coverage_extra_flags);
+    nob_sb_append_cstr(&sb, "</ExtraFlags>\n");
+
+    nob_sb_append_cstr(&sb, "  <Append>");
+    nob_sb_append_cstr(&sb, req->append_mode ? "true" : "false");
+    nob_sb_append_cstr(&sb, "</Append>\n");
+
+    if (req->labels.count > 0) {
+        SV_List label_items = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req->labels, &label_items)) {
+            nob_sb_free(sb);
+            return false;
+        }
+
+        nob_sb_append_cstr(&sb, "  <Labels>\n");
+        for (size_t i = 0; i < arena_arr_len(label_items); i++) {
+            if (label_items[i].count == 0) continue;
+            nob_sb_append_cstr(&sb, "    <Label>");
+            ctest_xml_append_escaped(&sb, label_items[i]);
+            nob_sb_append_cstr(&sb, "</Label>\n");
+        }
+        nob_sb_append_cstr(&sb, "  </Labels>\n");
+    }
+
+    nob_sb_append_cstr(&sb, "  <ExitCode>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", exit_code));
+    nob_sb_append_cstr(&sb, "</ExitCode>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdOut>");
+    ctest_xml_append_escaped(&sb, stdout_text);
+    nob_sb_append_cstr(&sb, "</StdOut>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdErr>");
+    ctest_xml_append_escaped(&sb, stderr_text);
+    nob_sb_append_cstr(&sb, "</StdErr>\n");
+
+    nob_sb_append_cstr(&sb, "</Coverage>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, coverage_xml_path, contents, false);
+}
+
 static bool ctest_write_submit_manifest(EvalExecContext *ctx,
                                         String_View manifest_path,
                                         String_View tag,
@@ -810,6 +888,7 @@ static bool ctest_write_submit_manifest(EvalExecContext *ctx,
 }
 
 static bool ctest_ensure_session_tag(EvalExecContext *ctx,
+                                     String_View build_dir_override,
                                      String_View model,
                                      String_View group,
                                      bool append_mode,
@@ -819,7 +898,7 @@ static bool ctest_ensure_session_tag(EvalExecContext *ctx,
                                      String_View *out_tag_dir) {
     if (!ctx || !out_tag || !out_testing_dir || !out_tag_file || !out_tag_dir) return false;
 
-    String_View build_dir = ctest_session_resolved_build_dir(ctx);
+    String_View build_dir = build_dir_override.count > 0 ? build_dir_override : ctest_session_resolved_build_dir(ctx);
     String_View testing_dir = ctest_get_session_field(ctx, "TESTING_DIR");
     if (testing_dir.count == 0) testing_dir = ctest_testing_root(ctx, build_dir);
     if (eval_should_stop(ctx)) return false;
@@ -1188,7 +1267,12 @@ static String_View ctest_submit_canonical_part(String_View raw_part) {
 
 static bool ctest_submit_part_is_available(EvalExecContext *ctx, const Ctest_Submit_Part_Def *part_def) {
     if (!ctx || !part_def || !part_def->name) return false;
-    if (part_def->status_command) return ctest_get_command_status(ctx, part_def->status_command).count > 0;
+    if (part_def->status_command) {
+        if (strcmp(part_def->name, "Coverage") == 0) {
+            return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")).count > 0;
+        }
+        return ctest_get_command_status(ctx, part_def->status_command).count > 0;
+    }
     if (strcmp(part_def->name, "Notes") == 0) {
         return eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_NOTES_FILES")).count > 0;
     }
@@ -1793,9 +1877,42 @@ static bool ctest_submit_append_part_files(EvalExecContext *ctx,
                                                  out_files)) {
                 return false;
             }
+        } else if (eval_sv_eq_ci_lit(part_items[i], "Coverage")) {
+            if (!ctest_append_joined_list_unique(ctx,
+                                                 eval_var_get_visible(ctx,
+                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")),
+                                                 out_files)) {
+                return false;
+            }
         }
     }
 
+    return true;
+}
+
+static bool ctest_append_command_tokens_temp(EvalExecContext *ctx, String_View raw, SV_List *out_argv) {
+    if (!ctx || !out_argv) return false;
+    if (raw.count == 0) return true;
+
+    bool prefer_semicolon_split = false;
+    for (size_t i = 0; i < raw.count; i++) {
+        if (raw.data[i] == ';') {
+            prefer_semicolon_split = true;
+            break;
+        }
+    }
+
+    SV_List tokens = {0};
+    if (prefer_semicolon_split) {
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw, &tokens)) return false;
+    } else {
+        if (!eval_split_command_line_temp(ctx, EVAL_CMDLINE_NATIVE, raw, &tokens)) return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(tokens); i++) {
+        if (tokens[i].count == 0) continue;
+        if (!svu_list_push_temp(ctx, out_argv, tokens[i])) return false;
+    }
     return true;
 }
 
@@ -2030,14 +2147,203 @@ Eval_Result eval_handle_ctest_configure(EvalExecContext *ctx, const Node *node) 
                                          nob_sv_from_cstr("MODELED"));
 }
 
+static bool ctest_parse_coverage_request(EvalExecContext *ctx,
+                                         const Node *node,
+                                         Ctest_Coverage_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_parse_generic(ctx,
+                             node,
+                             nob_sv_from_cstr("ctest_coverage"),
+                             &out_req->argv,
+                             &s_ctest_coverage_parse_spec,
+                             &out_req->parsed)) {
+        return false;
+    }
+
+    String_View build = ctest_parsed_field_value(&out_req->parsed, "BUILD");
+    out_req->build_dir = build.count > 0 ? ctest_resolve_binary_dir(ctx, build) : ctest_session_resolved_build_dir(ctx);
+    if (eval_should_stop(ctx)) return false;
+
+    out_req->model = ctest_get_session_field(ctx, "MODEL");
+    if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
+    out_req->coverage_command = ctest_submit_visible_var(ctx, "CTEST_COVERAGE_COMMAND", "COVERAGE_COMMAND");
+    out_req->coverage_extra_flags = ctest_submit_visible_var(ctx,
+                                                             "CTEST_COVERAGE_EXTRA_FLAGS",
+                                                             "COVERAGE_EXTRA_FLAGS");
+    out_req->labels = ctest_join_parsed_field_values(ctx, &out_req->parsed, "LABELS");
+    out_req->return_var = ctest_parsed_field_value(&out_req->parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
+    out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
+static bool ctest_execute_coverage_request(EvalExecContext *ctx,
+                                           const Node *node,
+                                           const Ctest_Coverage_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "RESOLVED_BUILD", req->build_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "COVERAGE_COMMAND", req->coverage_command)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_coverage"),
+                         "COVERAGE_EXTRA_FLAGS",
+                         req->coverage_extra_flags)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "LABELS_RESOLVED", req->labels)) return false;
+    if (!ctest_publish_common_dirs(ctx, ctest_get_session_field(ctx, "SOURCE"), req->build_dir)) return false;
+
+    if (req->coverage_command.count == 0) {
+        if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("1"))) {
+            return false;
+        }
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_coverage"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_coverage() requires CTEST_COVERAGE_COMMAND or COVERAGE_COMMAND"),
+                              nob_sv_from_cstr("Set the documented coverage tool command before running the coverage step"));
+        return false;
+    }
+
+    SV_List argv = {0};
+    if (!ctest_append_command_tokens_temp(ctx, req->coverage_command, &argv)) return false;
+    if (arena_arr_len(argv) == 0) {
+        if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("1"))) {
+            return false;
+        }
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_coverage"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_coverage() coverage command did not produce an executable"),
+                              req->coverage_command);
+        return false;
+    }
+    if (!ctest_append_command_tokens_temp(ctx, req->coverage_extra_flags, &argv)) return false;
+
+    Eval_Process_Run_Request process_req = {
+        .argv = argv,
+        .argc = arena_arr_len(argv),
+        .working_directory = req->build_dir,
+    };
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "OUTPUT", proc.stdout_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "ERROR_OUTPUT", proc.stderr_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "PROCESS_RESULT", proc.result_text)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_coverage"),
+                         "EXIT_CODE",
+                         ctest_submit_format_long_temp(ctx, (long)proc.exit_code))) {
+        return false;
+    }
+
+    bool success = proc.started && !proc.timed_out && proc.exit_code == 0;
+    String_View rv_value = success ? nob_sv_from_cstr("0")
+                                   : ctest_submit_format_size_temp(ctx,
+                                                                   proc.exit_code > 0
+                                                                       ? (size_t)proc.exit_code
+                                                                       : 1U);
+    if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, rv_value)) return false;
+
+    if (!success) {
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_coverage"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+
+        String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
+                            : proc.result_text.count > 0 ? proc.result_text
+                            : req->coverage_command;
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_coverage() coverage command failed"),
+                              detail);
+        return false;
+    }
+
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->build_dir,
+                                  req->model,
+                                  track,
+                                  false,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
+        return false;
+    }
+
+    String_View coverage_xml = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("Coverage.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_coverage_xml(ctx, coverage_xml, req, proc.stdout_text, proc.stderr_text, proc.exit_code)) {
+        return false;
+    }
+
+    String_View manifest = eval_sv_path_join(eval_temp_arena(ctx),
+                                             tag_dir_path,
+                                             nob_sv_from_cstr("CoverageManifest.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_manifest(ctx,
+                              nob_sv_from_cstr("ctest_coverage"),
+                              manifest,
+                              tag,
+                              track,
+                              nob_sv_from_cstr("Coverage"),
+                              coverage_xml)) {
+        return false;
+    }
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "TAG", tag)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "TAG_FILE", tag_file)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "TESTING_DIR", testing_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "COVERAGE_XML", coverage_xml)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "MANIFEST", manifest)) return false;
+
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_coverage"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("COLLECTED"));
+}
+
 Eval_Result eval_handle_ctest_coverage(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_metadata_request(ctx,
-                                         node,
-                                         nob_sv_from_cstr("ctest_coverage"),
-                                         &s_ctest_coverage_parse_spec,
-                                         false,
-                                         true,
-                                         nob_sv_from_cstr("MODELED"));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Coverage_Request req = {0};
+    if (!ctest_parse_coverage_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_coverage_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_ctest_empty_binary_directory(EvalExecContext *ctx, const Node *node) {
@@ -2362,6 +2668,7 @@ static bool ctest_execute_start_request(EvalExecContext *ctx,
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
     if (!ctest_ensure_session_tag(ctx,
+                                  req->resolved_build,
                                   effective_model,
                                   effective_group,
                                   req->append_mode,
@@ -2522,6 +2829,7 @@ static bool ctest_execute_submit_request(EvalExecContext *ctx,
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
     if (!ctest_ensure_session_tag(ctx,
+                                  req->build_dir,
                                   req->model,
                                   ctest_get_session_field(ctx, "TRACK"),
                                   false,
@@ -2688,6 +2996,7 @@ static bool ctest_execute_upload_request(EvalExecContext *ctx, const Ctest_Uploa
     String_View tag_file = nob_sv_from_cstr("");
     String_View tag_dir_path = nob_sv_from_cstr("");
     if (!ctest_ensure_session_tag(ctx,
+                                  req->build_dir,
                                   req->model,
                                   ctest_get_session_field(ctx, "TRACK"),
                                   false,

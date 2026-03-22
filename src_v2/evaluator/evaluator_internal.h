@@ -444,6 +444,7 @@ typedef struct {
     Eval_File_Lock_List file_locks;
     Eval_File_Generate_Job_List file_generate_jobs;
     Eval_Deferred_Dir_Frame_Stack deferred_dirs;
+    SV_List generated_deferred_ids;
     size_t next_deferred_call_id;
 } Eval_File_State;
 
@@ -569,6 +570,8 @@ typedef struct Eval_Command_Transaction {
     size_t file_generate_job_count;
     Eval_Deferred_Dir_Frame_Snapshot *deferred_dirs;
     size_t deferred_dir_count;
+    String_View *generated_deferred_ids;
+    size_t generated_deferred_id_count;
     size_t next_deferred_call_id;
 
     bool cpack_component_module_loaded;

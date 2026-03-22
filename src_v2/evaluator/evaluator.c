@@ -849,6 +849,13 @@ bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
                                         &tx->deferred_dirs)) {
         return false;
     }
+    tx->generated_deferred_id_count = arena_arr_len(ctx->file_state.generated_deferred_ids);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->file_state.generated_deferred_ids,
+                                   tx->generated_deferred_id_count,
+                                   &tx->generated_deferred_ids)) {
+        return false;
+    }
 
     ctx->active_transaction = tx;
     return true;
@@ -977,6 +984,10 @@ bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, 
             arena_rewind(eval_tx_arena(ctx), tx->mark);
             return false;
         }
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->file_state.generated_deferred_ids,
+                              tx->generated_deferred_ids,
+                              tx->generated_deferred_id_count);
         ctx->file_state.next_deferred_call_id = tx->next_deferred_call_id;
         ctx->cpack_component_module_loaded = tx->cpack_component_module_loaded;
         ctx->fetchcontent_module_loaded = tx->fetchcontent_module_loaded;
