@@ -924,6 +924,7 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
         "set(CMAKE_BINARY_DIR ctest_configure_exec_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR ctest_configure_exec_bin)\n"
         "set(CMAKE_COMMAND configure-tool)\n"
+        "set(CTEST_LABELS_FOR_SUBPROJECTS \"core;ui\")\n"
         "ctest_start(Experimental ctest_configure_exec_src .)\n"
         "ctest_configure(OPTIONS \"--preset;dev\" RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE APPEND QUIET)\n"
         "ctest_submit(PARTS Configure RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
@@ -948,6 +949,8 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("-1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::STATUS")),
                      nob_sv_from_cstr("CONFIGURED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::LABELS_FOR_SUBPROJECTS")),
+                     nob_sv_from_cstr("core;ui")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
                      nob_sv_from_cstr("FAILED")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
@@ -966,6 +969,9 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
     ASSERT(strstr(configure_sb.items, "configure-tool") != NULL);
     ASSERT(strstr(configure_sb.items, "--preset;dev") != NULL);
     ASSERT(strstr(configure_sb.items, "<Append>true</Append>") != NULL);
+    ASSERT(strstr(configure_sb.items, "<Labels>") != NULL);
+    ASSERT(strstr(configure_sb.items, "<Label>core</Label>") != NULL);
+    ASSERT(strstr(configure_sb.items, "<Label>ui</Label>") != NULL);
     nob_sb_free(configure_sb);
 
     String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::MANIFEST"));
@@ -1027,6 +1033,77 @@ TEST(evaluator_ctest_configure_captures_missing_command_without_fatal_error) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::STATUS")),
                      nob_sv_from_cstr("FAILED")));
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_defaults_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_defaults_bin"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_wrong_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_wrong_bin"));
+
+    Ctest_Configure_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_configure_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_SOURCE_DIR ctest_configure_wrong_src)\n"
+        "set(CMAKE_BINARY_DIR ctest_configure_wrong_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR .)\n"
+        "set(CTEST_SOURCE_DIRECTORY ctest_configure_defaults_src)\n"
+        "set(CTEST_BINARY_DIRECTORY ctest_configure_defaults_bin)\n"
+        "set(CMAKE_COMMAND configure-tool)\n"
+        "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_configure_tool);
+    ASSERT(strstr(mock.working_directory, "ctest_configure_defaults_bin") != NULL);
+    ASSERT(strstr(mock.source_arg, "ctest_configure_defaults_src") != NULL);
+    ASSERT(strstr(mock.working_directory, "ctest_configure_wrong_bin") == NULL);
+    ASSERT(strstr(mock.source_arg, "ctest_configure_wrong_src") == NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_CE")), nob_sv_from_cstr("0")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::RESOLVED_SOURCE")),
+                          nob_sv_from_cstr("ctest_configure_defaults_src")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::RESOLVED_BUILD")),
+                          nob_sv_from_cstr("ctest_configure_defaults_bin")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_SOURCE_DIRECTORY")),
+                          nob_sv_from_cstr("ctest_configure_defaults_src")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_BINARY_DIRECTORY")),
+                          nob_sv_from_cstr("ctest_configure_defaults_bin")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3033,6 +3110,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_ctest_start_models_documented_group_append_and_checkout_flow(passed, failed);
     test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed);
     test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed);
+    test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed);
     test_evaluator_ctest_submit_captures_remote_failures(passed, failed);

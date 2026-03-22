@@ -33,7 +33,7 @@
     X("cpack_add_component_group", eval_handle_cpack_add_component_group, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cpack_add_install_type", eval_handle_cpack_add_install_type, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("ctest_build", eval_handle_ctest_build, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_configure", eval_handle_ctest_configure, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_configure", eval_handle_ctest_configure, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("ctest_coverage", eval_handle_ctest_coverage, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("ctest_empty_binary_directory", eval_handle_ctest_empty_binary_directory, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("ctest_memcheck", eval_handle_ctest_memcheck, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \

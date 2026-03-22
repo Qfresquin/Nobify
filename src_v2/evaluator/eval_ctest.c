@@ -136,6 +136,7 @@ typedef struct {
     String_View build_dir;
     String_View configure_command;
     String_View configure_options;
+    String_View labels_for_subprojects;
     String_View return_var;
     String_View capture_cmake_error_var;
     bool append_mode;
@@ -576,12 +577,28 @@ static String_View ctest_resolve_source_dir(EvalExecContext *ctx, String_View ra
     return eval_sv_path_normalize_temp(ctx, resolved);
 }
 
+static String_View ctest_default_source_setting(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View value = ctest_submit_visible_var(ctx, "CTEST_SOURCE_DIRECTORY", "PROJECT_SOURCE_DIR");
+    if (value.count > 0) return ctest_resolve_source_dir(ctx, value);
+    return ctest_resolve_source_dir(ctx, ctest_source_root(ctx));
+}
+
 static String_View ctest_resolve_binary_dir(EvalExecContext *ctx, String_View raw) {
     if (!ctx) return nob_sv_from_cstr("");
     if (raw.count == 0) return nob_sv_from_cstr("");
     String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw, ctest_current_binary_dir(ctx), false);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
     return eval_sv_path_normalize_temp(ctx, resolved);
+}
+
+static String_View ctest_default_binary_setting(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View value = ctest_submit_visible_var(ctx, "CTEST_BINARY_DIRECTORY", "PROJECT_BINARY_DIR");
+    if (value.count > 0) return ctest_resolve_binary_dir(ctx, value);
+    return ctest_resolve_binary_dir(ctx, ctest_binary_root(ctx));
 }
 
 static bool ctest_publish_common_dirs(EvalExecContext *ctx, String_View source_dir, String_View binary_dir) {
@@ -603,15 +620,13 @@ static bool ctest_ensure_directory(EvalExecContext *ctx, String_View dir) {
 static String_View ctest_session_resolved_build_dir(EvalExecContext *ctx) {
     String_View build = ctest_get_session_field(ctx, "BUILD");
     if (build.count > 0) return build;
-    build = ctest_binary_root(ctx);
-    return ctest_resolve_binary_dir(ctx, build);
+    return ctest_default_binary_setting(ctx);
 }
 
 static String_View ctest_session_resolved_source_dir(EvalExecContext *ctx) {
     String_View source = ctest_get_session_field(ctx, "SOURCE");
     if (source.count > 0) return source;
-    source = ctest_source_root(ctx);
-    return ctest_resolve_source_dir(ctx, source);
+    return ctest_default_source_setting(ctx);
 }
 
 static String_View ctest_testing_root(EvalExecContext *ctx, String_View build_dir) {
@@ -788,6 +803,27 @@ static void ctest_xml_append_escaped(Nob_String_Builder *sb, String_View value) 
     }
 }
 
+static bool ctest_xml_append_labels_block(EvalExecContext *ctx,
+                                          Nob_String_Builder *sb,
+                                          String_View labels) {
+    if (!ctx || !sb || labels.count == 0) return true;
+
+    SV_List label_items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), labels, &label_items)) {
+        return false;
+    }
+
+    nob_sb_append_cstr(sb, "  <Labels>\n");
+    for (size_t i = 0; i < arena_arr_len(label_items); i++) {
+        if (label_items[i].count == 0) continue;
+        nob_sb_append_cstr(sb, "    <Label>");
+        ctest_xml_append_escaped(sb, label_items[i]);
+        nob_sb_append_cstr(sb, "</Label>\n");
+    }
+    nob_sb_append_cstr(sb, "  </Labels>\n");
+    return true;
+}
+
 static bool ctest_write_upload_xml(EvalExecContext *ctx, String_View upload_xml_path, String_View files) {
     if (!ctx || upload_xml_path.count == 0) return false;
 
@@ -842,21 +878,9 @@ static bool ctest_write_coverage_xml(EvalExecContext *ctx,
     nob_sb_append_cstr(&sb, req->append_mode ? "true" : "false");
     nob_sb_append_cstr(&sb, "</Append>\n");
 
-    if (req->labels.count > 0) {
-        SV_List label_items = {0};
-        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req->labels, &label_items)) {
-            nob_sb_free(sb);
-            return false;
-        }
-
-        nob_sb_append_cstr(&sb, "  <Labels>\n");
-        for (size_t i = 0; i < arena_arr_len(label_items); i++) {
-            if (label_items[i].count == 0) continue;
-            nob_sb_append_cstr(&sb, "    <Label>");
-            ctest_xml_append_escaped(&sb, label_items[i]);
-            nob_sb_append_cstr(&sb, "</Label>\n");
-        }
-        nob_sb_append_cstr(&sb, "  </Labels>\n");
+    if (!ctest_xml_append_labels_block(ctx, &sb, req->labels)) {
+        nob_sb_free(sb);
+        return false;
     }
 
     nob_sb_append_cstr(&sb, "  <ExitCode>");
@@ -909,6 +933,11 @@ static bool ctest_write_configure_xml(EvalExecContext *ctx,
     nob_sb_append_cstr(&sb, "  <Append>");
     nob_sb_append_cstr(&sb, req->append_mode ? "true" : "false");
     nob_sb_append_cstr(&sb, "</Append>\n");
+
+    if (!ctest_xml_append_labels_block(ctx, &sb, req->labels_for_subprojects)) {
+        nob_sb_free(sb);
+        return false;
+    }
 
     nob_sb_append_cstr(&sb, "  <ExitCode>");
     nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", exit_code));
@@ -2262,6 +2291,7 @@ static bool ctest_parse_configure_request(EvalExecContext *ctx,
     if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
     out_req->configure_command = ctest_configure_resolve_command(ctx, out_req->resolved_source);
     out_req->configure_options = ctest_parsed_field_value(&out_req->parsed, "OPTIONS");
+    out_req->labels_for_subprojects = ctest_submit_visible_var(ctx, "CTEST_LABELS_FOR_SUBPROJECTS", NULL);
     out_req->return_var = ctest_parsed_field_value(&out_req->parsed, "RETURN_VALUE");
     out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
     out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
@@ -2287,6 +2317,12 @@ static bool ctest_execute_configure_request(EvalExecContext *ctx,
                          nob_sv_from_cstr("ctest_configure"),
                          "OPTIONS_RESOLVED",
                          req->configure_options)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_configure"),
+                         "LABELS_FOR_SUBPROJECTS",
+                         req->labels_for_subprojects)) {
         return false;
     }
     if (!ctest_publish_common_dirs(ctx, req->resolved_source, req->build_dir)) return false;
