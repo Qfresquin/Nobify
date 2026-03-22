@@ -34,6 +34,16 @@ typedef struct {
     char working_directory[512];
 } Ctest_Start_Mock_Process_Data;
 
+typedef struct {
+    size_t call_count;
+    bool saw_configure_tool;
+    bool saw_source_arg;
+    bool saw_preset_flag;
+    bool saw_preset_value;
+    char working_directory[512];
+    char source_arg[512];
+} Ctest_Configure_Mock_Process_Data;
+
 static bool ctest_submit_mock_has_prefix(String_View value, const char *prefix) {
     size_t prefix_len = strlen(prefix);
     return value.count >= prefix_len && memcmp(value.data, prefix, prefix_len) == 0;
@@ -177,6 +187,53 @@ static bool ctest_start_mock_process_run(void *user_data,
     }
 
     out_result->exit_code = 0;
+    return true;
+}
+
+static bool ctest_configure_mock_process_run(void *user_data,
+                                             Arena *scratch_arena,
+                                             const Eval_Process_Run_Request *request,
+                                             Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Configure_Mock_Process_Data *data = (Ctest_Configure_Mock_Process_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+    data->call_count++;
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("configure-tool"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    data->saw_configure_tool = true;
+    for (size_t i = 1; i < request->argc; i++) {
+        if (!data->saw_source_arg && request->argv[i].count > 0 && request->argv[i].data[0] != '-') {
+            size_t n = request->argv[i].count < sizeof(data->source_arg) - 1
+                ? request->argv[i].count
+                : sizeof(data->source_arg) - 1;
+            memcpy(data->source_arg, request->argv[i].data, n);
+            data->source_arg[n] = '\0';
+            data->saw_source_arg = true;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--preset"))) data->saw_preset_flag = true;
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("dev"))) data->saw_preset_value = true;
+    }
+
+    if (request->working_directory.count > 0) {
+        size_t n = request->working_directory.count < sizeof(data->working_directory) - 1
+            ? request->working_directory.count
+            : sizeof(data->working_directory) - 1;
+        memcpy(data->working_directory, request->working_directory.data, n);
+        data->working_directory[n] = '\0';
+    }
+
+    out_result->exit_code = 0;
+    out_result->stdout_text = nob_sv_from_cstr("Configuring done\nGenerating done\n");
     return true;
 }
 
@@ -446,6 +503,12 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
+    Ctest_Configure_Mock_Process_Data configure_mock = {0};
+    EvalServices services = {
+        .user_data = &configure_mock,
+        .process_run_capture = ctest_configure_mock_process_run,
+    };
+
     ASSERT(nob_mkdir_if_not_exists("ctest_bin"));
     ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe"));
     ASSERT(nob_mkdir_if_not_exists("ctest_bin/wipe/sub"));
@@ -478,6 +541,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     init.source_dir = nob_sv_from_cstr(".");
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
+    init.services = &services;
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
@@ -486,6 +550,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         temp_arena,
         "set(CMAKE_BINARY_DIR ctest_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR ctest_bin)\n"
+        "set(CMAKE_COMMAND configure-tool)\n"
         "ctest_start(Experimental ctest_src . GROUP Nightly QUIET APPEND)\n"
         "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
         "ctest_build(TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
@@ -515,6 +580,8 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
+    ASSERT(configure_mock.call_count == 1);
+    ASSERT(configure_mock.saw_configure_tool);
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND")),
                      nob_sv_from_cstr("ctest_sleep")));
@@ -820,6 +887,150 @@ TEST(evaluator_ctest_start_models_documented_group_append_and_checkout_flow) {
         arena_destroy(event_arena);
     }
 
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_part) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_exec_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_exec_bin"));
+
+    Ctest_Configure_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_configure_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_configure_exec_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_configure_exec_bin)\n"
+        "set(CMAKE_COMMAND configure-tool)\n"
+        "ctest_start(Experimental ctest_configure_exec_src .)\n"
+        "ctest_configure(OPTIONS \"--preset;dev\" RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE APPEND QUIET)\n"
+        "ctest_submit(PARTS Configure RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_configure_tool);
+    ASSERT(mock.saw_source_arg);
+    ASSERT(mock.saw_preset_flag);
+    ASSERT(mock.saw_preset_value);
+    ASSERT(strstr(mock.working_directory, "ctest_configure_exec_bin") != NULL);
+    ASSERT(strstr(mock.source_arg, "ctest_configure_exec_src") != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::STATUS")),
+                     nob_sv_from_cstr("CONFIGURED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                          nob_sv_from_cstr("Configure")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("Configure.xml")));
+
+    String_View configure_xml = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML"));
+    char *configure_xml_c = arena_strndup(temp_arena, configure_xml.data, configure_xml.count);
+    ASSERT(configure_xml_c != NULL);
+    ASSERT(nob_file_exists(configure_xml_c));
+
+    Nob_String_Builder configure_sb = {0};
+    ASSERT(nob_read_entire_file(configure_xml_c, &configure_sb));
+    ASSERT(strstr(configure_sb.items, "<Configure>") != NULL);
+    ASSERT(strstr(configure_sb.items, "configure-tool") != NULL);
+    ASSERT(strstr(configure_sb.items, "--preset;dev") != NULL);
+    ASSERT(strstr(configure_sb.items, "<Append>true</Append>") != NULL);
+    nob_sb_free(configure_sb);
+
+    String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::MANIFEST"));
+    char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
+    ASSERT(manifest_c != NULL);
+    ASSERT(nob_file_exists(manifest_c));
+
+    Nob_String_Builder manifest_sb = {0};
+    ASSERT(nob_read_entire_file(manifest_c, &manifest_sb));
+    ASSERT(strstr(manifest_sb.items, "COMMAND=ctest_configure") != NULL);
+    ASSERT(strstr(manifest_sb.items, "PARTS=Configure") != NULL);
+    ASSERT(strstr(manifest_sb.items, "Configure.xml") != NULL);
+    nob_sb_free(manifest_sb);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_configure_captures_missing_command_without_fatal_error) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_missing_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_configure_missing_bin"));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_configure_missing_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_configure_missing_bin)\n"
+        "set(CMAKE_COMMAND \"\")\n"
+        "ctest_start(Experimental ctest_configure_missing_src .)\n"
+        "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
     TEST_PASS();
 }
 
@@ -2820,6 +3031,8 @@ void run_evaluator_v2_batch4(int *passed, int *failed) {
     test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
     test_evaluator_ctest_start_models_documented_group_append_and_checkout_flow(passed, failed);
+    test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed);
+    test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed);
     test_evaluator_ctest_submit_captures_remote_failures(passed, failed);

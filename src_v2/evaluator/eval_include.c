@@ -158,9 +158,9 @@ static bool include_try_module_search(EvalExecContext *ctx,
     return false;
 }
 
-static bool include_resolve_target(EvalExecContext *ctx,
-                                   String_View file_or_module,
-                                   String_View *out_resolved) {
+bool eval_include_resolve_target(EvalExecContext *ctx,
+                                 String_View file_or_module,
+                                 String_View *out_resolved) {
     if (!ctx || !out_resolved) return false;
     *out_resolved = nob_sv_from_cstr("");
     if (file_or_module.count == 0) return false;
@@ -393,7 +393,7 @@ Eval_Result eval_handle_include(EvalExecContext *ctx, const Node *node) {
     }
 
     String_View file_path = nob_sv_from_cstr("");
-    bool found = include_resolve_target(ctx, file_or_module, &file_path);
+    bool found = eval_include_resolve_target(ctx, file_or_module, &file_path);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
     if (!found) {

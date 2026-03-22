@@ -23,7 +23,7 @@
     X("cmake_file_api", eval_handle_cmake_file_api, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_parse_arguments", eval_handle_cmake_parse_arguments, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_minimum_required", eval_handle_cmake_minimum_required, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("cmake_language", eval_handle_cmake_language, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_ERROR_CONTINUE) \
+    X("cmake_language", eval_handle_cmake_language, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE) \
     X("cmake_path", eval_handle_cmake_path, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE) \
     X("cmake_policy", eval_handle_cmake_policy, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("configure_file", eval_handle_configure_file, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \

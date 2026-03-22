@@ -628,6 +628,7 @@ struct EvalExecContext {
     Eval_Return_Context return_context;
     Eval_Runtime_State runtime_state;
     Eval_Command_Transaction *active_transaction;
+    String_View dependency_provider_context_file;
 
     bool oom;
     bool stop_requested;

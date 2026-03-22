@@ -326,6 +326,11 @@ static bool flow_cmake_language_provider_command_exists(EvalExecContext *ctx, St
     return eval_user_cmd_find(ctx, command_name) != NULL;
 }
 
+static bool flow_cmake_language_provider_context_is_active(EvalExecContext *ctx) {
+    if (!ctx || !ctx->current_file || ctx->dependency_provider_context_file.count == 0) return false;
+    return flow_sv_eq_exact(nob_sv_from_cstr(ctx->current_file), ctx->dependency_provider_context_file);
+}
+
 static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                                         const Node *node,
                                                         const SV_List *args) {
@@ -353,6 +358,18 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires a command or an empty string"),
                                  nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER <command> SUPPORTED_METHODS FIND_PACKAGE) or cmake_language(SET_DEPENDENCY_PROVIDER \"\")"));
+        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    }
+
+    if (!flow_cmake_language_provider_context_is_active(ctx)) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_INVALID_CONTEXT,
+                                 nob_sv_from_cstr("flow"),
+                                 node->as.cmd.name,
+                                 origin,
+                                 nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) may only be called from a file listed in CMAKE_PROJECT_TOP_LEVEL_INCLUDES during the first project()"),
+                                 nob_sv_from_cstr("Move this call into a CMAKE_PROJECT_TOP_LEVEL_INCLUDES file processed by the first project() call"));
         return !eval_result_is_fatal(eval_result_from_ctx(ctx));
     }
 

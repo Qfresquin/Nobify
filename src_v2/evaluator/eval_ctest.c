@@ -132,6 +132,20 @@ typedef struct {
     SV_List argv;
     Ctest_Parse_Result parsed;
     String_View model;
+    String_View resolved_source;
+    String_View build_dir;
+    String_View configure_command;
+    String_View configure_options;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    bool append_mode;
+    bool quiet;
+} Ctest_Configure_Request;
+
+typedef struct {
+    SV_List argv;
+    Ctest_Parse_Result parsed;
+    String_View model;
     String_View build_dir;
     String_View coverage_command;
     String_View coverage_extra_flags;
@@ -171,7 +185,7 @@ static const Ctest_Parse_Spec s_ctest_build_parse_spec = {
 static const char *const s_ctest_configure_single_keywords[] = {
     "BUILD", "SOURCE", "OPTIONS", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR"
 };
-static const char *const s_ctest_configure_flag_keywords[] = {"QUIET"};
+static const char *const s_ctest_configure_flag_keywords[] = {"APPEND", "QUIET"};
 static const Ctest_Parse_Spec s_ctest_configure_parse_spec = {
     s_ctest_configure_single_keywords,
     sizeof(s_ctest_configure_single_keywords) / sizeof(s_ctest_configure_single_keywords[0]),
@@ -395,6 +409,27 @@ static String_View ctest_submit_visible_var(EvalExecContext *ctx,
     String_View value = eval_var_get_visible(ctx, nob_sv_from_cstr(primary_name));
     if (value.count > 0 || !fallback_name) return value;
     return eval_var_get_visible(ctx, nob_sv_from_cstr(fallback_name));
+}
+
+static String_View ctest_configure_resolve_command(EvalExecContext *ctx, String_View source_dir) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_CONFIGURE_COMMAND"));
+    if (command.count > 0) return command;
+
+    command = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    if (command.count == 0) return nob_sv_from_cstr("");
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_buf(&sb, command.data, command.count);
+    if (source_dir.count > 0) {
+        nob_sb_append_cstr(&sb, ";");
+        nob_sb_append_buf(&sb, source_dir.data, source_dir.count);
+    }
+
+    String_View resolved = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    return resolved;
 }
 
 static bool ctest_submit_resolve_numeric_setting(EvalExecContext *ctx,
@@ -844,6 +879,57 @@ static bool ctest_write_coverage_xml(EvalExecContext *ctx,
     return eval_write_text_file(ctx, coverage_xml_path, contents, false);
 }
 
+static bool ctest_write_configure_xml(EvalExecContext *ctx,
+                                      String_View configure_xml_path,
+                                      const Ctest_Configure_Request *req,
+                                      String_View stdout_text,
+                                      String_View stderr_text,
+                                      int exit_code) {
+    if (!ctx || configure_xml_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Configure>\n");
+
+    nob_sb_append_cstr(&sb, "  <SourceDirectory>");
+    ctest_xml_append_escaped(&sb, req->resolved_source);
+    nob_sb_append_cstr(&sb, "</SourceDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildDirectory>");
+    ctest_xml_append_escaped(&sb, req->build_dir);
+    nob_sb_append_cstr(&sb, "</BuildDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <ConfigureCommand>");
+    ctest_xml_append_escaped(&sb, req->configure_command);
+    nob_sb_append_cstr(&sb, "</ConfigureCommand>\n");
+
+    nob_sb_append_cstr(&sb, "  <Options>");
+    ctest_xml_append_escaped(&sb, req->configure_options);
+    nob_sb_append_cstr(&sb, "</Options>\n");
+
+    nob_sb_append_cstr(&sb, "  <Append>");
+    nob_sb_append_cstr(&sb, req->append_mode ? "true" : "false");
+    nob_sb_append_cstr(&sb, "</Append>\n");
+
+    nob_sb_append_cstr(&sb, "  <ExitCode>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", exit_code));
+    nob_sb_append_cstr(&sb, "</ExitCode>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdOut>");
+    ctest_xml_append_escaped(&sb, stdout_text);
+    nob_sb_append_cstr(&sb, "</StdOut>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdErr>");
+    ctest_xml_append_escaped(&sb, stderr_text);
+    nob_sb_append_cstr(&sb, "</StdErr>\n");
+
+    nob_sb_append_cstr(&sb, "</Configure>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, configure_xml_path, contents, false);
+}
+
 static bool ctest_write_submit_manifest(EvalExecContext *ctx,
                                         String_View manifest_path,
                                         String_View tag,
@@ -1268,6 +1354,9 @@ static String_View ctest_submit_canonical_part(String_View raw_part) {
 static bool ctest_submit_part_is_available(EvalExecContext *ctx, const Ctest_Submit_Part_Def *part_def) {
     if (!ctx || !part_def || !part_def->name) return false;
     if (part_def->status_command) {
+        if (strcmp(part_def->name, "Configure") == 0) {
+            return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")).count > 0;
+        }
         if (strcmp(part_def->name, "Coverage") == 0) {
             return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")).count > 0;
         }
@@ -1877,6 +1966,13 @@ static bool ctest_submit_append_part_files(EvalExecContext *ctx,
                                                  out_files)) {
                 return false;
             }
+        } else if (eval_sv_eq_ci_lit(part_items[i], "Configure")) {
+            if (!ctest_append_joined_list_unique(ctx,
+                                                 eval_var_get_visible(ctx,
+                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")),
+                                                 out_files)) {
+                return false;
+            }
         } else if (eval_sv_eq_ci_lit(part_items[i], "Coverage")) {
             if (!ctest_append_joined_list_unique(ctx,
                                                  eval_var_get_visible(ctx,
@@ -2137,14 +2233,238 @@ Eval_Result eval_handle_ctest_build(EvalExecContext *ctx, const Node *node) {
                                          nob_sv_from_cstr("MODELED"));
 }
 
+static bool ctest_parse_configure_request(EvalExecContext *ctx,
+                                          const Node *node,
+                                          Ctest_Configure_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_parse_generic(ctx,
+                             node,
+                             nob_sv_from_cstr("ctest_configure"),
+                             &out_req->argv,
+                             &s_ctest_configure_parse_spec,
+                             &out_req->parsed)) {
+        return false;
+    }
+
+    String_View source = ctest_parsed_field_value(&out_req->parsed, "SOURCE");
+    String_View build = ctest_parsed_field_value(&out_req->parsed, "BUILD");
+    out_req->resolved_source = source.count > 0 ? ctest_resolve_source_dir(ctx, source)
+                                                : ctest_session_resolved_source_dir(ctx);
+    out_req->build_dir = build.count > 0 ? ctest_resolve_binary_dir(ctx, build)
+                                         : ctest_session_resolved_build_dir(ctx);
+    if (eval_should_stop(ctx)) return false;
+
+    out_req->model = ctest_get_session_field(ctx, "MODEL");
+    if (out_req->model.count == 0) out_req->model = nob_sv_from_cstr("Experimental");
+    out_req->configure_command = ctest_configure_resolve_command(ctx, out_req->resolved_source);
+    out_req->configure_options = ctest_parsed_field_value(&out_req->parsed, "OPTIONS");
+    out_req->return_var = ctest_parsed_field_value(&out_req->parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
+    out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
+
+static bool ctest_execute_configure_request(EvalExecContext *ctx,
+                                            const Node *node,
+                                            const Ctest_Configure_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "RESOLVED_SOURCE", req->resolved_source)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "RESOLVED_BUILD", req->build_dir)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "CONFIGURE_COMMAND", req->configure_command)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_configure"),
+                         "OPTIONS_RESOLVED",
+                         req->configure_options)) {
+        return false;
+    }
+    if (!ctest_publish_common_dirs(ctx, req->resolved_source, req->build_dir)) return false;
+
+    if (req->configure_command.count == 0) {
+        if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("1"))) {
+            return false;
+        }
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_configure"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_configure() requires CTEST_CONFIGURE_COMMAND or CMAKE_COMMAND"),
+                              nob_sv_from_cstr("Set the documented configure command before running the configure step"));
+        return false;
+    }
+
+    if (!ctest_ensure_directory(ctx, req->build_dir)) {
+        if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("1"))) {
+            return false;
+        }
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_configure"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_configure() failed to create build directory"),
+                              req->build_dir);
+        return false;
+    }
+
+    SV_List argv = {0};
+    if (!ctest_append_command_tokens_temp(ctx, req->configure_command, &argv)) return false;
+    if (arena_arr_len(argv) == 0) {
+        if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("1"))) {
+            return false;
+        }
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_configure"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_configure() configure command did not produce an executable"),
+                              req->configure_command);
+        return false;
+    }
+    if (!ctest_append_command_tokens_temp(ctx, req->configure_options, &argv)) return false;
+
+    Eval_Process_Run_Request process_req = {
+        .argv = argv,
+        .argc = arena_arr_len(argv),
+        .working_directory = req->build_dir,
+    };
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "OUTPUT", proc.stdout_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "ERROR_OUTPUT", proc.stderr_text)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "PROCESS_RESULT", proc.result_text)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_configure"),
+                         "EXIT_CODE",
+                         ctest_submit_format_long_temp(ctx, (long)proc.exit_code))) {
+        return false;
+    }
+
+    bool success = proc.started && !proc.timed_out && proc.exit_code == 0;
+    String_View rv_value = success ? nob_sv_from_cstr("0")
+                                   : ctest_submit_format_size_temp(ctx,
+                                                                   proc.exit_code > 0
+                                                                       ? (size_t)proc.exit_code
+                                                                       : 1U);
+    if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, rv_value)) return false;
+
+    if (!success) {
+        if (req->capture_cmake_error_var.count > 0) {
+            if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+            return eval_ctest_publish_metadata(ctx,
+                                               nob_sv_from_cstr("ctest_configure"),
+                                               &req->argv,
+                                               nob_sv_from_cstr("FAILED"));
+        }
+
+        String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
+                            : proc.result_text.count > 0 ? proc.result_text
+                            : req->configure_command;
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_configure() configure command failed"),
+                              detail);
+        return false;
+    }
+
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->build_dir,
+                                  req->model,
+                                  track,
+                                  req->append_mode,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
+        return false;
+    }
+
+    String_View configure_xml = eval_sv_path_join(eval_temp_arena(ctx),
+                                                  tag_dir_path,
+                                                  nob_sv_from_cstr("Configure.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_configure_xml(ctx,
+                                   configure_xml,
+                                   req,
+                                   proc.stdout_text,
+                                   proc.stderr_text,
+                                   proc.exit_code)) {
+        return false;
+    }
+
+    String_View manifest = eval_sv_path_join(eval_temp_arena(ctx),
+                                             tag_dir_path,
+                                             nob_sv_from_cstr("ConfigureManifest.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_manifest(ctx,
+                              nob_sv_from_cstr("ctest_configure"),
+                              manifest,
+                              tag,
+                              track,
+                              nob_sv_from_cstr("Configure"),
+                              configure_xml)) {
+        return false;
+    }
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "TAG", tag)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "TAG_FILE", tag_file)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "TESTING_DIR", testing_dir)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "CONFIGURE_XML", configure_xml)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "MANIFEST", manifest)) return false;
+
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_configure"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("CONFIGURED"));
+}
+
 Eval_Result eval_handle_ctest_configure(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_metadata_request(ctx,
-                                         node,
-                                         nob_sv_from_cstr("ctest_configure"),
-                                         &s_ctest_configure_parse_spec,
-                                         true,
-                                         true,
-                                         nob_sv_from_cstr("MODELED"));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Configure_Request req = {0};
+    if (!ctest_parse_configure_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_configure_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 static bool ctest_parse_coverage_request(EvalExecContext *ctx,

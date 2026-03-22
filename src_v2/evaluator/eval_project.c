@@ -1,5 +1,6 @@
 #include "eval_project.h"
 
+#include "eval_include.h"
 #include "evaluator_internal.h"
 #include "sv_utils.h"
 
@@ -9,6 +10,97 @@
 
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
+
+static bool project_execute_top_level_include(EvalExecContext *ctx,
+                                              const Node *node,
+                                              Cmake_Event_Origin origin,
+                                              String_View raw_path) {
+    if (!ctx || !node || raw_path.count == 0) return false;
+
+    String_View resolved_path = nob_sv_from_cstr("");
+    if (!eval_include_resolve_target(ctx, raw_path, &resolved_path) || resolved_path.count == 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       origin,
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_IO_FAILURE,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("project() could not find CMAKE_PROJECT_TOP_LEVEL_INCLUDES entry"),
+                                       raw_path);
+        return false;
+    }
+
+    String_View scope_source = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_SOURCE_DIR"));
+    if (scope_source.count == 0) scope_source = ctx->source_dir;
+    String_View scope_binary = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CURRENT_BINARY_DIR"));
+    if (scope_binary.count == 0) scope_binary = ctx->binary_dir;
+
+    if (!eval_emit_include_begin(ctx, origin, resolved_path, false)) return false;
+    if (!eval_emit_dir_push(ctx, origin, scope_source, scope_binary)) return false;
+
+    bool pushed_policy = false;
+    if (!eval_policy_push(ctx)) {
+        (void)eval_emit_dir_pop(ctx, origin, scope_source, scope_binary);
+        return false;
+    }
+    pushed_policy = true;
+
+    String_View saved_context_file = ctx->dependency_provider_context_file;
+    ctx->dependency_provider_context_file = sv_copy_to_event_arena(ctx, resolved_path);
+    if (eval_should_stop(ctx)) {
+        ctx->dependency_provider_context_file = saved_context_file;
+        if (pushed_policy) (void)eval_policy_pop(ctx);
+        (void)eval_emit_dir_pop(ctx, origin, scope_source, scope_binary);
+        return false;
+    }
+
+    Eval_Result exec_res = eval_execute_file(ctx, resolved_path, false, nob_sv_from_cstr(""));
+    ctx->dependency_provider_context_file = saved_context_file;
+
+    bool success = !eval_result_is_fatal(exec_res);
+    if (pushed_policy && !eval_policy_pop(ctx) && !eval_should_stop(ctx)) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       origin,
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_POLICY_CONFLICT,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("project() failed to restore policy stack after CMAKE_PROJECT_TOP_LEVEL_INCLUDES"),
+                                       resolved_path);
+    }
+    if (!eval_emit_dir_pop(ctx, origin, scope_source, scope_binary)) return false;
+    if (!eval_emit_include_end(ctx, origin, resolved_path, success)) return false;
+    if (!success && !eval_should_stop(ctx)) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       origin,
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_IO_FAILURE,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("project() failed to read or evaluate CMAKE_PROJECT_TOP_LEVEL_INCLUDES entry"),
+                                       resolved_path);
+    }
+
+    return success;
+}
+
+static bool project_execute_top_level_includes(EvalExecContext *ctx,
+                                               const Node *node,
+                                               Cmake_Event_Origin origin) {
+    if (!ctx || !node) return false;
+
+    String_View raw_includes = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_PROJECT_TOP_LEVEL_INCLUDES"));
+    if (raw_includes.count == 0) return true;
+
+    SV_List include_items = NULL;
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), raw_includes, &include_items)) return false;
+    for (size_t i = 0; i < arena_arr_len(include_items); i++) {
+        if (include_items[i].count == 0) continue;
+        if (!project_execute_top_level_include(ctx, node, origin, include_items[i])) return false;
+    }
+
+    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+}
 
 static bool apply_subdir_system_default_to_target(EvalExecContext *ctx,
                                                   Cmake_Event_Origin o,
@@ -645,7 +737,6 @@ Eval_Result eval_handle_project(EvalExecContext *ctx, const Node *node) {
         }
         arena_arr_set_len(lang_items, 0);
     }
-    if (!apply_enabled_languages(ctx, o, node->as.cmd.name, &lang_items)) return eval_result_from_ctx(ctx);
 
     String_View version = has_version_arg ? version_info.raw : nob_sv_from_cstr("");
     String_View version_major = has_version_arg ? version_info.major : nob_sv_from_cstr("");
@@ -662,6 +753,7 @@ Eval_Result eval_handle_project(EvalExecContext *ctx, const Node *node) {
     String_View is_top_level_sv = is_top_level ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
     bool cmp0048_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0048);
     bool should_apply_version_vars = has_version_arg || cmp0048_new;
+    bool is_first_project_call = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_PROJECT_NAME")).count == 0;
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), name)) return eval_result_from_ctx(ctx);
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_SOURCE_DIR"), project_src_dir)) return eval_result_from_ctx(ctx);
@@ -703,6 +795,11 @@ Eval_Result eval_handle_project(EvalExecContext *ctx, const Node *node) {
         if (!project_set_prefixed_var(ctx, name, "_VERSION_PATCH", version_patch)) return eval_result_from_ctx(ctx);
         if (!project_set_prefixed_var(ctx, name, "_VERSION_TWEAK", version_tweak)) return eval_result_from_ctx(ctx);
     }
+
+    if (is_first_project_call && !project_execute_top_level_includes(ctx, node, o)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!apply_enabled_languages(ctx, o, node->as.cmd.name, &lang_items)) return eval_result_from_ctx(ctx);
 
     (void)name;
     (void)version;

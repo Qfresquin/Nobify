@@ -293,26 +293,41 @@ TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
                                  "set(ClearedPkg_CONFIG_HIT 1)\n",
                                  strlen("set(ClearedPkg_FOUND 1)\n"
                                         "set(ClearedPkg_CONFIG_HIT 1)\n")));
+    ASSERT(nob_write_entire_file("provider_top_find_package.cmake",
+                                 "macro(dep_provider method)\n"
+                                 "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+                                 "  if(method STREQUAL \"FIND_PACKAGE\")\n"
+                                 "    if(ARGV1 STREQUAL \"ProvidedPkg\")\n"
+                                 "      set(ProvidedPkg_FOUND 1)\n"
+                                 "      set(ProvidedPkg_CONFIG provider://ProvidedPkg)\n"
+                                 "      set(PROVIDED_BY_PROVIDER yes)\n"
+                                 "    else()\n"
+                                 "      find_package(${ARGN} BYPASS_PROVIDER)\n"
+                                 "    endif()\n"
+                                 "  endif()\n"
+                                 "endmacro()\n"
+                                 "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FIND_PACKAGE)\n",
+                                 strlen("macro(dep_provider method)\n"
+                                        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+                                        "  if(method STREQUAL \"FIND_PACKAGE\")\n"
+                                        "    if(ARGV1 STREQUAL \"ProvidedPkg\")\n"
+                                        "      set(ProvidedPkg_FOUND 1)\n"
+                                        "      set(ProvidedPkg_CONFIG provider://ProvidedPkg)\n"
+                                        "      set(PROVIDED_BY_PROVIDER yes)\n"
+                                        "    else()\n"
+                                        "      find_package(${ARGN} BYPASS_PROVIDER)\n"
+                                        "    endif()\n"
+                                        "  endif()\n"
+                                        "endmacro()\n"
+                                        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FIND_PACKAGE)\n")));
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "macro(dep_provider method)\n"
-        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
-        "  if(method STREQUAL \"FIND_PACKAGE\")\n"
-        "    if(ARGV1 STREQUAL \"ProvidedPkg\")\n"
-        "      set(ProvidedPkg_FOUND 1)\n"
-        "      set(ProvidedPkg_CONFIG provider://ProvidedPkg)\n"
-        "      set(PROVIDED_BY_PROVIDER yes)\n"
-        "    else()\n"
-        "      find_package(${ARGN} BYPASS_PROVIDER)\n"
-        "    endif()\n"
-        "  endif()\n"
-        "endmacro()\n"
         "set(CMAKE_PREFIX_PATH \"${CMAKE_CURRENT_BINARY_DIR}/provider_root\")\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FIND_PACKAGE)\n"
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES \"${CMAKE_CURRENT_BINARY_DIR}/provider_top_find_package.cmake\")\n"
+        "project(ProviderFindPackage LANGUAGES NONE)\n"
         "find_package(ProvidedPkg QUIET)\n"
         "find_package(FallbackPkg CONFIG QUIET)\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n"
         "find_package(ClearedPkg CONFIG QUIET)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -328,7 +343,7 @@ TEST(evaluator_cmake_language_dependency_provider_models_find_package_hook) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ClearedPkg_FOUND")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ClearedPkg_CONFIG_HIT")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
-                     nob_sv_from_cstr("FIND_PACKAGE:ProvidedPkg;FIND_PACKAGE:FallbackPkg")));
+                     nob_sv_from_cstr("FIND_PACKAGE:ProvidedPkg;FIND_PACKAGE:FallbackPkg;FIND_PACKAGE:ClearedPkg")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -364,21 +379,38 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
     ASSERT(nob_write_entire_file("fetchcontent_bypass/CMakeLists.txt",
                                  "add_library(bypass_from_fetch INTERFACE)\n",
                                  strlen("add_library(bypass_from_fetch INTERFACE)\n")));
+    ASSERT(nob_write_entire_file("provider_top_fetchcontent.cmake",
+                                 "macro(dep_provider method)\n"
+                                 "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+                                 "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
+                                 "    if(ARGV1 STREQUAL \"ProvidedDep\")\n"
+                                 "      FetchContent_SetPopulated(${ARGV1}\n"
+                                 "        SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_src\"\n"
+                                 "        BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_build\")\n"
+                                 "    elseif(ARGV1 STREQUAL \"LocalDep\")\n"
+                                 "      FetchContent_MakeAvailable(${ARGV1})\n"
+                                 "    endif()\n"
+                                 "  endif()\n"
+                                 "endmacro()\n"
+                                 "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n",
+                                 strlen("macro(dep_provider method)\n"
+                                        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+                                        "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
+                                        "    if(ARGV1 STREQUAL \"ProvidedDep\")\n"
+                                        "      FetchContent_SetPopulated(${ARGV1}\n"
+                                        "        SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_src\"\n"
+                                        "        BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_build\")\n"
+                                        "    elseif(ARGV1 STREQUAL \"LocalDep\")\n"
+                                        "      FetchContent_MakeAvailable(${ARGV1})\n"
+                                        "    endif()\n"
+                                        "  endif()\n"
+                                        "endmacro()\n"
+                                        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n")));
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "macro(dep_provider method)\n"
-        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
-        "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
-        "    if(ARGV1 STREQUAL \"ProvidedDep\")\n"
-        "      FetchContent_SetPopulated(${ARGV1}\n"
-        "        SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_src\"\n"
-        "        BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/provided_dep_build\")\n"
-        "    elseif(ARGV1 STREQUAL \"LocalDep\")\n"
-        "      FetchContent_MakeAvailable(${ARGV1})\n"
-        "    endif()\n"
-        "  endif()\n"
-        "endmacro()\n"
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES \"${CMAKE_CURRENT_BINARY_DIR}/provider_top_fetchcontent.cmake\")\n"
+        "project(ProviderFetchContent LANGUAGES NONE)\n"
         "include(FetchContent)\n"
         "FetchContent_Declare(ProvidedDep)\n"
         "FetchContent_Declare(DeclaredOnly)\n"
@@ -388,13 +420,11 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
         "FetchContent_Declare(BypassDep)\n"
         "FetchContent_GetProperties(DeclaredOnly SOURCE_DIR DECLARED_SRC BINARY_DIR DECLARED_BIN POPULATED DECLARED_POPULATED)\n"
         "set(FETCHCONTENT_SOURCE_DIR_BYPASSDEP \"${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_bypass\")\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n"
         "FetchContent_MakeAvailable(ProvidedDep LocalDep BypassDep)\n"
         "FetchContent_GetProperties(ProvidedDep SOURCE_DIR PROVIDED_SRC BINARY_DIR PROVIDED_BIN POPULATED PROVIDED_POPULATED)\n"
         "FetchContent_GetProperties(LocalDep SOURCE_DIR LOCAL_SRC BINARY_DIR LOCAL_BIN POPULATED LOCAL_POPULATED)\n"
         "FetchContent_GetProperties(BypassDep SOURCE_DIR BYPASS_SRC BINARY_DIR BYPASS_BIN POPULATED BYPASS_POPULATED)\n"
-        "FetchContent_GetProperties(ProvidedDep)\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n");
+        "FetchContent_GetProperties(ProvidedDep)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
@@ -418,6 +448,79 @@ TEST(evaluator_cmake_language_dependency_provider_models_fetchcontent_hook) {
                      eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDED_BIN"))));
     ASSERT(eval_test_target_known(ctx, nob_sv_from_cstr("local_from_fetch")));
     ASSERT(eval_test_target_known(ctx, nob_sv_from_cstr("bypass_from_fetch")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_cmake_language_dependency_provider_top_level_includes_run_only_on_first_project) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_write_entire_file("provider_top_once.cmake",
+                                 "if(DEFINED TOP_LEVEL_PROVIDER_INCLUDE_COUNT)\n"
+                                 "  math(EXPR TOP_LEVEL_PROVIDER_INCLUDE_COUNT \"${TOP_LEVEL_PROVIDER_INCLUDE_COUNT} + 1\")\n"
+                                 "else()\n"
+                                 "  set(TOP_LEVEL_PROVIDER_INCLUDE_COUNT 1)\n"
+                                 "endif()\n"
+                                 "macro(dep_provider_once method)\n"
+                                 "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+                                 "  if(method STREQUAL \"FIND_PACKAGE\" AND ARGV1 STREQUAL \"OnlyOncePkg\")\n"
+                                 "    set(OnlyOncePkg_FOUND 1)\n"
+                                 "    set(ONLY_ONCE_PROVIDER yes)\n"
+                                 "  endif()\n"
+                                 "endmacro()\n"
+                                 "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_once SUPPORTED_METHODS FIND_PACKAGE)\n",
+                                 strlen("if(DEFINED TOP_LEVEL_PROVIDER_INCLUDE_COUNT)\n"
+                                        "  math(EXPR TOP_LEVEL_PROVIDER_INCLUDE_COUNT \"${TOP_LEVEL_PROVIDER_INCLUDE_COUNT} + 1\")\n"
+                                        "else()\n"
+                                        "  set(TOP_LEVEL_PROVIDER_INCLUDE_COUNT 1)\n"
+                                        "endif()\n"
+                                        "macro(dep_provider_once method)\n"
+                                        "  list(APPEND PROVIDER_LOG \"${method}:${ARGV1}\")\n"
+                                        "  if(method STREQUAL \"FIND_PACKAGE\" AND ARGV1 STREQUAL \"OnlyOncePkg\")\n"
+                                        "    set(OnlyOncePkg_FOUND 1)\n"
+                                        "    set(ONLY_ONCE_PROVIDER yes)\n"
+                                        "  endif()\n"
+                                        "endmacro()\n"
+                                        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_once SUPPORTED_METHODS FIND_PACKAGE)\n")));
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES \"${CMAKE_CURRENT_BINARY_DIR}/provider_top_once.cmake\")\n"
+        "project(ProviderFirst LANGUAGES NONE)\n"
+        "project(ProviderSecond LANGUAGES NONE)\n"
+        "find_package(OnlyOncePkg QUIET)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TOP_LEVEL_PROVIDER_INCLUDE_COUNT")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ONLY_ONCE_PROVIDER")),
+                     nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("OnlyOncePkg_FOUND")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PROVIDER_LOG")),
+                     nob_sv_from_cstr("FIND_PACKAGE:OnlyOncePkg")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -721,6 +824,23 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
     ASSERT(nob_write_entire_file("fc_provider_parse/CMakeLists.txt",
                                  "add_library(fc_provider_parse_lib INTERFACE)\n",
                                  strlen("add_library(fc_provider_parse_lib INTERFACE)\n")));
+    ASSERT(nob_write_entire_file("provider_top_fetchcontent_invalid.cmake",
+                                 "macro(fc_bad_provider method)\n"
+                                 "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
+                                 "    if(ARGV1 STREQUAL \"ParseProvider\")\n"
+                                 "      FetchContent_SetPopulated(${ARGV1} SOURCE_DIR)\n"
+                                 "    endif()\n"
+                                 "  endif()\n"
+                                 "endmacro()\n"
+                                 "cmake_language(SET_DEPENDENCY_PROVIDER fc_bad_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n",
+                                 strlen("macro(fc_bad_provider method)\n"
+                                        "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
+                                        "    if(ARGV1 STREQUAL \"ParseProvider\")\n"
+                                        "      FetchContent_SetPopulated(${ARGV1} SOURCE_DIR)\n"
+                                        "    endif()\n"
+                                        "  endif()\n"
+                                        "endmacro()\n"
+                                        "cmake_language(SET_DEPENDENCY_PROVIDER fc_bad_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n")));
 
     Eval_Test_Init init = {0};
     init.arena = temp_arena;
@@ -735,13 +855,8 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "macro(fc_bad_provider method)\n"
-        "  if(method STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n"
-        "    if(ARGV1 STREQUAL \"ParseProvider\")\n"
-        "      FetchContent_SetPopulated(${ARGV1} SOURCE_DIR)\n"
-        "    endif()\n"
-        "  endif()\n"
-        "endmacro()\n"
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES \"${CMAKE_CURRENT_BINARY_DIR}/provider_top_fetchcontent_invalid.cmake\")\n"
+        "project(ParseProviderProject LANGUAGES NONE)\n"
         "include(FetchContent)\n"
         "FetchContent_Declare(ParseProvider SOURCE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_provider_parse\")\n"
         "FetchContent_MakeAvailable()\n"
@@ -750,9 +865,7 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
         "FetchContent_Populate()\n"
         "FetchContent_Populate(MissingDecl)\n"
         "FetchContent_SetPopulated(ParseProvider)\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER fc_bad_provider SUPPORTED_METHODS FETCHCONTENT_MAKEAVAILABLE_SERIAL)\n"
-        "FetchContent_MakeAvailable(ParseProvider)\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER \"\")\n");
+        "FetchContent_MakeAvailable(ParseProvider)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
@@ -1029,16 +1142,29 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
+    ASSERT(nob_write_entire_file("provider_invalid_top.cmake",
+                                 "macro(dep_provider_bad method)\n"
+                                 "endmacro()\n"
+                                 "function(dep_provider_scope)\n"
+                                 "  cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS FIND_PACKAGE)\n"
+                                 "endfunction()\n"
+                                 "dep_provider_scope()\n"
+                                 "cmake_language(SET_DEPENDENCY_PROVIDER missing_provider SUPPORTED_METHODS FIND_PACKAGE)\n"
+                                 "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS BAD_METHOD)\n",
+                                 strlen("macro(dep_provider_bad method)\n"
+                                        "endmacro()\n"
+                                        "function(dep_provider_scope)\n"
+                                        "  cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS FIND_PACKAGE)\n"
+                                        "endfunction()\n"
+                                        "dep_provider_scope()\n"
+                                        "cmake_language(SET_DEPENDENCY_PROVIDER missing_provider SUPPORTED_METHODS FIND_PACKAGE)\n"
+                                        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS BAD_METHOD)\n")));
+
     Ast_Root root = parse_cmake(
         temp_arena,
-        "macro(dep_provider_bad method)\n"
-        "endmacro()\n"
-        "function(dep_provider_scope)\n"
-        "  cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS FIND_PACKAGE)\n"
-        "endfunction()\n"
-        "dep_provider_scope()\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER missing_provider SUPPORTED_METHODS FIND_PACKAGE)\n"
-        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS BAD_METHOD)\n"
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES \"${CMAKE_CURRENT_BINARY_DIR}/provider_invalid_top.cmake\")\n"
+        "project(ProviderInvalid LANGUAGES NONE)\n"
+        "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider_bad SUPPORTED_METHODS FIND_PACKAGE)\n"
         "find_package(OutsidePkg BYPASS_PROVIDER QUIET)\n");
 
     Eval_Result run_res = eval_test_run(ctx, root);
@@ -1047,12 +1173,13 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 4);
+    ASSERT(report->error_count == 5);
 
     bool saw_scope = false;
     bool saw_missing = false;
     bool saw_method = false;
     bool saw_bypass = false;
+    bool saw_context = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
@@ -1062,6 +1189,9 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
             saw_missing = true;
         } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) received an unknown method"))) {
             saw_method = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) may only be called from a file listed in CMAKE_PROJECT_TOP_LEVEL_INCLUDES during the first project()"))) {
+            saw_context = true;
         } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("find_package(BYPASS_PROVIDER) may only be used from inside a dependency provider"))) {
             saw_bypass = true;
         }
@@ -1070,6 +1200,7 @@ TEST(evaluator_cmake_language_dependency_provider_rejects_invalid_forms) {
     ASSERT(saw_scope);
     ASSERT(saw_missing);
     ASSERT(saw_method);
+    ASSERT(saw_context);
     ASSERT(saw_bypass);
 
     eval_test_destroy(ctx);
@@ -2175,6 +2306,7 @@ void run_evaluator_v2_batch2(int *passed, int *failed) {
     test_evaluator_cmake_language_defer_only_allows_leading_underscore_for_generated_ids(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed);
     test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed);
+    test_evaluator_cmake_language_dependency_provider_top_level_includes_run_only_on_first_project(passed, failed);
     test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed);
     test_evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory(passed, failed);
     test_evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory(passed, failed);
