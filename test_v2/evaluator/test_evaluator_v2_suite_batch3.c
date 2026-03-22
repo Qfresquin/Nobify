@@ -2067,7 +2067,62 @@ TEST(evaluator_try_run_new_signature_accepts_no_log_and_runs) {
     TEST_PASS();
 }
 
-TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
+TEST(evaluator_try_run_caches_result_vars_by_default_and_respects_no_cache) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_run(RUN_CACHE COMPILE_CACHE\n"
+        "  SOURCE_FROM_CONTENT probe_cache.c \"int main(void){return 5;}\" )\n"
+        "unset(COMPILE_CACHE)\n"
+        "unset(RUN_CACHE)\n"
+        "set(COMPILE_CACHE_AFTER ${COMPILE_CACHE})\n"
+        "set(RUN_CACHE_AFTER ${RUN_CACHE})\n"
+        "try_run(RUN_NO_CACHE COMPILE_NO_CACHE\n"
+        "  SOURCE_FROM_CONTENT probe_no_cache.c \"int main(void){return 6;}\"\n"
+        "  NO_CACHE)\n"
+        "unset(COMPILE_NO_CACHE)\n"
+        "unset(RUN_NO_CACHE)\n"
+        "set(COMPILE_NO_CACHE_AFTER ${COMPILE_NO_CACHE})\n"
+        "set(RUN_NO_CACHE_AFTER ${RUN_NO_CACHE})\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_CACHE_AFTER")),
+                     nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_CACHE_AFTER")),
+                     nob_sv_from_cstr("5")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_NO_CACHE_AFTER")),
+                     nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_NO_CACHE_AFTER")),
+                     nob_sv_from_cstr("")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeholders) {
     Arena *temp_arena = arena_create(3 * 1024 * 1024);
     Arena *event_arena = arena_create(3 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -2085,6 +2140,9 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
+    if (nob_file_exists("TryRunResults.cmake")) {
+        ASSERT(nob_delete_file("TryRunResults.cmake"));
+    }
 
     const char *ok_source =
         "#include <stdio.h>\n"
@@ -2198,6 +2256,67 @@ TEST(evaluator_try_run_executes_native_artifacts_and_reports_partial_limits) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_run_consumes_prefilled_crosscompile_cache_answers) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+    if (nob_file_exists("TryRunResults.cmake")) {
+        ASSERT(nob_delete_file("TryRunResults.cmake"));
+    }
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(RUN_PRESET 23 CACHE STRING \"\")\n"
+        "set(RUN_PRESET__TRYRUN_OUTPUT preset_all CACHE STRING \"\")\n"
+        "set(RUN_PRESET__TRYRUN_OUTPUT_STDOUT preset_out CACHE STRING \"\")\n"
+        "set(RUN_PRESET__TRYRUN_OUTPUT_STDERR preset_err CACHE STRING \"\")\n"
+        "set(CMAKE_CROSSCOMPILING ON)\n"
+        "unset(CMAKE_CROSSCOMPILING_EMULATOR)\n"
+        "try_run(RUN_PRESET COMPILE_PRESET\n"
+        "  SOURCE_FROM_CONTENT probe_preset.c \"int main(void){return 0;}\"\n"
+        "  RUN_OUTPUT_VARIABLE RUN_PRESET_ALL\n"
+        "  RUN_OUTPUT_STDOUT_VARIABLE RUN_PRESET_STDOUT\n"
+        "  RUN_OUTPUT_STDERR_VARIABLE RUN_PRESET_STDERR)\n"
+        "unset(COMPILE_PRESET)\n"
+        "set(COMPILE_PRESET_AFTER ${COMPILE_PRESET})\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET")),
+                     nob_sv_from_cstr("23")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET_ALL")),
+                     nob_sv_from_cstr("preset_all")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET_STDOUT")),
+                     nob_sv_from_cstr("preset_out")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET_STDERR")),
+                     nob_sv_from_cstr("preset_err")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_PRESET_AFTER")),
+                     nob_sv_from_cstr("TRUE")));
+    ASSERT(!nob_file_exists("TryRunResults.cmake"));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_try_run_uses_crosscompiling_emulator_when_available) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2260,6 +2379,47 @@ TEST(evaluator_try_run_uses_crosscompiling_emulator_when_available) {
     ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("RUN_EMU__TRYRUN_OUTPUT")));
 
     nob_sb_free(script_sb);
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_try_run_sets_failed_to_run_when_process_cannot_start) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_run(RUN_FAILED_START COMPILE_FAILED_START\n"
+        "  SOURCE_FROM_CONTENT probe_failed_start.c \"int main(void){return 0;}\"\n"
+        "  NO_CACHE\n"
+        "  WORKING_DIRECTORY missing_run_dir)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_FAILED_START")),
+                     nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_FAILED_START")),
+                     nob_sv_from_cstr("FAILED_TO_RUN")));
+
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
@@ -2703,8 +2863,11 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
     test_evaluator_host_build_commands_reject_invalid_shapes_and_warn_on_ignored_project_name(passed, failed);
     test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed);
-    test_evaluator_try_run_executes_native_artifacts_and_reports_partial_limits(passed, failed);
+    test_evaluator_try_run_caches_result_vars_by_default_and_respects_no_cache(passed, failed);
+    test_evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeholders(passed, failed);
+    test_evaluator_try_run_consumes_prefilled_crosscompile_cache_answers(passed, failed);
     test_evaluator_try_run_uses_crosscompiling_emulator_when_available(passed, failed);
+    test_evaluator_try_run_sets_failed_to_run_when_process_cannot_start(passed, failed);
     test_evaluator_try_run_rejects_incomplete_argument_shapes(passed, failed);
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
     test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);

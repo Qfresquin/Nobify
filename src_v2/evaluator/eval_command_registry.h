@@ -120,7 +120,7 @@
     X("target_precompile_headers", eval_handle_target_precompile_headers, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("target_sources", eval_handle_target_sources, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("try_compile", eval_handle_try_compile, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("try_run", eval_handle_try_run, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("try_run", eval_handle_try_run, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("unset", eval_handle_unset, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("use_mangled_mesa", eval_handle_use_mangled_mesa, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("utility_source", eval_handle_utility_source, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \

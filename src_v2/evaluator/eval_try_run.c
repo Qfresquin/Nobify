@@ -2,12 +2,84 @@
 
 #include <string.h>
 
+typedef struct {
+    String_View run_result;
+    String_View combined_output;
+    String_View stdout_output;
+    String_View stderr_output;
+    bool has_run_result;
+    bool has_combined_output;
+    bool has_stdout_output;
+    bool has_stderr_output;
+} Try_Run_Cache_Answers;
+
 static bool try_run_clear_run_outputs(EvalExecContext *ctx, const Try_Run_Request *req) {
     if (!ctx || !req) return false;
     if (req->run_output_var.count > 0 && !eval_var_set_current(ctx, req->run_output_var, nob_sv_from_cstr(""))) return false;
     if (req->run_stdout_var.count > 0 && !eval_var_set_current(ctx, req->run_stdout_var, nob_sv_from_cstr(""))) return false;
     if (req->run_stderr_var.count > 0 && !eval_var_set_current(ctx, req->run_stderr_var, nob_sv_from_cstr(""))) return false;
     return true;
+}
+
+static bool try_run_unset_run_outputs(EvalExecContext *ctx, const Try_Run_Request *req) {
+    if (!ctx || !req) return false;
+    if (req->run_output_var.count > 0 && !eval_var_unset_current(ctx, req->run_output_var)) return false;
+    if (req->run_stdout_var.count > 0 && !eval_var_unset_current(ctx, req->run_stdout_var)) return false;
+    if (req->run_stderr_var.count > 0 && !eval_var_unset_current(ctx, req->run_stderr_var)) return false;
+    if (req->legacy_output_var.count > 0 && !eval_var_unset_current(ctx, req->legacy_output_var)) return false;
+    return true;
+}
+
+static bool try_run_result_uses_cache(const Try_Run_Request *req) {
+    return req && !req->compile_req.no_cache;
+}
+
+static String_View try_run_cache_get(EvalExecContext *ctx, String_View key) {
+    if (!ctx || key.count == 0 || !ctx->scope_state.cache_entries) return nob_sv_from_cstr("");
+    Eval_Cache_Entry *entry = stbds_shgetp_null(ctx->scope_state.cache_entries, nob_temp_sv_to_cstr(key));
+    if (!entry) return nob_sv_from_cstr("");
+    return entry->value.data;
+}
+
+static bool try_run_publish_result_var(EvalExecContext *ctx,
+                                       Cmake_Event_Origin origin,
+                                       String_View key,
+                                       String_View value,
+                                       bool use_cache,
+                                       String_View type,
+                                       String_View doc) {
+    if (!ctx || key.count == 0) return true;
+    if (!use_cache) return eval_var_set_current(ctx, key, value);
+    if (!eval_cache_set(ctx, key, value, type, doc)) return false;
+    return eval_emit_var_set_cache(ctx, origin, key, value);
+}
+
+static bool try_run_publish_compile_result(EvalExecContext *ctx,
+                                           const Try_Run_Request *req,
+                                           Cmake_Event_Origin origin,
+                                           bool compile_ok) {
+    if (!ctx || !req) return false;
+    return try_run_publish_result_var(ctx,
+                                      origin,
+                                      req->compile_req.result_var,
+                                      compile_ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"),
+                                      try_run_result_uses_cache(req),
+                                      nob_sv_from_cstr("INTERNAL"),
+                                      nob_sv_from_cstr("try_run compile result"));
+}
+
+static bool try_run_publish_run_result(EvalExecContext *ctx,
+                                       const Try_Run_Request *req,
+                                       Cmake_Event_Origin origin,
+                                       String_View run_result) {
+    if (!ctx || !req) return false;
+    return try_run_publish_result_var(ctx,
+                                      origin,
+                                      req->run_result_var,
+                                      run_result,
+                                      try_run_result_uses_cache(req),
+                                      nob_sv_from_cstr("STRING"),
+                                      nob_sv_from_cstr("try_run result"));
 }
 
 static String_View try_run_merge_stdout_stderr_temp(EvalExecContext *ctx,
@@ -91,6 +163,15 @@ static String_View try_run_results_file_path(EvalExecContext *ctx) {
     return eval_sv_path_join(eval_temp_arena(ctx), top_bin, nob_sv_from_cstr("TryRunResults.cmake"));
 }
 
+static String_View try_run_cross_compile_cache_value_or_placeholder(EvalExecContext *ctx,
+                                                                    String_View key,
+                                                                    String_View placeholder) {
+    if (!ctx || key.count == 0) return placeholder;
+    if (!eval_cache_defined(ctx, key)) return placeholder;
+    String_View cached = try_run_cache_get(ctx, key);
+    return cached.count > 0 ? cached : nob_sv_from_cstr("");
+}
+
 static bool try_run_write_results_file(EvalExecContext *ctx, const Try_Run_Request *req) {
     if (!ctx || !req) return false;
     String_View placeholder_run = nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN");
@@ -102,15 +183,35 @@ static bool try_run_write_results_file(EvalExecContext *ctx, const Try_Run_Reque
 
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "# Generated by evaluator try_run() for cross-compiling.\n");
-    try_run_sb_append_cache_line(&sb, req->run_result_var, placeholder_run, "Result from try_run()");
+    try_run_sb_append_cache_line(&sb,
+                                 req->run_result_var,
+                                 try_run_cross_compile_cache_value_or_placeholder(ctx,
+                                                                                  req->run_result_var,
+                                                                                  placeholder_run),
+                                 "Result from try_run()");
     if (req->run_output_var.count > 0 || req->legacy_output_var.count > 0) {
-        try_run_sb_append_cache_line(&sb, combined_key, placeholder_output, "Output from try_run()");
+        try_run_sb_append_cache_line(&sb,
+                                     combined_key,
+                                     try_run_cross_compile_cache_value_or_placeholder(ctx,
+                                                                                      combined_key,
+                                                                                      placeholder_output),
+                                     "Output from try_run()");
     }
     if (req->run_stdout_var.count > 0) {
-        try_run_sb_append_cache_line(&sb, stdout_key, placeholder_output, "Stdout from try_run()");
+        try_run_sb_append_cache_line(&sb,
+                                     stdout_key,
+                                     try_run_cross_compile_cache_value_or_placeholder(ctx,
+                                                                                      stdout_key,
+                                                                                      placeholder_output),
+                                     "Stdout from try_run()");
     }
     if (req->run_stderr_var.count > 0) {
-        try_run_sb_append_cache_line(&sb, stderr_key, placeholder_output, "Stderr from try_run()");
+        try_run_sb_append_cache_line(&sb,
+                                     stderr_key,
+                                     try_run_cross_compile_cache_value_or_placeholder(ctx,
+                                                                                      stderr_key,
+                                                                                      placeholder_output),
+                                     "Stderr from try_run()");
     }
 
     bool ok = eval_write_text_file(ctx,
@@ -125,28 +226,117 @@ static bool try_run_publish_cross_compile_placeholders(EvalExecContext *ctx,
                                                        const Try_Run_Request *req,
                                                        Cmake_Event_Origin origin) {
     if (!ctx || !req) return false;
+    if (!try_run_unset_run_outputs(ctx, req)) return false;
     String_View placeholder_run = nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN");
     String_View placeholder_output = nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND");
     String_View doc = nob_sv_from_cstr("try_run() cross-compiling placeholder");
-    if (!try_run_cache_set_and_emit(ctx, origin, req->run_result_var, placeholder_run, doc)) return false;
+    if (!eval_cache_defined(ctx, req->run_result_var) &&
+        !try_run_cache_set_and_emit(ctx, origin, req->run_result_var, placeholder_run, doc)) {
+        return false;
+    }
 
     if (req->run_output_var.count > 0 || req->legacy_output_var.count > 0) {
         String_View key = try_run_cache_key_with_suffix_temp(ctx, req->run_result_var, "__TRYRUN_OUTPUT");
         if (eval_should_stop(ctx)) return false;
-        if (!try_run_cache_set_and_emit(ctx, origin, key, placeholder_output, doc)) return false;
+        if (!eval_cache_defined(ctx, key) &&
+            !try_run_cache_set_and_emit(ctx, origin, key, placeholder_output, doc)) {
+            return false;
+        }
     }
     if (req->run_stdout_var.count > 0) {
         String_View key = try_run_cache_key_with_suffix_temp(ctx, req->run_result_var, "__TRYRUN_OUTPUT_STDOUT");
         if (eval_should_stop(ctx)) return false;
-        if (!try_run_cache_set_and_emit(ctx, origin, key, placeholder_output, doc)) return false;
+        if (!eval_cache_defined(ctx, key) &&
+            !try_run_cache_set_and_emit(ctx, origin, key, placeholder_output, doc)) {
+            return false;
+        }
     }
     if (req->run_stderr_var.count > 0) {
         String_View key = try_run_cache_key_with_suffix_temp(ctx, req->run_result_var, "__TRYRUN_OUTPUT_STDERR");
         if (eval_should_stop(ctx)) return false;
-        if (!try_run_cache_set_and_emit(ctx, origin, key, placeholder_output, doc)) return false;
+        if (!eval_cache_defined(ctx, key) &&
+            !try_run_cache_set_and_emit(ctx, origin, key, placeholder_output, doc)) {
+            return false;
+        }
     }
 
     return try_run_write_results_file(ctx, req);
+}
+
+static bool try_run_collect_cross_compile_answers(EvalExecContext *ctx,
+                                                  const Try_Run_Request *req,
+                                                  Try_Run_Cache_Answers *out_answers,
+                                                  bool *out_complete) {
+    if (!ctx || !req || !out_answers || !out_complete) return false;
+    *out_answers = (Try_Run_Cache_Answers){0};
+    *out_complete = true;
+
+    out_answers->has_run_result = eval_cache_defined(ctx, req->run_result_var);
+    if (out_answers->has_run_result) {
+        out_answers->run_result = try_run_cache_get(ctx, req->run_result_var);
+    } else {
+        *out_complete = false;
+    }
+
+    if (req->run_output_var.count > 0 || req->legacy_output_var.count > 0) {
+        String_View key = try_run_cache_key_with_suffix_temp(ctx, req->run_result_var, "__TRYRUN_OUTPUT");
+        if (eval_should_stop(ctx)) return false;
+        out_answers->has_combined_output = eval_cache_defined(ctx, key);
+        if (out_answers->has_combined_output) {
+            out_answers->combined_output = try_run_cache_get(ctx, key);
+        } else {
+            *out_complete = false;
+        }
+    }
+
+    if (req->run_stdout_var.count > 0) {
+        String_View key = try_run_cache_key_with_suffix_temp(ctx, req->run_result_var, "__TRYRUN_OUTPUT_STDOUT");
+        if (eval_should_stop(ctx)) return false;
+        out_answers->has_stdout_output = eval_cache_defined(ctx, key);
+        if (out_answers->has_stdout_output) {
+            out_answers->stdout_output = try_run_cache_get(ctx, key);
+        } else {
+            *out_complete = false;
+        }
+    }
+
+    if (req->run_stderr_var.count > 0) {
+        String_View key = try_run_cache_key_with_suffix_temp(ctx, req->run_result_var, "__TRYRUN_OUTPUT_STDERR");
+        if (eval_should_stop(ctx)) return false;
+        out_answers->has_stderr_output = eval_cache_defined(ctx, key);
+        if (out_answers->has_stderr_output) {
+            out_answers->stderr_output = try_run_cache_get(ctx, key);
+        } else {
+            *out_complete = false;
+        }
+    }
+
+    return true;
+}
+
+static bool try_run_publish_cross_compile_answers(EvalExecContext *ctx,
+                                                  const Try_Run_Request *req,
+                                                  Cmake_Event_Origin origin,
+                                                  String_View compile_output,
+                                                  const Try_Run_Cache_Answers *answers) {
+    if (!ctx || !req || !answers) return false;
+    if (!try_run_publish_run_result(ctx, req, origin, answers->run_result)) return false;
+    if (req->run_output_var.count > 0 &&
+        !eval_var_set_current(ctx, req->run_output_var, answers->combined_output)) {
+        return false;
+    }
+    if (req->run_stdout_var.count > 0 &&
+        !eval_var_set_current(ctx, req->run_stdout_var, answers->stdout_output)) {
+        return false;
+    }
+    if (req->run_stderr_var.count > 0 &&
+        !eval_var_set_current(ctx, req->run_stderr_var, answers->stderr_output)) {
+        return false;
+    }
+    return try_run_set_legacy_output(ctx,
+                                     req,
+                                     compile_output,
+                                     answers->has_combined_output ? answers->combined_output : nob_sv_from_cstr(""));
 }
 
 static String_View try_run_resolve_exec_path(EvalExecContext *ctx, String_View artifact_path) {
@@ -179,12 +369,11 @@ static bool try_run_execute_compile_phase(EvalExecContext *ctx,
 }
 
 static bool try_run_publish_compile_phase(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
                                           const Try_Run_Request *req,
                                           const Try_Run_Result *run_res) {
     if (!ctx || !req || !run_res) return false;
-    if (!eval_var_set_current(ctx,
-                              req->compile_req.result_var,
-                              run_res->compile_ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) {
+    if (!try_run_publish_compile_result(ctx, req, origin, run_res->compile_ok)) {
         return false;
     }
     if (req->compile_output_var.count > 0 &&
@@ -196,60 +385,20 @@ static bool try_run_publish_compile_phase(EvalExecContext *ctx,
 
 static bool try_run_finish_without_run(EvalExecContext *ctx,
                                        const Try_Run_Request *req,
-                                       String_View compile_output) {
+                                       Cmake_Event_Origin origin,
+                                       String_View compile_output,
+                                       String_View run_result) {
     if (!ctx || !req) return false;
     if (!try_run_clear_run_outputs(ctx, req)) return false;
     if (!try_run_set_legacy_output(ctx, req, compile_output, nob_sv_from_cstr(""))) return false;
-    if (req->run_result_var.count > 0 && !eval_var_set_current(ctx, req->run_result_var, nob_sv_from_cstr(""))) {
-        return false;
-    }
-    return true;
+    return try_run_publish_run_result(ctx, req, origin, run_result);
 }
 
-static bool try_run_emit_unrunnable_artifact_diag(EvalExecContext *ctx,
-                                                  const Node *node,
-                                                  Cmake_Event_Origin origin,
-                                                  String_View hint) {
-    if (!ctx || !node) return false;
-    return EVAL_DIAG_BOOL_SEV(ctx,
-                              EV_DIAG_ERROR,
-                              EVAL_DIAG_IO_FAILURE,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              origin,
-                              nob_sv_from_cstr("try_run() failed to start compiled executable"),
-                              hint);
-}
-
-static bool try_run_prepare_argv(EvalExecContext *ctx,
-                                 const Try_Run_Request *req,
-                                 String_View exec_path,
-                                 Cmake_Event_Origin origin,
-                                 SV_List *out_argv,
-                                 bool *out_placeholder_only) {
-    if (!ctx || !req || !out_argv || !out_placeholder_only) return false;
-    *out_argv = NULL;
-    *out_placeholder_only = false;
-
-    String_View cross_compiling = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
-    bool is_cross_compiling = cross_compiling.count > 0 && !try_compile_is_false(cross_compiling);
-    if (is_cross_compiling) {
-        String_View emulator = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING_EMULATOR"));
-        if (emulator.count > 0 && !try_compile_is_false(emulator)) {
-            SV_List emulator_argv = NULL;
-            if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), emulator, &emulator_argv)) {
-                return false;
-            }
-            for (size_t i = 0; i < arena_arr_len(emulator_argv); i++) {
-                if (!eval_sv_arr_push_temp(ctx, out_argv, emulator_argv[i])) return false;
-            }
-        } else {
-            if (!try_run_publish_cross_compile_placeholders(ctx, req, origin)) return false;
-            *out_placeholder_only = true;
-            return true;
-        }
-    }
-
+static bool try_run_append_exec_argv(EvalExecContext *ctx,
+                                     const Try_Run_Request *req,
+                                     String_View exec_path,
+                                     SV_List *out_argv) {
+    if (!ctx || !req || !out_argv) return false;
     if (!eval_sv_arr_push_temp(ctx, out_argv, exec_path)) return false;
     for (size_t i = 0; i < arena_arr_len(req->run_args); i++) {
         if (!eval_sv_arr_push_temp(ctx, out_argv, req->run_args[i])) return false;
@@ -257,8 +406,31 @@ static bool try_run_prepare_argv(EvalExecContext *ctx,
     return true;
 }
 
+static bool try_run_handle_cross_compile_without_emulator(EvalExecContext *ctx,
+                                                          const Try_Run_Request *req,
+                                                          Cmake_Event_Origin origin,
+                                                          String_View compile_output,
+                                                          bool *out_handled) {
+    if (!ctx || !req || !out_handled) return false;
+    *out_handled = false;
+
+    Try_Run_Cache_Answers answers = {0};
+    bool answers_complete = false;
+    if (!try_run_collect_cross_compile_answers(ctx, req, &answers, &answers_complete)) return false;
+    if (answers_complete) {
+        if (!try_run_publish_cross_compile_answers(ctx, req, origin, compile_output, &answers)) return false;
+        *out_handled = true;
+        return true;
+    }
+
+    if (!try_run_publish_cross_compile_placeholders(ctx, req, origin)) return false;
+    *out_handled = true;
+    return true;
+}
+
 static bool try_run_publish_process_outputs(EvalExecContext *ctx,
                                             const Try_Run_Request *req,
+                                            Cmake_Event_Origin origin,
                                             Try_Run_Result *run_res,
                                             const Eval_Process_Run_Result *proc_res) {
     if (!ctx || !req || !run_res || !proc_res) return false;
@@ -268,7 +440,7 @@ static bool try_run_publish_process_outputs(EvalExecContext *ctx,
     run_res->run_stdout = proc_res->stdout_text;
     run_res->run_stderr = proc_res->stderr_text;
 
-    if (req->run_result_var.count > 0 && !eval_var_set_current(ctx, req->run_result_var, proc_res->result_text)) return false;
+    if (!try_run_publish_run_result(ctx, req, origin, proc_res->result_text)) return false;
     if (req->run_stdout_var.count > 0 && !eval_var_set_current(ctx, req->run_stdout_var, run_res->run_stdout)) return false;
     if (req->run_stderr_var.count > 0 && !eval_var_set_current(ctx, req->run_stderr_var, run_res->run_stderr)) return false;
 
@@ -284,30 +456,53 @@ static bool try_run_execute_request(EvalExecContext *ctx,
                                     const Try_Run_Request *req) {
     if (!ctx || !node || !req) return false;
 
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     Try_Compile_Execution_Result exec_res = {0};
     Try_Run_Result run_res = {0};
     if (!try_run_execute_compile_phase(ctx, node, req, &exec_res, &run_res)) return false;
-    if (!try_run_publish_compile_phase(ctx, req, &run_res)) return false;
+    if (!try_run_publish_compile_phase(ctx, origin, req, &run_res)) return false;
 
     if (!run_res.compile_ok) {
-        return try_run_finish_without_run(ctx, req, run_res.compile_output);
+        return try_run_finish_without_run(ctx, req, origin, run_res.compile_output, nob_sv_from_cstr(""));
     }
 
-    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (exec_res.artifact_path.count == 0) {
-        if (!try_run_emit_unrunnable_artifact_diag(ctx, node, origin, nob_sv_from_cstr("compiled artifact path is empty"))) {
-            return false;
-        }
-        return try_run_finish_without_run(ctx, req, run_res.compile_output);
+        return try_run_finish_without_run(ctx,
+                                          req,
+                                          origin,
+                                          run_res.compile_output,
+                                          nob_sv_from_cstr("FAILED_TO_RUN"));
     }
 
     String_View exec_path = try_run_resolve_exec_path(ctx, exec_res.artifact_path);
     if (eval_should_stop(ctx)) return false;
 
+    String_View cross_compiling = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
+    bool is_cross_compiling = cross_compiling.count > 0 && !try_compile_is_false(cross_compiling);
     SV_List argv = NULL;
-    bool placeholder_only = false;
-    if (!try_run_prepare_argv(ctx, req, exec_path, origin, &argv, &placeholder_only)) return false;
-    if (placeholder_only) return true;
+    if (is_cross_compiling) {
+        String_View emulator = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING_EMULATOR"));
+        if (emulator.count > 0 && !try_compile_is_false(emulator)) {
+            SV_List emulator_argv = NULL;
+            if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), emulator, &emulator_argv)) {
+                return false;
+            }
+            for (size_t i = 0; i < arena_arr_len(emulator_argv); i++) {
+                if (!eval_sv_arr_push_temp(ctx, &argv, emulator_argv[i])) return false;
+            }
+        } else {
+            bool handled = false;
+            if (!try_run_handle_cross_compile_without_emulator(ctx,
+                                                               req,
+                                                               origin,
+                                                               run_res.compile_output,
+                                                               &handled)) {
+                return false;
+            }
+            if (handled) return true;
+        }
+    }
+    if (!try_run_append_exec_argv(ctx, req, exec_path, &argv)) return false;
 
     String_View working_dir = req->working_directory.count > 0
         ? eval_path_resolve_for_cmake_arg(ctx, req->working_directory, req->compile_req.current_bin_dir, false)
@@ -324,11 +519,14 @@ static bool try_run_execute_request(EvalExecContext *ctx,
     if (!eval_process_run_capture(ctx, &proc_req, &proc_res)) return false;
 
     if (!proc_res.started) {
-        if (!try_run_emit_unrunnable_artifact_diag(ctx, node, origin, exec_res.artifact_path)) return false;
-        return try_run_finish_without_run(ctx, req, run_res.compile_output);
+        return try_run_finish_without_run(ctx,
+                                          req,
+                                          origin,
+                                          run_res.compile_output,
+                                          nob_sv_from_cstr("FAILED_TO_RUN"));
     }
 
-    return try_run_publish_process_outputs(ctx, req, &run_res, &proc_res);
+    return try_run_publish_process_outputs(ctx, req, origin, &run_res, &proc_res);
 }
 
 Eval_Result eval_handle_try_run(EvalExecContext *ctx, const Node *node) {
