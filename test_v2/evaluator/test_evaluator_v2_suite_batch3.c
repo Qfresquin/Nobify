@@ -1712,7 +1712,7 @@ TEST(evaluator_remove_definitions_updates_directory_definition_and_option_state)
     TEST_PASS();
 }
 
-TEST(evaluator_load_cache_rejects_missing_mode_and_incomplete_read_with_prefix) {
+TEST(evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -1733,28 +1733,46 @@ TEST(evaluator_load_cache_rejects_missing_mode_and_incomplete_read_with_prefix) 
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "load_cache(cache_in)\n"
+        "load_cache()\n"
+        "load_cache(cache_in EXCLUDE)\n"
+        "load_cache(cache_in INCLUDE_INTERNALS)\n"
+        "load_cache(cache_in cache_extra)\n"
         "load_cache(cache_in READ_WITH_PREFIX LC_ONLY)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 2);
+    ASSERT(report->error_count == 5);
 
-    bool saw_missing_mode = false;
+    bool saw_missing_path = false;
+    bool saw_empty_exclude = false;
+    bool saw_empty_include_internals = false;
+    bool saw_unsupported_argument = false;
     bool saw_incomplete_prefixed = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
         if (nob_sv_eq(ev->as.diag.cause,
-                      nob_sv_from_cstr("load_cache() requires a path and a supported mode"))) {
-            saw_missing_mode = true;
+                      nob_sv_from_cstr("load_cache() requires a build directory path"))) {
+            saw_missing_path = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("load_cache(EXCLUDE ...) requires at least one entry"))) {
+            saw_empty_exclude = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("load_cache(INCLUDE_INTERNALS ...) requires at least one entry"))) {
+            saw_empty_include_internals = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("load_cache() received an unsupported argument"))) {
+            saw_unsupported_argument = true;
         } else if (nob_sv_eq(ev->as.diag.cause,
                              nob_sv_from_cstr("load_cache(READ_WITH_PREFIX ...) requires a prefix and at least one entry"))) {
             saw_incomplete_prefixed = true;
         }
     }
-    ASSERT(saw_missing_mode);
+    ASSERT(saw_missing_path);
+    ASSERT(saw_empty_exclude);
+    ASSERT(saw_empty_include_internals);
+    ASSERT(saw_unsupported_argument);
     ASSERT(saw_incomplete_prefixed);
 
     eval_test_destroy(ctx);
@@ -2951,7 +2969,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);
     test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed);
-    test_evaluator_load_cache_rejects_missing_mode_and_incomplete_read_with_prefix(passed, failed);
+    test_evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix(passed, failed);
     test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
     test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);

@@ -238,7 +238,7 @@ static bool ctest_configure_mock_process_run(void *user_data,
     return true;
 }
 
-TEST(evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset) {
+TEST(evaluator_load_cache_supports_documented_legacy_and_prefix_forms) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -246,27 +246,21 @@ TEST(evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    ASSERT(nob_mkdir_if_not_exists("cache_multi_a"));
-    ASSERT(nob_mkdir_if_not_exists("cache_multi_b"));
+    ASSERT(nob_mkdir_if_not_exists("cache_legacy_plain"));
+    ASSERT(nob_mkdir_if_not_exists("cache_legacy_filtered"));
     ASSERT(nob_mkdir_if_not_exists("cache_prefix_empty"));
-    ASSERT(nob_write_entire_file("cache_multi_a/CMakeCache.txt",
+    ASSERT(nob_write_entire_file("cache_legacy_plain/CMakeCache.txt",
                                  "FIRST:STRING=one\n"
-                                 "SHARED:STRING=from-a\n"
-                                 "DROP:STRING=drop-a\n"
-                                 "HIDE_A:INTERNAL=secret-a\n",
+                                 "HIDE_PLAIN:INTERNAL=hidden-plain\n",
                                  strlen("FIRST:STRING=one\n"
-                                        "SHARED:STRING=from-a\n"
-                                        "DROP:STRING=drop-a\n"
-                                        "HIDE_A:INTERNAL=secret-a\n")));
-    ASSERT(nob_write_entire_file("cache_multi_b/CMakeCache.txt",
-                                 "SECOND:BOOL=ON\n"
-                                 "SHARED:STRING=from-b\n"
-                                 "DROP:STRING=drop-b\n"
-                                 "HIDE_B:INTERNAL=secret-b\n",
-                                 strlen("SECOND:BOOL=ON\n"
-                                        "SHARED:STRING=from-b\n"
-                                        "DROP:STRING=drop-b\n"
-                                        "HIDE_B:INTERNAL=secret-b\n")));
+                                        "HIDE_PLAIN:INTERNAL=hidden-plain\n")));
+    ASSERT(nob_write_entire_file("cache_legacy_filtered/CMakeCache.txt",
+                                 "KEEP:STRING=keep\n"
+                                 "DROP:STRING=drop-me\n"
+                                 "HIDE_FILTER:INTERNAL=secret-filter\n",
+                                 strlen("KEEP:STRING=keep\n"
+                                        "DROP:STRING=drop-me\n"
+                                        "HIDE_FILTER:INTERNAL=secret-filter\n")));
     ASSERT(nob_write_entire_file("cache_prefix_empty/CMakeCache.txt",
                                  "EMPTY:STRING=\n"
                                  "KEEP:STRING=keep-prefix\n",
@@ -287,7 +281,8 @@ TEST(evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset) {
     Ast_Root root = parse_cmake(
         temp_arena,
         "set(PFX_EMPTY sentinel)\n"
-        "load_cache(cache_multi_a cache_multi_b INCLUDE_INTERNALS HIDE_A HIDE_B EXCLUDE DROP)\n"
+        "load_cache(cache_legacy_plain)\n"
+        "load_cache(cache_legacy_filtered INCLUDE_INTERNALS HIDE_FILTER EXCLUDE DROP)\n"
         "load_cache(cache_prefix_empty READ_WITH_PREFIX PFX_ EMPTY KEEP)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -296,16 +291,76 @@ TEST(evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset) {
     ASSERT(report->error_count == 0);
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("FIRST")), nob_sv_from_cstr("one")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SECOND")), nob_sv_from_cstr("ON")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SHARED")), nob_sv_from_cstr("from-b")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HIDE_A")), nob_sv_from_cstr("secret-a")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HIDE_B")), nob_sv_from_cstr("secret-b")));
+    ASSERT(eval_test_var_defined(ctx, nob_sv_from_cstr("FIRST")));
+    ASSERT(!eval_test_cache_defined(ctx, nob_sv_from_cstr("HIDE_PLAIN")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("KEEP")), nob_sv_from_cstr("keep")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HIDE_FILTER")), nob_sv_from_cstr("secret-filter")));
+    ASSERT(eval_test_var_defined(ctx, nob_sv_from_cstr("KEEP")));
+    ASSERT(eval_test_var_defined(ctx, nob_sv_from_cstr("HIDE_FILTER")));
     ASSERT(!eval_test_cache_defined(ctx, nob_sv_from_cstr("DROP")));
 
     ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("PFX_EMPTY")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PFX_KEEP")),
                      nob_sv_from_cstr("keep-prefix")));
     ASSERT(!eval_test_cache_defined(ctx, nob_sv_from_cstr("PFX_KEEP")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_load_cache_allows_read_with_prefix_but_rejects_legacy_form_in_script_mode) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("cache_script_only"));
+    ASSERT(nob_write_entire_file("cache_script_only/CMakeCache.txt",
+                                 "FOO:STRING=from-cache\n"
+                                 "BAR:INTERNAL=hidden\n",
+                                 strlen("FOO:STRING=from-cache\n"
+                                        "BAR:INTERNAL=hidden\n")));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "script.cmake";
+    init.exec_mode = EVAL_EXEC_MODE_SCRIPT;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "load_cache(cache_script_only READ_WITH_PREFIX PFX_ FOO)\n"
+        "load_cache(cache_script_only INCLUDE_INTERNALS BAR)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    size_t legacy_form_errors = 0;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("load_cache() legacy form is available only in CMake projects"))) {
+            legacy_form_errors++;
+        }
+    }
+    ASSERT(legacy_form_errors == 1);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PFX_FOO")),
+                     nob_sv_from_cstr("from-cache")));
+    ASSERT(!eval_test_cache_defined(ctx, nob_sv_from_cstr("FOO")));
+    ASSERT(!eval_test_cache_defined(ctx, nob_sv_from_cstr("BAR")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3127,7 +3182,8 @@ TEST(evaluator_var_commands_reject_invalid_option_shapes) {
 
 
 void run_evaluator_v2_batch4(int *passed, int *failed) {
-    test_evaluator_load_cache_supports_multi_path_legacy_mode_and_prefix_unset(passed, failed);
+    test_evaluator_load_cache_supports_documented_legacy_and_prefix_forms(passed, failed);
+    test_evaluator_load_cache_allows_read_with_prefix_but_rejects_legacy_form_in_script_mode(passed, failed);
     test_evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file(passed, failed);
     test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
     test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);

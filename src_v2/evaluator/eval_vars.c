@@ -38,6 +38,31 @@ typedef struct {
     SV_List cache_inputs;
 } Load_Cache_Request;
 
+static bool load_cache_validate_exec_mode(EvalExecContext *ctx,
+                                          const Node *node,
+                                          const Load_Cache_Request *req) {
+    if (!ctx || !node || !req) return false;
+    if (eval_exec_is_project_mode(ctx)) return true;
+    if (ctx->mode == EVAL_EXEC_MODE_SCRIPT &&
+        req->mode == LOAD_CACHE_MODE_READ_WITH_PREFIX) {
+        return true;
+    }
+    if (ctx->mode == EVAL_EXEC_MODE_SCRIPT) {
+        return load_cache_emit_diag(
+            ctx,
+            node,
+            EV_DIAG_ERROR,
+            nob_sv_from_cstr("load_cache() legacy form is available only in CMake projects"),
+            nob_sv_from_cstr("Use load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...) in regular cmake -P script mode"));
+    }
+    return load_cache_emit_diag(
+        ctx,
+        node,
+        EV_DIAG_ERROR,
+        nob_sv_from_cstr("load_cache() is available only in CMake projects"),
+        nob_sv_from_cstr("Only load_cache(READ_WITH_PREFIX ...) is allowed outside project mode, and only in regular cmake -P script mode"));
+}
+
 static bool load_cache_name_in_list(String_View name, const SV_List *list) {
     if (!list) return false;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
@@ -204,17 +229,33 @@ static bool load_cache_parse_legacy_request(EvalExecContext *ctx,
     if (!load_cache_push_temp(ctx, &out_req->cache_inputs, args[0])) return false;
 
     size_t i = 1;
-    if (!load_cache_collect_until_keyword(ctx, args, &i, &out_req->cache_inputs)) return false;
-
     while (i < arena_arr_len(args)) {
         if (eval_sv_eq_ci_lit(args[i], "EXCLUDE")) {
             i++;
+            size_t start = i;
             if (!load_cache_collect_until_keyword(ctx, args, &i, &out_req->excludes)) return false;
+            if (i == start) {
+                (void)load_cache_emit_diag(ctx,
+                                           node,
+                                           EV_DIAG_ERROR,
+                                           nob_sv_from_cstr("load_cache(EXCLUDE ...) requires at least one entry"),
+                                           nob_sv_from_cstr("Usage: load_cache(<path> EXCLUDE <entry>... [INCLUDE_INTERNALS <entry>...])"));
+                return false;
+            }
             continue;
         }
         if (eval_sv_eq_ci_lit(args[i], "INCLUDE_INTERNALS")) {
             i++;
+            size_t start = i;
             if (!load_cache_collect_until_keyword(ctx, args, &i, &out_req->include_internals)) return false;
+            if (i == start) {
+                (void)load_cache_emit_diag(ctx,
+                                           node,
+                                           EV_DIAG_ERROR,
+                                           nob_sv_from_cstr("load_cache(INCLUDE_INTERNALS ...) requires at least one entry"),
+                                           nob_sv_from_cstr("Usage: load_cache(<path> [EXCLUDE <entry>...] INCLUDE_INTERNALS <entry>...)"));
+                return false;
+            }
             continue;
         }
 
@@ -235,17 +276,17 @@ static bool load_cache_parse_request(EvalExecContext *ctx,
                                      Load_Cache_Request *out_req) {
     if (!ctx || !node || !out_req) return false;
 
-    if (arena_arr_len(args) < 2) {
+    if (arena_arr_len(args) < 1) {
         (void)load_cache_emit_diag(ctx,
                                    node,
                                    EV_DIAG_ERROR,
-                                   nob_sv_from_cstr("load_cache() requires a path and a supported mode"),
-                                   nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...)"));
+                                   nob_sv_from_cstr("load_cache() requires a build directory path"),
+                                   nob_sv_from_cstr("Usage: load_cache(<path> READ_WITH_PREFIX <prefix> <entry>...) or load_cache(<path> [EXCLUDE <entry>...] [INCLUDE_INTERNALS <entry>...])"));
         return false;
     }
 
     *out_req = (Load_Cache_Request){0};
-    if (eval_sv_eq_ci_lit(args[1], "READ_WITH_PREFIX")) {
+    if (arena_arr_len(args) >= 2 && eval_sv_eq_ci_lit(args[1], "READ_WITH_PREFIX")) {
         return load_cache_parse_read_with_prefix_request(ctx, node, args, out_req);
     }
     return load_cache_parse_legacy_request(ctx, node, args, out_req);
@@ -947,6 +988,7 @@ Eval_Result eval_handle_load_cache(EvalExecContext *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     Load_Cache_Request req = {0};
     if (!load_cache_parse_request(ctx, node, a, &req)) return eval_result_from_ctx(ctx);
+    if (!load_cache_validate_exec_mode(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!load_cache_execute_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
 
     return eval_result_from_ctx(ctx);
