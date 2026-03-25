@@ -84,35 +84,53 @@ static bool legacy_metadata_only(EvalExecContext *ctx,
 }
 
 Eval_Result eval_handle_export_library_dependencies(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 1, nob_sv_from_cstr("export_library_dependencies")));
+    if (!legacy_metadata_only(ctx, node, 1, nob_sv_from_cstr("export_library_dependencies"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_load_command(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 1, nob_sv_from_cstr("load_command")));
+    if (!legacy_metadata_only(ctx, node, 1, nob_sv_from_cstr("load_command"))) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_output_required_files(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 2, nob_sv_from_cstr("output_required_files")));
+    if (!legacy_metadata_only(ctx, node, 2, nob_sv_from_cstr("output_required_files"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_subdir_depends(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 2, nob_sv_from_cstr("subdir_depends")));
+    if (!legacy_metadata_only(ctx, node, 2, nob_sv_from_cstr("subdir_depends"))) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_subdirs(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 1, nob_sv_from_cstr("subdirs")));
+    if (!legacy_metadata_only(ctx, node, 1, nob_sv_from_cstr("subdirs"))) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_use_mangled_mesa(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 0, nob_sv_from_cstr("use_mangled_mesa")));
+    if (!legacy_metadata_only(ctx, node, 0, nob_sv_from_cstr("use_mangled_mesa"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_utility_source(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 3, nob_sv_from_cstr("utility_source")));
+    if (!legacy_metadata_only(ctx, node, 3, nob_sv_from_cstr("utility_source"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_variable_requires(EvalExecContext *ctx, const Node *node) {
-    return eval_result_from_bool(legacy_metadata_only(ctx, node, 3, nob_sv_from_cstr("variable_requires")));
+    if (!legacy_metadata_only(ctx, node, 3, nob_sv_from_cstr("variable_requires"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }
 
 typedef struct {

@@ -662,7 +662,7 @@ struct EvalSession {
 bool eval_should_stop(EvalExecContext *ctx);
 void eval_request_stop(EvalExecContext *ctx);
 void eval_request_stop_on_error(EvalExecContext *ctx);
-void eval_clear_stop_if_not_oom(EvalExecContext *ctx);
+void eval_reset_stop_request(EvalExecContext *ctx);
 bool eval_continue_on_error(EvalExecContext *ctx);
 void eval_refresh_runtime_compat(EvalExecContext *ctx);
 bool eval_compat_set_profile(EvalExecContext *ctx, Eval_Compat_Profile profile);
@@ -692,10 +692,6 @@ static inline Eval_Result eval_result_fatal(void) {
 
 static inline Eval_Result eval_result_merge(Eval_Result lhs, Eval_Result rhs) {
     return (rhs.kind > lhs.kind) ? rhs : lhs;
-}
-
-static inline Eval_Result eval_result_from_bool(bool ok) {
-    return ok ? eval_result_ok() : eval_result_fatal();
 }
 
 static inline Eval_Result eval_result_from_ctx(EvalExecContext *ctx) {

@@ -367,7 +367,12 @@ static Eval_Result eval_node(EvalExecContext *ctx, const Node *node) {
             break;
         case NODE_FUNCTION:
         case NODE_MACRO:
-            result = eval_result_from_bool(eval_user_cmd_register(ctx, node));
+            if (!eval_user_cmd_register(ctx, node)) {
+                result = eval_result_from_ctx(ctx);
+                if (!eval_result_is_fatal(result)) result = eval_result_fatal();
+                break;
+            }
+            result = eval_result_from_ctx(ctx);
             break;
         default:
             break;

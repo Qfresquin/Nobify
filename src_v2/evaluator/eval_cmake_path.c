@@ -706,23 +706,50 @@ Eval_Result eval_handle_cmake_path(EvalExecContext *ctx, const Node *node) {
 
     String_View mode = a[0];
 
-    if (eval_sv_eq_ci_lit(mode, "SET")) return eval_result_from_bool(handle_set(ctx, node, o, a));
-    if (eval_sv_eq_ci_lit(mode, "GET")) return eval_result_from_bool(handle_get(ctx, node, o, a));
-    if (eval_sv_eq_ci_lit(mode, "APPEND")) return eval_result_from_bool(handle_append_like(ctx, node, o, a, false));
-    if (eval_sv_eq_ci_lit(mode, "APPEND_STRING")) return eval_result_from_bool(handle_append_like(ctx, node, o, a, true));
-    if (eval_sv_eq_ci_lit(mode, "REMOVE_FILENAME")) return eval_result_from_bool(handle_remove_filename(ctx, node, o, a));
-    if (eval_sv_eq_ci_lit(mode, "REPLACE_FILENAME")) return eval_result_from_bool(handle_replace_filename(ctx, node, o, a));
-    if (eval_sv_eq_ci_lit(mode, "REMOVE_EXTENSION")) return eval_result_from_bool(handle_extension_common(ctx, node, o, a, false));
-    if (eval_sv_eq_ci_lit(mode, "REPLACE_EXTENSION")) return eval_result_from_bool(handle_extension_common(ctx, node, o, a, true));
+    if (eval_sv_eq_ci_lit(mode, "SET")) {
+        if (!handle_set(ctx, node, o, a)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "GET")) {
+        if (!handle_get(ctx, node, o, a)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "APPEND")) {
+        if (!handle_append_like(ctx, node, o, a, false)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "APPEND_STRING")) {
+        if (!handle_append_like(ctx, node, o, a, true)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "REMOVE_FILENAME")) {
+        if (!handle_remove_filename(ctx, node, o, a)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "REPLACE_FILENAME")) {
+        if (!handle_replace_filename(ctx, node, o, a)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "REMOVE_EXTENSION")) {
+        if (!handle_extension_common(ctx, node, o, a, false)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (eval_sv_eq_ci_lit(mode, "REPLACE_EXTENSION")) {
+        if (!handle_extension_common(ctx, node, o, a, true)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
     if (eval_sv_eq_ci_lit(mode, "NORMAL_PATH")) {
         bool ok = handle_normal_path(ctx, node, o, a);
         if (ok && !eval_should_stop(ctx)) {
             String_View out_var = (arena_arr_len(a) == 4 && eval_sv_eq_ci_lit(a[2], "OUTPUT_VARIABLE")) ? a[3] : nob_sv_from_cstr("");
             if (!eval_emit_path_normalize(ctx, o, out_var)) return eval_result_fatal();
         }
-        return eval_result_from_bool(ok);
+        return eval_result_from_ctx(ctx);
     }
-    if (eval_sv_eq_ci_lit(mode, "RELATIVE_PATH")) return eval_result_from_bool(handle_relative_path(ctx, node, o, a));
+    if (eval_sv_eq_ci_lit(mode, "RELATIVE_PATH")) {
+        if (!handle_relative_path(ctx, node, o, a)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
     if (eval_sv_eq_ci_lit(mode, "ABSOLUTE_PATH")) {
         bool ok = handle_absolute_path(ctx, node, o, a);
         if (ok && !eval_should_stop(ctx)) {
@@ -735,7 +762,7 @@ Eval_Result eval_handle_cmake_path(EvalExecContext *ctx, const Node *node) {
             }
             if (!eval_emit_path_normalize(ctx, o, out_var)) return eval_result_fatal();
         }
-        return eval_result_from_bool(ok);
+        return eval_result_from_ctx(ctx);
     }
     if (eval_sv_eq_ci_lit(mode, "NATIVE_PATH")) {
         bool ok = handle_native_path(ctx, node, o, a);
@@ -743,7 +770,7 @@ Eval_Result eval_handle_cmake_path(EvalExecContext *ctx, const Node *node) {
             String_View out_var = arena_arr_len(a) >= 3 ? a[arena_arr_len(a) - 1] : nob_sv_from_cstr("");
             if (!eval_emit_path_normalize(ctx, o, out_var)) return eval_result_fatal();
         }
-        return eval_result_from_bool(ok);
+        return eval_result_from_ctx(ctx);
     }
     if (eval_sv_eq_ci_lit(mode, "CONVERT")) {
         bool ok = handle_convert(ctx, node, o, a);
@@ -756,7 +783,7 @@ Eval_Result eval_handle_cmake_path(EvalExecContext *ctx, const Node *node) {
             }
             if (!eval_emit_path_convert(ctx, o, out_var)) return eval_result_fatal();
         }
-        return eval_result_from_bool(ok);
+        return eval_result_from_ctx(ctx);
     }
     if (eval_sv_eq_ci_lit(mode, "COMPARE")) {
         bool ok = handle_compare(ctx, node, o, a);
@@ -764,12 +791,21 @@ Eval_Result eval_handle_cmake_path(EvalExecContext *ctx, const Node *node) {
             String_View out_var = arena_arr_len(a) == 5 ? a[4] : nob_sv_from_cstr("");
             if (!eval_emit_path_compare(ctx, o, out_var)) return eval_result_fatal();
         }
-        return eval_result_from_bool(ok);
+        return eval_result_from_ctx(ctx);
     }
-    if (eval_sv_eq_ci_lit(mode, "HASH")) return eval_result_from_bool(handle_hash(ctx, node, o, a));
+    if (eval_sv_eq_ci_lit(mode, "HASH")) {
+        if (!handle_hash(ctx, node, o, a)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
 
-    if (svu_has_prefix_ci_lit(mode, "HAS_")) return eval_result_from_bool(handle_has_component(ctx, node, o, a, mode));
-    if (svu_has_prefix_ci_lit(mode, "IS_")) return eval_result_from_bool(handle_is_mode(ctx, node, o, a, mode));
+    if (svu_has_prefix_ci_lit(mode, "HAS_")) {
+        if (!handle_has_component(ctx, node, o, a, mode)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
+    if (svu_has_prefix_ci_lit(mode, "IS_")) {
+        if (!handle_is_mode(ctx, node, o, a, mode)) return eval_result_from_ctx(ctx);
+        return eval_result_from_ctx(ctx);
+    }
 
     cmk_path_error(ctx, node, o,
                    "cmake_path() subcommand is not implemented",

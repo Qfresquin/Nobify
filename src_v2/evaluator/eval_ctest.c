@@ -1213,7 +1213,7 @@ static void ctest_new_process_end(EvalExecContext *ctx, const Ctest_New_Process_
     ctx->fetchcontent_module_loaded = state->fetchcontent_module_loaded;
     eval_exec_clear_pending_flow(ctx);
     eval_clear_return_state(ctx);
-    eval_clear_stop_if_not_oom(ctx);
+    eval_reset_stop_request(ctx);
 }
 
 static bool ctest_apply_resolved_context(EvalExecContext *ctx,

@@ -226,8 +226,8 @@ void eval_request_stop_on_error(EvalExecContext *ctx) {
     ctx->stop_requested = true;
 }
 
-void eval_clear_stop_if_not_oom(EvalExecContext *ctx) {
-    if (!ctx || ctx->oom) return;
+void eval_reset_stop_request(EvalExecContext *ctx) {
+    if (!ctx) return;
     ctx->stop_requested = false;
 }
 
@@ -1937,7 +1937,7 @@ static bool eval_exec_bind_request(EvalExecContext *ctx,
     ctx->return_context = EVAL_RETURN_CTX_TOPLEVEL;
     ctx->active_transaction = NULL;
     eval_clear_return_state(ctx);
-    eval_clear_stop_if_not_oom(ctx);
+    eval_reset_stop_request(ctx);
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SOURCE_DIR"), ctx->source_dir)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_BINARY_DIR"), ctx->binary_dir)) return false;

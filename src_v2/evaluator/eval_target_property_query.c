@@ -777,8 +777,10 @@ Eval_Result eval_handle_get_cmake_property(EvalExecContext *ctx, const Node *nod
         return eval_result_from_ctx(ctx);
     }
 
-    return eval_result_from_bool(
-        eval_property_query_cmake(ctx, node, origin, req.out_var, req.property_name));
+    if (!eval_property_query_cmake(ctx, node, origin, req.out_var, req.property_name)) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_get_directory_property(EvalExecContext *ctx, const Node *node) {
@@ -793,7 +795,10 @@ Eval_Result eval_handle_get_directory_property(EvalExecContext *ctx, const Node 
 
     if (req.kind == GET_DIRECTORY_PROPERTY_QUERY_DEFINITION) {
         String_View value = eval_var_get_visible(ctx, req.query_name);
-        return eval_result_from_bool(eval_var_set_current(ctx, req.out_var, value));
+        if (!eval_var_set_current(ctx, req.out_var, value)) {
+            return eval_result_from_ctx(ctx);
+        }
+        return eval_result_from_ctx(ctx);
     }
 
     Property_Query_Request query = {
@@ -902,7 +907,10 @@ Eval_Result eval_handle_get_test_property(EvalExecContext *ctx, const Node *node
     }
 
     if (!eval_test_exists_in_directory_scope(ctx, req.test_name, req.inherit_dir)) {
-        return eval_result_from_bool(property_query_set_literal_notfound(ctx, req.out_var));
+        if (!property_query_set_literal_notfound(ctx, req.out_var)) {
+            return eval_result_from_ctx(ctx);
+        }
+        return eval_result_from_ctx(ctx);
     }
 
     Property_Query_Request query = {

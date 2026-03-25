@@ -881,5 +881,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
 }
 
 Eval_Result eval_string_handle_json(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
-    return eval_result_from_bool(string_handle_json_command(ctx, node, o, a));
+    if (!string_handle_json_command(ctx, node, o, a)) {
+        return eval_result_from_ctx(ctx);
+    }
+    return eval_result_from_ctx(ctx);
 }

@@ -43,6 +43,18 @@ check_forbidden_pattern \
     src_v2/evaluator \
     '-RIn --include=*.c --include=*.h'
 
+check_forbidden_pattern \
+    "legacy eval_result_from_bool helper usage" \
+    'eval_result_from_bool\(' \
+    src_v2/evaluator \
+    '-RIn --include=*.c --include=*.h'
+
+check_forbidden_pattern \
+    "legacy eval_clear_stop_if_not_oom helper usage" \
+    'eval_clear_stop_if_not_oom\(' \
+    src_v2/evaluator \
+    '-RIn --include=*.c --include=*.h'
+
 state_write_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'ctx->(oom|stop_requested)[[:space:]]*=' src_v2/evaluator || true)
 if [[ -n "$state_write_matches" ]]; then
     unauthorized=$(printf '%s\n' "$state_write_matches" | grep -v '^src_v2/evaluator/evaluator.c:' || true)
