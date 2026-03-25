@@ -255,11 +255,13 @@ static bool flow_run_call(EvalExecContext *ctx, const Node *node, const SV_List 
     String_View command_name = (*args)[1];
     if (!flow_is_valid_command_name(command_name)) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("cmake_language(CALL) requires a valid command name"), command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (flow_is_call_disallowed(command_name)) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("cmake_language(CALL) does not allow structural commands"), command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     const String_View *call_args = &(*args)[2];
@@ -271,21 +273,23 @@ static bool flow_run_call(EvalExecContext *ctx, const Node *node, const SV_List 
         for (size_t i = 0; i < call_arg_count; i++) {
             if (!EVAL_ARR_PUSH(ctx, ctx->arena, tmp, call_args[i])) return false;
         }
-        if (!flow_build_call_script(ctx, command_name, &tmp, &script)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (!flow_build_call_script(ctx, command_name, &tmp, &script)) { if (eval_should_stop(ctx)) return false; return true; }
     }
 
     Ast_Root ast = NULL;
-    if (!flow_parse_inline_script(ctx, script, &ast)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!flow_parse_inline_script(ctx, script, &ast)) { if (eval_should_stop(ctx)) return false; return true; }
     eval_command_tx_preserve_scope_vars_on_failure(ctx);
     Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
     if (eval_result_is_fatal(inline_result)) return false;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool flow_run_eval_code(EvalExecContext *ctx, const Node *node, const SV_List *args) {
     if (!ctx || !node || !args || arena_arr_len(*args) < 3) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("cmake_language(EVAL CODE ...) requires code text"), nob_sv_from_cstr("Usage: cmake_language(EVAL CODE <code>...)"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     size_t total = 0;
@@ -303,11 +307,12 @@ static bool flow_run_eval_code(EvalExecContext *ctx, const Node *node, const SV_
     String_View code = nob_sv_from_parts(buf, off);
 
     Ast_Root ast = NULL;
-    if (!flow_parse_inline_script(ctx, code, &ast)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!flow_parse_inline_script(ctx, code, &ast)) { if (eval_should_stop(ctx)) return false; return true; }
     eval_command_tx_preserve_scope_vars_on_failure(ctx);
     Eval_Result inline_result = eval_run_ast_inline(ctx, ast);
     if (eval_result_is_fatal(inline_result)) return false;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static String_View flow_cmake_language_find_defer_call_command_name(SV_List args) {
@@ -346,7 +351,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) must be called at file scope"),
                                  nob_sv_from_cstr("Do not call it from inside function(), macro(), or block() scopes"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (arena_arr_len(*args) < 2) {
@@ -358,7 +364,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires a command or an empty string"),
                                  nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER <command> SUPPORTED_METHODS FIND_PACKAGE) or cmake_language(SET_DEPENDENCY_PROVIDER \"\")"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (!flow_cmake_language_provider_context_is_active(ctx)) {
@@ -370,7 +377,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) may only be called from a file listed in CMAKE_PROJECT_TOP_LEVEL_INCLUDES during the first project()"),
                                  nob_sv_from_cstr("Move this call into a CMAKE_PROJECT_TOP_LEVEL_INCLUDES file processed by the first project() call"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     String_View command_name = (*args)[1];
@@ -384,14 +392,16 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                      origin,
                                      nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER \"\") does not accept SUPPORTED_METHODS"),
                                      nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER \"\")"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         ctx->semantic_state.package.dependency_provider.command_name = nob_sv_from_cstr("");
         ctx->semantic_state.package.dependency_provider.supports_find_package = false;
         ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial = false;
         ctx->semantic_state.package.dependency_provider.active_find_package_depth = 0;
         ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (!flow_is_valid_command_name(command_name)) {
@@ -403,7 +413,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires a valid command name"),
                                  command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (!flow_cmake_language_provider_command_exists(ctx, command_name)) {
         (void)EVAL_DIAG_EMIT_SEV(ctx,
@@ -414,7 +425,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires an existing function() or macro()"),
                                  command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (arena_arr_len(*args) < 4 || !eval_sv_eq_ci_lit((*args)[2], "SUPPORTED_METHODS")) {
         (void)EVAL_DIAG_EMIT_SEV(ctx,
@@ -425,7 +437,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires SUPPORTED_METHODS"),
                                  nob_sv_from_cstr("Usage: cmake_language(SET_DEPENDENCY_PROVIDER <command> SUPPORTED_METHODS FIND_PACKAGE)"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     bool supports_find_package = false;
@@ -448,7 +461,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) received an unknown method"),
                                  method);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (!supports_find_package && !supports_fetchcontent) {
@@ -460,7 +474,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
                                  origin,
                                  nob_sv_from_cstr("cmake_language(SET_DEPENDENCY_PROVIDER) requires at least one supported method"),
                                  nob_sv_from_cstr("Supported here: FIND_PACKAGE, FETCHCONTENT_MAKEAVAILABLE_SERIAL"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     ctx->semantic_state.package.dependency_provider.command_name = sv_copy_to_event_arena(ctx, command_name);
@@ -469,7 +484,8 @@ static bool flow_cmake_language_set_dependency_provider(EvalExecContext *ctx,
     ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial = supports_fetchcontent;
     ctx->semantic_state.package.dependency_provider.active_find_package_depth = 0;
     ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth = 0;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool flow_set_var_to_deferred_ids(EvalExecContext *ctx,
@@ -518,7 +534,8 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (arena_arr_len(*raw) < 2) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER) requires a subcommand"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] <subcommand> ...)"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     size_t i = 1;
@@ -529,7 +546,8 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
     if (eval_sv_eq_ci_lit(tok, "DIRECTORY")) {
         if (i + 1 >= arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER DIRECTORY) requires a directory argument"), nob_sv_from_cstr("Usage: cmake_language(DEFER DIRECTORY <dir> ...)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         has_directory = true;
         directory = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
@@ -537,30 +555,34 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
         i += 2;
         if (i >= arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER) requires a subcommand"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] <subcommand> ...)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
     }
 
     String_View subcmd = flow_eval_arg_single(ctx, &(*raw)[i], true);
     if (eval_should_stop(ctx)) return false;
     Eval_Deferred_Dir_Frame *frame = flow_resolve_defer_directory(ctx, node, has_directory, directory);
-    if (!frame) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!frame) { if (eval_should_stop(ctx)) return false; return true; }
 
     if (eval_sv_eq_ci_lit(subcmd, "GET_CALL_IDS")) {
         if (i + 2 != arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER GET_CALL_IDS) expects one output variable"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL_IDS <out-var>)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         String_View out_var = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
         (void)flow_set_var_to_deferred_ids(ctx, frame, out_var);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (eval_sv_eq_ci_lit(subcmd, "GET_CALL")) {
         if (i + 3 != arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER GET_CALL) expects an id and one output variable"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] GET_CALL <id> <out-var>)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         String_View id = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         String_View out_var = flow_eval_arg_single(ctx, &(*raw)[i + 2], true);
@@ -570,20 +592,23 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
             return eval_var_set_current(ctx, out_var, nob_sv_from_cstr(""));
         }
         (void)flow_set_var_to_deferred_call(ctx, call, out_var);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (eval_sv_eq_ci_lit(subcmd, "CANCEL_CALL")) {
         if (i + 1 >= arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER CANCEL_CALL) requires at least one id"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] CANCEL_CALL <id>...)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         for (size_t k = i + 1; k < arena_arr_len(*raw); k++) {
             String_View id = flow_eval_arg_single(ctx, &(*raw)[k], true);
             if (eval_should_stop(ctx)) return false;
             if (!flow_remove_all_deferred_calls_with_id(frame, id)) return false;
         }
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     String_View explicit_id = nob_sv_from_cstr("");
@@ -591,7 +616,8 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
     while (eval_sv_eq_ci_lit(subcmd, "ID") || eval_sv_eq_ci_lit(subcmd, "ID_VAR")) {
         if (i + 1 >= arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER) option requires a value"), subcmd);
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         String_View value = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
         if (eval_should_stop(ctx)) return false;
@@ -603,7 +629,8 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
         i += 2;
         if (i >= arena_arr_len(*raw)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER) missing CALL subcommand"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         subcmd = flow_eval_arg_single(ctx, &(*raw)[i], true);
         if (eval_should_stop(ctx)) return false;
@@ -611,22 +638,26 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
 
     if (!eval_sv_eq_ci_lit(subcmd, "CALL")) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("Unsupported cmake_language(DEFER) subcommand"), subcmd);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (i + 1 >= arena_arr_len(*raw)) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER CALL) requires a command name"), nob_sv_from_cstr("Usage: cmake_language(DEFER [DIRECTORY <dir>] [ID <id>] [ID_VAR <var>] CALL <command> [<arg>...])"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     String_View command_name = flow_eval_arg_single(ctx, &(*raw)[i + 1], true);
     if (eval_should_stop(ctx)) return false;
     if (!flow_is_valid_command_name(command_name)) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER CALL) requires a valid command name"), command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (flow_is_call_disallowed(command_name)) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("flow"), node->as.cmd.name, origin, nob_sv_from_cstr("cmake_language(DEFER CALL) does not allow structural commands"), command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     bool generated_id = explicit_id.count == 0;
@@ -642,7 +673,8 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
                                  origin,
                                  flow_deferred_id_validation_cause(id_validation),
                                  id);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     Eval_Deferred_Call call = {0};
@@ -654,7 +686,8 @@ static bool flow_handle_defer(EvalExecContext *ctx, const Node *node) {
     if (!flow_append_defer_queue(ctx, frame, call)) return false;
     if (!eval_emit_flow_defer_queue(ctx, origin, call.id, call.command_name)) return false;
     if (id_var.count > 0 && !eval_var_set_current(ctx, id_var, call.id)) return false;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool flow_parse_cmake_language_request(EvalExecContext *ctx,

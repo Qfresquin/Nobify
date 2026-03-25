@@ -99,7 +99,9 @@ static bool project_execute_top_level_includes(EvalExecContext *ctx,
         if (!project_execute_top_level_include(ctx, node, origin, include_items[i])) return false;
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 static bool apply_subdir_system_default_to_target(EvalExecContext *ctx,
@@ -551,7 +553,8 @@ static bool apply_enabled_languages(EvalExecContext *ctx,
         String_View lang = (*requested)[i];
         if (!language_token_is_known(lang)) {
             EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("dispatcher"), cmd_name, o, nob_sv_from_cstr("Unknown language in language-enabling command"), lang);
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         if (!enabled_languages_contains(enabled, lang)) {
             if (!svu_list_push_temp(ctx, &enabled, lang)) return false;

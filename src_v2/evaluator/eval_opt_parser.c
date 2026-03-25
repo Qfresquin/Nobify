@@ -151,5 +151,7 @@ bool eval_opt_parse_walk(EvalExecContext *ctx,
         if (eval_should_stop(ctx)) return false;
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }

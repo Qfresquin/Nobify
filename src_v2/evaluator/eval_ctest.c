@@ -679,7 +679,8 @@ static bool ctest_read_tag_file_details_temp(EvalExecContext *ctx,
 
     nob_sb_free(sb);
     if (out_details->group.count == 0) out_details->group = out_details->model;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static String_View ctest_generate_tag_temp(EvalExecContext *ctx) {
@@ -1114,7 +1115,8 @@ static bool ctest_resolve_files(EvalExecContext *ctx,
     }
 
     *out_resolved = eval_sv_join_semi_temp(ctx, resolved_items, arena_arr_len(resolved_items));
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_resolve_scripts(EvalExecContext *ctx,
@@ -1452,7 +1454,8 @@ static bool ctest_submit_resolve_parts(EvalExecContext *ctx,
     }
 
     *out_parts = eval_sv_join_semi_temp(ctx, resolved_parts, arena_arr_len(resolved_parts));
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_submit_append_resolved_files(EvalExecContext *ctx,
@@ -1635,7 +1638,8 @@ static bool ctest_submit_read_file_temp(EvalExecContext *ctx,
     if (!nob_read_entire_file(path_c, &sb)) return false;
     *out_contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
     nob_sb_free(sb);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static String_View ctest_submit_lower_ascii_temp(EvalExecContext *ctx, String_View input) {
@@ -2296,7 +2300,8 @@ static bool ctest_parse_configure_request(EvalExecContext *ctx,
     out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
     out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
     out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_execute_configure_request(EvalExecContext *ctx,
@@ -2535,7 +2540,8 @@ static bool ctest_parse_coverage_request(EvalExecContext *ctx,
     out_req->capture_cmake_error_var = ctest_parsed_field_value(&out_req->parsed, "CAPTURE_CMAKE_ERROR");
     out_req->append_mode = ctest_parsed_field_value(&out_req->parsed, "APPEND").count > 0;
     out_req->quiet = ctest_parsed_field_value(&out_req->parsed, "QUIET").count > 0;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_execute_coverage_request(EvalExecContext *ctx,
@@ -2877,7 +2883,8 @@ static bool ctest_parse_sleep_request(EvalExecContext *ctx,
     int n = snprintf(buf, sizeof(buf), "%.3f", computed);
     if (n < 0 || (size_t)n >= sizeof(buf)) return ctx_oom(ctx);
     out_req->duration = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_execute_sleep_request(EvalExecContext *ctx, const Ctest_Sleep_Request *req) {
@@ -2947,7 +2954,8 @@ static bool ctest_parse_start_request(EvalExecContext *ctx,
     if (out_req->group.count == 0) out_req->group = ctest_parsed_field_value(&out_req->parsed, "TRACK");
     out_req->resolved_source = ctest_resolve_source_dir(ctx, source);
     out_req->resolved_build = ctest_resolve_binary_dir(ctx, build);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_execute_start_request(EvalExecContext *ctx,
@@ -3138,7 +3146,8 @@ static bool ctest_parse_submit_request(EvalExecContext *ctx,
             return false;
         }
         out_req->files = eval_sv_join_semi_temp(ctx, resolved_files, arena_arr_len(resolved_files));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (out_req->cdash_upload_type.count > 0) {
@@ -3167,7 +3176,8 @@ static bool ctest_parse_submit_request(EvalExecContext *ctx,
     }
 
     out_req->files = eval_sv_join_semi_temp(ctx, resolved_files, arena_arr_len(resolved_files));
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_submit_set_optional_var(EvalExecContext *ctx, String_View var_name, String_View value) {

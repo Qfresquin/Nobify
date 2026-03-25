@@ -347,7 +347,8 @@ static bool string_uuid_name_based_temp(EvalExecContext *ctx,
 
     uuid[8] = (unsigned char)((uuid[8] & 0x3F) | 0x80);
     *out_uuid = string_format_uuid_temp(ctx, uuid, upper);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 Eval_Result eval_string_handle_misc(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {

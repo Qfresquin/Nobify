@@ -390,13 +390,15 @@ static bool host_processor_name_temp(EvalExecContext *ctx, String_View *out_valu
     size_t size = sizeof(buf);
     if (sysctlbyname("machdep.cpu.brand_string", buf, &size, NULL, 0) == 0 && size > 1) {
         *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(buf));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 #elif defined(_WIN32)
     const char *value = eval_getenv_temp(ctx, "PROCESSOR_IDENTIFIER");
     if (value && value[0] != '\0') {
         *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(value));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 #elif defined(__linux__)
     String_View cpuinfo_name = nob_sv_from_cstr("");
@@ -413,7 +415,8 @@ static bool host_processor_name_temp(EvalExecContext *ctx, String_View *out_valu
 
     String_View arch = eval_detect_host_processor();
     *out_value = sv_copy_to_temp_arena(ctx, arch);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool host_processor_description_temp(EvalExecContext *ctx, String_View *out_value) {
@@ -481,7 +484,8 @@ static bool host_os_release_path_temp(EvalExecContext *ctx,
     }
     const char *trimmed = (suffix[0] == '/') ? suffix + 1 : suffix;
     *out_path = eval_sv_path_join(eval_temp_arena(ctx), sysroot, nob_sv_from_cstr(trimmed));
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool host_parse_os_release_line_temp(EvalExecContext *ctx,
@@ -618,7 +622,8 @@ static bool host_distrib_query_value(EvalExecContext *ctx,
             if (!arena_arr_push(eval_temp_arena(ctx), vars, var_name)) return false;
         }
         *out_value = eval_sv_join_semi_temp(ctx, vars, arena_arr_len(vars));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     String_View subkey = nob_sv_from_parts(key.data + 8, key.count - 8);
@@ -666,7 +671,8 @@ static bool host_capture_command_stdout(EvalExecContext *ctx, String_View comman
     while (len > 0 && (sb.items[len - 1] == '\n' || sb.items[len - 1] == '\r')) len--;
     *out_text = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, len));
     nob_sb_free(sb);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static String_View host_format_size_t_temp(EvalExecContext *ctx, size_t value) {
@@ -826,19 +832,22 @@ static bool host_info_query_value(EvalExecContext *ctx,
             return true;
         }
         *out_value = host_format_size_t_temp(ctx, count);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "NUMBER_OF_PHYSICAL_CORES")) {
         size_t count = 0;
         if (!host_physical_cores_temp(ctx, &count)) return false;
         *out_value = host_format_size_t_temp(ctx, count);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "HOSTNAME")) {
         String_View hostname = nob_sv_from_cstr("");
         if (!eval_host_hostname_temp(ctx, &hostname)) return false;
         *out_value = hostname;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "FQDN")) {
 #if defined(_WIN32)
@@ -846,13 +855,15 @@ static bool host_info_query_value(EvalExecContext *ctx,
         DWORD size = (DWORD)(sizeof(buf) - 1);
         if (GetComputerNameExA(ComputerNameDnsFullyQualified, buf, &size) && size > 0) {
             *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)size));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
 #endif
         String_View hostname = nob_sv_from_cstr("");
         if (!eval_host_hostname_temp(ctx, &hostname)) return false;
         *out_value = hostname;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "TOTAL_VIRTUAL_MEMORY") ||
         eval_sv_eq_ci_lit(key, "AVAILABLE_VIRTUAL_MEMORY") ||
@@ -871,7 +882,8 @@ static bool host_info_query_value(EvalExecContext *ctx,
         else value = info.available_physical_mib;
 
         *out_value = host_format_ull_temp(ctx, value);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "IS_64BIT")) {
         *out_value = host_format_bool_temp(ctx, sizeof(void*) >= 8);
@@ -903,19 +915,23 @@ static bool host_info_query_value(EvalExecContext *ctx,
         bool value = false;
         if (!host_cpu_feature_temp(ctx, feature, &value)) return false;
         *out_value = host_format_bool_temp(ctx, value);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "PROCESSOR_SERIAL_NUMBER")) {
         if (!host_processor_serial_temp(ctx, out_value)) return false;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "PROCESSOR_NAME")) {
         if (!host_processor_name_temp(ctx, out_value)) return false;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "PROCESSOR_DESCRIPTION")) {
         if (!host_processor_description_temp(ctx, out_value)) return false;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "OS_NAME")) {
         *out_value = eval_detect_host_system_name();
@@ -923,11 +939,13 @@ static bool host_info_query_value(EvalExecContext *ctx,
     }
     if (eval_sv_eq_ci_lit(key, "OS_RELEASE")) {
         *out_value = eval_host_os_release_temp(ctx);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "OS_VERSION")) {
         *out_value = eval_host_os_version_temp(ctx);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(key, "OS_PLATFORM")) {
         *out_value = eval_detect_host_processor();
@@ -938,7 +956,8 @@ static bool host_info_query_value(EvalExecContext *ctx,
         const char *value = eval_getenv_temp(ctx, "MSYSTEM_PREFIX");
         if (!value) value = "";
         *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(value));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
 #else
         return true;
 #endif
@@ -946,7 +965,8 @@ static bool host_info_query_value(EvalExecContext *ctx,
     if (eval_sv_eq_ci_lit(key, "DISTRIB_INFO") ||
         (key.count > 8 && memcmp(key.data, "DISTRIB_", 8) == 0)) {
         if (!host_distrib_query_value(ctx, result_var, key, out_value)) return false;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     *out_supported = false;

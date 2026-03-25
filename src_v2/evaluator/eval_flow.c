@@ -7,7 +7,7 @@ bool flow_require_no_args(EvalExecContext *ctx, const Node *node, String_View us
     if (!ctx || !node) return false;
 
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
     if (arena_arr_len(args) == 0) return true;
 
     (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("Command does not accept arguments"), usage_hint);

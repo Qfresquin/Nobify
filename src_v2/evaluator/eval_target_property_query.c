@@ -642,7 +642,8 @@ static bool get_source_file_property_parse_request(EvalExecContext *ctx,
         }
         out_req->object_id = eval_property_scoped_object_id_temp(
             ctx, "DIRECTORY", out_req->inherit_dir, out_req->source_name);
-        return !eval_should_stop(ctx);
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (!eval_sv_eq_ci_lit(args[2], "TARGET_DIRECTORY")) {
@@ -674,7 +675,8 @@ static bool get_source_file_property_parse_request(EvalExecContext *ctx,
 
     out_req->object_id = eval_property_scoped_object_id_temp(
         ctx, "DIRECTORY", out_req->inherit_dir, out_req->source_name);
-    return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool get_test_property_parse_request(EvalExecContext *ctx,
@@ -732,7 +734,8 @@ static bool get_test_property_parse_request(EvalExecContext *ctx,
 
     out_req->object_id =
         eval_property_scoped_object_id_temp(ctx, "DIRECTORY", out_req->inherit_dir, out_req->test_name);
-    return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 Eval_Result eval_handle_get_property(EvalExecContext *ctx, const Node *node) {

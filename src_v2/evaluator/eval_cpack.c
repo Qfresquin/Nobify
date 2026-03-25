@@ -44,7 +44,8 @@ static bool cpack_install_type_on_positional(EvalExecContext *ctx,
     if (!ctx || !userdata) return false;
     Cpack_Install_Type_Request *st = (Cpack_Install_Type_Request*)userdata;
     EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_install_type() unexpected argument"), value);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 enum {
@@ -104,7 +105,8 @@ static bool cpack_group_on_positional(EvalExecContext *ctx,
     if (!ctx || !userdata) return false;
     Cpack_Component_Group_Request *st = (Cpack_Component_Group_Request*)userdata;
     EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_component_group() unexpected argument"), value);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 enum {
@@ -193,7 +195,8 @@ static bool cpack_component_on_positional(EvalExecContext *ctx,
     if (!ctx || !userdata) return false;
     Cpack_Component_Request *st = (Cpack_Component_Request*)userdata;
     EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, nob_sv_from_cstr("dispatcher"), st->command_name, st->origin, nob_sv_from_cstr("cpack_add_component() unsupported/extra argument"), value);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool cpack_parse_install_type_request(EvalExecContext *ctx,

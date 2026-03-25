@@ -8,7 +8,8 @@ static bool try_compile_cache_upsert(EvalExecContext *ctx, String_View key, Stri
         entry->value.data = sv_copy_to_event_arena(ctx, value);
         entry->value.type = sv_copy_to_event_arena(ctx, nob_sv_from_cstr("INTERNAL"));
         entry->value.doc = sv_copy_to_event_arena(ctx, nob_sv_from_cstr("try_compile result"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     char *stable_key = (char*)arena_alloc(eval_event_arena(ctx), key.count + 1);

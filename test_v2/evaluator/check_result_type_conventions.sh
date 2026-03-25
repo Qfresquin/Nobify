@@ -37,6 +37,12 @@ check_forbidden_pattern \
     src_v2/evaluator/evaluator.h \
     '-In'
 
+check_forbidden_pattern \
+    "legacy bool propagation via eval_result_from_ctx" \
+    'return[[:space:]]+!eval_result_is_fatal\(eval_result_from_ctx\(ctx\)\);' \
+    src_v2/evaluator \
+    '-RIn --include=*.c --include=*.h'
+
 state_write_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'ctx->(oom|stop_requested)[[:space:]]*=' src_v2/evaluator || true)
 if [[ -n "$state_write_matches" ]]; then
     unauthorized=$(printf '%s\n' "$state_write_matches" | grep -v '^src_v2/evaluator/evaluator.c:' || true)

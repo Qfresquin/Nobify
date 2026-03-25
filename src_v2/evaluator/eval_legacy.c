@@ -70,14 +70,15 @@ static bool legacy_metadata_only(EvalExecContext *ctx,
                                  size_t min_args,
                                  String_View command_name) {
     SV_List a = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
     if (arena_arr_len(a) < min_args) {
         (void)legacy_emit_diag(ctx,
                                node,
                                EV_DIAG_ERROR,
                                nob_sv_from_cstr("legacy command received too few arguments"),
                                command_name);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     return eval_legacy_publish_args(ctx, command_name, &a);
 }
@@ -510,7 +511,8 @@ static bool legacy_execute_variable_watch_request(EvalExecContext *ctx,
         if (i < arena_arr_len(commands->watched_variable_commands)) {
             commands->watched_variable_commands[i] = sv_copy_to_event_arena(ctx, req->command);
         }
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     String_View stable_var = sv_copy_to_event_arena(ctx, req->variable);

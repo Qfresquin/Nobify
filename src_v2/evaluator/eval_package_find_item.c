@@ -663,7 +663,7 @@ static bool find_item_invoke_validator(EvalExecContext *ctx,
     SV_List call_args = call_args_storage;
     Cmake_Event_Origin o = {0};
     o.file_path = ctx->current_file ? nob_sv_from_cstr(ctx->current_file) : nob_sv_from_cstr("<input>");
-    if (!eval_user_cmd_invoke(ctx, opt->validator, &call_args, o)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!eval_user_cmd_invoke(ctx, opt->validator, &call_args, o)) { if (eval_should_stop(ctx)) return false; return true; }
     if (eval_should_stop(ctx)) return false;
 
     String_View final = eval_var_get_visible(ctx, result_var);
@@ -845,7 +845,8 @@ static bool find_item_set_result(EvalExecContext *ctx,
                                       opt->out_var);
         eval_request_stop_on_error(ctx);
     }
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static Eval_Result find_item_handle(EvalExecContext *ctx,

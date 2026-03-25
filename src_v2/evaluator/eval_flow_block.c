@@ -53,7 +53,8 @@ static bool block_parse_options(EvalExecContext *ctx,
 
         if (!has_scope_item) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("block(SCOPE_FOR ...) requires VARIABLES and/or POLICIES"), nob_sv_from_cstr("Usage: block([SCOPE_FOR VARIABLES POLICIES] [PROPAGATE <vars...>])"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
     }
 
@@ -61,7 +62,8 @@ static bool block_parse_options(EvalExecContext *ctx,
         i++;
         if (i >= arena_arr_len(args)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("block(PROPAGATE ...) requires at least one variable name"), nob_sv_from_cstr("Usage: block(PROPAGATE <var1> <var2> ...)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
 
         if (!arena_arr_reserve(ctx->event_arena, frame.propagate_vars, arena_arr_len(args) - i)) {
@@ -74,12 +76,14 @@ static bool block_parse_options(EvalExecContext *ctx,
 
     if (i < arena_arr_len(args) && !eval_sv_eq_ci_lit(args[i], "PROPAGATE")) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("block() received unsupported argument"), args[i]);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (frame.propagate_vars && !frame.variable_scope_pushed) {
         (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("block(PROPAGATE ...) requires variable scope"), nob_sv_from_cstr("Use SCOPE_FOR VARIABLES (or omit SCOPE_FOR) when using PROPAGATE"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     *out_frame = frame;

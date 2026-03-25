@@ -455,7 +455,8 @@ static bool flow_exec_read_file(EvalExecContext *ctx, String_View path, String_V
     }
     *out_text = flow_sb_to_temp_sv(ctx, &sb);
     nob_sb_free(sb);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool flow_exec_write_file(EvalExecContext *ctx, String_View path, String_View content) {
@@ -573,7 +574,8 @@ static bool flow_exec_collect_results(EvalExecContext *ctx,
     if (eval_should_stop(ctx)) return false;
 
     *out_results_joined = eval_sv_join_semi_temp(ctx, results, executed);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool flow_exec_apply_outputs(EvalExecContext *ctx,
@@ -632,13 +634,15 @@ static bool flow_exec_apply_outputs(EvalExecContext *ctx,
         String_View file_value = share_file ? merged_value : output_value;
         if (!flow_exec_write_file(ctx, opt->output_file, file_value)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("execute_process() failed to write OUTPUT_FILE"), opt->output_file);
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
     }
     if (opt->has_error_file && !opt->error_quiet && !share_file) {
         if (!flow_exec_write_file(ctx, opt->error_file, error_value)) {
             (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("execute_process() failed to write ERROR_FILE"), opt->error_file);
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
     }
 
@@ -666,7 +670,9 @@ static bool flow_exec_apply_outputs(EvalExecContext *ctx,
         }
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 static bool flow_execute_execute_process_request(EvalExecContext *ctx,

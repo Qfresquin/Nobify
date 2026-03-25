@@ -510,13 +510,13 @@ static bool handle_convert(EvalExecContext *ctx, const Node *node, Cmake_Event_O
         const char native_list_sep = ':';
 #endif
         SV_List parts = NULL;
-        if (!cmk_path_split_char_list_temp(ctx, input, native_list_sep, &parts)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (!cmk_path_split_char_list_temp(ctx, input, native_list_sep, &parts)) { if (eval_should_stop(ctx)) return false; return true; }
 
         SV_List converted = NULL;
         for (size_t i = 0; i < arena_arr_len(parts); i++) {
             String_View p = cmk_path_to_cmake_seps_temp(ctx, parts[i]);
             if (normalize) p = cmk_path_normalize_temp(ctx, p);
-            if (!svu_list_push_temp(ctx, &converted, p)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (!svu_list_push_temp(ctx, &converted, p)) { if (eval_should_stop(ctx)) return false; return true; }
         }
         String_View out = eval_sv_join_semi_temp(ctx, converted, arena_arr_len(converted));
         (void)eval_var_set_current(ctx, out_var, out);
@@ -540,7 +540,7 @@ static bool handle_convert(EvalExecContext *ctx, const Node *node, Cmake_Event_O
             String_View p = parts[i];
             if (normalize) p = cmk_path_normalize_temp(ctx, p);
             p = cmk_path_to_native_seps_temp(ctx, p);
-            if (!svu_list_push_temp(ctx, &converted, p)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (!svu_list_push_temp(ctx, &converted, p)) { if (eval_should_stop(ctx)) return false; return true; }
         }
 
         String_View out = cmk_path_join_char_list_temp(ctx, converted, native_list_sep);

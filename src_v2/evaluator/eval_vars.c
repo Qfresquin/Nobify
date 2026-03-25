@@ -424,7 +424,8 @@ static bool cache_promote_untyped_path_value_if_needed(EvalExecContext *ctx,
     String_View abs = eval_sv_path_join(eval_event_arena(ctx), cwd, entry->value.data);
     if (entry->value.data.count > 0 && abs.count == 0) return ctx_oom(ctx);
     entry->value.data = abs;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static Eval_Cache_Entry *cache_find(EvalExecContext *ctx, String_View key) {
@@ -459,7 +460,8 @@ static bool cache_upsert(EvalExecContext *ctx,
         entry->value.data = sv_copy_to_event_arena(ctx, value);
         entry->value.type = sv_copy_to_event_arena(ctx, type);
         entry->value.doc = sv_copy_to_event_arena(ctx, doc);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     char *stable_key = cache_copy_key_cstr(ctx, key);

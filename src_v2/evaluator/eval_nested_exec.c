@@ -86,7 +86,9 @@ static bool eval_lex_external_tokens(EvalExecContext *ctx,
         }
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 static bool eval_parse_external_ast(EvalExecContext *ctx,
@@ -94,7 +96,8 @@ static bool eval_parse_external_ast(EvalExecContext *ctx,
                                     Ast_Root *out_ast) {
     if (!ctx || !tokens || !out_ast) return false;
     *out_ast = parse_tokens(ctx->arena, *tokens);
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool eval_push_external_context(EvalExecContext *ctx,

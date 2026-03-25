@@ -233,7 +233,8 @@ static bool fetchcontent_upsert_state(EvalExecContext *ctx,
         state->populated = populated;
         state->source_dir = sv_copy_to_event_arena(ctx, source_dir);
         state->binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     Eval_FetchContent_State entry = {0};
@@ -353,7 +354,8 @@ static bool fetchcontent_clone_declaration_to_event(EvalExecContext *ctx,
     if (!fetchcontent_clone_list_to_event(ctx, &out_decl->args, src_decl->args)) return false;
     if (!fetchcontent_clone_list_to_event(ctx, &out_decl->find_package_args, src_decl->find_package_args)) return false;
     if (!fetchcontent_clone_list_to_event(ctx, &out_decl->git_submodules, src_decl->git_submodules)) return false;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool fetchcontent_try_find_mode_from_var(EvalExecContext *ctx,
@@ -384,13 +386,15 @@ static bool fetchcontent_store_single_value(EvalExecContext *ctx,
         value = eval_path_resolve_for_cmake_arg(ctx, value, fetchcontent_current_source_dir(ctx), false);
         decl->source_dir = value;
         decl->has_source_dir = true;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(keyword, "BINARY_DIR")) {
         value = eval_path_resolve_for_cmake_arg(ctx, value, fetchcontent_current_binary_dir(ctx), false);
         decl->binary_dir = value;
         decl->has_binary_dir = true;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(keyword, "SOURCE_SUBDIR")) {
         decl->source_subdir = value;
@@ -410,7 +414,8 @@ static bool fetchcontent_store_single_value(EvalExecContext *ctx,
         }
         decl->transport = EVAL_FETCHCONTENT_TRANSPORT_URL;
         decl->url = fetchcontent_resolve_local_like_path(ctx, value, fetchcontent_current_source_dir(ctx));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(keyword, "URL_HASH")) {
         decl->transport = decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
@@ -440,7 +445,8 @@ static bool fetchcontent_store_single_value(EvalExecContext *ctx,
         }
         decl->transport = EVAL_FETCHCONTENT_TRANSPORT_GIT;
         decl->git_repository = fetchcontent_resolve_local_like_path(ctx, value, fetchcontent_current_source_dir(ctx));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     if (eval_sv_eq_ci_lit(keyword, "GIT_TAG")) {
         decl->transport = decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
@@ -646,7 +652,8 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
                                        dependency_name);
         return false;
     }
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool fetchcontent_build_provider_args(EvalExecContext *ctx,
@@ -1147,7 +1154,9 @@ static bool fetchcontent_populate_content(EvalExecContext *ctx,
         }
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 static bool fetchcontent_invoke_dependency_provider(EvalExecContext *ctx,
@@ -1185,7 +1194,8 @@ static bool fetchcontent_invoke_dependency_provider(EvalExecContext *ctx,
 
     Eval_FetchContent_State *state = fetchcontent_find_state(ctx, decl->canonical_name);
     if (state && state->populated) *out_populated = true;
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool fetchcontent_makeavailable_one(EvalExecContext *ctx,

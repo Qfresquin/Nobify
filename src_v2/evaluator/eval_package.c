@@ -1141,7 +1141,9 @@ static bool find_package_execute_resolved_artifacts(EvalExecContext *ctx,
         }
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 static void find_package_finalize_found_var(EvalExecContext *ctx,
@@ -1201,7 +1203,9 @@ static bool find_package_invoke_dependency_provider(EvalExecContext *ctx,
         if (out_found_path->count == 0) *out_found_path = eval_var_get_visible(ctx, dir_key);
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 static void find_package_emit_result(EvalExecContext *ctx,

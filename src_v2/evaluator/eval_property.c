@@ -301,7 +301,9 @@ bool eval_target_apply_defined_initializers(EvalExecContext *ctx,
         }
     }
 
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+
+    return true;
 }
 
 bool eval_property_write(EvalExecContext *ctx,
@@ -585,7 +587,8 @@ bool eval_property_query(EvalExecContext *ctx,
                                                "dispatcher",
                                                nob_sv_from_cstr("get_property(TARGET ...) target was not declared"),
                                                validated_name);
-                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+                if (eval_should_stop(ctx)) return false;
+                return true;
             }
         } else if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
             if (!eval_cache_defined(ctx, validated_name)) {
@@ -597,7 +600,8 @@ bool eval_property_query(EvalExecContext *ctx,
                                                "dispatcher",
                                                nob_sv_from_cstr("get_property(CACHE ...) cache entry does not exist"),
                                                validated_name);
-                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+                if (eval_should_stop(ctx)) return false;
+                return true;
             }
         } else if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
             String_View test_dir =
@@ -612,7 +616,8 @@ bool eval_property_query(EvalExecContext *ctx,
                     "dispatcher",
                     nob_sv_from_cstr("get_property(TEST ...) test was not declared in selected directory scope"),
                     validated_name);
-                return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+                if (eval_should_stop(ctx)) return false;
+                return true;
             }
         }
     }

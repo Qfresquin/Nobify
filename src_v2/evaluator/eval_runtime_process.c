@@ -111,7 +111,8 @@ bool eval_process_env_set(EvalExecContext *ctx, String_View name, String_View va
     if (entry) {
         entry->value.text = sv_copy_to_event_arena(ctx, value);
         entry->value.is_set = true;
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     String_View stable_key = eval_process_env_key_sv_event(ctx, name);

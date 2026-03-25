@@ -218,14 +218,16 @@ static bool string_json_emit_or_store_error(EvalExecContext *ctx,
                                             String_View message,
                                             String_View *path,
                                             size_t path_prefix_count) {
-    if (!ctx || !node) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!ctx || !node) { if (eval_should_stop(ctx)) return false; return true; }
     if (has_error_var) {
         (void)eval_var_set_current(ctx, out_var, string_json_notfound_temp(ctx, path, path_prefix_count));
         (void)eval_var_set_current(ctx, error_var, message);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
     EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "string", message, nob_sv_from_cstr(""));
-    return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static String_Json_Value *string_jsonv_new(EvalExecContext *ctx, String_Json_Type type) {
@@ -646,10 +648,11 @@ static bool string_handle_json_command(EvalExecContext *ctx,
                                        const Node *node,
                                        Cmake_Event_Origin o,
                                        SV_List a) {
-    if (!ctx || !node) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+    if (!ctx || !node) { if (eval_should_stop(ctx)) return false; return true; }
     if (arena_arr_len(a) < 4) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "string", nob_sv_from_cstr("string(JSON) requires out-var, mode and JSON string"), nob_sv_from_cstr("Usage: string(JSON <out-var> [ERROR_VARIABLE <err-var>] <mode> <json> ...)"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     size_t pos = 1;
@@ -659,7 +662,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
     if (pos < arena_arr_len(a) && eval_sv_eq_ci_lit(a[pos], "ERROR_VARIABLE")) {
         if (pos + 1 >= arena_arr_len(a)) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "string", nob_sv_from_cstr("string(JSON ERROR_VARIABLE) requires output variable"), nob_sv_from_cstr("Usage: string(JSON <out-var> ERROR_VARIABLE <err-var> <mode> <json> ...)"));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         has_error_var = true;
         error_var = a[pos + 1];
@@ -701,7 +705,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var, err, NULL, 0);
         }
         (void)eval_var_set_current(ctx, out_var, string_jsonv_equal(lhs, rhs) ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (pos >= arena_arr_len(a)) {
@@ -736,11 +741,13 @@ static bool string_handle_json_command(EvalExecContext *ctx,
             } else {
                 (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, target));
             }
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         if (eval_sv_eq_ci_lit(mode, "TYPE")) {
             (void)eval_var_set_current(ctx, out_var, string_json_type_name(target->type));
-            return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+            if (eval_should_stop(ctx)) return false;
+            return true;
         }
         if (target->type != STRING_JSON_OBJECT && target->type != STRING_JSON_ARRAY) {
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
@@ -750,7 +757,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
         char num[64];
         snprintf(num, sizeof(num), "%zu", target->type == STRING_JSON_ARRAY ? target->array_count : target->object_count);
         (void)eval_var_set_current(ctx, out_var, nob_sv_from_cstr(num));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (eval_sv_eq_ci_lit(mode, "MEMBER")) {
@@ -778,7 +786,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
                                                    path, path_count);
         }
         (void)eval_var_set_current(ctx, out_var, target->object_items[idx].key);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (eval_sv_eq_ci_lit(mode, "REMOVE")) {
@@ -815,7 +824,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
                                                    path, path_count - 1);
         }
         (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     if (eval_sv_eq_ci_lit(mode, "SET")) {
@@ -841,7 +851,7 @@ static bool string_handle_json_command(EvalExecContext *ctx,
             if (string_jsonv_object_find(parent, key_or_index, &idx)) {
                 parent->object_items[idx].value = new_value;
             } else {
-                if (!string_jsonv_object_push(ctx, parent, key_or_index, new_value)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+                if (!string_jsonv_object_push(ctx, parent, key_or_index, new_value)) { if (eval_should_stop(ctx)) return false; return true; }
             }
         } else if (parent->type == STRING_JSON_ARRAY) {
             size_t idx = 0;
@@ -853,7 +863,7 @@ static bool string_handle_json_command(EvalExecContext *ctx,
             if (idx < parent->array_count) {
                 parent->array_items[idx] = new_value;
             } else {
-                if (!string_jsonv_array_push(ctx, parent, new_value)) return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+                if (!string_jsonv_array_push(ctx, parent, new_value)) { if (eval_should_stop(ctx)) return false; return true; }
             }
         } else {
             return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,
@@ -861,7 +871,8 @@ static bool string_handle_json_command(EvalExecContext *ctx,
                                                    path, path_count - 2);
         }
         (void)eval_var_set_current(ctx, out_var, string_jsonv_serialize_temp(ctx, root));
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     return string_json_emit_or_store_error(ctx, node, o, has_error_var, error_var, out_var,

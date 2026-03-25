@@ -1247,7 +1247,8 @@ bool eval_cache_set(EvalExecContext *ctx,
         entry->value.type = sv_copy_to_event_arena(ctx, type);
         if (eval_should_stop(ctx)) return false;
         entry->value.doc = sv_copy_to_event_arena(ctx, doc);
-        return !eval_result_is_fatal(eval_result_from_ctx(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
     }
 
     char *stable_key = eval_copy_key_cstr_event(ctx, key);
