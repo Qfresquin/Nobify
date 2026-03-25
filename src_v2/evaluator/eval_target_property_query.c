@@ -20,7 +20,7 @@ typedef struct {
     String_View inherit_dir;
     Eval_Property_Query_Mode mode;
     bool validate_object;
-    bool missing_as_notfound;
+    Eval_Property_Query_Missing_Behavior missing_behavior;
     bool unset_as_empty;
 } Property_Query_Request;
 
@@ -58,6 +58,26 @@ typedef struct {
     String_View property_name;
 } Property_Triplet_Request;
 
+typedef struct {
+    String_View out_var;
+    String_View source_name;
+    String_View object_id;
+    String_View property_name;
+    String_View inherit_dir;
+} Get_Source_File_Property_Request;
+
+typedef struct {
+    String_View out_var;
+    String_View test_name;
+    String_View object_id;
+    String_View property_name;
+    String_View inherit_dir;
+} Get_Test_Property_Request;
+
+static bool property_query_set_literal_notfound(EvalExecContext *ctx, String_View out_var) {
+    return eval_var_set_current(ctx, out_var, nob_sv_from_cstr("NOTFOUND"));
+}
+
 static bool target_get_declared_dir_temp(EvalExecContext *ctx,
                                          String_View target_name,
                                          String_View *out_dir) {
@@ -82,7 +102,7 @@ static bool property_query_request_execute(EvalExecContext *ctx,
                              req->mode,
                              req->inherit_dir,
                              req->validate_object,
-                             req->missing_as_notfound)) {
+                             req->missing_behavior)) {
         return false;
     }
     if (req->unset_as_empty && !eval_var_defined_visible(ctx, req->out_var)) {
@@ -185,17 +205,23 @@ static bool get_property_parse_directory_scope(EvalExecContext *ctx,
                                                const Node *node,
                                                Get_Property_Request *out_req) {
     String_View cur_src = eval_current_source_dir_for_paths(ctx);
-    if (out_req->object_token.count == 0) out_req->object_id = cur_src;
-    else out_req->object_id =
-             eval_path_resolve_for_cmake_arg(ctx, out_req->object_token, cur_src, true);
-    if (eval_should_stop(ctx)) return false;
+    if (out_req->object_token.count == 0) {
+        out_req->object_id = cur_src;
+    } else {
+        String_View resolved =
+            eval_path_resolve_for_cmake_arg(ctx, out_req->object_token, cur_src, true);
+        if (eval_should_stop(ctx)) return false;
 
-    if (out_req->object_token.count > 0 && !eval_directory_is_known(ctx, out_req->object_id)) {
-        property_diag_unknown_directory(ctx,
-                                        node,
-                                        nob_sv_from_cstr("get_property(DIRECTORY ...) directory is not known"),
-                                        out_req->object_id);
-        return false;
+        String_View known_source_dir = eval_directory_known_source_dir_temp(ctx, resolved);
+        if (eval_should_stop(ctx)) return false;
+        if (known_source_dir.count == 0) {
+            property_diag_unknown_directory(ctx,
+                                            node,
+                                            nob_sv_from_cstr("get_property(DIRECTORY ...) directory is not known"),
+                                            resolved);
+            return false;
+        }
+        out_req->object_id = known_source_dir;
     }
 
     out_req->inherit_dir = out_req->object_id;
@@ -223,15 +249,17 @@ static bool get_property_parse_source_scope(EvalExecContext *ctx,
                 return false;
             }
 
-            out_req->inherit_dir =
+            String_View resolved_dir =
                 eval_path_resolve_for_cmake_arg(ctx, args[i + 1], cur_src, true);
             if (eval_should_stop(ctx)) return false;
-            if (!eval_directory_is_known(ctx, out_req->inherit_dir)) {
+            out_req->inherit_dir = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+            if (eval_should_stop(ctx)) return false;
+            if (out_req->inherit_dir.count == 0) {
                 property_diag_unknown_directory(
                     ctx,
                     node,
                     nob_sv_from_cstr("get_property(SOURCE DIRECTORY ...) directory is not known"),
-                    out_req->inherit_dir);
+                    resolved_dir);
                 return false;
             }
 
@@ -262,8 +290,8 @@ static bool get_property_parse_source_scope(EvalExecContext *ctx,
             if (!target_get_declared_dir_temp(ctx, target_name, &out_req->inherit_dir)) return false;
             if (eval_should_stop(ctx)) return false;
 
-            out_req->object_id =
-                eval_property_scoped_object_id_temp(ctx, "TARGET_DIRECTORY", target_name, out_req->object_token);
+            out_req->object_id = eval_property_scoped_object_id_temp(
+                ctx, "DIRECTORY", out_req->inherit_dir, out_req->object_token);
             if (eval_should_stop(ctx)) return false;
 
             saw_source_target_dir_clause = true;
@@ -312,15 +340,17 @@ static bool get_property_parse_test_scope(EvalExecContext *ctx,
             return false;
         }
 
-        out_req->inherit_dir =
+        String_View resolved_dir =
             eval_path_resolve_for_cmake_arg(ctx, args[i + 1], cur_src, true);
         if (eval_should_stop(ctx)) return false;
-        if (!eval_directory_is_known(ctx, out_req->inherit_dir)) {
+        out_req->inherit_dir = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+        if (eval_should_stop(ctx)) return false;
+        if (out_req->inherit_dir.count == 0) {
             property_diag_unknown_directory(
                 ctx,
                 node,
                 nob_sv_from_cstr("get_property(TEST DIRECTORY ...) directory is not known"),
-                out_req->inherit_dir);
+                resolved_dir);
             return false;
         }
 
@@ -471,15 +501,17 @@ static bool get_directory_property_parse_request(EvalExecContext *ctx,
             return false;
         }
 
-        out_req->directory =
+        String_View resolved_dir =
             eval_path_resolve_for_cmake_arg(ctx, args[i + 1], out_req->directory, true);
         if (eval_should_stop(ctx)) return false;
-        if (!eval_directory_is_known(ctx, out_req->directory)) {
+        out_req->directory = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+        if (eval_should_stop(ctx)) return false;
+        if (out_req->directory.count == 0) {
             property_diag_unknown_directory(
                 ctx,
                 node,
                 nob_sv_from_cstr("get_directory_property(DIRECTORY ...) directory is not known"),
-                out_req->directory);
+                resolved_dir);
             return false;
         }
         i += 2;
@@ -566,6 +598,143 @@ static bool property_triplet_parse_request(EvalExecContext *ctx,
     return true;
 }
 
+static bool get_source_file_property_parse_request(EvalExecContext *ctx,
+                                                   const Node *node,
+                                                   Cmake_Event_Origin origin,
+                                                   SV_List args,
+                                                   Get_Source_File_Property_Request *out_req) {
+    if (arena_arr_len(args) != 3 && arena_arr_len(args) != 5) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_MISSING_REQUIRED,
+            "dispatcher",
+            nob_sv_from_cstr("get_source_file_property() expects output variable, source, optional scope override and property"),
+            nob_sv_from_cstr("Usage: get_source_file_property(<var> <source> [DIRECTORY <dir> | TARGET_DIRECTORY <target>] <property>)"));
+        return false;
+    }
+
+    *out_req = (Get_Source_File_Property_Request){
+        .out_var = args[0],
+        .source_name = args[1],
+        .object_id = args[1],
+        .property_name = args[arena_arr_len(args) - 1],
+        .inherit_dir = eval_current_source_dir_for_paths(ctx),
+    };
+
+    if (arena_arr_len(args) == 3) return true;
+
+    if (eval_sv_eq_ci_lit(args[2], "DIRECTORY")) {
+        String_View resolved_dir =
+            eval_path_resolve_for_cmake_arg(ctx, args[3], out_req->inherit_dir, true);
+        if (eval_should_stop(ctx)) return false;
+        out_req->inherit_dir = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+        if (eval_should_stop(ctx)) return false;
+        if (out_req->inherit_dir.count == 0) {
+            property_diag_unknown_directory(
+                ctx,
+                node,
+                nob_sv_from_cstr("get_source_file_property(DIRECTORY ...) directory is not known"),
+                resolved_dir);
+            return false;
+        }
+        out_req->object_id = eval_property_scoped_object_id_temp(
+            ctx, "DIRECTORY", out_req->inherit_dir, out_req->source_name);
+        return !eval_should_stop(ctx);
+    }
+
+    if (!eval_sv_eq_ci_lit(args[2], "TARGET_DIRECTORY")) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_UNEXPECTED_ARGUMENT,
+            "dispatcher",
+            nob_sv_from_cstr("get_source_file_property() received an unknown scope override"),
+            args[2]);
+        return false;
+    }
+
+    if (!eval_target_known(ctx, args[3])) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       origin,
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_NOT_FOUND,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("get_source_file_property(TARGET_DIRECTORY ...) target was not declared"),
+                                       args[3]);
+        return false;
+    }
+    if (!target_get_declared_dir_temp(ctx, args[3], &out_req->inherit_dir)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    out_req->object_id = eval_property_scoped_object_id_temp(
+        ctx, "DIRECTORY", out_req->inherit_dir, out_req->source_name);
+    return !eval_should_stop(ctx);
+}
+
+static bool get_test_property_parse_request(EvalExecContext *ctx,
+                                            const Node *node,
+                                            Cmake_Event_Origin origin,
+                                            SV_List args,
+                                            Get_Test_Property_Request *out_req) {
+    if (arena_arr_len(args) != 3 && arena_arr_len(args) != 5) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
+            ctx,
+            node,
+            origin,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_MISSING_REQUIRED,
+            "dispatcher",
+            nob_sv_from_cstr("get_test_property() expects test, property, optional DIRECTORY clause and output variable"),
+            nob_sv_from_cstr("Usage: get_test_property(<test> <property> [DIRECTORY <dir>] <var>)"));
+        return false;
+    }
+
+    *out_req = (Get_Test_Property_Request){
+        .out_var = args[arena_arr_len(args) - 1],
+        .test_name = args[0],
+        .object_id = args[0],
+        .property_name = args[1],
+        .inherit_dir = eval_current_source_dir_for_paths(ctx),
+    };
+
+    if (arena_arr_len(args) == 3) return true;
+    if (!eval_sv_eq_ci_lit(args[2], "DIRECTORY")) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       origin,
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_UNEXPECTED_ARGUMENT,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("get_test_property() received an invalid DIRECTORY clause"),
+                                       args[2]);
+        return false;
+    }
+
+    String_View resolved_dir =
+        eval_path_resolve_for_cmake_arg(ctx, args[3], out_req->inherit_dir, true);
+    if (eval_should_stop(ctx)) return false;
+    out_req->inherit_dir = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+    if (eval_should_stop(ctx)) return false;
+    if (out_req->inherit_dir.count == 0) {
+        property_diag_unknown_directory(
+            ctx,
+            node,
+            nob_sv_from_cstr("get_test_property(DIRECTORY ...) directory is not known"),
+            resolved_dir);
+        return false;
+    }
+
+    out_req->object_id =
+        eval_property_scoped_object_id_temp(ctx, "DIRECTORY", out_req->inherit_dir, out_req->test_name);
+    return !eval_should_stop(ctx);
+}
+
 Eval_Result eval_handle_get_property(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
@@ -585,8 +754,8 @@ Eval_Result eval_handle_get_property(EvalExecContext *ctx, const Node *node) {
         .inherit_dir = req.inherit_dir,
         .mode = req.mode,
         .validate_object = true,
-        .missing_as_notfound = false,
-        .unset_as_empty = false,
+        .missing_behavior = EVAL_PROP_QUERY_MISSING_UNSET,
+        .unset_as_empty = true,
     };
     if (!property_query_request_execute(ctx, node, origin, &query)) {
         return eval_result_from_ctx(ctx);
@@ -633,7 +802,7 @@ Eval_Result eval_handle_get_directory_property(EvalExecContext *ctx, const Node 
         .inherit_dir = req.directory,
         .mode = EVAL_PROP_QUERY_VALUE,
         .validate_object = false,
-        .missing_as_notfound = false,
+        .missing_behavior = EVAL_PROP_QUERY_MISSING_UNSET,
         .unset_as_empty = true,
     };
     if (!property_query_request_execute(ctx, node, origin, &query)) {
@@ -648,28 +817,21 @@ Eval_Result eval_handle_get_source_file_property(EvalExecContext *ctx, const Nod
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    Property_Triplet_Request req = {0};
-    if (!property_triplet_parse_request(
-            ctx,
-            node,
-            origin,
-            args,
-            nob_sv_from_cstr("get_source_file_property() expects output variable, source and property"),
-            nob_sv_from_cstr("Usage: get_source_file_property(<var> <source> <property>)"),
-            &req)) {
+    Get_Source_File_Property_Request req = {0};
+    if (!get_source_file_property_parse_request(ctx, node, origin, args, &req)) {
         return eval_result_from_ctx(ctx);
     }
 
     Property_Query_Request query = {
         .out_var = req.out_var,
         .scope_upper = nob_sv_from_cstr("SOURCE"),
-        .object_id = req.object_name,
-        .validation_object = req.object_name,
+        .object_id = req.object_id,
+        .validation_object = req.source_name,
         .property_name = req.property_name,
-        .inherit_dir = eval_current_source_dir_for_paths(ctx),
+        .inherit_dir = req.inherit_dir,
         .mode = EVAL_PROP_QUERY_VALUE,
         .validate_object = false,
-        .missing_as_notfound = true,
+        .missing_behavior = EVAL_PROP_QUERY_MISSING_LITERAL_NOTFOUND,
         .unset_as_empty = false,
     };
     if (!property_query_request_execute(ctx, node, origin, &query)) {
@@ -716,7 +878,7 @@ Eval_Result eval_handle_get_target_property(EvalExecContext *ctx, const Node *no
         .inherit_dir = nob_sv_from_cstr(""),
         .mode = EVAL_PROP_QUERY_VALUE,
         .validate_object = false,
-        .missing_as_notfound = true,
+        .missing_behavior = EVAL_PROP_QUERY_MISSING_VAR_NOTFOUND,
         .unset_as_empty = false,
     };
     if (!property_query_request_execute(ctx, node, origin, &query)) {
@@ -731,42 +893,25 @@ Eval_Result eval_handle_get_test_property(EvalExecContext *ctx, const Node *node
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    Property_Triplet_Request req = {0};
-    if (!property_triplet_parse_request(
-            ctx,
-            node,
-            origin,
-            args,
-            nob_sv_from_cstr("get_test_property() expects output variable, test and property"),
-            nob_sv_from_cstr("Usage: get_test_property(<var> <test> <property>)"),
-            &req)) {
+    Get_Test_Property_Request req = {0};
+    if (!get_test_property_parse_request(ctx, node, origin, args, &req)) {
         return eval_result_from_ctx(ctx);
     }
 
-    String_View test_dir = eval_current_source_dir_for_paths(ctx);
-    if (!eval_test_exists_in_directory_scope(ctx, req.object_name, test_dir)) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(
-            ctx,
-            node,
-            origin,
-            EV_DIAG_ERROR,
-            EVAL_DIAG_NOT_FOUND,
-            "dispatcher",
-            nob_sv_from_cstr("get_test_property() test was not declared in current directory scope"),
-            req.object_name);
-        return eval_result_from_ctx(ctx);
+    if (!eval_test_exists_in_directory_scope(ctx, req.test_name, req.inherit_dir)) {
+        return eval_result_from_bool(property_query_set_literal_notfound(ctx, req.out_var));
     }
 
     Property_Query_Request query = {
         .out_var = req.out_var,
         .scope_upper = nob_sv_from_cstr("TEST"),
-        .object_id = req.object_name,
-        .validation_object = req.object_name,
+        .object_id = req.object_id,
+        .validation_object = req.test_name,
         .property_name = req.property_name,
-        .inherit_dir = test_dir,
+        .inherit_dir = req.inherit_dir,
         .mode = EVAL_PROP_QUERY_VALUE,
         .validate_object = false,
-        .missing_as_notfound = true,
+        .missing_behavior = EVAL_PROP_QUERY_MISSING_LITERAL_NOTFOUND,
         .unset_as_empty = false,
     };
     if (!property_query_request_execute(ctx, node, origin, &query)) {

@@ -91,6 +91,18 @@ static const Eval_Directory_Node *eval_directory_find_node_const(const EvalExecC
     return NULL;
 }
 
+static const Eval_Directory_Node *eval_directory_find_node_by_binary_dir_const(const EvalExecContext *ctx,
+                                                                               String_View binary_dir) {
+    if (!ctx || binary_dir.count == 0) return NULL;
+    const Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
+    for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
+        const Eval_Directory_Node *node = &graph->nodes[i];
+        if (node->binary_dir.count == 0) continue;
+        if (svu_eq_ci_sv(node->binary_dir, binary_dir)) return node;
+    }
+    return NULL;
+}
+
 static bool eval_directory_list_append_unique(EvalExecContext *ctx, SV_List *list, String_View value) {
     if (!ctx || !list || value.count == 0) return false;
     for (size_t i = 0; i < arena_arr_len(*list); i++) {
@@ -199,6 +211,22 @@ bool eval_directory_is_known(EvalExecContext *ctx, String_View dir) {
     if (normalized.count == 0) return false;
 
     return eval_directory_find_node_const(ctx, normalized) != NULL;
+}
+
+String_View eval_directory_known_source_dir_temp(EvalExecContext *ctx, String_View dir) {
+    if (!ctx || dir.count == 0) return nob_sv_from_cstr("");
+
+    String_View normalized = eval_sv_path_normalize_temp(ctx, dir);
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    if (normalized.count == 0) return nob_sv_from_cstr("");
+
+    const Eval_Directory_Node *node = eval_directory_find_node_const(ctx, normalized);
+    if (node) return node->source_dir;
+
+    node = eval_directory_find_node_by_binary_dir_const(ctx, normalized);
+    if (node) return node->source_dir;
+
+    return nob_sv_from_cstr("");
 }
 
 bool eval_directory_parent(EvalExecContext *ctx, String_View source_dir, String_View *out_parent_source_dir) {

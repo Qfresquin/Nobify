@@ -164,10 +164,14 @@ Eval_Result eval_handle_set_source_files_properties(EvalExecContext *ctx, const 
         }
 
         for (size_t ti = 0; ti < arena_arr_len(target_dirs); ti++) {
-            String_View object_id = eval_property_scoped_object_id_temp(ctx,
-                                                                        "TARGET_DIRECTORY",
-                                                                        target_dirs[ti],
-                                                                        files[fi]);
+            String_View declared_dir = nob_sv_from_cstr("");
+            if (!eval_target_declared_dir(ctx, target_dirs[ti], &declared_dir)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+            String_View object_id =
+                eval_property_scoped_object_id_temp(ctx, "DIRECTORY", declared_dir, files[fi]);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
             for (size_t pi = i; pi + 1 < arena_arr_len(a); pi += 2) {
                 if (!eval_property_write(ctx,
@@ -529,25 +533,52 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
 
     {
         String_View cur_src = eval_current_source_dir_for_paths(ctx);
+        if (is_dir_scope) {
+            for (size_t oi = 0; oi < arena_arr_len(objects); oi++) {
+                String_View resolved_dir =
+                    eval_path_resolve_for_cmake_arg(ctx, objects[oi], cur_src, true);
+                if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+                String_View known_source_dir = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+                if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+                if (known_source_dir.count == 0) {
+                    property_diag_unknown_directory(ctx,
+                                                    node,
+                                                    nob_sv_from_cstr("set_property(DIRECTORY ...) directory is not known"),
+                                                    resolved_dir);
+                    return eval_result_from_ctx(ctx);
+                }
+
+                objects[oi] = known_source_dir;
+            }
+        }
         for (size_t di = 0; di < arena_arr_len(source_dirs); di++) {
-            source_dirs[di] = eval_path_resolve_for_cmake_arg(ctx, source_dirs[di], cur_src, true);
+            String_View resolved_dir =
+                eval_path_resolve_for_cmake_arg(ctx, source_dirs[di], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-            if (!eval_directory_is_known(ctx, source_dirs[di])) {
+
+            source_dirs[di] = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            if (source_dirs[di].count == 0) {
                 property_diag_unknown_directory(ctx,
                                                 node,
                                                 nob_sv_from_cstr("set_property(SOURCE DIRECTORY ...) directory is not known"),
-                                                source_dirs[di]);
+                                                resolved_dir);
                 return eval_result_from_ctx(ctx);
             }
         }
         for (size_t di = 0; di < arena_arr_len(test_dirs); di++) {
-            test_dirs[di] = eval_path_resolve_for_cmake_arg(ctx, test_dirs[di], cur_src, true);
+            String_View resolved_dir =
+                eval_path_resolve_for_cmake_arg(ctx, test_dirs[di], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-            if (!eval_directory_is_known(ctx, test_dirs[di])) {
+
+            test_dirs[di] = eval_directory_known_source_dir_temp(ctx, resolved_dir);
+            if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+            if (test_dirs[di].count == 0) {
                 property_diag_unknown_directory(ctx,
                                                 node,
                                                 nob_sv_from_cstr("set_property(TEST DIRECTORY ...) directory is not known"),
-                                                test_dirs[di]);
+                                                resolved_dir);
                 return eval_result_from_ctx(ctx);
             }
         }
@@ -669,10 +700,14 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                     }
                 }
                 for (size_t ti = 0; ti < arena_arr_len(source_target_dirs); ti++) {
-                    String_View object_id = eval_property_scoped_object_id_temp(ctx,
-                                                                                "TARGET_DIRECTORY",
-                                                                                source_target_dirs[ti],
-                                                                                objects[oi]);
+                    String_View declared_dir = nob_sv_from_cstr("");
+                    if (!eval_target_declared_dir(ctx, source_target_dirs[ti], &declared_dir)) {
+                        return eval_result_from_ctx(ctx);
+                    }
+                    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+
+                    String_View object_id = eval_property_scoped_object_id_temp(
+                        ctx, "DIRECTORY", declared_dir, objects[oi]);
                     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
                     if (!eval_property_write(ctx,
                                              o,

@@ -227,6 +227,12 @@ typedef enum {
     EVAL_PROP_QUERY_FULL_DOCS,
 } Eval_Property_Query_Mode;
 
+typedef enum {
+    EVAL_PROP_QUERY_MISSING_UNSET = 0,
+    EVAL_PROP_QUERY_MISSING_VAR_NOTFOUND,
+    EVAL_PROP_QUERY_MISSING_LITERAL_NOTFOUND,
+} Eval_Property_Query_Missing_Behavior;
+
 typedef struct {
     Cmake_Event_Origin origin;
     String_View id;
@@ -2128,7 +2134,7 @@ bool eval_property_query(EvalExecContext *ctx,
                          Eval_Property_Query_Mode mode,
                          String_View inherit_directory,
                          bool validate_object,
-                         bool missing_as_notfound);
+                         Eval_Property_Query_Missing_Behavior missing_behavior);
 bool eval_property_query_cmake(EvalExecContext *ctx,
                                const Node *node,
                                Event_Origin origin,
@@ -2175,6 +2181,7 @@ bool eval_sv_key_eq(String_View a, String_View b);
 bool eval_sv_eq_ci_lit(String_View a, const char *lit);
 bool eval_directory_register_known(EvalExecContext *ctx, String_View dir);
 bool eval_directory_is_known(EvalExecContext *ctx, String_View dir);
+String_View eval_directory_known_source_dir_temp(EvalExecContext *ctx, String_View dir);
 String_View eval_test_scoped_marker_key_temp(EvalExecContext *ctx,
                                              String_View scope_dir,
                                              String_View test_name);

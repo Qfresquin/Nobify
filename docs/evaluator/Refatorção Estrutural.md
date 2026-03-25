@@ -133,7 +133,7 @@ Snapshot status (March 19, 2026):
 - Flow control (`break` / `continue` / `return`) is modeled on execution frames instead of global run booleans.
 - Registry mutation is blocked during `eval_session_run(...)`.
 - `test_v2/evaluator`, `test_v2/pipeline`, `test_v2/codegen`, and `src_v2/app` no longer include evaluator internals and now use the public session/request API.
-- `docs/evaluator/evaluator_coverage_matrix.md` reports `103` `FULL`, `32` `PARTIAL`, `0` `MISSING`, `0` native-tag divergences, and no remaining `artifact-critical` partial rows in this snapshot.
+- `docs/evaluator/evaluator_coverage_matrix.md` reports `107` `FULL`, `28` `PARTIAL`, `0` `MISSING`, `0` native-tag divergences, and no remaining `artifact-critical` partial rows in this snapshot.
 - The remaining evaluator gaps are semantic coverage limits on typed request/canonical execution paths, not architectural drift from the target pipeline.
 
 ## 5. Temporary Compatibility Policy

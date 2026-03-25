@@ -541,7 +541,7 @@ bool eval_property_query(EvalExecContext *ctx,
                          Eval_Property_Query_Mode mode,
                          String_View inherit_directory,
                          bool validate_object,
-                         bool missing_as_notfound) {
+                         Eval_Property_Query_Missing_Behavior missing_behavior) {
     if (!ctx || !node) return false;
 
     const Eval_Property_Definition *def =
@@ -562,7 +562,7 @@ bool eval_property_query(EvalExecContext *ctx,
     }
 
     if (mode == EVAL_PROP_QUERY_BRIEF_DOCS || mode == EVAL_PROP_QUERY_FULL_DOCS) {
-        if (!def) return set_output_var_notfound(ctx, out_var);
+        if (!def) return set_output_var_literal_notfound(ctx, out_var);
         if (mode == EVAL_PROP_QUERY_BRIEF_DOCS) {
             return set_output_var_value(ctx,
                                         out_var,
@@ -632,7 +632,12 @@ bool eval_property_query(EvalExecContext *ctx,
     }
 
     if (!have) {
-        if (missing_as_notfound) return set_output_var_notfound(ctx, out_var);
+        if (missing_behavior == EVAL_PROP_QUERY_MISSING_VAR_NOTFOUND) {
+            return set_output_var_notfound(ctx, out_var);
+        }
+        if (missing_behavior == EVAL_PROP_QUERY_MISSING_LITERAL_NOTFOUND) {
+            return set_output_var_literal_notfound(ctx, out_var);
+        }
         return eval_var_unset_current(ctx, out_var);
     }
     return set_output_var_value(ctx, out_var, value);
@@ -726,7 +731,7 @@ bool eval_property_query_cmake(EvalExecContext *ctx,
                              EVAL_PROP_QUERY_VALUE,
                              nob_sv_from_cstr(""),
                              false,
-                             false)) {
+                             EVAL_PROP_QUERY_MISSING_UNSET)) {
         return false;
     }
     if (!eval_var_defined_visible(ctx, out_var)) return set_output_var_literal_notfound(ctx, out_var);

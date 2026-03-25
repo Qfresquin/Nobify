@@ -627,7 +627,7 @@ TEST(evaluator_set_property_source_test_directory_clauses_parse_and_apply) {
             saw_source_dir_var_set = true;
         } else if (nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("CXX")) &&
                    nob_sv_eq(ev->as.var_set.key,
-                             nob_sv_from_cstr("NOBIFY_PROPERTY_SOURCE::TARGET_DIRECTORY::src_t::bar.c::LANGUAGE"))) {
+                             nob_sv_from_cstr("NOBIFY_PROPERTY_SOURCE::DIRECTORY::.::bar.c::LANGUAGE"))) {
             saw_source_target_dir_var_set = true;
         } else if (nob_sv_eq(ev->as.var_set.value, nob_sv_from_cstr("fast")) &&
                    nob_sv_eq(ev->as.var_set.key,
@@ -794,6 +794,8 @@ TEST(evaluator_get_property_core_queries_and_directory_wrappers) {
         "get_property(GP_DEF GLOBAL PROPERTY BATCH_DOC DEFINED)\n"
         "get_property(GP_BRIEF GLOBAL PROPERTY BATCH_DOC BRIEF_DOCS)\n"
         "get_property(GP_FULL GLOBAL PROPERTY BATCH_DOC FULL_DOCS)\n"
+        "get_property(GP_MISSING GLOBAL PROPERTY UNKNOWN_BATCH_PROP)\n"
+        "get_property(GP_MISSING_DOC GLOBAL PROPERTY UNKNOWN_BATCH_PROP BRIEF_DOCS)\n"
         "get_property(GP_INH DIRECTORY PROPERTY INHERITED_DIR)\n"
         "get_directory_property(GP_DIR BATCH_DIR_PROP)\n"
         "get_directory_property(GP_DEFVAR DEFINITION SCOPE_VAR)\n");
@@ -807,6 +809,9 @@ TEST(evaluator_get_property_core_queries_and_directory_wrappers) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_DEF")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_BRIEF")), nob_sv_from_cstr("short_doc")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_FULL")), nob_sv_from_cstr("long_doc")));
+    ASSERT(eval_test_var_defined(ctx, nob_sv_from_cstr("GP_MISSING")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_MISSING")), nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_MISSING_DOC")), nob_sv_from_cstr("NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_INH")), nob_sv_from_cstr("inherited_global")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_DIR")), nob_sv_from_cstr("dir_value")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GP_DEFVAR")), nob_sv_from_cstr("scope_value")));
@@ -846,9 +851,13 @@ TEST(evaluator_get_property_target_source_and_test_wrappers) {
         "get_target_property(TGT_OK batch_target CUSTOM_TGT)\n"
         "get_target_property(TGT_MISS batch_target UNKNOWN_TGT)\n"
         "get_source_file_property(SRC_OK main.c SRC_FLAG)\n"
+        "get_source_file_property(SRC_DIR main.c DIRECTORY . SRC_FLAG)\n"
+        "get_source_file_property(SRC_TGT_DIR main.c TARGET_DIRECTORY batch_target SRC_FLAG)\n"
         "get_source_file_property(SRC_MISS main.c UNKNOWN_SRC)\n"
         "get_property(TEST_OK TEST batch_test DIRECTORY . PROPERTY LABELS)\n"
-        "get_test_property(TEST_MISS batch_test UNKNOWN_TEST)\n");
+        "get_test_property(batch_test LABELS DIRECTORY . TEST_DIR_OK)\n"
+        "get_test_property(batch_test UNKNOWN_TEST TEST_MISS)\n"
+        "get_test_property(missing_test LABELS TEST_UNDECLARED)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
@@ -858,9 +867,13 @@ TEST(evaluator_get_property_target_source_and_test_wrappers) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TGT_OK")), nob_sv_from_cstr("hello")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TGT_MISS")), nob_sv_from_cstr("TGT_MISS-NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_OK")), nob_sv_from_cstr("yes")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_MISS")), nob_sv_from_cstr("SRC_MISS-NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_DIR")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_TGT_DIR")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_MISS")), nob_sv_from_cstr("NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_OK")), nob_sv_from_cstr("fast")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_MISS")), nob_sv_from_cstr("TEST_MISS-NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_DIR_OK")), nob_sv_from_cstr("fast")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_MISS")), nob_sv_from_cstr("NOTFOUND")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_UNDECLARED")), nob_sv_from_cstr("NOTFOUND")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -970,6 +983,86 @@ TEST(evaluator_get_property_source_directory_clause_and_get_cmake_property_lists
     ASSERT(!nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IDX_COMPONENT_RUNTIME")), nob_sv_from_cstr("-1")));
     ASSERT(!nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IDX_MACRO")), nob_sv_from_cstr("-1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MISSING_PROP")), nob_sv_from_cstr("NOTFOUND")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("gp_bin_src"));
+    ASSERT(nob_mkdir_if_not_exists("gp_bin_build"));
+    ASSERT(nob_write_entire_file("gp_bin_src/sub_file.c", "int gp_bin_sub_file;\n", 21));
+    {
+        const char *sub_cmake =
+            "set_property(DIRECTORY PROPERTY BIN_DIR_PROP from_child)\n"
+            "set_source_files_properties(sub_file.c PROPERTIES BIN_SRC_PROP from_source)\n"
+            "add_test(NAME gp_bin_test COMMAND cmd)\n"
+            "set_tests_properties(gp_bin_test PROPERTIES LABELS from_test)\n";
+        ASSERT(nob_write_entire_file("gp_bin_src/CMakeLists.txt", sub_cmake, strlen(sub_cmake)));
+    }
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_subdirectory(gp_bin_src gp_bin_build)\n"
+        "get_property(DIR_FROM_BIN DIRECTORY gp_bin_build PROPERTY BIN_DIR_PROP)\n"
+        "get_property(SRC_FROM_BIN SOURCE sub_file.c DIRECTORY gp_bin_build PROPERTY BIN_SRC_PROP)\n"
+        "get_property(TEST_FROM_BIN TEST gp_bin_test DIRECTORY gp_bin_build PROPERTY LABELS)\n"
+        "get_source_file_property(SRC_WRAP_FROM_BIN sub_file.c DIRECTORY gp_bin_build BIN_SRC_PROP)\n"
+        "get_test_property(gp_bin_test LABELS DIRECTORY gp_bin_build TEST_WRAP_FROM_BIN)\n"
+        "set_property(DIRECTORY gp_bin_build PROPERTY BIN_DIR_PROP updated_dir)\n"
+        "set_property(SOURCE sub_file.c DIRECTORY gp_bin_build PROPERTY BIN_SRC_PROP updated_source)\n"
+        "set_property(TEST gp_bin_test DIRECTORY gp_bin_build PROPERTY LABELS updated_test)\n"
+        "get_property(DIR_UPDATED DIRECTORY gp_bin_build PROPERTY BIN_DIR_PROP)\n"
+        "get_property(SRC_UPDATED SOURCE sub_file.c DIRECTORY gp_bin_build PROPERTY BIN_SRC_PROP)\n"
+        "get_property(TEST_UPDATED TEST gp_bin_test DIRECTORY gp_bin_build PROPERTY LABELS)\n"
+        "get_source_file_property(SRC_WRAP_UPDATED sub_file.c DIRECTORY gp_bin_build BIN_SRC_PROP)\n"
+        "get_test_property(gp_bin_test LABELS DIRECTORY gp_bin_build TEST_WRAP_UPDATED)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DIR_FROM_BIN")),
+                     nob_sv_from_cstr("from_child")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_FROM_BIN")),
+                     nob_sv_from_cstr("from_source")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_FROM_BIN")),
+                     nob_sv_from_cstr("from_test")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_WRAP_FROM_BIN")),
+                     nob_sv_from_cstr("from_source")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_WRAP_FROM_BIN")),
+                     nob_sv_from_cstr("from_test")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DIR_UPDATED")),
+                     nob_sv_from_cstr("updated_dir")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_UPDATED")),
+                     nob_sv_from_cstr("updated_source")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_UPDATED")),
+                     nob_sv_from_cstr("updated_test")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_WRAP_UPDATED")),
+                     nob_sv_from_cstr("updated_source")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_WRAP_UPDATED")),
+                     nob_sv_from_cstr("updated_test")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2849,6 +2942,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed) {
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
     test_evaluator_get_directory_property_missing_materializes_empty_string(passed, failed);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed);
+    test_evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs(passed, failed);
     test_evaluator_install_signatures_emit_expected_rules_and_component_inventory(passed, failed);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
     test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed);
