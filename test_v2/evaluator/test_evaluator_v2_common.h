@@ -46,6 +46,7 @@ typedef struct {
     String_View source_dir;
     String_View binary_dir;
     const char *current_file;
+    Eval_Exec_Mode exec_mode;
     const EvalServices *services;
     Eval_Compat_Profile compat_profile;
     EvalRegistry *registry;
@@ -372,6 +373,7 @@ static Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init) {
     ctx->request.source_dir = init->source_dir;
     ctx->request.binary_dir = init->binary_dir;
     ctx->request.list_file = init->current_file;
+    ctx->request.mode = init->exec_mode;
     ctx->request.stream = init->stream;
     ctx->stream = init->stream;
     ctx->current_file = init->current_file;

@@ -75,6 +75,12 @@ typedef struct EvalRegistry EvalRegistry;
 typedef struct EvalServices EvalServices;
 typedef struct EvalExec_Request EvalExec_Request;
 typedef struct EvalRunResult EvalRunResult;
+
+typedef enum {
+    EVAL_EXEC_MODE_PROJECT = 0,
+    EVAL_EXEC_MODE_SCRIPT,
+    EVAL_EXEC_MODE_CTEST_SCRIPT,
+} Eval_Exec_Mode;
 ```
 
 Target configuration types:
@@ -94,6 +100,7 @@ typedef struct {
     String_View source_dir;
     String_View binary_dir;
     const char *list_file;
+    Eval_Exec_Mode mode;
     Event_Stream *stream; /* optional */
 } EvalExec_Request;
 

@@ -1846,6 +1846,7 @@ static void eval_exec_prepare_session_view(EvalExecContext *ctx, EvalSession *se
     ctx->file_eval_depth = 0;
     ctx->function_eval_depth = 0;
     ctx->active_transaction = NULL;
+    ctx->mode = EVAL_EXEC_MODE_PROJECT;
     ctx->oom = false;
     ctx->stop_requested = false;
 }
@@ -1895,7 +1896,8 @@ static bool eval_exec_bind_request(EvalExecContext *ctx,
                                    Event_Stream *stream,
                                    String_View source_dir,
                                    String_View binary_dir,
-                                   const char *list_file) {
+                                   const char *list_file,
+                                   Eval_Exec_Mode mode) {
     if (!ctx || !session || !scratch_arena || !stream) return false;
 
     String_View requested_source = source_dir.count > 0 ? source_dir : session->source_root;
@@ -1910,6 +1912,7 @@ static bool eval_exec_bind_request(EvalExecContext *ctx,
     if (requested_source.count > 0 && ctx->source_dir.count == 0) return false;
     ctx->binary_dir = sv_copy_to_event_arena(ctx, requested_binary);
     if (requested_binary.count > 0 && ctx->binary_dir.count == 0) return false;
+    ctx->mode = mode;
     if (list_file) {
         ctx->current_file = eval_copy_cstr_to_arena(ctx->event_arena, list_file);
         if (!ctx->current_file) return false;
@@ -2277,7 +2280,8 @@ EvalRunResult eval_session_run(EvalSession *session,
                                 effective_stream,
                                 request->source_dir,
                                 request->binary_dir,
-                                request->list_file)) {
+                                request->list_file,
+                                request->mode)) {
         if (session->state.registry) session->state.registry->mutation_blocked = false;
         return out;
     }

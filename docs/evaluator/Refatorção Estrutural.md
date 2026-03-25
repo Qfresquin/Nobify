@@ -123,7 +123,7 @@ Exit criteria:
 - new feature work lands on the target pipeline by default
 - remaining audits measure semantic coverage rather than architectural drift
 
-Snapshot status (March 19, 2026):
+Snapshot status (March 25, 2026):
 - The public shim based on `Evaluator_Context` is gone from `src_v2/evaluator/evaluator.h`.
 - `EvalNativeCommandDef` is now the only public native-command definition type.
 - Native handlers now receive `EvalExecContext *`, and public native extension points are session/registry based.
@@ -133,7 +133,7 @@ Snapshot status (March 19, 2026):
 - Flow control (`break` / `continue` / `return`) is modeled on execution frames instead of global run booleans.
 - Registry mutation is blocked during `eval_session_run(...)`.
 - `test_v2/evaluator`, `test_v2/pipeline`, `test_v2/codegen`, and `src_v2/app` no longer include evaluator internals and now use the public session/request API.
-- `docs/evaluator/evaluator_coverage_matrix.md` reports `107` `FULL`, `28` `PARTIAL`, `0` `MISSING`, `0` native-tag divergences, and no remaining `artifact-critical` partial rows in this snapshot.
+- `docs/evaluator/evaluator_coverage_matrix.md` reports `108` `FULL`, `27` `PARTIAL`, `0` `MISSING`, `0` native-tag divergences, and no remaining `artifact-critical` partial rows in this snapshot.
 - The remaining evaluator gaps are semantic coverage limits on typed request/canonical execution paths, not architectural drift from the target pipeline.
 
 ## 5. Temporary Compatibility Policy

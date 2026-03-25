@@ -73,6 +73,12 @@ typedef enum {
 } Eval_Unsupported_Policy;
 
 typedef enum {
+    EVAL_EXEC_MODE_PROJECT = 0,
+    EVAL_EXEC_MODE_SCRIPT,
+    EVAL_EXEC_MODE_CTEST_SCRIPT,
+} Eval_Exec_Mode;
+
+typedef enum {
     EVAL_CMD_IMPL_FULL = 0,
     EVAL_CMD_IMPL_PARTIAL,
     EVAL_CMD_IMPL_MISSING,
@@ -192,6 +198,7 @@ typedef struct {
     String_View source_dir;
     String_View binary_dir;
     const char *list_file;
+    Eval_Exec_Mode mode;
     Event_Stream *stream; /* optional */
 } EvalExec_Request;
 

@@ -611,6 +611,7 @@ struct EvalExecContext {
 
     String_View source_dir;
     String_View binary_dir;
+    Eval_Exec_Mode mode;
 
     const char *current_file;
 
@@ -759,6 +760,10 @@ static inline const Eval_Scope_State *eval_scope_slice_const(const EvalExecConte
 
 static inline Eval_Runtime_State *eval_runtime_slice(EvalExecContext *ctx) {
     return ctx ? &ctx->runtime_state : NULL;
+}
+
+static inline bool eval_exec_is_project_mode(const EvalExecContext *ctx) {
+    return ctx && ctx->mode == EVAL_EXEC_MODE_PROJECT;
 }
 
 static inline const Eval_Runtime_State *eval_runtime_slice_const(const EvalExecContext *ctx) {
