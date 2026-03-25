@@ -58,6 +58,7 @@ static bool test_codegen(void);
 static void append_v2_pcre_sources(Nob_Cmd *cmd);
 static void append_platform_link_flags(Nob_Cmd *cmd);
 static bool ensure_temp_tests_layout(void);
+static bool run_result_type_conventions_check(void);
 
 static Test_Module TEST_MODULES[] = {
     {"arena", test_arena},
@@ -724,6 +725,15 @@ static bool run_binary_in_workspace(const char *bin_rel_path) {
     return ok;
 }
 
+static bool run_result_type_conventions_check(void) {
+    Nob_Cmd cmd = {0};
+    nob_log(NOB_INFO, "[v2] check result type conventions");
+    nob_cmd_append(&cmd, "bash", "test_v2/evaluator/check_result_type_conventions.sh");
+    bool ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
 static bool build_test_lexer(void) {
     return build_incremental_test_binary(TEST_LEXER_OUT, append_test_lexer_all_sources);
 }
@@ -806,6 +816,8 @@ static bool test_v2_all(void) {
 }
 
 static bool run_in_temp_workspace(Test_Module_Run_Fn run_fn) {
+    if (!run_result_type_conventions_check()) return false;
+
     bool prepare_ok = prepare_temp_tests_workspace();
     bool run_ok = false;
 

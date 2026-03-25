@@ -8,6 +8,8 @@ int main(void) {
     int passed = 0;
     int failed = 0;
 
+    if (!test_v2_require_result_type_conventions()) return 1;
+
     run_parser_v2_tests(&passed, &failed);
 
     nob_log(NOB_INFO, "parser v2 tests: passed=%d failed=%d", passed, failed);
