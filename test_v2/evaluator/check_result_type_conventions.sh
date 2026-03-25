@@ -55,6 +55,41 @@ check_forbidden_pattern \
     src_v2/evaluator \
     '-RIn --include=*.c --include=*.h'
 
+system_matches=$(grep -RIn --include='*.c' --include='*.h' -E '\bsystem[[:space:]]*\(' src_v2 test_v2 || true)
+if [[ -n "$system_matches" ]]; then
+    unauthorized=$(printf '%s\n' "$system_matches" | grep -v '^test_v2/evaluator/test_evaluator_v2_common.h:' || true)
+    if [[ -n "$unauthorized" ]]; then
+        echo "[FAIL] system(...) usage outside the approved test allowlist"
+        echo "$unauthorized"
+        exit 1
+    fi
+fi
+
+legacy_temp_path_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'Temp_tests/(work|bin|obj)([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])TEMP_TESTS_(WORK|BIN|OBJ)($|[^A-Za-z0-9_])' src_v2 test_v2 || true)
+if [[ -n "$legacy_temp_path_matches" ]]; then
+    echo "[FAIL] legacy fixed Temp_tests work/bin/obj paths are forbidden"
+    echo "$legacy_temp_path_matches"
+    exit 1
+fi
+
+preflight_invocation_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'check_result_type_conventions\.sh' src_v2 test_v2 || true)
+if [[ -n "$preflight_invocation_matches" ]]; then
+    unauthorized=$(printf '%s\n' "$preflight_invocation_matches" | grep -v '^src_v2/build/nob_test.c:' || true)
+    if [[ -n "$unauthorized" ]]; then
+        echo "[FAIL] result type conventions preflight must be owned by src_v2/build/nob_test.c"
+        echo "$unauthorized"
+        exit 1
+    fi
+fi
+
+for main_file in test_v2/*/test_*_main.c; do
+    if ! grep -q 'test_v2_require_official_runner()' "$main_file"; then
+        echo "[FAIL] test entrypoint bypasses the official nob_test runner"
+        echo "$main_file"
+        exit 1
+    fi
+done
+
 state_write_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'ctx->(oom|stop_requested)[[:space:]]*=' src_v2/evaluator || true)
 if [[ -n "$state_write_matches" ]]; then
     unauthorized=$(printf '%s\n' "$state_write_matches" | grep -v '^src_v2/evaluator/evaluator.c:' || true)

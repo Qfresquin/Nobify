@@ -303,8 +303,8 @@ DIAG errors=0 warnings=0
 EVENTS count=12
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=19 col=1 name='foreach_modes' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=19 col=1 target='foreach_modes' path='main.c'
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='ACC=5_5_5' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ACC=5_5_5' vis=PRIVATE
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='ACC=1_3_5' op=APPEND_LIST
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ACC=1_3_5' vis=PRIVATE
 EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='ZIP_ACC=a' op=APPEND_LIST
 EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ZIP_ACC=a' vis=PRIVATE
 EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='1|b' op=APPEND_LIST

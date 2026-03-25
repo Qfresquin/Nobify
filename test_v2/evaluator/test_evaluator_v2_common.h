@@ -617,6 +617,13 @@ static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, St
     return true;
 }
 
+static bool evaluator_read_entire_file_cstr(const char *path, Nob_String_Builder *out) {
+    if (!path || !out) return false;
+    if (!nob_read_entire_file(path, out)) return false;
+    nob_da_append(out, '\0');
+    return true;
+}
+
 static bool eval_test_append_file_to_log_if_nonempty(Arena *arena,
                                                      const char *path,
                                                      Nob_String_Builder *log) {

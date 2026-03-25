@@ -1,13 +1,18 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 #include "test_fs.h"
+#include "test_workspace.h"
 
 #include <stdbool.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if !defined(_WIN32)
-#include <errno.h>
+#include <time.h>
+#if defined(_WIN32)
+#include <direct.h>
+#include <windows.h>
+#else
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -23,58 +28,70 @@
 #endif
 
 #define TEMP_TESTS_ROOT "Temp_tests"
-#define TEMP_TESTS_WORK TEMP_TESTS_ROOT "/work"
-#define TEMP_TESTS_BIN TEMP_TESTS_ROOT "/bin"
-#define TEMP_TESTS_OBJ TEMP_TESTS_ROOT "/obj"
+#define TEMP_TESTS_RUNS TEMP_TESTS_ROOT "/runs"
+#define TEMP_TESTS_BIN_ROOT TEMP_TESTS_ROOT "/bin"
+#define TEMP_TESTS_OBJ_ROOT TEMP_TESTS_ROOT "/obj"
+#define TEMP_TESTS_LOCKS TEMP_TESTS_ROOT "/locks"
+#define TEMP_TESTS_PROBES TEMP_TESTS_ROOT "/probes"
 
-#define TEST_ARENA_OUT TEMP_TESTS_BIN "/test_arena"
-#define TEST_LEXER_OUT TEMP_TESTS_BIN "/test_lexer"
-#define TEST_PARSER_OUT TEMP_TESTS_BIN "/test_parser"
-#define TEST_EVALUATOR_OUT TEMP_TESTS_BIN "/test_evaluator"
-#define TEST_PIPELINE_OUT TEMP_TESTS_BIN "/test_pipeline"
-#define TEST_CODEGEN_OUT TEMP_TESTS_BIN "/test_codegen"
-
-#define TEST_ARENA_RUN "../bin/test_arena"
-#define TEST_LEXER_RUN "../bin/test_lexer"
-#define TEST_PARSER_RUN "../bin/test_parser"
-#define TEST_EVALUATOR_RUN "../bin/test_evaluator"
-#define TEST_PIPELINE_RUN "../bin/test_pipeline"
-#define TEST_CODEGEN_RUN "../bin/test_codegen"
-
-typedef bool (*Test_Module_Run_Fn)(void);
 typedef void (*Append_Source_List_Fn)(Nob_Cmd *cmd);
 
 typedef struct {
     const char *name;
-    Test_Module_Run_Fn run;
+    Append_Source_List_Fn append_sources;
 } Test_Module;
 
-static bool test_lexer(void);
-static bool test_parser(void);
-static bool test_evaluator(void);
-static bool test_pipeline(void);
-static bool test_arena(void);
-static bool test_codegen(void);
+typedef struct {
+    const char *name;
+    bool sanitize;
+} Test_Profile;
+
+typedef struct {
+    char root[_TINYDIR_PATH_MAX];
+    char suite_copy[_TINYDIR_PATH_MAX];
+} Test_Run_Workspace;
+
+static void append_test_arena_all_sources(Nob_Cmd *cmd);
+static void append_test_lexer_all_sources(Nob_Cmd *cmd);
+static void append_test_parser_all_sources(Nob_Cmd *cmd);
+static void append_test_evaluator_all_sources(Nob_Cmd *cmd);
+static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
+static void append_test_codegen_all_sources(Nob_Cmd *cmd);
 static void append_v2_pcre_sources(Nob_Cmd *cmd);
 static void append_platform_link_flags(Nob_Cmd *cmd);
-static bool ensure_temp_tests_layout(void);
-static bool run_result_type_conventions_check(void);
+static bool ensure_temp_tests_layout(const Test_Profile *profile);
+static bool run_test_preflight(const Test_Profile *profile);
+
+static const Test_Profile TEST_PROFILE_DEFAULT = {"default", false};
+static const Test_Profile TEST_PROFILE_ASAN_UBSAN = {"asan_ubsan", true};
 
 static Test_Module TEST_MODULES[] = {
-    {"arena", test_arena},
-    {"lexer", test_lexer},
-    {"parser", test_parser},
-    {"evaluator", test_evaluator},
-    {"pipeline", test_pipeline},
-    {"codegen", test_codegen},
+    {"arena", append_test_arena_all_sources},
+    {"lexer", append_test_lexer_all_sources},
+    {"parser", append_test_parser_all_sources},
+    {"evaluator", append_test_evaluator_all_sources},
+    {"pipeline", append_test_pipeline_all_sources},
+    {"codegen", append_test_codegen_all_sources},
 };
 
-static void append_v2_common_flags(Nob_Cmd *cmd) {
+static void append_test_profile_compile_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
+    if (profile && profile->sanitize) {
+        nob_cmd_append(cmd, "-O1", "-ggdb", "-fno-omit-frame-pointer", "-fsanitize=address,undefined");
+        return;
+    }
+    nob_cmd_append(cmd, "-O3", "-ggdb");
+}
+
+static void append_test_profile_link_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
+    if (profile && profile->sanitize) {
+        nob_cmd_append(cmd, "-fsanitize=address,undefined", "-fno-omit-frame-pointer");
+    }
+}
+
+static void append_v2_common_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
     nob_cmd_append(cmd,
         "-D_GNU_SOURCE",
         "-Wall", "-Wextra", "-std=c11",
-        "-O3",
-        "-ggdb",
         "-DHAVE_CONFIG_H",
         "-DPCRE2_CODE_UNIT_WIDTH=8",
         "-Ivendor");
@@ -105,6 +122,8 @@ static void append_v2_common_flags(Nob_Cmd *cmd) {
     if (use_libarchive && strcmp(use_libarchive, "1") == 0) {
         nob_cmd_append(cmd, "-DEVAL_HAVE_LIBARCHIVE=1");
     }
+
+    append_test_profile_compile_flags(cmd, profile);
 }
 
 static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
@@ -275,13 +294,37 @@ static void append_v2_codegen_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/codegen/nob_codegen.c");
 }
 
-static const char *test_object_config_dir_temp(void) {
+static unsigned long test_process_id(void) {
+#if defined(_WIN32)
+    return (unsigned long)GetCurrentProcessId();
+#else
+    return (unsigned long)getpid();
+#endif
+}
+
+static bool build_abs_path(const char *cwd, const char *rel, char out[_TINYDIR_PATH_MAX]) {
+    int n = 0;
+    if (!cwd || !rel || !out) return false;
+    n = snprintf(out, _TINYDIR_PATH_MAX, "%s/%s", cwd, rel);
+    if (n < 0 || n >= _TINYDIR_PATH_MAX) {
+        nob_log(NOB_ERROR, "path too long while composing %s/%s", cwd, rel);
+        return false;
+    }
+    return true;
+}
+
+static const char *test_profile_bin_dir_temp(const Test_Profile *profile) {
+    return nob_temp_sprintf("%s/%s", TEMP_TESTS_BIN_ROOT, profile->name);
+}
+
+static const char *test_object_config_dir_temp(const Test_Profile *profile) {
     const char *use_libcurl = getenv("NOBIFY_USE_LIBCURL");
     const char *use_libarchive = getenv("NOBIFY_USE_LIBARCHIVE");
     bool with_curl = use_libcurl && strcmp(use_libcurl, "1") == 0;
     bool with_archive = use_libarchive && strcmp(use_libarchive, "1") == 0;
-    return nob_temp_sprintf("%s/curl%d_archive%d",
-                            TEMP_TESTS_OBJ,
+    return nob_temp_sprintf("%s/%s/curl%d_archive%d",
+                            TEMP_TESTS_OBJ_ROOT,
+                            profile->name,
                             with_curl ? 1 : 0,
                             with_archive ? 1 : 0);
 }
@@ -325,12 +368,68 @@ static bool ensure_parent_dir(const char *path) {
     return ok;
 }
 
-static const char *test_object_path_temp(const char *source_path) {
-    return nob_temp_sprintf("%s/%s.o", test_object_config_dir_temp(), source_path);
+static const char *test_object_path_temp(const char *source_path, const Test_Profile *profile) {
+    return nob_temp_sprintf("%s/%s.o", test_object_config_dir_temp(profile), source_path);
 }
 
-static const char *test_dep_path_temp(const char *source_path) {
-    return nob_temp_sprintf("%s/%s.d", test_object_config_dir_temp(), source_path);
+static const char *test_dep_path_temp(const char *source_path, const Test_Profile *profile) {
+    return nob_temp_sprintf("%s/%s.d", test_object_config_dir_temp(profile), source_path);
+}
+
+static const char *test_binary_output_path_temp(const Test_Module *module, const Test_Profile *profile) {
+    return nob_temp_sprintf("%s/test_%s", test_profile_bin_dir_temp(profile), module->name);
+}
+
+static const char *test_build_lock_path_temp(const Test_Profile *profile) {
+    return nob_temp_sprintf("%s/%s.lock", TEMP_TESTS_LOCKS, profile->name);
+}
+
+static bool try_create_dir_lock(const char *path, bool *created) {
+#if defined(_WIN32)
+    if (_mkdir(path) == 0) {
+        *created = true;
+        return true;
+    }
+#else
+    if (mkdir(path, 0777) == 0) {
+        *created = true;
+        return true;
+    }
+#endif
+    if (errno == EEXIST) {
+        *created = false;
+        return true;
+    }
+    nob_log(NOB_ERROR, "failed to create lock directory %s: %s", path, strerror(errno));
+    return false;
+}
+
+static void sleep_millis(unsigned milliseconds) {
+#if defined(_WIN32)
+    Sleep(milliseconds);
+#else
+    usleep((useconds_t)milliseconds * 1000);
+#endif
+}
+
+static bool acquire_build_lock(const char *lock_path) {
+    for (size_t attempt = 0; attempt < 300; ++attempt) {
+        bool created = false;
+        if (!try_create_dir_lock(lock_path, &created)) return false;
+        if (created) return true;
+        sleep_millis(100);
+    }
+    nob_log(NOB_ERROR, "timed out waiting for build lock %s", lock_path);
+    return false;
+}
+
+static bool release_build_lock(const char *lock_path) {
+    if (!lock_path) return true;
+    if (!test_fs_remove_tree(lock_path)) {
+        nob_log(NOB_ERROR, "failed to release build lock %s", lock_path);
+        return false;
+    }
+    return true;
 }
 
 static bool depfile_collect_inputs(const char *dep_path, Nob_File_Paths *inputs) {
@@ -475,7 +574,8 @@ defer:
 
 static bool build_object_file(const char *source_path,
                               const char *object_path,
-                              const char *dep_path) {
+                              const char *dep_path,
+                              const Test_Profile *profile) {
     Nob_Cmd cmd = {0};
     bool ok = false;
 
@@ -484,14 +584,16 @@ static bool build_object_file(const char *source_path,
 
     nob_log(NOB_INFO, "[v2] compile %s", source_path);
     nob_cc(&cmd);
-    append_v2_common_flags(&cmd);
+    append_v2_common_flags(&cmd, profile);
     nob_cmd_append(&cmd, "-MMD", "-MF", dep_path, "-c", source_path, "-o", object_path);
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
     return ok;
 }
 
-static bool link_test_binary(const char *output_path, const Nob_File_Paths *object_paths) {
+static bool link_test_binary(const char *output_path,
+                             const Nob_File_Paths *object_paths,
+                             const Test_Profile *profile) {
     Nob_Cmd cmd = {0};
     Nob_File_Paths inputs = {0};
     bool ok = false;
@@ -512,6 +614,7 @@ static bool link_test_binary(const char *output_path, const Nob_File_Paths *obje
     for (size_t i = 0; i < object_paths->count; ++i) {
         nob_cmd_append(&cmd, object_paths->items[i]);
     }
+    append_test_profile_link_flags(&cmd, profile);
     append_platform_link_flags(&cmd);
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
@@ -522,25 +625,26 @@ defer:
 }
 
 static bool build_incremental_test_binary(const char *output_path,
-                                          Append_Source_List_Fn append_sources) {
+                                          Append_Source_List_Fn append_sources,
+                                          const Test_Profile *profile) {
     Nob_Cmd sources = {0};
     Nob_File_Paths object_paths = {0};
     bool ok = false;
     size_t temp_mark = nob_temp_save();
 
-    if (!ensure_temp_tests_layout()) goto defer;
+    if (!ensure_temp_tests_layout(profile)) goto defer;
 
     append_sources(&sources);
     for (size_t i = 0; i < sources.count; ++i) {
         const char *source_path = sources.items[i];
-        const char *object_path = test_object_path_temp(source_path);
-        const char *dep_path = test_dep_path_temp(source_path);
+        const char *object_path = test_object_path_temp(source_path, profile);
+        const char *dep_path = test_dep_path_temp(source_path, profile);
 
         nob_da_append(&object_paths, object_path);
-        if (!build_object_file(source_path, object_path, dep_path)) goto defer;
+        if (!build_object_file(source_path, object_path, dep_path, profile)) goto defer;
     }
 
-    ok = link_test_binary(output_path, &object_paths);
+    ok = link_test_binary(output_path, &object_paths, profile);
 
 defer:
     nob_da_free(object_paths);
@@ -667,62 +771,154 @@ static char *dup_env_value(const char *name) {
     return copy;
 }
 
-static bool ensure_temp_tests_layout(void) {
-    if (!nob_mkdir_if_not_exists(TEMP_TESTS_ROOT)) return false;
-    if (!nob_mkdir_if_not_exists(TEMP_TESTS_WORK)) return false;
-    if (!nob_mkdir_if_not_exists(TEMP_TESTS_BIN)) return false;
-    if (!nob_mkdir_if_not_exists(TEMP_TESTS_OBJ)) return false;
-    return true;
+static bool ensure_temp_tests_layout(const Test_Profile *profile) {
+    bool ok = false;
+    size_t temp_mark = nob_temp_save();
+
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_ROOT)) goto defer;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_RUNS)) goto defer;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_BIN_ROOT)) goto defer;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_OBJ_ROOT)) goto defer;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_LOCKS)) goto defer;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_PROBES)) goto defer;
+    if (profile) {
+        if (!nob_mkdir_if_not_exists(test_profile_bin_dir_temp(profile))) goto defer;
+        if (!ensure_dir_chain(test_object_config_dir_temp(profile))) goto defer;
+    }
+    ok = true;
+
+defer:
+    nob_temp_rewind(temp_mark);
+    return ok;
 }
 
-static bool prepare_temp_tests_workspace(void) {
-    if (!test_fs_remove_tree(TEMP_TESTS_WORK)) return false;
-    if (!ensure_temp_tests_layout()) return false;
-    if (!test_fs_copy_tree("test_v2", TEMP_TESTS_WORK "/test_v2")) return false;
-    return true;
-}
-
-static bool cleanup_temp_tests_workspace(void) {
-    return test_fs_remove_tree(TEMP_TESTS_WORK);
-}
-
-static bool run_binary_in_workspace(const char *bin_rel_path) {
-    char cwd[_TINYDIR_PATH_MAX] = {0};
-    char *prev_reuse_cwd = NULL;
-    char *prev_repo_root = NULL;
+static bool validate_test_profile_support(const Test_Profile *profile) {
     Nob_Cmd cmd = {0};
     bool ok = false;
+    const char *probe_source = NULL;
+    const char *probe_binary = NULL;
+    const char *probe_program = "int main(void) { return 0; }\n";
+    size_t temp_mark = nob_temp_save();
 
-    if (!test_fs_save_current_dir(cwd)) return false;
-    prev_reuse_cwd = dup_env_value("CMK2NOB_TEST_WS_REUSE_CWD");
-    if (getenv("CMK2NOB_TEST_WS_REUSE_CWD") && !prev_reuse_cwd) return false;
-    prev_repo_root = dup_env_value("CMK2NOB_TEST_REPO_ROOT");
-    if (getenv("CMK2NOB_TEST_REPO_ROOT") && !prev_repo_root) {
-        free(prev_reuse_cwd);
-        return false;
+    if (!profile || !profile->sanitize) {
+        ok = true;
+        goto defer;
     }
-    if (!nob_set_current_dir(TEMP_TESTS_WORK)) {
-        free(prev_reuse_cwd);
-        free(prev_repo_root);
-        return false;
-    }
-    set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", "1");
-    set_env_or_unset("CMK2NOB_TEST_REPO_ROOT", cwd);
 
-    nob_cmd_append(&cmd, bin_rel_path);
+    probe_source = nob_temp_sprintf("%s/%s_probe.c", TEMP_TESTS_PROBES, profile->name);
+    probe_binary = nob_temp_sprintf("%s/%s_probe", TEMP_TESTS_PROBES, profile->name);
+    if (!ensure_parent_dir(probe_source) || !ensure_parent_dir(probe_binary)) goto defer;
+    if (!nob_write_entire_file(probe_source, probe_program, strlen(probe_program))) goto defer;
+
+    nob_log(NOB_INFO, "[v2] validate profile %s", profile->name);
+    nob_cc(&cmd);
+    append_test_profile_compile_flags(&cmd, profile);
+    nob_cmd_append(&cmd, probe_source, "-o", probe_binary);
     ok = nob_cmd_run(&cmd);
+    if (!ok) {
+        nob_log(NOB_ERROR, "[v2] toolchain does not support profile %s", profile->name);
+    }
+
+defer:
     nob_cmd_free(cmd);
-    set_env_or_unset("CMK2NOB_TEST_WS_REUSE_CWD", prev_reuse_cwd);
-    set_env_or_unset("CMK2NOB_TEST_REPO_ROOT", prev_repo_root);
-    free(prev_reuse_cwd);
-    free(prev_repo_root);
+    nob_temp_rewind(temp_mark);
+    return ok;
+}
+
+static bool prepare_test_run_workspace(Test_Run_Workspace *ws,
+                                       const Test_Module *module,
+                                       const Test_Profile *profile) {
+    static unsigned long long run_serial = 0;
+    const char *cwd = nob_get_current_dir_temp();
+    char root_rel[_TINYDIR_PATH_MAX] = {0};
+    int n = 0;
+
+    if (!ws || !module || !profile || !cwd) return false;
+    memset(ws, 0, sizeof(*ws));
+
+    run_serial++;
+    n = snprintf(root_rel, sizeof(root_rel), "%s/%s-%s-%lu-%lld-%llu",
+                 TEMP_TESTS_RUNS,
+                 module->name,
+                 profile->name,
+                 test_process_id(),
+                 (long long)time(NULL),
+                 run_serial);
+    if (n < 0 || n >= (int)sizeof(root_rel)) {
+        nob_log(NOB_ERROR, "generated run workspace path is too long");
+        return false;
+    }
+
+    if (!build_abs_path(cwd, root_rel, ws->root)) return false;
+    if (!test_fs_join_path(ws->root, "test_v2", ws->suite_copy)) return false;
+    if (!test_fs_remove_tree(ws->root)) return false;
+    if (!nob_mkdir_if_not_exists(ws->root)) return false;
+    if (!nob_copy_directory_recursively("test_v2", ws->suite_copy)) return false;
+
+    nob_log(NOB_INFO, "[v2] workspace created: %s", ws->root);
+    return true;
+}
+
+static bool cleanup_test_run_workspace(const Test_Run_Workspace *ws) {
+    if (!ws || ws->root[0] == '\0') return false;
+    if (!test_fs_remove_tree(ws->root)) return false;
+    nob_log(NOB_INFO, "[v2] workspace cleaned: %s", ws->root);
+    return true;
+}
+
+static bool run_binary_in_workspace(const Test_Module *module,
+                                    const Test_Profile *profile,
+                                    const char *binary_rel_path) {
+    char cwd[_TINYDIR_PATH_MAX] = {0};
+    char binary_abs[_TINYDIR_PATH_MAX] = {0};
+    char *prev_runner = NULL;
+    char *prev_reuse_cwd = NULL;
+    char *prev_repo_root = NULL;
+    Test_Run_Workspace workspace = {0};
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+    bool cleanup_ok = false;
+
+    if (!test_fs_save_current_dir(cwd)) goto defer;
+    if (!build_abs_path(cwd, binary_rel_path, binary_abs)) goto defer;
+    if (!prepare_test_run_workspace(&workspace, module, profile)) goto defer;
+
+    prev_runner = dup_env_value(CMK2NOB_TEST_RUNNER_ENV);
+    if (getenv(CMK2NOB_TEST_RUNNER_ENV) && !prev_runner) goto defer;
+    prev_reuse_cwd = dup_env_value(CMK2NOB_TEST_WS_REUSE_CWD_ENV);
+    if (getenv(CMK2NOB_TEST_WS_REUSE_CWD_ENV) && !prev_reuse_cwd) goto defer;
+    prev_repo_root = dup_env_value(CMK2NOB_TEST_REPO_ROOT_ENV);
+    if (getenv(CMK2NOB_TEST_REPO_ROOT_ENV) && !prev_repo_root) goto defer;
+
+    if (!nob_set_current_dir(workspace.root)) goto defer;
+    set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, "1");
+    set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, "1");
+    set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, cwd);
+
+    nob_cmd_append(&cmd, binary_abs);
+    ok = nob_cmd_run(&cmd);
 
     if (!nob_set_current_dir(cwd)) {
         nob_log(NOB_ERROR, "failed to restore current directory to %s", cwd);
         ok = false;
     }
+    cleanup_ok = cleanup_test_run_workspace(&workspace);
+    if (!cleanup_ok) {
+        nob_log(NOB_ERROR, "[v2] failed to cleanup run workspace for %s", module->name);
+    }
 
-    return ok;
+defer:
+    set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, prev_runner);
+    set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, prev_reuse_cwd);
+    set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, prev_repo_root);
+    free(prev_runner);
+    free(prev_reuse_cwd);
+    free(prev_repo_root);
+    nob_cmd_free(cmd);
+    if (!cleanup_ok && workspace.root[0] != '\0') {
+        cleanup_ok = cleanup_test_run_workspace(&workspace);
+    }
+    return ok && cleanup_ok;
 }
 
 static bool run_result_type_conventions_check(void) {
@@ -734,74 +930,49 @@ static bool run_result_type_conventions_check(void) {
     return ok;
 }
 
-static bool build_test_lexer(void) {
-    return build_incremental_test_binary(TEST_LEXER_OUT, append_test_lexer_all_sources);
+static bool run_test_preflight(const Test_Profile *profile) {
+    if (!run_result_type_conventions_check()) return false;
+    nob_log(NOB_INFO, "[v2] validate workspace infra");
+    if (!ensure_temp_tests_layout(profile)) return false;
+    return validate_test_profile_support(profile);
 }
 
-static bool build_test_arena(void) {
-    return build_incremental_test_binary(TEST_ARENA_OUT, append_test_arena_all_sources);
+static bool run_test_module(const Test_Module *module, const Test_Profile *profile) {
+    bool ok = false;
+    bool lock_acquired = false;
+    size_t temp_mark = nob_temp_save();
+    const char *binary_rel_path = test_binary_output_path_temp(module, profile);
+    const char *lock_path = test_build_lock_path_temp(profile);
+
+    nob_log(NOB_INFO, "[v2] build+run %s (%s)", module->name, profile->name);
+
+    lock_acquired = acquire_build_lock(lock_path);
+    if (!lock_acquired) goto defer;
+    if (!build_incremental_test_binary(binary_rel_path, module->append_sources, profile)) goto defer;
+    if (!release_build_lock(lock_path)) {
+        lock_acquired = false;
+        goto defer;
+    }
+    lock_acquired = false;
+
+    ok = run_binary_in_workspace(module, profile, binary_rel_path);
+
+defer:
+    if (lock_acquired) {
+        (void)release_build_lock(lock_path);
+    }
+    nob_temp_rewind(temp_mark);
+    return ok;
 }
 
-static bool build_test_parser(void) {
-    return build_incremental_test_binary(TEST_PARSER_OUT, append_test_parser_all_sources);
-}
-
-static bool build_test_evaluator(void) {
-    return build_incremental_test_binary(TEST_EVALUATOR_OUT, append_test_evaluator_all_sources);
-}
-
-static bool build_test_pipeline(void) {
-    return build_incremental_test_binary(TEST_PIPELINE_OUT, append_test_pipeline_all_sources);
-}
-
-static bool build_test_codegen(void) {
-    return build_incremental_test_binary(TEST_CODEGEN_OUT, append_test_codegen_all_sources);
-}
-
-static bool test_evaluator(void) {
-    nob_log(NOB_INFO, "[v2] build+run evaluator");
-    if (!build_test_evaluator()) return false;
-    return run_binary_in_workspace(TEST_EVALUATOR_RUN);
-}
-
-static bool test_pipeline(void) {
-    nob_log(NOB_INFO, "[v2] build+run pipeline");
-    if (!build_test_pipeline()) return false;
-    return run_binary_in_workspace(TEST_PIPELINE_RUN);
-}
-
-static bool test_codegen(void) {
-    nob_log(NOB_INFO, "[v2] build+run codegen");
-    if (!build_test_codegen()) return false;
-    return run_binary_in_workspace(TEST_CODEGEN_RUN);
-}
-
-static bool test_arena(void) {
-    nob_log(NOB_INFO, "[v2] build+run arena");
-    if (!build_test_arena()) return false;
-    return run_binary_in_workspace(TEST_ARENA_RUN);
-}
-
-static bool test_lexer(void) {
-    nob_log(NOB_INFO, "[v2] build+run lexer");
-    if (!build_test_lexer()) return false;
-    return run_binary_in_workspace(TEST_LEXER_RUN);
-}
-
-static bool test_parser(void) {
-    nob_log(NOB_INFO, "[v2] build+run parser");
-    if (!build_test_parser()) return false;
-    return run_binary_in_workspace(TEST_PARSER_RUN);
-}
-
-static bool test_v2_all(void) {
+static bool run_all_test_modules(const Test_Profile *profile) {
     size_t passed_modules = 0;
     size_t failed_modules = 0;
     size_t count = sizeof(TEST_MODULES) / sizeof(TEST_MODULES[0]);
 
     for (size_t i = 0; i < count; i++) {
         Test_Module module = TEST_MODULES[i];
-        bool ok = module.run();
+        bool ok = run_test_module(&module, profile);
         if (ok) {
             passed_modules++;
             nob_log(NOB_INFO, "[v2] module %s: PASS", module.name);
@@ -815,36 +986,78 @@ static bool test_v2_all(void) {
     return failed_modules == 0;
 }
 
-static bool run_in_temp_workspace(Test_Module_Run_Fn run_fn) {
-    if (!run_result_type_conventions_check()) return false;
+static const Test_Module *find_test_module(const char *name) {
+    size_t count = sizeof(TEST_MODULES) / sizeof(TEST_MODULES[0]);
+    for (size_t i = 0; i < count; ++i) {
+        if (strcmp(TEST_MODULES[i].name, name) == 0) {
+            return &TEST_MODULES[i];
+        }
+    }
+    return NULL;
+}
 
-    bool prepare_ok = prepare_temp_tests_workspace();
-    bool run_ok = false;
+static bool has_suffix(const char *text, const char *suffix) {
+    size_t text_len = strlen(text);
+    size_t suffix_len = strlen(suffix);
+    if (text_len < suffix_len) return false;
+    return strcmp(text + text_len - suffix_len, suffix) == 0;
+}
 
-    if (prepare_ok) {
-        run_ok = run_fn();
+static bool resolve_test_command(const char *cmd,
+                                 const Test_Module **module,
+                                 const Test_Profile **profile,
+                                 bool *run_all) {
+    char base_command[64] = {0};
+    const char *module_name = NULL;
+    size_t base_len = 0;
+
+    if (!cmd || !module || !profile || !run_all) return false;
+    *module = NULL;
+    *profile = &TEST_PROFILE_DEFAULT;
+    *run_all = false;
+
+    if (has_suffix(cmd, "-san")) {
+        base_len = strlen(cmd) - strlen("-san");
+        if (base_len + 1 > sizeof(base_command)) return false;
+        memcpy(base_command, cmd, base_len);
+        base_command[base_len] = '\0';
+        *profile = &TEST_PROFILE_ASAN_UBSAN;
+    } else {
+        base_len = strlen(cmd);
+        if (base_len + 1 > sizeof(base_command)) return false;
+        memcpy(base_command, cmd, base_len + 1);
     }
 
-    bool cleanup_ok = cleanup_temp_tests_workspace();
-    if (!cleanup_ok) {
-        nob_log(NOB_ERROR, "[v2] failed to cleanup %s", TEMP_TESTS_ROOT);
+    if (strcmp(base_command, "test-v2") == 0) {
+        *run_all = true;
+        return true;
     }
+    if (strncmp(base_command, "test-", 5) != 0) return false;
 
-    return prepare_ok && run_ok && cleanup_ok;
+    module_name = base_command + 5;
+    *module = find_test_module(module_name);
+    return *module != NULL;
+}
+
+static bool run_test_command(const Test_Module *module, const Test_Profile *profile, bool run_all) {
+    if (!run_test_preflight(profile)) return false;
+    if (run_all) return run_all_test_modules(profile);
+    return run_test_module(module, profile);
 }
 
 int main(int argc, char **argv) {
     const char *cmd = (argc > 1) ? argv[1] : "test-v2";
+    const Test_Module *module = NULL;
+    const Test_Profile *profile = NULL;
+    bool run_all = false;
 
     if (strcmp(cmd, "clean-tests") == 0) return test_fs_remove_tree(TEMP_TESTS_ROOT) ? 0 : 1;
-    if (strcmp(cmd, "test-arena") == 0) return run_in_temp_workspace(test_arena) ? 0 : 1;
-    if (strcmp(cmd, "test-lexer") == 0) return run_in_temp_workspace(test_lexer) ? 0 : 1;
-    if (strcmp(cmd, "test-parser") == 0) return run_in_temp_workspace(test_parser) ? 0 : 1;
-    if (strcmp(cmd, "test-evaluator") == 0) return run_in_temp_workspace(test_evaluator) ? 0 : 1;
-    if (strcmp(cmd, "test-pipeline") == 0) return run_in_temp_workspace(test_pipeline) ? 0 : 1;
-    if (strcmp(cmd, "test-codegen") == 0) return run_in_temp_workspace(test_codegen) ? 0 : 1;
-    if (strcmp(cmd, "test-v2") == 0) return run_in_temp_workspace(test_v2_all) ? 0 : 1;
+    if (resolve_test_command(cmd, &module, &profile, &run_all)) {
+        return run_test_command(module, profile, run_all) ? 0 : 1;
+    }
 
-    nob_log(NOB_INFO, "Usage: %s [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-codegen|test-v2]", argv[0]);
+    nob_log(NOB_INFO,
+            "Usage: %s [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-codegen|test-v2|test-arena-san|test-lexer-san|test-parser-san|test-evaluator-san|test-pipeline-san|test-codegen-san|test-v2-san]",
+            argv[0]);
     return 1;
 }

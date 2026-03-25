@@ -535,9 +535,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
         bool cmd_ok = false;
         if (!try_compile_run_command_captured(ctx, &cmd, req->binary_dir, &log, &cmd_ok)) {
+            nob_cmd_free(cmd);
             nob_sb_free(log);
             return false;
         }
+        nob_cmd_free(cmd);
         if (!cmd_ok) {
             out_res->output = try_compile_finish_log(ctx, &log);
             out_res->ok = false;
@@ -599,9 +601,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 #endif
         bool cmd_ok = false;
         if (!try_compile_run_command_captured(ctx, &cmd, req->binary_dir, &log, &cmd_ok)) {
+            nob_cmd_free(cmd);
             nob_sb_free(log);
             return false;
         }
+        nob_cmd_free(cmd);
         out_res->ok = cmd_ok;
         out_res->output = try_compile_finish_log(ctx, &log);
         out_res->artifact_path = cmd_ok ? output_path : nob_sv_from_cstr("");
@@ -668,9 +672,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
     bool link_ok = false;
     if (!try_compile_run_command_captured(ctx, &link_cmd, req->binary_dir, &log, &link_ok)) {
+        nob_cmd_free(link_cmd);
         nob_sb_free(log);
         return false;
     }
+    nob_cmd_free(link_cmd);
 
     out_res->ok = link_ok;
     out_res->artifact_path = link_ok ? output_path : nob_sv_from_cstr("");
@@ -740,9 +746,11 @@ bool try_compile_execute_project_request(EvalExecContext *ctx,
 
     bool configure_ok = false;
     if (!try_compile_run_command_captured(ctx, &configure_cmd, req->binary_dir, &log, &configure_ok)) {
+        nob_cmd_free(configure_cmd);
         nob_sb_free(log);
         return false;
     }
+    nob_cmd_free(configure_cmd);
     if (!configure_ok) {
         out_res->ok = false;
         out_res->output = try_compile_finish_log(ctx, &log);
@@ -759,9 +767,11 @@ bool try_compile_execute_project_request(EvalExecContext *ctx,
 
     bool build_ok = false;
     if (!try_compile_run_command_captured(ctx, &build_cmd, req->binary_dir, &log, &build_ok)) {
+        nob_cmd_free(build_cmd);
         nob_sb_free(log);
         return false;
     }
+    nob_cmd_free(build_cmd);
 
     out_res->ok = build_ok;
     out_res->output = try_compile_finish_log(ctx, &log);

@@ -8,7 +8,7 @@ int main(void) {
     int passed = 0;
     int failed = 0;
 
-    if (!test_v2_require_result_type_conventions()) return 1;
+    if (!test_v2_require_official_runner()) return 1;
 
     run_arena_v2_tests(&passed, &failed);
 

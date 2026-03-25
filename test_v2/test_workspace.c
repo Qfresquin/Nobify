@@ -83,7 +83,7 @@ bool test_ws_prepare(Test_Workspace *ws, const char *suite_name) {
         return false;
     }
 
-    const char *reuse = getenv("CMK2NOB_TEST_WS_REUSE_CWD");
+    const char *reuse = getenv(CMK2NOB_TEST_WS_REUSE_CWD_ENV);
     if (reuse && strcmp(reuse, "1") == 0) {
         int n_root = snprintf(ws->root, sizeof(ws->root), "%s", cwd);
         int n_work = snprintf(ws->work, sizeof(ws->work), "%s", cwd);
@@ -159,7 +159,7 @@ bool test_ws_leave(const char *prev_cwd) {
 
 bool test_ws_cleanup(const Test_Workspace *ws) {
     if (!ws || ws->root[0] == '\0') return false;
-    const char *reuse = getenv("CMK2NOB_TEST_WS_REUSE_CWD");
+    const char *reuse = getenv(CMK2NOB_TEST_WS_REUSE_CWD_ENV);
     if (reuse && strcmp(reuse, "1") == 0) {
         nob_log(NOB_INFO, "workspace cleaned: %s", ws->root);
         return true;

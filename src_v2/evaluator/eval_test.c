@@ -293,9 +293,11 @@ Eval_Result eval_handle_create_test_sourcelist(EvalExecContext *ctx, const Node 
     nob_sb_append_cstr(&sb, "  return 0;\n}\n");
 
     if (!eval_write_text_file(ctx, driver, nob_sv_from_parts(sb.items, sb.count), false)) {
+        nob_sb_free(sb);
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_test", nob_sv_from_cstr("create_test_sourcelist() failed to write the generated driver"), driver);
         return eval_result_from_ctx(ctx);
     }
+    nob_sb_free(sb);
 
     SV_List out_items = NULL;
     for (size_t ti = 0; ti < arena_arr_len(tests); ti++) {

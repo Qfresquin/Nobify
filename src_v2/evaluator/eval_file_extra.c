@@ -298,25 +298,25 @@ static String_View configure_file_process_line(EvalExecContext *ctx,
 
     Nob_String_Builder sb = {0};
     if (is_define01) {
-        nob_sb_append_buf(&sb, line.data, hash + 1);
-        nob_sb_append_buf(&sb, pad.data, pad.count);
+        if (hash + 1 > 0) nob_sb_append_buf(&sb, line.data, hash + 1);
+        if (pad.count > 0) nob_sb_append_buf(&sb, pad.data, pad.count);
         nob_sb_append_cstr(&sb, "define ");
-        nob_sb_append_buf(&sb, key.data, key.count);
+        if (key.count > 0) nob_sb_append_buf(&sb, key.data, key.count);
         nob_sb_append_cstr(&sb, truthy ? " 1" : " 0");
     } else if (truthy) {
-        nob_sb_append_buf(&sb, line.data, hash + 1);
-        nob_sb_append_buf(&sb, pad.data, pad.count);
+        if (hash + 1 > 0) nob_sb_append_buf(&sb, line.data, hash + 1);
+        if (pad.count > 0) nob_sb_append_buf(&sb, pad.data, pad.count);
         nob_sb_append_cstr(&sb, "define ");
-        nob_sb_append_buf(&sb, key.data, key.count);
+        if (key.count > 0) nob_sb_append_buf(&sb, key.data, key.count);
         if (suffix.count > 0) {
             nob_sb_append(&sb, ' ');
             String_View expanded = file_expand_configure_once(ctx, suffix, at_only, escape_quotes);
             file_append_configure_value(&sb, expanded, false);
         }
     } else {
-        nob_sb_append_buf(&sb, line.data, hash);
+        if (hash > 0) nob_sb_append_buf(&sb, line.data, hash);
         nob_sb_append_cstr(&sb, "/* #undef ");
-        nob_sb_append_buf(&sb, key.data, key.count);
+        if (key.count > 0) nob_sb_append_buf(&sb, key.data, key.count);
         nob_sb_append_cstr(&sb, " */");
     }
     nob_sb_append_null(&sb);

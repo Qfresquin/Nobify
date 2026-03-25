@@ -12,9 +12,10 @@ Track hot-path cost for:
 
 ## Current Baseline Process
 Use the existing `test-v2` pipeline module as a repeatable workload:
-1. Run `./build/nob_v2_test.exe test-pipeline` 5x.
-2. Record wall-clock mean/p95 externally.
-3. Compare before/after refactors.
+1. Run `./build/nob_test test-pipeline` 5x.
+2. For sanitizer sampling, run `./build/nob_test test-pipeline-san` as a separate pass.
+3. Record wall-clock mean/p95 externally.
+4. Compare before/after refactors.
 
 ## Why this document exists
 The v2 code path now avoids heuristic dependency inference in validation and adds directory scope events.

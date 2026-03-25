@@ -105,7 +105,7 @@ Status:
 - the active v2 runner in `src_v2/build/nob_test.c` builds pipeline coverage
   with `append_v2_build_model_runtime_sources(...)`
 - the March 11, 2026 verification refresh keeps
-  `./build/nob_v2_test test-pipeline` green with `passed=3 failed=0`
+  `./build/nob_test test-pipeline` green with `passed=3 failed=0`
 
 Deliverables:
 - move pipeline tests to the canonical API

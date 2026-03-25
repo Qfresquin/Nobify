@@ -323,7 +323,9 @@ static bool meta_export_write(EvalExecContext *ctx,
                                                                               cxx_modules_name),
                                     false);
     }
-    return eval_write_text_file(ctx, out_path, nob_sv_from_parts(sb.items, sb.count), append);
+    bool ok = eval_write_text_file(ctx, out_path, nob_sv_from_parts(sb.items, sb.count), append);
+    nob_sb_free(sb);
+    return ok;
 }
 
 static bool meta_export_assign_last(EvalExecContext *ctx,
@@ -462,10 +464,12 @@ static bool meta_export_write_cxx_module_target_file(EvalExecContext *ctx,
         }
     }
 
-    return eval_write_text_file(ctx,
-                                target_file_path,
-                                nob_sv_from_parts(sb.items, sb.count),
-                                false);
+    bool ok = eval_write_text_file(ctx,
+                                   target_file_path,
+                                   nob_sv_from_parts(sb.items, sb.count),
+                                   false);
+    nob_sb_free(sb);
+    return ok;
 }
 
 static bool meta_export_write_cxx_module_sidecars(EvalExecContext *ctx,
@@ -506,25 +510,36 @@ static bool meta_export_write_cxx_module_sidecars(EvalExecContext *ctx,
                               trampoline_path,
                               nob_sv_from_parts(trampoline.items, trampoline.count),
                               false)) {
+        nob_sb_free(trampoline);
         return false;
     }
+    nob_sb_free(trampoline);
 
     Nob_String_Builder config = {0};
     nob_sb_append_cstr(&config, "# evaluator-generated export C++ module config metadata\n");
     for (size_t i = 0; i < arena_arr_len(targets); i++) {
         SV_List module_sets = NULL;
-        if (!meta_target_collect_cxx_module_sets_temp(ctx, targets[i], &module_sets)) return false;
+        if (!meta_target_collect_cxx_module_sets_temp(ctx, targets[i], &module_sets)) {
+            nob_sb_free(config);
+            return false;
+        }
         if (arena_arr_len(module_sets) == 0) continue;
 
         String_View target_export_name = meta_target_export_name_temp(ctx, targets[i]);
-        if (eval_should_stop(ctx)) return false;
+        if (eval_should_stop(ctx)) {
+            nob_sb_free(config);
+            return false;
+        }
         String_View target_file_name =
             nob_sv_from_cstr(nob_temp_sprintf("target-%.*s-noconfig.cmake",
                                               (int)target_export_name.count,
                                               target_export_name.data));
         String_View target_file_path =
             eval_sv_path_join(eval_temp_arena(ctx), abs_dir, target_file_name);
-        if (eval_should_stop(ctx)) return false;
+        if (eval_should_stop(ctx)) {
+            nob_sb_free(config);
+            return false;
+        }
 
         if (!meta_export_write_cxx_module_target_file(ctx,
                                                       target_file_path,
@@ -532,6 +547,7 @@ static bool meta_export_write_cxx_module_sidecars(EvalExecContext *ctx,
                                                       target_export_name,
                                                       ns,
                                                       nob_sv_from_cstr("noconfig"))) {
+            nob_sb_free(config);
             return false;
         }
         meta_sb_append_include_line(&config,
@@ -539,10 +555,12 @@ static bool meta_export_write_cxx_module_sidecars(EvalExecContext *ctx,
                                     false);
     }
 
-    return eval_write_text_file(ctx,
-                                config_path,
-                                nob_sv_from_parts(config.items, config.count),
-                                append);
+    bool ok = eval_write_text_file(ctx,
+                                   config_path,
+                                   nob_sv_from_parts(config.items, config.count),
+                                   append);
+    nob_sb_free(config);
+    return ok;
 }
 
 static bool meta_export_is_targets_option(String_View token) {

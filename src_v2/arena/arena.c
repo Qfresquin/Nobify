@@ -28,6 +28,7 @@ struct Arena {
 };
 
 static Arena_Block* arena_find_block(Arena *arena, Arena_Block *target);
+static Arena_Block* arena_find_block_for_ptr(Arena *arena, const void *ptr, size_t *offset_out);
 static void arena_run_cleanups_until(Arena *arena, Arena_Cleanup_Node *stop_head);
 static void arena_reset_blocks_only(Arena *arena);
 
@@ -157,6 +158,23 @@ static Arena_Block* arena_find_block(Arena *arena, Arena_Block *target) {
     return NULL;
 }
 
+static Arena_Block* arena_find_block_for_ptr(Arena *arena, const void *ptr, size_t *offset_out) {
+    if (offset_out) *offset_out = 0;
+    if (!arena || !ptr) return NULL;
+
+    Arena_Block *block = arena->first;
+    while (block) {
+        uint8_t *begin = (uint8_t*)(block + 1);
+        uint8_t *end = begin + block->used;
+        if ((const uint8_t*)ptr >= begin && (const uint8_t*)ptr <= end) {
+            if (offset_out) *offset_out = (size_t)((const uint8_t*)ptr - begin);
+            return block;
+        }
+        block = block->next;
+    }
+    return NULL;
+}
+
 static void arena_run_cleanups_until(Arena *arena, Arena_Cleanup_Node *stop_head) {
     if (!arena) return;
 
@@ -267,11 +285,19 @@ void* arena_realloc_last(Arena* arena, void* ptr, size_t old_size, size_t new_si
         }
     }
     
-    // Não é a última ou não cabe: aloca novo e copia
+    // Não é a última ou não cabe: aloca novo e copia somente a faixa
+    // comprovadamente legível dentro do bloco dono de ptr.
     void* new_ptr = arena_alloc(arena, new_size_aligned);
     if (new_ptr && old_size > 0) {
+        size_t ptr_offset = 0;
+        Arena_Block *owner = arena_find_block_for_ptr(arena, ptr, &ptr_offset);
+        size_t readable_size = 0;
+        if (owner && ptr_offset <= owner->used) {
+            readable_size = owner->used - ptr_offset;
+        }
         size_t copy_size = old_size < new_size ? old_size : new_size;
-        memcpy(new_ptr, ptr, copy_size);
+        if (copy_size > readable_size) copy_size = readable_size;
+        if (copy_size > 0) memmove(new_ptr, ptr, copy_size);
     }
     return new_ptr;
 }

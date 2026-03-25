@@ -22,6 +22,11 @@ static void destroy_sub_arena_cb(void *userdata) {
     arena_destroy(arena);
 }
 
+static void eval_registry_cleanup_cb(void *userdata) {
+    EvalRegistry *registry = (EvalRegistry*)userdata;
+    eval_registry_destroy(registry);
+}
+
 // -----------------------------------------------------------------------------
 // Arena helpers and origin tracking
 // -----------------------------------------------------------------------------
@@ -1616,6 +1621,7 @@ static bool eval_registry_index_rebuild(EvalRegistry *registry) {
 
 const Eval_Native_Command *eval_registry_find_const(const EvalRegistry *registry, String_View name) {
     if (!registry || !name.data || name.count == 0) return NULL;
+    if (!registry->native_command_index) return NULL;
 
     char *lookup_key = sv_ascii_upper_heap(name);
     if (!lookup_key) return NULL;
@@ -1668,6 +1674,7 @@ bool eval_registry_unregister_internal(EvalRegistry *registry,
                                        bool allow_builtin_remove) {
     if (!registry || name.count == 0 || !name.data) return false;
     if (registry->mutation_blocked) return false;
+    if (!registry->native_command_index) return false;
 
     char *lookup_key = sv_ascii_upper_heap(name);
     if (!lookup_key) return false;
@@ -2191,6 +2198,7 @@ EvalRegistry *eval_registry_create(Arena *arena) {
     EvalRegistry *registry = arena_alloc_zero(arena, sizeof(EvalRegistry));
     if (!registry) return NULL;
     registry->arena = arena;
+    if (!arena_on_destroy(arena, eval_registry_cleanup_cb, registry)) return NULL;
     if (!eval_dispatcher_seed_builtin_commands(registry)) {
         eval_registry_destroy(registry);
         return NULL;

@@ -6,14 +6,16 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#define CMK2NOB_TEST_RUNNER_ENV "CMK2NOB_TEST_RUNNER"
+#define CMK2NOB_TEST_WS_REUSE_CWD_ENV "CMK2NOB_TEST_WS_REUSE_CWD"
+#define CMK2NOB_TEST_REPO_ROOT_ENV "CMK2NOB_TEST_REPO_ROOT"
+
 typedef struct {
     char root[_TINYDIR_PATH_MAX];
     char work[_TINYDIR_PATH_MAX];
     char bin[_TINYDIR_PATH_MAX];
     char suite_copy[_TINYDIR_PATH_MAX];
 } Test_Workspace;
-
-#define CMK2NOB_TEST_REPO_ROOT_ENV "CMK2NOB_TEST_REPO_ROOT"
 
 bool test_ws_prepare(Test_Workspace *ws, const char *suite_name);
 bool test_ws_enter(const Test_Workspace *ws, char prev_cwd[], size_t prev_cwd_cap);

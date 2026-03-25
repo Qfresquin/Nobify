@@ -152,11 +152,14 @@ static Eval_Result eval_foreach(EvalExecContext *ctx, const Node *node) {
         for (long v = start;; v += step) {
             char buf[64];
             int n = snprintf(buf, sizeof(buf), "%ld", v);
+            String_View item = {0};
             if (n < 0 || (size_t)n >= sizeof(buf)) {
                 (void)ctx_oom(ctx);
                 return eval_result_fatal();
             }
-            if (!exec_core_sv_list_push(ctx->arena, &items, nob_sv_from_cstr(buf))) {
+            item = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(buf));
+            if (ctx->oom) return eval_result_fatal();
+            if (!exec_core_sv_list_push(ctx->arena, &items, item)) {
                 (void)ctx_oom(ctx);
                 return eval_result_fatal();
             }

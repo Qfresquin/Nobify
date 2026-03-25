@@ -709,7 +709,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_file_exists(tag_file_c));
 
     Nob_String_Builder tag_sb = {0};
-    ASSERT(nob_read_entire_file(tag_file_c, &tag_sb));
+    ASSERT(evaluator_read_entire_file_cstr(tag_file_c, &tag_sb));
     ASSERT(strstr(tag_sb.items, "Experimental") != NULL);
     ASSERT(strstr(tag_sb.items, "Nightly") != NULL);
     ASSERT(strstr(tag_sb.items, tag_file_c) == NULL);
@@ -722,7 +722,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_file_exists(submit_manifest_c));
 
     Nob_String_Builder submit_sb = {0};
-    ASSERT(nob_read_entire_file(submit_manifest_c, &submit_sb));
+    ASSERT(evaluator_read_entire_file_cstr(submit_manifest_c, &submit_sb));
     ASSERT(strstr(submit_sb.items, "COMMAND=ctest_submit") != NULL);
     ASSERT(strstr(submit_sb.items, "PARTS=Start;Build;Test") != NULL);
     ASSERT(strstr(submit_sb.items, "FILES=") != NULL);
@@ -735,7 +735,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_file_exists(upload_manifest_c));
 
     Nob_String_Builder upload_sb = {0};
-    ASSERT(nob_read_entire_file(upload_manifest_c, &upload_sb));
+    ASSERT(evaluator_read_entire_file_cstr(upload_manifest_c, &upload_sb));
     ASSERT(strstr(upload_sb.items, "COMMAND=ctest_upload") != NULL);
     ASSERT(strstr(upload_sb.items, "a.txt") != NULL);
     ASSERT(strstr(upload_sb.items, "b.txt") != NULL);
@@ -822,7 +822,7 @@ TEST(evaluator_ctest_start_models_documented_group_append_and_checkout_flow) {
         ASSERT(nob_file_exists(tag_file_c));
 
         Nob_String_Builder tag_sb = {0};
-        ASSERT(nob_read_entire_file(tag_file_c, &tag_sb));
+        ASSERT(evaluator_read_entire_file_cstr(tag_file_c, &tag_sb));
         ASSERT(strstr(tag_sb.items, "Experimental") != NULL);
         ASSERT(strstr(tag_sb.items, "GroupExperimental") != NULL);
         size_t first_tag_len = 0;
@@ -1020,7 +1020,7 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
     ASSERT(nob_file_exists(configure_xml_c));
 
     Nob_String_Builder configure_sb = {0};
-    ASSERT(nob_read_entire_file(configure_xml_c, &configure_sb));
+    ASSERT(evaluator_read_entire_file_cstr(configure_xml_c, &configure_sb));
     ASSERT(strstr(configure_sb.items, "<Configure>") != NULL);
     ASSERT(strstr(configure_sb.items, "configure-tool") != NULL);
     ASSERT(strstr(configure_sb.items, "--preset;dev") != NULL);
@@ -1036,7 +1036,7 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
     ASSERT(nob_file_exists(manifest_c));
 
     Nob_String_Builder manifest_sb = {0};
-    ASSERT(nob_read_entire_file(manifest_c, &manifest_sb));
+    ASSERT(evaluator_read_entire_file_cstr(manifest_c, &manifest_sb));
     ASSERT(strstr(manifest_sb.items, "COMMAND=ctest_configure") != NULL);
     ASSERT(strstr(manifest_sb.items, "PARTS=Configure") != NULL);
     ASSERT(strstr(manifest_sb.items, "Configure.xml") != NULL);
@@ -1289,7 +1289,7 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(nob_file_exists(manifest_c));
 
     Nob_String_Builder submit_sb = {0};
-    ASSERT(nob_read_entire_file(manifest_c, &submit_sb));
+    ASSERT(evaluator_read_entire_file_cstr(manifest_c, &submit_sb));
     ASSERT(strstr(submit_sb.items, "SIGNATURE=DEFAULT") != NULL);
     ASSERT(strstr(submit_sb.items, "SUBMIT_URL=https://submit.example.test/submit.php?project=Nobify") != NULL);
     ASSERT(strstr(submit_sb.items, "HTTPHEADERS=Authorization: Bearer one;X-Nobify: yes") != NULL);
@@ -1386,7 +1386,7 @@ TEST(evaluator_ctest_submit_models_cdash_upload_signature) {
     ASSERT(nob_file_exists(manifest_c));
 
     Nob_String_Builder submit_sb = {0};
-    ASSERT(nob_read_entire_file(manifest_c, &submit_sb));
+    ASSERT(evaluator_read_entire_file_cstr(manifest_c, &submit_sb));
     ASSERT(strstr(submit_sb.items, "SIGNATURE=CDASH_UPLOAD") != NULL);
     ASSERT(strstr(submit_sb.items, "CDASH_UPLOAD=artifact.dat") != NULL);
     ASSERT(strstr(submit_sb.items, "CDASH_UPLOAD_TYPE=CoverageData") != NULL);
@@ -1538,7 +1538,7 @@ TEST(evaluator_ctest_upload_stages_upload_xml_and_submit_part) {
     ASSERT(nob_file_exists(upload_xml_c));
 
     Nob_String_Builder upload_xml_sb = {0};
-    ASSERT(nob_read_entire_file(upload_xml_c, &upload_xml_sb));
+    ASSERT(evaluator_read_entire_file_cstr(upload_xml_c, &upload_xml_sb));
     ASSERT(strstr(upload_xml_sb.items, "<Upload>") != NULL);
     ASSERT(strstr(upload_xml_sb.items, "ctest_upload_remote_bin/upload.bin") != NULL);
     nob_sb_free(upload_xml_sb);

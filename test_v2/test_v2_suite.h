@@ -2,6 +2,9 @@
 #define TEST_V2_SUITE_H_
 
 #include <stdlib.h>
+#include <string.h>
+
+#include "test_workspace.h"
 
 typedef void (*Test_Suite_Fn)(int *passed, int *failed);
 
@@ -12,10 +15,10 @@ void run_evaluator_v2_tests(int *passed, int *failed);
 void run_pipeline_v2_tests(int *passed, int *failed);
 void run_codegen_v2_tests(int *passed, int *failed);
 
-static inline int test_v2_require_result_type_conventions(void) {
-    int rc = system("bash test_v2/evaluator/check_result_type_conventions.sh");
-    if (rc != 0) {
-        nob_log(NOB_ERROR, "result type conventions preflight failed");
+static inline int test_v2_require_official_runner(void) {
+    const char *runner = getenv(CMK2NOB_TEST_RUNNER_ENV);
+    if (!runner || strcmp(runner, "1") != 0) {
+        nob_log(NOB_ERROR, "test suites must be launched via ./build/nob_test");
         return 0;
     }
     return 1;

@@ -12,6 +12,7 @@ void run_codegen_v2_tests(int *passed, int *failed) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     char repo_root[_TINYDIR_PATH_MAX] = {0};
+    const char *repo_root_env = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
     bool prepared = test_ws_prepare(&ws, "codegen");
     bool entered = false;
 
@@ -29,7 +30,7 @@ void run_codegen_v2_tests(int *passed, int *failed) {
         return;
     }
 
-    snprintf(repo_root, sizeof(repo_root), "%s/../..", prev_cwd);
+    snprintf(repo_root, sizeof(repo_root), "%s", repo_root_env ? repo_root_env : "");
 
     run_codegen_v2_render_tests(repo_root, passed, failed);
     run_codegen_v2_build_tests(repo_root, passed, failed);
