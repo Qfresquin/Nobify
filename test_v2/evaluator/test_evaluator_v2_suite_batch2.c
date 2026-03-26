@@ -1,4 +1,4 @@
-#include "test_evaluator_v2_common.h"
+#include "test_evaluator_v2_support.h"
 
 TEST(evaluator_cmake_language_core_subcommands_work) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);

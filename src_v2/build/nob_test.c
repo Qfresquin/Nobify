@@ -92,6 +92,9 @@ static void append_v2_common_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
     nob_cmd_append(cmd,
         "-D_GNU_SOURCE",
         "-Wall", "-Wextra", "-std=c11",
+        "-Werror=unused-function",
+        "-Werror=unused-variable",
+        "-Werror=unused-but-set-variable",
         "-DHAVE_CONFIG_H",
         "-DPCRE2_CODE_UNIT_WIDTH=8",
         "-Ivendor");
@@ -248,6 +251,7 @@ static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_workspace.c",
+        "test_v2/evaluator/test_evaluator_v2_support.c",
         "test_v2/evaluator/test_evaluator_v2_main.c",
         "test_v2/evaluator/test_evaluator_v2_suite.c",
         "test_v2/evaluator/test_evaluator_v2_suite_batch1.c",
@@ -267,6 +271,7 @@ static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
 static void append_v2_codegen_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_workspace.c",
+        "test_v2/codegen/test_codegen_v2_support.c",
         "test_v2/codegen/test_codegen_v2_main.c",
         "test_v2/codegen/test_codegen_v2_suite.c",
         "test_v2/codegen/test_codegen_v2_suite_render.c",

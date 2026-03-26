@@ -1,4 +1,4 @@
-#include "test_evaluator_v2_common.h"
+#include "test_evaluator_v2_support.h"
 
 TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);

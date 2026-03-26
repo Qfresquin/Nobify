@@ -13,7 +13,7 @@ TEST(codegen_write_file_rebases_paths_and_generated_file_compiles) {
 
     ASSERT(codegen_load_text_file_to_arena(arena, "generated/out/nob.c", &generated));
     ASSERT(codegen_sv_contains(generated, "../../src/main.c"));
-    ASSERT(codegen_compile_generated_nob(s_codegen_repo_root, "generated/out/nob.c", "generated/out/nob_gen"));
+    ASSERT(codegen_compile_generated_nob("generated/out/nob.c", "generated/out/nob_gen"));
 
     arena_destroy(arena);
     TEST_PASS();
@@ -35,7 +35,7 @@ TEST(codegen_shared_and_module_targets_build_on_posix_backend) {
     ASSERT(codegen_load_text_file_to_arena(arena, "generated/shared/nob.c", &generated));
     ASSERT(codegen_sv_contains(generated, "\"-shared\""));
     ASSERT(codegen_sv_contains(generated, "\"-fPIC\""));
-    ASSERT(codegen_compile_generated_nob(s_codegen_repo_root, "generated/shared/nob.c", "generated/shared/nob_gen"));
+    ASSERT(codegen_compile_generated_nob("generated/shared/nob.c", "generated/shared/nob_gen"));
     ASSERT(codegen_run_binary_in_dir("generated/shared", "./nob_gen", NULL, NULL));
     ASSERT(nob_file_exists("generated/shared/../../artifacts/lib/libcorex.so"));
     ASSERT(nob_file_exists("generated/shared/../../artifacts/modules/libplugin.so"));
@@ -67,7 +67,7 @@ TEST(codegen_cxx_static_dependency_uses_cxx_driver_for_link) {
     ASSERT(codegen_load_text_file_to_arena(arena, "generated/cxx/nob.c", &generated));
     ASSERT(codegen_sv_contains(generated, "append_toolchain_cmd(&cc_cmd, true);"));
     ASSERT(codegen_sv_contains(generated, "append_toolchain_cmd(&link_cmd, true);"));
-    ASSERT(codegen_compile_generated_nob(s_codegen_repo_root, "generated/cxx/nob.c", "generated/cxx/nob_gen"));
+    ASSERT(codegen_compile_generated_nob("generated/cxx/nob.c", "generated/cxx/nob_gen"));
     ASSERT(codegen_run_binary_in_dir("generated/cxx", "./nob_gen", "app", NULL));
     ASSERT(nob_file_exists("generated/cxx/../../build/app"));
     arena_destroy(arena);
@@ -94,8 +94,7 @@ TEST(codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs) {
     TEST_PASS();
 }
 
-void run_codegen_v2_build_tests(const char *repo_root, int *passed, int *failed) {
-    snprintf(s_codegen_repo_root, sizeof(s_codegen_repo_root), "%s", repo_root ? repo_root : "");
+void run_codegen_v2_build_tests(int *passed, int *failed) {
     test_codegen_write_file_rebases_paths_and_generated_file_compiles(passed, failed);
     test_codegen_shared_and_module_targets_build_on_posix_backend(passed, failed);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link(passed, failed);

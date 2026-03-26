@@ -76,8 +76,7 @@ TEST(codegen_output_properties_shape_artifact_paths) {
     TEST_PASS();
 }
 
-void run_codegen_v2_render_tests(const char *repo_root, int *passed, int *failed) {
-    snprintf(s_codegen_repo_root, sizeof(s_codegen_repo_root), "%s", repo_root ? repo_root : "");
+void run_codegen_v2_render_tests(int *passed, int *failed) {
     test_codegen_simple_executable_generates_compilable_nob(passed, failed);
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed);
     test_codegen_output_properties_shape_artifact_paths(passed, failed);

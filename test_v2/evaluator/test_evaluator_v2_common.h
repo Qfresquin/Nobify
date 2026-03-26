@@ -71,11 +71,6 @@ static Eval_Result eval_test_result_ok(void) {
     return result;
 }
 
-static Eval_Result eval_test_result_soft_error(void) {
-    Eval_Result result = { .kind = EVAL_RESULT_SOFT_ERROR };
-    return result;
-}
-
 static Eval_Result eval_test_result_fatal(void) {
     Eval_Result result = { .kind = EVAL_RESULT_FATAL };
     return result;
@@ -1320,7 +1315,5 @@ done:
     arena_destroy(arena);
     return ok;
 }
-
-static const char *EVALUATOR_GOLDEN_DIR = "test_v2/evaluator/golden";
 
 #endif // TEST_EVALUATOR_V2_COMMON_H_

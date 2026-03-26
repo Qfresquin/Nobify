@@ -34,8 +34,7 @@ TEST(codegen_rejects_imported_target_reference) {
     TEST_PASS();
 }
 
-void run_codegen_v2_reject_tests(const char *repo_root, int *passed, int *failed) {
-    snprintf(s_codegen_repo_root, sizeof(s_codegen_repo_root), "%s", repo_root ? repo_root : "");
+void run_codegen_v2_reject_tests(int *passed, int *failed) {
     test_codegen_rejects_module_target_as_link_dependency(passed, failed);
     test_codegen_rejects_imported_target_reference(passed, failed);
 }
