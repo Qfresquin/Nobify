@@ -2641,6 +2641,13 @@ TEST(evaluator_try_run_rejects_incomplete_argument_shapes) {
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 4);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("BAD_LEGACY_OUT")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD2")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD2")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD3")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD3")).count == 0);
 
     bool saw_missing_inputs = false;
     bool saw_legacy_output_restriction = false;

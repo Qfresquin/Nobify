@@ -693,6 +693,13 @@ bool try_compile_execute_project_request(EvalExecContext *ctx,
     (void)node;
 
     Nob_String_Builder log = {0};
+    if (req->source_dir.count == 0 || req->source_dir.data == NULL) {
+        nob_sb_append_cstr(&log, "try_compile(PROJECT) source directory is missing\n");
+        out_res->output = try_compile_finish_log(ctx, &log);
+        out_res->ok = false;
+        return true;
+    }
+
     String_View cmake_lists = eval_sv_path_join(eval_temp_arena(ctx),
                                                 req->source_dir,
                                                 nob_sv_from_cstr("CMakeLists.txt"));

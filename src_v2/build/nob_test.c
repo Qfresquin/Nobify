@@ -44,7 +44,12 @@ typedef struct {
 
 typedef struct {
     const char *name;
-    bool sanitize;
+    bool use_asan;
+    bool use_ubsan;
+    bool use_msan;
+    const char *asan_options_default;
+    const char *ubsan_options_default;
+    const char *msan_options_default;
 } Test_Profile;
 
 typedef struct {
@@ -70,8 +75,56 @@ static void report_captured_test_output(const Test_Module *module,
 static bool ensure_temp_tests_layout(const Test_Profile *profile);
 static bool run_test_preflight(const Test_Profile *profile);
 
-static const Test_Profile TEST_PROFILE_DEFAULT = {"default", false};
-static const Test_Profile TEST_PROFILE_ASAN_UBSAN = {"asan_ubsan", true};
+static const Test_Profile TEST_PROFILE_DEFAULT = {
+    .name = "default",
+    .use_asan = false,
+    .use_ubsan = false,
+    .use_msan = false,
+    .asan_options_default = NULL,
+    .ubsan_options_default = NULL,
+    .msan_options_default = NULL,
+};
+static const Test_Profile TEST_PROFILE_ASAN_UBSAN = {
+    .name = "asan_ubsan",
+    .use_asan = true,
+    .use_ubsan = true,
+    .use_msan = false,
+    .asan_options_default =
+        "detect_leaks=1:detect_stack_use_after_return=1:abort_on_error=1:symbolize=1",
+    .ubsan_options_default =
+        "print_stacktrace=1:halt_on_error=1",
+    .msan_options_default = NULL,
+};
+static const Test_Profile TEST_PROFILE_ASAN = {
+    .name = "asan",
+    .use_asan = true,
+    .use_ubsan = false,
+    .use_msan = false,
+    .asan_options_default =
+        "detect_leaks=1:detect_stack_use_after_return=1:abort_on_error=1:symbolize=1",
+    .ubsan_options_default = NULL,
+    .msan_options_default = NULL,
+};
+static const Test_Profile TEST_PROFILE_UBSAN = {
+    .name = "ubsan",
+    .use_asan = false,
+    .use_ubsan = true,
+    .use_msan = false,
+    .asan_options_default = NULL,
+    .ubsan_options_default =
+        "print_stacktrace=1:halt_on_error=1",
+    .msan_options_default = NULL,
+};
+static const Test_Profile TEST_PROFILE_MSAN = {
+    .name = "msan",
+    .use_asan = false,
+    .use_ubsan = false,
+    .use_msan = true,
+    .asan_options_default = NULL,
+    .ubsan_options_default = NULL,
+    .msan_options_default =
+        "abort_on_error=1:symbolize=1:track_origins=2:poison_in_dtor=1",
+};
 
 static Test_Module TEST_MODULES[] = {
     {"arena", append_test_arena_all_sources, true},
@@ -88,6 +141,18 @@ static bool starts_with(const char *text, const char *prefix) {
     if (!text || !prefix) return false;
     prefix_len = strlen(prefix);
     return strncmp(text, prefix, prefix_len) == 0;
+}
+
+static bool test_profile_is_sanitized(const Test_Profile *profile) {
+    return profile && (profile->use_asan || profile->use_ubsan || profile->use_msan);
+}
+
+static void append_test_profile_compiler(Nob_Cmd *cmd, const Test_Profile *profile) {
+    if (profile && profile->use_msan) {
+        nob_cmd_append(cmd, "clang");
+        return;
+    }
+    nob_cc(cmd);
 }
 
 static void runner_emit_log_line(Nob_Log_Level level, const char *message) {
@@ -140,16 +205,60 @@ static void runner_log_handler(Nob_Log_Level level, const char *fmt, va_list arg
 }
 
 static void append_test_profile_compile_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
-    if (profile && profile->sanitize) {
-        nob_cmd_append(cmd, "-O1", "-ggdb", "-fno-omit-frame-pointer", "-fsanitize=address,undefined");
+    if (!test_profile_is_sanitized(profile)) {
+        nob_cmd_append(cmd, "-O3", "-ggdb");
         return;
     }
-    nob_cmd_append(cmd, "-O3", "-ggdb");
+
+    nob_cmd_append(cmd, "-O1", "-ggdb", "-fno-omit-frame-pointer", "-fno-optimize-sibling-calls");
+    if (profile->use_msan) {
+        nob_cmd_append(cmd,
+            "-fPIE",
+            "-fsanitize=memory",
+            "-fsanitize-memory-track-origins=2");
+        return;
+    }
+    if (profile->use_asan && profile->use_ubsan) {
+        nob_cmd_append(cmd,
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            "-fno-sanitize-recover=undefined");
+        return;
+    }
+    if (profile->use_asan) {
+        nob_cmd_append(cmd,
+            "-fsanitize=address",
+            "-fsanitize-address-use-after-scope");
+        return;
+    }
+    if (profile->use_ubsan) {
+        nob_cmd_append(cmd,
+            "-fsanitize=undefined",
+            "-fno-sanitize-recover=undefined");
+    }
 }
 
 static void append_test_profile_link_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
-    if (profile && profile->sanitize) {
-        nob_cmd_append(cmd, "-fsanitize=address,undefined", "-fno-omit-frame-pointer");
+    if (!test_profile_is_sanitized(profile)) return;
+
+    nob_cmd_append(cmd, "-fno-omit-frame-pointer");
+    if (profile->use_msan) {
+        nob_cmd_append(cmd,
+            "-pie",
+            "-fsanitize=memory",
+            "-fsanitize-memory-track-origins=2");
+        return;
+    }
+    if (profile->use_asan && profile->use_ubsan) {
+        nob_cmd_append(cmd, "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined");
+        return;
+    }
+    if (profile->use_asan) {
+        nob_cmd_append(cmd, "-fsanitize=address");
+        return;
+    }
+    if (profile->use_ubsan) {
+        nob_cmd_append(cmd, "-fsanitize=undefined", "-fno-sanitize-recover=undefined");
     }
 }
 
@@ -675,7 +784,7 @@ static bool build_object_file(const char *source_path,
     if (!object_needs_rebuild(object_path, dep_path)) return true;
 
     nob_log(NOB_INFO, "[v2] compile %s", source_path);
-    nob_cc(&cmd);
+    append_test_profile_compiler(&cmd, profile);
     append_v2_common_flags(&cmd, profile);
     nob_cmd_append(&cmd, "-MMD", "-MF", dep_path, "-c", source_path, "-o", object_path);
     ok = nob_cmd_run(&cmd);
@@ -701,7 +810,7 @@ static bool link_test_binary(const char *output_path,
     }
 
     nob_log(NOB_INFO, "[v2] link %s", output_path);
-    nob_cc(&cmd);
+    append_test_profile_compiler(&cmd, profile);
     nob_cmd_append(&cmd, "-o", output_path);
     for (size_t i = 0; i < object_paths->count; ++i) {
         nob_cmd_append(&cmd, object_paths->items[i]);
@@ -869,6 +978,17 @@ static char *dup_env_value(const char *name) {
     return copy;
 }
 
+static bool preserve_env_for_restore(const char *name, char **prev_value, bool *had_prev_value) {
+    if (!name || !prev_value || !had_prev_value) return false;
+    *prev_value = NULL;
+    *had_prev_value = getenv(name) != NULL;
+    if (*had_prev_value) {
+        *prev_value = dup_env_value(name);
+        if (!*prev_value) return false;
+    }
+    return true;
+}
+
 static bool ensure_temp_tests_layout(const Test_Profile *profile) {
     bool ok = false;
     size_t temp_mark = nob_temp_save();
@@ -898,7 +1018,7 @@ static bool validate_test_profile_support(const Test_Profile *profile) {
     const char *probe_program = "int main(void) { return 0; }\n";
     size_t temp_mark = nob_temp_save();
 
-    if (!profile || !profile->sanitize) {
+    if (!test_profile_is_sanitized(profile)) {
         ok = true;
         goto defer;
     }
@@ -909,8 +1029,9 @@ static bool validate_test_profile_support(const Test_Profile *profile) {
     if (!nob_write_entire_file(probe_source, probe_program, strlen(probe_program))) goto defer;
 
     nob_log(NOB_INFO, "[v2] validate profile %s", profile->name);
-    nob_cc(&cmd);
+    append_test_profile_compiler(&cmd, profile);
     append_test_profile_compile_flags(&cmd, profile);
+    append_test_profile_link_flags(&cmd, profile);
     nob_cmd_append(&cmd, probe_source, "-o", probe_binary);
     ok = nob_cmd_run(&cmd);
     if (!ok) {
@@ -1004,6 +1125,15 @@ static bool run_binary_in_workspace(const Test_Module *module,
     char *prev_runner = NULL;
     char *prev_reuse_cwd = NULL;
     char *prev_repo_root = NULL;
+    char *prev_asan_options = NULL;
+    char *prev_ubsan_options = NULL;
+    char *prev_msan_options = NULL;
+    bool had_prev_runner = false;
+    bool had_prev_reuse_cwd = false;
+    bool had_prev_repo_root = false;
+    bool had_prev_asan_options = false;
+    bool had_prev_ubsan_options = false;
+    bool had_prev_msan_options = false;
     Test_Run_Workspace workspace = {0};
     Nob_Cmd cmd = {0};
     bool ok = false;
@@ -1016,17 +1146,29 @@ static bool run_binary_in_workspace(const Test_Module *module,
     if (!test_fs_join_path(workspace.root, "test.stdout.log", stdout_log_abs)) goto defer;
     if (!test_fs_join_path(workspace.root, "test.stderr.log", stderr_log_abs)) goto defer;
 
-    prev_runner = dup_env_value(CMK2NOB_TEST_RUNNER_ENV);
-    if (getenv(CMK2NOB_TEST_RUNNER_ENV) && !prev_runner) goto defer;
-    prev_reuse_cwd = dup_env_value(CMK2NOB_TEST_WS_REUSE_CWD_ENV);
-    if (getenv(CMK2NOB_TEST_WS_REUSE_CWD_ENV) && !prev_reuse_cwd) goto defer;
-    prev_repo_root = dup_env_value(CMK2NOB_TEST_REPO_ROOT_ENV);
-    if (getenv(CMK2NOB_TEST_REPO_ROOT_ENV) && !prev_repo_root) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_RUNNER_ENV, &prev_runner, &had_prev_runner)) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_WS_REUSE_CWD_ENV, &prev_reuse_cwd, &had_prev_reuse_cwd)) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_REPO_ROOT_ENV, &prev_repo_root, &had_prev_repo_root)) goto defer;
+    if (!preserve_env_for_restore("ASAN_OPTIONS", &prev_asan_options, &had_prev_asan_options)) goto defer;
+    if (!preserve_env_for_restore("UBSAN_OPTIONS", &prev_ubsan_options, &had_prev_ubsan_options)) goto defer;
+    if (!preserve_env_for_restore("MSAN_OPTIONS", &prev_msan_options, &had_prev_msan_options)) goto defer;
+    (void)had_prev_runner;
+    (void)had_prev_reuse_cwd;
+    (void)had_prev_repo_root;
 
     if (!nob_set_current_dir(workspace.root)) goto defer;
     set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, "1");
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, "1");
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, cwd);
+    if (!had_prev_asan_options && profile && profile->asan_options_default) {
+        set_env_or_unset("ASAN_OPTIONS", profile->asan_options_default);
+    }
+    if (!had_prev_ubsan_options && profile && profile->ubsan_options_default) {
+        set_env_or_unset("UBSAN_OPTIONS", profile->ubsan_options_default);
+    }
+    if (!had_prev_msan_options && profile && profile->msan_options_default) {
+        set_env_or_unset("MSAN_OPTIONS", profile->msan_options_default);
+    }
 
     nob_cmd_append(&cmd, binary_abs);
     if (verbose) {
@@ -1058,9 +1200,21 @@ defer:
     set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, prev_runner);
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, prev_reuse_cwd);
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, prev_repo_root);
+    if (profile && profile->asan_options_default) {
+        set_env_or_unset("ASAN_OPTIONS", had_prev_asan_options ? prev_asan_options : NULL);
+    }
+    if (profile && profile->ubsan_options_default) {
+        set_env_or_unset("UBSAN_OPTIONS", had_prev_ubsan_options ? prev_ubsan_options : NULL);
+    }
+    if (profile && profile->msan_options_default) {
+        set_env_or_unset("MSAN_OPTIONS", had_prev_msan_options ? prev_msan_options : NULL);
+    }
     free(prev_runner);
     free(prev_reuse_cwd);
     free(prev_repo_root);
+    free(prev_asan_options);
+    free(prev_ubsan_options);
+    free(prev_msan_options);
     nob_cmd_free(cmd);
     if (!workspace_preserved && !cleanup_ok && workspace.root[0] != '\0') {
         cleanup_ok = cleanup_test_run_workspace(&workspace);
@@ -1192,7 +1346,25 @@ static bool resolve_test_command(const char *cmd,
     *profile = &TEST_PROFILE_DEFAULT;
     *run_all = false;
 
-    if (has_suffix(cmd, "-san")) {
+    if (has_suffix(cmd, "-msan")) {
+        base_len = strlen(cmd) - strlen("-msan");
+        if (base_len + 1 > sizeof(base_command)) return false;
+        memcpy(base_command, cmd, base_len);
+        base_command[base_len] = '\0';
+        *profile = &TEST_PROFILE_MSAN;
+    } else if (has_suffix(cmd, "-asan")) {
+        base_len = strlen(cmd) - strlen("-asan");
+        if (base_len + 1 > sizeof(base_command)) return false;
+        memcpy(base_command, cmd, base_len);
+        base_command[base_len] = '\0';
+        *profile = &TEST_PROFILE_ASAN;
+    } else if (has_suffix(cmd, "-ubsan")) {
+        base_len = strlen(cmd) - strlen("-ubsan");
+        if (base_len + 1 > sizeof(base_command)) return false;
+        memcpy(base_command, cmd, base_len);
+        base_command[base_len] = '\0';
+        *profile = &TEST_PROFILE_UBSAN;
+    } else if (has_suffix(cmd, "-san")) {
         base_len = strlen(cmd) - strlen("-san");
         if (base_len + 1 > sizeof(base_command)) return false;
         memcpy(base_command, cmd, base_len);
@@ -1263,7 +1435,7 @@ int main(int argc, char **argv) {
     }
 
     nob_log(NOB_INFO,
-            "Usage: %s [--verbose] [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-arena-san|test-lexer-san|test-parser-san|test-evaluator-san|test-evaluator-integration-san|test-pipeline-san|test-codegen-san|test-v2-san]",
+            "Usage: %s [--verbose] [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
             argv[0]);
     return 1;
 }

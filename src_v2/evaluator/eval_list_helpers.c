@@ -183,6 +183,10 @@ bool list_regex_replace_one_temp(EvalExecContext *ctx,
     const char *cursor = in_buf;
 
     for (;;) {
+        for (size_t i = 0; i < MAX_GROUPS; i++) {
+            m[i].rm_so = -1;
+            m[i].rm_eo = -1;
+        }
         int rc = regexec(re, cursor, MAX_GROUPS, m, 0);
         if (rc != 0 || m[0].rm_so < 0 || m[0].rm_eo < m[0].rm_so) {
             nob_sb_append_cstr(&sb, cursor);

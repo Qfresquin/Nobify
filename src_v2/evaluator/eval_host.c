@@ -344,7 +344,11 @@ static bool host_cpu_feature_temp(EvalExecContext *ctx,
             *out_value = __builtin_cpu_supports("sse") && __builtin_cpu_supports("mmx");
             return true;
         case HOST_CPU_FEATURE_AMD_3DNOW:
+#if defined(__clang__)
+            *out_value = false;
+#else
             *out_value = __builtin_cpu_supports("3dnow");
+#endif
             return true;
         case HOST_CPU_FEATURE_AMD_3DNOW_PLUS:
             *out_value = false;

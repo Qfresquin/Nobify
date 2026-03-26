@@ -136,6 +136,25 @@ static Eval_Opt_Parse_Config try_compile_opt_cfg(const Node *node,
     return cfg;
 }
 
+static bool try_compile_parse_diag_and_stop(EvalExecContext *ctx,
+                                            const Node *node,
+                                            Cmake_Diag_Severity severity,
+                                            Eval_Diag_Code code,
+                                            Cmake_Event_Origin origin,
+                                            String_View cause,
+                                            String_View hint) {
+    if (!ctx || !node) return false;
+    (void)eval_emit_diag_with_severity(ctx,
+                                       severity,
+                                       code,
+                                       nob_sv_from_cstr("dispatcher"),
+                                       node->as.cmd.name,
+                                       origin,
+                                       cause,
+                                       hint);
+    return false;
+}
+
 static bool try_compile_add_source_item(EvalExecContext *ctx,
                                         Try_Compile_Request *req,
                                         String_View path,
@@ -180,14 +199,13 @@ static bool try_compile_write_generated_source(EvalExecContext *ctx,
 static bool try_compile_emit_invalid_source_project_keyword(EvalExecContext *ctx,
                                                             const Node *node,
                                                             Cmake_Event_Origin origin) {
-    return EVAL_DIAG_BOOL_SEV(ctx,
-                              EV_DIAG_ERROR,
-                              EVAL_DIAG_INVALID_VALUE,
-                              nob_sv_from_cstr("dispatcher"),
-                              node->as.cmd.name,
-                              origin,
-                              nob_sv_from_cstr("PROJECT-signature keywords are invalid in try_compile(SOURCE ...)"),
-                              nob_sv_from_cstr("Use try_compile(<out-var> PROJECT ... SOURCE_DIR ...)"));
+    return try_compile_parse_diag_and_stop(ctx,
+                                           node,
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_INVALID_VALUE,
+                                           origin,
+                                           nob_sv_from_cstr("PROJECT-signature keywords are invalid in try_compile(SOURCE ...)"),
+                                           nob_sv_from_cstr("Use try_compile(<out-var> PROJECT ... SOURCE_DIR ...)"));
 }
 
 static bool try_compile_parse_source_option(EvalExecContext *ctx,
@@ -375,14 +393,13 @@ static bool try_run_parse_option(EvalExecContext *ctx,
             return true;
         case TRY_RUN_OPT_OUTPUT_VARIABLE:
             if (!state->req->allow_legacy_output_variable) {
-                return EVAL_DIAG_BOOL_SEV(ctx,
-                                          EV_DIAG_ERROR,
-                                          EVAL_DIAG_INVALID_VALUE,
-                                          nob_sv_from_cstr("dispatcher"),
-                                          state->node->as.cmd.name,
-                                          state->origin,
-                                          nob_sv_from_cstr("try_run(OUTPUT_VARIABLE) is supported only by the legacy signature with an explicit binary directory"),
-                                          nob_sv_from_cstr("Use COMPILE_OUTPUT_VARIABLE and RUN_OUTPUT_* variables with the new signature"));
+                return try_compile_parse_diag_and_stop(ctx,
+                                                       state->node,
+                                                       EV_DIAG_ERROR,
+                                                       EVAL_DIAG_INVALID_VALUE,
+                                                       state->origin,
+                                                       nob_sv_from_cstr("try_run(OUTPUT_VARIABLE) is supported only by the legacy signature with an explicit binary directory"),
+                                                       nob_sv_from_cstr("Use COMPILE_OUTPUT_VARIABLE and RUN_OUTPUT_* variables with the new signature"));
             }
             state->req->legacy_output_var = values[0];
             return true;
@@ -436,7 +453,13 @@ static bool try_compile_parse_source_request_core(EvalExecContext *ctx,
                                                   Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 2) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile() requires at least a result variable"), nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
+        return try_compile_parse_diag_and_stop(ctx,
+                                               node,
+                                               EV_DIAG_ERROR,
+                                               EVAL_DIAG_MISSING_REQUIRED,
+                                               eval_origin_from_node(ctx, node),
+                                               nob_sv_from_cstr("try_compile() requires at least a result variable"),
+                                               nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
     try_compile_init_request(ctx, (*args)[0], out_req);
@@ -474,7 +497,13 @@ static bool try_compile_parse_source_request_core(EvalExecContext *ctx,
     }
 
     if (out_req->source_items.count == 0) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile(SOURCE ...) requires at least one source input"), nob_sv_from_cstr("Use SOURCES, SOURCE_FROM_CONTENT, SOURCE_FROM_VAR or SOURCE_FROM_FILE"));
+        return try_compile_parse_diag_and_stop(ctx,
+                                               node,
+                                               EV_DIAG_ERROR,
+                                               EVAL_DIAG_MISSING_REQUIRED,
+                                               eval_origin_from_node(ctx, node),
+                                               nob_sv_from_cstr("try_compile(SOURCE ...) requires at least one source input"),
+                                               nob_sv_from_cstr("Use SOURCES, SOURCE_FROM_CONTENT, SOURCE_FROM_VAR or SOURCE_FROM_FILE"));
     }
 
     return true;
@@ -486,7 +515,13 @@ bool try_compile_parse_request(EvalExecContext *ctx,
                                Try_Compile_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 2) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile() requires at least a result variable"), nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
+        return try_compile_parse_diag_and_stop(ctx,
+                                               node,
+                                               EV_DIAG_ERROR,
+                                               EVAL_DIAG_MISSING_REQUIRED,
+                                               eval_origin_from_node(ctx, node),
+                                               nob_sv_from_cstr("try_compile() requires at least a result variable"),
+                                               nob_sv_from_cstr("Usage: try_compile(<out-var> <bindir> <src> ...)"));
     }
 
     try_compile_init_request(ctx, (*args)[0], out_req);
@@ -510,7 +545,13 @@ bool try_compile_parse_request(EvalExecContext *ctx,
         }
 
         if (out_req->source_dir.count == 0) {
-            return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_compile(PROJECT ...) requires SOURCE_DIR"), nob_sv_from_cstr("Usage: try_compile(<out-var> PROJECT <name> SOURCE_DIR <dir> ...)"));
+            return try_compile_parse_diag_and_stop(ctx,
+                                                   node,
+                                                   EV_DIAG_ERROR,
+                                                   EVAL_DIAG_MISSING_REQUIRED,
+                                                   eval_origin_from_node(ctx, node),
+                                                   nob_sv_from_cstr("try_compile(PROJECT ...) requires SOURCE_DIR"),
+                                                   nob_sv_from_cstr("Usage: try_compile(<out-var> PROJECT <name> SOURCE_DIR <dir> ...)"));
         }
 
         if (out_req->binary_dir.count == 0) {
@@ -530,7 +571,13 @@ bool try_run_parse_request(EvalExecContext *ctx,
                            Try_Run_Request *out_req) {
     if (!ctx || !node || !args || !out_req) return false;
     if (arena_arr_len(*args) < 3) {
-        return EVAL_DIAG_BOOL_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("dispatcher"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("try_run() requires run result, compile result and try_compile-style inputs"), nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...) or try_run(<run-var> <compile-var> SOURCE_FROM_CONTENT ...)"));
+        return try_compile_parse_diag_and_stop(ctx,
+                                               node,
+                                               EV_DIAG_ERROR,
+                                               EVAL_DIAG_MISSING_REQUIRED,
+                                               eval_origin_from_node(ctx, node),
+                                               nob_sv_from_cstr("try_run() requires run result, compile result and try_compile-style inputs"),
+                                               nob_sv_from_cstr("Usage: try_run(<run-var> <compile-var> <bindir> <src> ...) or try_run(<run-var> <compile-var> SOURCE_FROM_CONTENT ...)"));
     }
 
     *out_req = (Try_Run_Request){

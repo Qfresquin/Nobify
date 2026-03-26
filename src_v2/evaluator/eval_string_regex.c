@@ -33,6 +33,8 @@ Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cma
         }
 
         regmatch_t m[1];
+        m[0].rm_so = -1;
+        m[0].rm_eo = -1;
         int rc = regexec(&re, in_buf, 1, m, 0);
         regfree(&re);
 
@@ -80,6 +82,10 @@ Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cma
         const char *cursor = in_buf;
 
         for (;;) {
+            for (size_t i = 0; i < MAX_GROUPS; i++) {
+                m[i].rm_so = -1;
+                m[i].rm_eo = -1;
+            }
             int rc = regexec(&re, cursor, MAX_GROUPS, m, 0);
             if (rc != 0 || m[0].rm_so < 0 || m[0].rm_eo < m[0].rm_so) {
                 nob_sb_append_cstr(&sb, cursor);
@@ -157,6 +163,8 @@ Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cma
         const char *cursor = in_buf;
         for (;;) {
             regmatch_t m[1];
+            m[0].rm_so = -1;
+            m[0].rm_eo = -1;
             int rc = regexec(&re, cursor, 1, m, 0);
             if (rc != 0 || m[0].rm_so < 0 || m[0].rm_eo < m[0].rm_so) break;
 
