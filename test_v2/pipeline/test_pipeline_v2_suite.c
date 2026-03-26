@@ -590,7 +590,7 @@ TEST(pipeline_validate_does_not_infer_link_library_targets) {
     TEST_PASS();
 }
 
-void run_pipeline_v2_tests(int *passed, int *failed) {
+void run_pipeline_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     bool prepared = test_ws_prepare(&ws, "pipeline");
@@ -610,9 +610,9 @@ void run_pipeline_v2_tests(int *passed, int *failed) {
         return;
     }
 
-    test_pipeline_golden_all_cases(passed, failed);
-    test_pipeline_builder_directory_scope_events(passed, failed);
-    test_pipeline_validate_does_not_infer_link_library_targets(passed, failed);
+    test_pipeline_golden_all_cases(passed, failed, skipped);
+    test_pipeline_builder_directory_scope_events(passed, failed, skipped);
+    test_pipeline_validate_does_not_infer_link_library_targets(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

@@ -156,6 +156,194 @@ bool evaluator_create_fetchcontent_git_repo(const char *repo_dir,
         repo_dir, cmakelists_text, version_text, tag_name);
 }
 
+typedef struct {
+    Arena *temp_arena;
+    Arena *event_arena;
+    Cmake_Event_Stream *stream;
+    Eval_Test_Init init;
+    Eval_Test_Runtime *ctx;
+} Eval_Test_Fixture;
+
+Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init);
+void eval_test_destroy(Eval_Test_Runtime *ctx);
+
+typedef struct {
+    char *name;
+    char *prev_value;
+    bool had_prev_value;
+} Eval_Test_Env_Guard;
+
+static void evaluator_test_env_guard_cleanup(void *ctx) {
+    Eval_Test_Env_Guard *guard = (Eval_Test_Env_Guard*)ctx;
+    if (!guard) return;
+#if defined(_WIN32)
+    if (guard->had_prev_value) {
+        _putenv_s(guard->name, guard->prev_value ? guard->prev_value : "");
+    } else {
+        _putenv_s(guard->name, "");
+    }
+#else
+    if (guard->had_prev_value) {
+        setenv(guard->name, guard->prev_value ? guard->prev_value : "", 1);
+    } else {
+        unsetenv(guard->name);
+    }
+#endif
+    free(guard->name);
+    free(guard->prev_value);
+    free(guard);
+}
+
+static void evaluator_test_log_capture_cleanup(void *ctx) {
+    (void)ctx;
+    evaluator_end_nob_log_capture();
+}
+
+void eval_test_fixture_destroy(void *ctx) {
+    Eval_Test_Fixture *fixture = (Eval_Test_Fixture*)ctx;
+    if (!fixture) return;
+    if (fixture->ctx) eval_test_destroy(fixture->ctx);
+    if (fixture->temp_arena) arena_destroy(fixture->temp_arena);
+    if (fixture->event_arena) arena_destroy(fixture->event_arena);
+    free(fixture);
+}
+
+Eval_Test_Fixture *eval_test_fixture_create(size_t temp_arena_size,
+                                            size_t event_arena_size,
+                                            const Eval_Test_Init *overrides) {
+    Eval_Test_Fixture *fixture = (Eval_Test_Fixture*)calloc(1, sizeof(*fixture));
+    if (!fixture) return NULL;
+
+    if (temp_arena_size == 0) temp_arena_size = 2 * 1024 * 1024;
+    if (event_arena_size == 0) event_arena_size = 2 * 1024 * 1024;
+
+    fixture->temp_arena = arena_create(temp_arena_size);
+    fixture->event_arena = arena_create(event_arena_size);
+    if (!fixture->temp_arena || !fixture->event_arena) {
+        eval_test_fixture_destroy(fixture);
+        return NULL;
+    }
+
+    fixture->stream = event_stream_create(fixture->event_arena);
+    if (!fixture->stream) {
+        eval_test_fixture_destroy(fixture);
+        return NULL;
+    }
+
+    fixture->init = (Eval_Test_Init){
+        .arena = fixture->temp_arena,
+        .event_arena = fixture->event_arena,
+        .stream = fixture->stream,
+        .source_dir = nob_sv_from_cstr("."),
+        .binary_dir = nob_sv_from_cstr("."),
+        .current_file = "CMakeLists.txt",
+        .exec_mode = EVAL_EXEC_MODE_PROJECT,
+        .services = NULL,
+        .compat_profile = EVAL_PROFILE_PERMISSIVE,
+        .registry = NULL,
+    };
+
+    if (overrides) {
+        if (overrides->source_dir.count > 0) fixture->init.source_dir = overrides->source_dir;
+        if (overrides->binary_dir.count > 0) fixture->init.binary_dir = overrides->binary_dir;
+        if (overrides->current_file) fixture->init.current_file = overrides->current_file;
+        if (overrides->exec_mode != EVAL_EXEC_MODE_PROJECT) fixture->init.exec_mode = overrides->exec_mode;
+        if (overrides->services) fixture->init.services = overrides->services;
+        if (overrides->compat_profile != EVAL_PROFILE_PERMISSIVE) {
+            fixture->init.compat_profile = overrides->compat_profile;
+        }
+        if (overrides->registry) fixture->init.registry = overrides->registry;
+    }
+
+    fixture->ctx = eval_test_create(&fixture->init);
+    if (!fixture->ctx) {
+        eval_test_fixture_destroy(fixture);
+        return NULL;
+    }
+
+    if (!test_v2_cleanup_push(eval_test_fixture_destroy, fixture)) {
+        eval_test_fixture_destroy(fixture);
+        return NULL;
+    }
+
+    return fixture;
+}
+
+bool evaluator_test_begin_nob_log_capture_guarded(void) {
+    evaluator_begin_nob_log_capture();
+    if (!test_v2_cleanup_push(evaluator_test_log_capture_cleanup, NULL)) {
+        evaluator_end_nob_log_capture();
+        return false;
+    }
+    return true;
+}
+
+bool evaluator_test_guard_env(const char *name, const char *value) {
+    const char *prev_value = NULL;
+    Eval_Test_Env_Guard *guard = NULL;
+    size_t name_len = 0;
+
+    if (!name || name[0] == '\0') return false;
+
+    prev_value = getenv(name);
+    guard = (Eval_Test_Env_Guard*)calloc(1, sizeof(*guard));
+    if (!guard) return false;
+
+    name_len = strlen(name);
+    guard->name = (char*)malloc(name_len + 1);
+    if (!guard->name) {
+        free(guard);
+        return false;
+    }
+    memcpy(guard->name, name, name_len + 1);
+
+    if (prev_value) {
+        size_t prev_len = strlen(prev_value);
+        guard->prev_value = (char*)malloc(prev_len + 1);
+        if (!guard->prev_value) {
+            free(guard->name);
+            free(guard);
+            return false;
+        }
+        memcpy(guard->prev_value, prev_value, prev_len + 1);
+        guard->had_prev_value = true;
+    }
+
+#if defined(_WIN32)
+    if (_putenv_s(name, value ? value : "") != 0) {
+        free(guard->name);
+        free(guard->prev_value);
+        free(guard);
+        return false;
+    }
+#else
+    if (value) {
+        if (setenv(name, value, 1) != 0) {
+            free(guard->name);
+            free(guard->prev_value);
+            free(guard);
+            return false;
+        }
+    } else if (unsetenv(name) != 0) {
+        free(guard->name);
+        free(guard->prev_value);
+        free(guard);
+        return false;
+    }
+#endif
+
+    if (!test_v2_cleanup_push(evaluator_test_env_guard_cleanup, guard)) {
+        evaluator_test_env_guard_cleanup(guard);
+        return false;
+    }
+
+    return true;
+}
+
+bool evaluator_test_guard_source_date_epoch(const char *value) {
+    return evaluator_test_guard_env("SOURCE_DATE_EPOCH", value);
+}
+
 Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init) {
     return evaluator_support_impl_eval_test_create(init);
 }

@@ -529,6 +529,11 @@ TEST(evaluator_cmake_language_dependency_provider_top_level_includes_run_only_on
 }
 
 TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
+    char tar_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("tar", tar_path)) {
+        TEST_SKIP("requires tar on PATH");
+    }
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -599,6 +604,11 @@ TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
 }
 
 TEST(evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory) {
+    char tar_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("tar", tar_path)) {
+        TEST_SKIP("requires tar on PATH");
+    }
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -659,6 +669,11 @@ TEST(evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add
 }
 
 TEST(evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory) {
+    char git_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("git", git_path)) {
+        TEST_SKIP("requires git on PATH");
+    }
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -714,6 +729,11 @@ TEST(evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdir
 }
 
 TEST(evaluator_fetchcontent_makeavailable_saved_git_populates_and_adds_subdirectory) {
+    char git_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("git", git_path)) {
+        TEST_SKIP("requires git on PATH");
+    }
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -928,6 +948,11 @@ TEST(evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes) {
 }
 
 TEST(evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags) {
+    char tar_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("tar", tar_path)) {
+        TEST_SKIP("requires tar on PATH");
+    }
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -2307,32 +2332,35 @@ TEST(evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate) {
 }
 
 
-void run_evaluator_v2_batch2(int *passed, int *failed) {
-    test_evaluator_cmake_language_core_subcommands_work(passed, failed);
-    test_evaluator_defer_replay_in_subdirectory_uses_child_execution_context(passed, failed);
-    test_evaluator_cmake_language_defer_allows_duplicate_ids_and_missing_get_call_returns_empty(passed, failed);
-    test_evaluator_cmake_language_defer_only_allows_leading_underscore_for_generated_ids(passed, failed);
-    test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed);
-    test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed);
-    test_evaluator_cmake_language_dependency_provider_top_level_includes_run_only_on_first_project(passed, failed);
-    test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed);
-    test_evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory(passed, failed);
-    test_evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory(passed, failed);
-    test_evaluator_fetchcontent_makeavailable_saved_git_populates_and_adds_subdirectory(passed, failed);
-    test_evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_package_resolution(passed, failed);
-    test_evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes(passed, failed);
-    test_evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags(passed, failed);
-    test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed);
-    test_evaluator_cmake_language_rejects_incomplete_and_unknown_forms(passed, failed);
-    test_evaluator_cmake_language_dependency_provider_rejects_invalid_forms(passed, failed);
-    test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed);
-    test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed);
-    test_evaluator_add_custom_command_output_validates_conflicts(passed, failed);
-    test_evaluator_event_ir_taxonomy_is_frozen(passed, failed);
-    test_evaluator_event_ir_metadata_and_stream_contract(passed, failed);
-    test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed);
-    test_evaluator_event_ir_command_trace_sequences_unknown_and_error_paths(passed, failed);
-    test_evaluator_event_ir_command_trace_sequences_success_paths(passed, failed);
-    test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed);
-    test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed);
+void run_evaluator_v2_batch2(int *passed, int *failed, int *skipped) {
+    test_evaluator_cmake_language_core_subcommands_work(passed, failed, skipped);
+    test_evaluator_defer_replay_in_subdirectory_uses_child_execution_context(passed, failed, skipped);
+    test_evaluator_cmake_language_defer_allows_duplicate_ids_and_missing_get_call_returns_empty(passed, failed, skipped);
+    test_evaluator_cmake_language_defer_only_allows_leading_underscore_for_generated_ids(passed, failed, skipped);
+    test_evaluator_cmake_language_dependency_provider_models_find_package_hook(passed, failed, skipped);
+    test_evaluator_cmake_language_dependency_provider_models_fetchcontent_hook(passed, failed, skipped);
+    test_evaluator_cmake_language_dependency_provider_top_level_includes_run_only_on_first_project(passed, failed, skipped);
+    test_evaluator_fetchcontent_makeavailable_try_find_package_always_prefers_package_resolution(passed, failed, skipped);
+    test_evaluator_fetchcontent_entrypoints_reject_incomplete_argument_shapes(passed, failed, skipped);
+    test_evaluator_cmake_language_eval_inline_soft_error_preserves_context(passed, failed, skipped);
+    test_evaluator_cmake_language_rejects_incomplete_and_unknown_forms(passed, failed, skipped);
+    test_evaluator_cmake_language_dependency_provider_rejects_invalid_forms(passed, failed, skipped);
+    test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed, skipped);
+    test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed, skipped);
+    test_evaluator_add_custom_command_output_validates_conflicts(passed, failed, skipped);
+    test_evaluator_event_ir_taxonomy_is_frozen(passed, failed, skipped);
+    test_evaluator_event_ir_metadata_and_stream_contract(passed, failed, skipped);
+    test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed, skipped);
+    test_evaluator_event_ir_command_trace_sequences_unknown_and_error_paths(passed, failed, skipped);
+    test_evaluator_event_ir_command_trace_sequences_success_paths(passed, failed, skipped);
+    test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed, skipped);
+    test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed, skipped);
+}
+
+void run_evaluator_v2_integration_batch2(int *passed, int *failed, int *skipped) {
+    test_evaluator_fetchcontent_url_population_and_redirect_override(passed, failed, skipped);
+    test_evaluator_fetchcontent_populate_direct_url_download_no_extract_does_not_add_subdirectory(passed, failed, skipped);
+    test_evaluator_fetchcontent_populate_saved_details_git_clones_without_add_subdirectory(passed, failed, skipped);
+    test_evaluator_fetchcontent_makeavailable_saved_git_populates_and_adds_subdirectory(passed, failed, skipped);
+    test_evaluator_fetchcontent_negative_declarations_and_hash_failure_surface_diags(passed, failed, skipped);
 }

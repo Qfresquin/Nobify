@@ -1,9 +1,72 @@
 #include "test_evaluator_v2_support.h"
 
+typedef struct {
+    size_t call_count;
+    bool saw_pipeline_input;
+} Execute_Process_Mock_Data;
+
+static bool evaluator_execute_process_mock_run(void *user_data,
+                                               Arena *scratch_arena,
+                                               const Eval_Process_Run_Request *request,
+                                               Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Execute_Process_Mock_Data *data = (Execute_Process_Mock_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+    data->call_count++;
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("mock_out"))) {
+        out_result->stdout_text = nob_sv_from_cstr("out\n");
+        out_result->stderr_text = nob_sv_from_cstr("err\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("mock_lower"))) {
+        out_result->stdout_text = nob_sv_from_cstr("abc");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("mock_upper"))) {
+        if (nob_sv_eq(request->stdin_data, nob_sv_from_cstr("abc"))) data->saw_pipeline_input = true;
+        out_result->stdout_text = nob_sv_from_cstr("ABC");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("mock_file"))) {
+        out_result->stdout_text = nob_sv_from_cstr("file-copy");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("mock_fail"))) {
+        out_result->exit_code = 3;
+        out_result->result_text = nob_sv_from_cstr("3");
+        return true;
+    }
+
+    out_result->exit_code = 127;
+    out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+    out_result->result_text = nob_sv_from_cstr("127");
+    return true;
+}
+
 TEST(evaluator_golden_all_cases) {
     ASSERT(assert_evaluator_golden_casepack(
-        nob_temp_sprintf("%s/evaluator_all.cmake", EVALUATOR_GOLDEN_DIR),
-        nob_temp_sprintf("%s/evaluator_all.txt", EVALUATOR_GOLDEN_DIR)));
+        nob_temp_sprintf("%s/evaluator_default.cmake", EVALUATOR_GOLDEN_DIR),
+        nob_temp_sprintf("%s/evaluator_default.txt", EVALUATOR_GOLDEN_DIR)));
+    TEST_PASS();
+}
+
+TEST(evaluator_golden_integration_cases) {
+    if (!test_ws_host_supports_directory_symlink()) {
+        TEST_SKIP("requires directory symlink support");
+    }
+
+    ASSERT(assert_evaluator_golden_casepack(
+        nob_temp_sprintf("%s/evaluator_integration.cmake", EVALUATOR_GOLDEN_DIR),
+        nob_temp_sprintf("%s/evaluator_integration.txt", EVALUATOR_GOLDEN_DIR)));
     TEST_PASS();
 }
 
@@ -2098,69 +2161,55 @@ TEST(evaluator_add_compile_definitions_updates_existing_and_future_targets) {
 }
 
 TEST(evaluator_execute_process_captures_output_and_models_3_28_fatal_mode) {
-    Arena *temp_arena = arena_create(2 * 1024 * 1024);
-    Arena *event_arena = arena_create(2 * 1024 * 1024);
-    ASSERT(temp_arena && event_arena);
+    Execute_Process_Mock_Data process_data = {0};
+    EvalServices services = {
+        .user_data = &process_data,
+        .process_run_capture = evaluator_execute_process_mock_run,
+    };
+    Eval_Test_Init init = {
+        .services = &services,
+    };
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          &init);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
 
-    Cmake_Event_Stream *stream = event_stream_create(event_arena);
-    ASSERT(stream != NULL);
-
-    Eval_Test_Init init = {0};
-    init.arena = temp_arena;
-    init.event_arena = event_arena;
-    init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
-    init.current_file = "CMakeLists.txt";
-
-    Eval_Test_Runtime *ctx = eval_test_create(&init);
-    ASSERT(ctx != NULL);
-
-#if defined(_WIN32)
     const char *script =
-        "execute_process(COMMAND cmd /C \"echo out&& echo err 1>&2\" "
+        "execute_process(COMMAND mock_out "
         "OUTPUT_VARIABLE OUT ERROR_VARIABLE ERR RESULT_VARIABLE RES "
         "OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)\n"
-        "execute_process(COMMAND cmd /C \"echo file-copy\" OUTPUT_FILE ep_out.txt)\n"
-        "execute_process(COMMAND cmd /C exit 3 COMMAND_ERROR_IS_FATAL LAST RESULT_VARIABLE BAD)\n";
-#else
-    const char *script =
-        "execute_process(COMMAND /bin/sh -c \"printf 'out\\n'; printf 'err\\n' >&2\" "
-        "OUTPUT_VARIABLE OUT ERROR_VARIABLE ERR RESULT_VARIABLE RES "
-        "OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)\n"
-        "execute_process(COMMAND /bin/sh -c \"printf 'abc'\" "
-        "COMMAND /bin/sh -c \"tr a-z A-Z\" "
+        "execute_process(COMMAND mock_lower "
+        "COMMAND mock_upper "
         "OUTPUT_VARIABLE PIPE RESULTS_VARIABLE PIPE_RESULTS "
         "OUTPUT_STRIP_TRAILING_WHITESPACE)\n"
-        "execute_process(COMMAND /bin/sh -c \"printf 'file-copy'\" OUTPUT_FILE ep_out.txt)\n"
-        "execute_process(COMMAND /bin/sh -c \"exit 3\" COMMAND_ERROR_IS_FATAL LAST RESULT_VARIABLE BAD)\n";
-#endif
+        "execute_process(COMMAND mock_file OUTPUT_FILE ep_out.txt)\n"
+        "execute_process(COMMAND mock_fail COMMAND_ERROR_IS_FATAL LAST RESULT_VARIABLE BAD)\n";
 
-    Ast_Root root = parse_cmake(temp_arena, script);
-    ASSERT(eval_result_is_fatal(eval_test_run(ctx, root)));
+    Ast_Root root = parse_cmake(fixture->temp_arena, script);
+    ASSERT(eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
 
-    const Eval_Run_Report *report = eval_test_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 1);
 
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("OUT")), nob_sv_from_cstr("out")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ERR")), nob_sv_from_cstr("err")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RES")), nob_sv_from_cstr("0")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BAD")), nob_sv_from_cstr("3")));
-
-#if !defined(_WIN32)
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PIPE")), nob_sv_from_cstr("ABC")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("PIPE_RESULTS")), nob_sv_from_cstr("0;0")));
-#endif
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("OUT")), nob_sv_from_cstr("out")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("ERR")), nob_sv_from_cstr("err")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("RES")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("BAD")), nob_sv_from_cstr("3")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("PIPE")), nob_sv_from_cstr("ABC")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("PIPE_RESULTS")), nob_sv_from_cstr("0;0")));
 
     String_View file_text = {0};
-    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "ep_out.txt", &file_text));
-    String_View file_norm = evaluator_normalize_newlines_to_arena(temp_arena, file_text);
+    ASSERT(evaluator_load_text_file_to_arena(fixture->temp_arena, "ep_out.txt", &file_text));
+    String_View file_norm = evaluator_normalize_newlines_to_arena(fixture->temp_arena, file_text);
     ASSERT(sv_contains_sv(file_norm, nob_sv_from_cstr("file-copy")));
+    ASSERT(process_data.call_count == 5);
+    ASSERT(process_data.saw_pipeline_input);
 
     bool saw_fatal = false;
-    for (size_t i = 0; i < stream->count; i++) {
-        const Cmake_Event *ev = &stream->items[i];
+    for (size_t i = 0; i < fixture->stream->count; i++) {
+        const Cmake_Event *ev = &fixture->stream->items[i];
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
         if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("execute_process() child process failed"))) {
             saw_fatal = true;
@@ -2168,10 +2217,6 @@ TEST(evaluator_execute_process_captures_output_and_models_3_28_fatal_mode) {
         }
     }
     ASSERT(saw_fatal);
-
-    eval_test_destroy(ctx);
-    arena_destroy(temp_arena);
-    arena_destroy(event_arena);
     TEST_PASS();
 }
 
@@ -2194,21 +2239,12 @@ TEST(evaluator_execute_process_rejects_incomplete_and_invalid_option_forms) {
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
-#if defined(_WIN32)
     const char *script =
         "execute_process()\n"
         "execute_process(COMMAND)\n"
-        "execute_process(COMMAND cmd /C echo ok OUTPUT_VARIABLE)\n"
-        "execute_process(COMMAND cmd /C echo ok COMMAND_ECHO MAYBE)\n"
-        "execute_process(COMMAND cmd /C echo ok COMMAND_ERROR_IS_FATAL NONE)\n";
-#else
-    const char *script =
-        "execute_process()\n"
-        "execute_process(COMMAND)\n"
-        "execute_process(COMMAND /bin/sh -c \"printf ok\" OUTPUT_VARIABLE)\n"
-        "execute_process(COMMAND /bin/sh -c \"printf ok\" COMMAND_ECHO MAYBE)\n"
-        "execute_process(COMMAND /bin/sh -c \"printf ok\" COMMAND_ERROR_IS_FATAL NONE)\n";
-#endif
+        "execute_process(COMMAND mock_cmd OUTPUT_VARIABLE)\n"
+        "execute_process(COMMAND mock_cmd COMMAND_ECHO MAYBE)\n"
+        "execute_process(COMMAND mock_cmd COMMAND_ERROR_IS_FATAL NONE)\n";
 
     Ast_Root root = parse_cmake(temp_arena, script);
     Eval_Result run_res = eval_test_run(ctx, root);
@@ -2321,42 +2357,46 @@ TEST(evaluator_directory_option_commands_expand_shell_and_linker_tokens_once) {
     TEST_PASS();
 }
 
-void run_evaluator_v2_batch1(int *passed, int *failed) {
-    test_evaluator_golden_all_cases(passed, failed);
-    test_evaluator_public_api_profile_and_report_snapshot(passed, failed);
-    test_evaluator_session_api_runs_with_explicit_request_and_stream(passed, failed);
-    test_evaluator_registry_api_supports_custom_commands_and_null_stream_runs(passed, failed);
-    test_evaluator_session_services_env_lookup_is_injected(passed, failed);
-    test_evaluator_command_transaction_rollback_suppresses_semantic_state_and_events(passed, failed);
-    test_evaluator_g5_legacy_wrapper_capabilities_promoted_to_full(passed, failed);
-    test_evaluator_native_command_registry_runtime_extension(passed, failed);
-    test_evaluator_command_capability_remains_native_only_introspection(passed, failed);
-    test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed);
-    test_evaluator_compat_refresh_snapshot_applies_next_command_cycle(passed, failed);
-    test_evaluator_global_diag_strict_controls_event_report_and_runtime_gating(passed, failed);
-    test_evaluator_unsupported_policy_snapshot_applies_next_command_cycle(passed, failed);
-    test_evaluator_run_result_kind_tri_state_contract(passed, failed);
-    test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed);
-    test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed);
-    test_evaluator_cmake_path_getters_and_relative_absolute_roundtrip_cover_remaining_components(passed, failed);
-    test_evaluator_flow_commands_reject_extra_arguments(passed, failed);
-    test_evaluator_while_iteration_limit_snapshot_applies_per_loop_entry(passed, failed);
-    test_evaluator_while_iteration_limit_invalid_value_warns_and_falls_back(passed, failed);
-    test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed);
-    test_evaluator_enable_testing_rejects_extra_arguments(passed, failed);
-    test_evaluator_include_supports_result_variable_optional_and_module_search(passed, failed);
-    test_evaluator_include_validates_options_strictly(passed, failed);
-    test_evaluator_include_cmp0017_search_order_from_builtin_modules(passed, failed);
-    test_evaluator_include_guard_default_scope_is_strict_and_warning_free(passed, failed);
-    test_evaluator_include_guard_directory_scope_applies_only_to_directory_and_children(passed, failed);
-    test_evaluator_include_guard_global_scope_persists_across_function_scope(passed, failed);
-    test_evaluator_include_guard_rejects_invalid_arguments(passed, failed);
-    test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed);
-    test_evaluator_add_test_name_signature_parses_supported_options(passed, failed);
-    test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed);
-    test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed);
-    test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed);
-    test_evaluator_directory_option_commands_expand_shell_and_linker_tokens_once(passed, failed);
-    test_evaluator_execute_process_rejects_incomplete_and_invalid_option_forms(passed, failed);
-    test_evaluator_execute_process_captures_output_and_models_3_28_fatal_mode(passed, failed);
+void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
+    test_evaluator_golden_all_cases(passed, failed, skipped);
+    test_evaluator_public_api_profile_and_report_snapshot(passed, failed, skipped);
+    test_evaluator_session_api_runs_with_explicit_request_and_stream(passed, failed, skipped);
+    test_evaluator_registry_api_supports_custom_commands_and_null_stream_runs(passed, failed, skipped);
+    test_evaluator_session_services_env_lookup_is_injected(passed, failed, skipped);
+    test_evaluator_command_transaction_rollback_suppresses_semantic_state_and_events(passed, failed, skipped);
+    test_evaluator_g5_legacy_wrapper_capabilities_promoted_to_full(passed, failed, skipped);
+    test_evaluator_native_command_registry_runtime_extension(passed, failed, skipped);
+    test_evaluator_command_capability_remains_native_only_introspection(passed, failed, skipped);
+    test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed, skipped);
+    test_evaluator_compat_refresh_snapshot_applies_next_command_cycle(passed, failed, skipped);
+    test_evaluator_global_diag_strict_controls_event_report_and_runtime_gating(passed, failed, skipped);
+    test_evaluator_unsupported_policy_snapshot_applies_next_command_cycle(passed, failed, skipped);
+    test_evaluator_run_result_kind_tri_state_contract(passed, failed, skipped);
+    test_evaluator_link_libraries_supports_qualifiers_and_rejects_dangling_qualifier(passed, failed, skipped);
+    test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed, skipped);
+    test_evaluator_cmake_path_getters_and_relative_absolute_roundtrip_cover_remaining_components(passed, failed, skipped);
+    test_evaluator_flow_commands_reject_extra_arguments(passed, failed, skipped);
+    test_evaluator_while_iteration_limit_snapshot_applies_per_loop_entry(passed, failed, skipped);
+    test_evaluator_while_iteration_limit_invalid_value_warns_and_falls_back(passed, failed, skipped);
+    test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed, skipped);
+    test_evaluator_enable_testing_rejects_extra_arguments(passed, failed, skipped);
+    test_evaluator_include_supports_result_variable_optional_and_module_search(passed, failed, skipped);
+    test_evaluator_include_validates_options_strictly(passed, failed, skipped);
+    test_evaluator_include_cmp0017_search_order_from_builtin_modules(passed, failed, skipped);
+    test_evaluator_include_guard_default_scope_is_strict_and_warning_free(passed, failed, skipped);
+    test_evaluator_include_guard_directory_scope_applies_only_to_directory_and_children(passed, failed, skipped);
+    test_evaluator_include_guard_global_scope_persists_across_function_scope(passed, failed, skipped);
+    test_evaluator_include_guard_rejects_invalid_arguments(passed, failed, skipped);
+    test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed, skipped);
+    test_evaluator_add_test_name_signature_parses_supported_options(passed, failed, skipped);
+    test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed, skipped);
+    test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed, skipped);
+    test_evaluator_add_compile_definitions_updates_existing_and_future_targets(passed, failed, skipped);
+    test_evaluator_directory_option_commands_expand_shell_and_linker_tokens_once(passed, failed, skipped);
+    test_evaluator_execute_process_rejects_incomplete_and_invalid_option_forms(passed, failed, skipped);
+    test_evaluator_execute_process_captures_output_and_models_3_28_fatal_mode(passed, failed, skipped);
+}
+
+void run_evaluator_v2_integration_batch1(int *passed, int *failed, int *skipped) {
+    test_evaluator_golden_integration_cases(passed, failed, skipped);
 }

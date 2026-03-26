@@ -7,11 +7,12 @@
 int main(void) {
     int passed = 0;
     int failed = 0;
+    int skipped = 0;
 
     if (!test_v2_require_official_runner()) return 1;
 
-    run_arena_v2_tests(&passed, &failed);
+    run_arena_v2_tests(&passed, &failed, &skipped);
 
-    nob_log(NOB_INFO, "arena v2 tests: passed=%d failed=%d", passed, failed);
+    nob_log(NOB_INFO, "arena v2 tests: passed=%d failed=%d skipped=%d", passed, failed, skipped);
     return failed == 0 ? 0 : 1;
 }

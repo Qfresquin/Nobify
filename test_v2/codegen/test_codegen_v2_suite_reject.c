@@ -34,7 +34,7 @@ TEST(codegen_rejects_imported_target_reference) {
     TEST_PASS();
 }
 
-void run_codegen_v2_reject_tests(int *passed, int *failed) {
-    test_codegen_rejects_module_target_as_link_dependency(passed, failed);
-    test_codegen_rejects_imported_target_reference(passed, failed);
+void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
+    test_codegen_rejects_module_target_as_link_dependency(passed, failed, skipped);
+    test_codegen_rejects_imported_target_reference(passed, failed, skipped);
 }

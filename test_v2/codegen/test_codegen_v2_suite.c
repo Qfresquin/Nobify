@@ -2,11 +2,11 @@
 
 #include <stdio.h>
 
-void run_codegen_v2_render_tests(int *passed, int *failed);
-void run_codegen_v2_build_tests(int *passed, int *failed);
-void run_codegen_v2_reject_tests(int *passed, int *failed);
+void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped);
+void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped);
+void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped);
 
-void run_codegen_v2_tests(int *passed, int *failed) {
+void run_codegen_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     char repo_root[_TINYDIR_PATH_MAX] = {0};
@@ -31,9 +31,9 @@ void run_codegen_v2_tests(int *passed, int *failed) {
     snprintf(repo_root, sizeof(repo_root), "%s", repo_root_env ? repo_root_env : "");
     codegen_test_set_repo_root(repo_root);
 
-    run_codegen_v2_render_tests(passed, failed);
-    run_codegen_v2_build_tests(passed, failed);
-    run_codegen_v2_reject_tests(passed, failed);
+    run_codegen_v2_render_tests(passed, failed, skipped);
+    run_codegen_v2_build_tests(passed, failed, skipped);
+    run_codegen_v2_reject_tests(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         nob_log(NOB_ERROR, "codegen suite: failed to restore cwd");

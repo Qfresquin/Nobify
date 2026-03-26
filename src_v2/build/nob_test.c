@@ -39,6 +39,7 @@ typedef void (*Append_Source_List_Fn)(Nob_Cmd *cmd);
 typedef struct {
     const char *name;
     Append_Source_List_Fn append_sources;
+    bool include_in_aggregate;
 } Test_Module;
 
 typedef struct {
@@ -51,14 +52,21 @@ typedef struct {
     char suite_copy[_TINYDIR_PATH_MAX];
 } Test_Run_Workspace;
 
+static bool g_runner_verbose = false;
+
 static void append_test_arena_all_sources(Nob_Cmd *cmd);
 static void append_test_lexer_all_sources(Nob_Cmd *cmd);
 static void append_test_parser_all_sources(Nob_Cmd *cmd);
 static void append_test_evaluator_all_sources(Nob_Cmd *cmd);
+static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd);
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
 static void append_test_codegen_all_sources(Nob_Cmd *cmd);
 static void append_v2_pcre_sources(Nob_Cmd *cmd);
 static void append_platform_link_flags(Nob_Cmd *cmd);
+static void report_captured_test_output(const Test_Module *module,
+                                        const Test_Run_Workspace *workspace,
+                                        const char *stdout_path,
+                                        const char *stderr_path);
 static bool ensure_temp_tests_layout(const Test_Profile *profile);
 static bool run_test_preflight(const Test_Profile *profile);
 
@@ -66,13 +74,70 @@ static const Test_Profile TEST_PROFILE_DEFAULT = {"default", false};
 static const Test_Profile TEST_PROFILE_ASAN_UBSAN = {"asan_ubsan", true};
 
 static Test_Module TEST_MODULES[] = {
-    {"arena", append_test_arena_all_sources},
-    {"lexer", append_test_lexer_all_sources},
-    {"parser", append_test_parser_all_sources},
-    {"evaluator", append_test_evaluator_all_sources},
-    {"pipeline", append_test_pipeline_all_sources},
-    {"codegen", append_test_codegen_all_sources},
+    {"arena", append_test_arena_all_sources, true},
+    {"lexer", append_test_lexer_all_sources, true},
+    {"parser", append_test_parser_all_sources, true},
+    {"evaluator", append_test_evaluator_all_sources, true},
+    {"evaluator-integration", append_test_evaluator_integration_all_sources, false},
+    {"pipeline", append_test_pipeline_all_sources, true},
+    {"codegen", append_test_codegen_all_sources, true},
 };
+
+static bool starts_with(const char *text, const char *prefix) {
+    size_t prefix_len = 0;
+    if (!text || !prefix) return false;
+    prefix_len = strlen(prefix);
+    return strncmp(text, prefix, prefix_len) == 0;
+}
+
+static void runner_emit_log_line(Nob_Log_Level level, const char *message) {
+    const char *prefix = "[INFO] ";
+    FILE *stream = stderr;
+    size_t len = 0;
+
+    if (!message) return;
+
+    switch (level) {
+        case NOB_WARNING: prefix = "[WARNING] "; break;
+        case NOB_ERROR: prefix = "[ERROR] "; break;
+        case NOB_INFO:
+        default: prefix = "[INFO] "; break;
+    }
+
+    fputs(prefix, stream);
+    fputs(message, stream);
+    len = strlen(message);
+    if (len == 0 || message[len - 1] != '\n') fputc('\n', stream);
+    fflush(stream);
+}
+
+static bool runner_should_show_info_message(const char *message) {
+    if (!message) return false;
+    return starts_with(message, "[v2] module ") ||
+           starts_with(message, "[v2] summary:") ||
+           starts_with(message, "Usage:");
+}
+
+static void runner_log_handler(Nob_Log_Level level, const char *fmt, va_list args) {
+    char message[4096] = {0};
+    va_list copy;
+    int n = 0;
+
+    va_copy(copy, args);
+    n = vsnprintf(message, sizeof(message), fmt, copy);
+    va_end(copy);
+    if (n < 0) return;
+
+    if (!g_runner_verbose) {
+        if (level >= NOB_WARNING) {
+            runner_emit_log_line(level, message);
+            return;
+        }
+        if (!runner_should_show_info_message(message)) return;
+    }
+
+    runner_emit_log_line(level, message);
+}
 
 static void append_test_profile_compile_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
     if (profile && profile->sanitize) {
@@ -95,6 +160,8 @@ static void append_v2_common_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
         "-Werror=unused-function",
         "-Werror=unused-variable",
         "-Werror=unused-but-set-variable",
+        "-Wno-unused-parameter",
+        "-Wno-unused-result",
         "-DHAVE_CONFIG_H",
         "-DPCRE2_CODE_UNIT_WIDTH=8",
         "-Ivendor");
@@ -229,6 +296,7 @@ static void append_v2_arena_runtime_sources(Nob_Cmd *cmd) {
 
 static void append_v2_arena_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
         "test_v2/test_workspace.c",
         "test_v2/arena/test_arena_v2_main.c",
         "test_v2/arena/test_arena_v2_suite.c");
@@ -236,6 +304,7 @@ static void append_v2_arena_test_sources(Nob_Cmd *cmd) {
 
 static void append_v2_lexer_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
         "test_v2/test_workspace.c",
         "test_v2/lexer/test_lexer_v2_main.c",
         "test_v2/lexer/test_lexer_v2_suite.c");
@@ -243,6 +312,7 @@ static void append_v2_lexer_test_sources(Nob_Cmd *cmd) {
 
 static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
         "test_v2/test_workspace.c",
         "test_v2/parser/test_parser_v2_main.c",
         "test_v2/parser/test_parser_v2_suite.c");
@@ -250,6 +320,7 @@ static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
 
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
         "test_v2/test_workspace.c",
         "test_v2/evaluator/test_evaluator_v2_support.c",
         "test_v2/evaluator/test_evaluator_v2_main.c",
@@ -261,8 +332,23 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
         "test_v2/evaluator/test_evaluator_v2_suite_batch5.c");
 }
 
+static void append_v2_evaluator_integration_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
+        "test_v2/test_workspace.c",
+        "test_v2/evaluator/test_evaluator_v2_support.c",
+        "test_v2/evaluator/test_evaluator_v2_integration_main.c",
+        "test_v2/evaluator/test_evaluator_v2_suite.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch1.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch2.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch3.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch4.c",
+        "test_v2/evaluator/test_evaluator_v2_suite_batch5.c");
+}
+
 static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
         "test_v2/test_workspace.c",
         "test_v2/pipeline/test_pipeline_v2_main.c",
         "test_v2/pipeline/test_pipeline_v2_suite.c");
@@ -270,6 +356,7 @@ static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
 
 static void append_v2_codegen_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_v2_assert.c",
         "test_v2/test_workspace.c",
         "test_v2/codegen/test_codegen_v2_support.c",
         "test_v2/codegen/test_codegen_v2_main.c",
@@ -679,6 +766,12 @@ static void append_test_evaluator_all_sources(Nob_Cmd *cmd) {
     append_v2_pcre_sources(cmd);
 }
 
+static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd) {
+    append_v2_evaluator_integration_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd) {
     append_v2_pipeline_test_sources(cmd);
     append_v2_evaluator_runtime_sources(cmd);
@@ -871,22 +964,57 @@ static bool cleanup_test_run_workspace(const Test_Run_Workspace *ws) {
     return true;
 }
 
+static void report_captured_test_output(const Test_Module *module,
+                                        const Test_Run_Workspace *workspace,
+                                        const char *stdout_path,
+                                        const char *stderr_path) {
+    if (stderr_path) {
+        Nob_String_Builder stderr_content = {0};
+        if (nob_read_entire_file(stderr_path, &stderr_content) && stderr_content.count > 0) {
+            fprintf(stderr, "[v2] %s captured stderr:\n", module->name);
+            fwrite(stderr_content.items, 1, stderr_content.count, stderr);
+            if (stderr_content.items[stderr_content.count - 1] != '\n') fputc('\n', stderr);
+        }
+        nob_sb_free(stderr_content);
+    }
+
+    if (stdout_path) {
+        Nob_String_Builder stdout_content = {0};
+        if (nob_read_entire_file(stdout_path, &stdout_content) && stdout_content.count > 0) {
+            fprintf(stdout, "[v2] %s captured stdout:\n", module->name);
+            fwrite(stdout_content.items, 1, stdout_content.count, stdout);
+            if (stdout_content.items[stdout_content.count - 1] != '\n') fputc('\n', stdout);
+        }
+        nob_sb_free(stdout_content);
+    }
+
+    if (workspace && workspace->root[0] != '\0') {
+        nob_log(NOB_ERROR, "[v2] preserved failed workspace: %s", workspace->root);
+    }
+}
+
 static bool run_binary_in_workspace(const Test_Module *module,
                                     const Test_Profile *profile,
-                                    const char *binary_rel_path) {
+                                    const char *binary_rel_path,
+                                    bool verbose) {
     char cwd[_TINYDIR_PATH_MAX] = {0};
     char binary_abs[_TINYDIR_PATH_MAX] = {0};
+    char stdout_log_abs[_TINYDIR_PATH_MAX] = {0};
+    char stderr_log_abs[_TINYDIR_PATH_MAX] = {0};
     char *prev_runner = NULL;
     char *prev_reuse_cwd = NULL;
     char *prev_repo_root = NULL;
     Test_Run_Workspace workspace = {0};
     Nob_Cmd cmd = {0};
     bool ok = false;
-    bool cleanup_ok = false;
+    bool cleanup_ok = true;
+    bool workspace_preserved = false;
 
     if (!test_fs_save_current_dir(cwd)) goto defer;
     if (!build_abs_path(cwd, binary_rel_path, binary_abs)) goto defer;
     if (!prepare_test_run_workspace(&workspace, module, profile)) goto defer;
+    if (!test_fs_join_path(workspace.root, "test.stdout.log", stdout_log_abs)) goto defer;
+    if (!test_fs_join_path(workspace.root, "test.stderr.log", stderr_log_abs)) goto defer;
 
     prev_runner = dup_env_value(CMK2NOB_TEST_RUNNER_ENV);
     if (getenv(CMK2NOB_TEST_RUNNER_ENV) && !prev_runner) goto defer;
@@ -901,15 +1029,29 @@ static bool run_binary_in_workspace(const Test_Module *module,
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, cwd);
 
     nob_cmd_append(&cmd, binary_abs);
-    ok = nob_cmd_run(&cmd);
+    if (verbose) {
+        ok = nob_cmd_run(&cmd);
+    } else {
+        ok = nob_cmd_run(&cmd, .stdout_path = stdout_log_abs, .stderr_path = stderr_log_abs);
+    }
 
     if (!nob_set_current_dir(cwd)) {
         nob_log(NOB_ERROR, "failed to restore current directory to %s", cwd);
         ok = false;
     }
-    cleanup_ok = cleanup_test_run_workspace(&workspace);
-    if (!cleanup_ok) {
-        nob_log(NOB_ERROR, "[v2] failed to cleanup run workspace for %s", module->name);
+
+    if (!ok) {
+        if (!verbose) {
+            report_captured_test_output(module, &workspace, stdout_log_abs, stderr_log_abs);
+        } else if (workspace.root[0] != '\0') {
+            nob_log(NOB_ERROR, "[v2] preserved failed workspace: %s", workspace.root);
+        }
+        workspace_preserved = true;
+    } else {
+        cleanup_ok = cleanup_test_run_workspace(&workspace);
+        if (!cleanup_ok) {
+            nob_log(NOB_ERROR, "[v2] failed to cleanup run workspace for %s", module->name);
+        }
     }
 
 defer:
@@ -920,7 +1062,7 @@ defer:
     free(prev_reuse_cwd);
     free(prev_repo_root);
     nob_cmd_free(cmd);
-    if (!cleanup_ok && workspace.root[0] != '\0') {
+    if (!workspace_preserved && !cleanup_ok && workspace.root[0] != '\0') {
         cleanup_ok = cleanup_test_run_workspace(&workspace);
     }
     return ok && cleanup_ok;
@@ -928,21 +1070,39 @@ defer:
 
 static bool run_result_type_conventions_check(void) {
     Nob_Cmd cmd = {0};
+    bool ok = false;
+    size_t temp_mark = nob_temp_save();
     nob_log(NOB_INFO, "[v2] check result type conventions");
     nob_cmd_append(&cmd, "bash", "test_v2/evaluator/check_result_type_conventions.sh");
-    bool ok = nob_cmd_run(&cmd);
+
+    if (g_runner_verbose) {
+        ok = nob_cmd_run(&cmd);
+    } else {
+        const char *stdout_path = nob_temp_sprintf("%s/result_type_check.stdout.log", TEMP_TESTS_PROBES);
+        const char *stderr_path = nob_temp_sprintf("%s/result_type_check.stderr.log", TEMP_TESTS_PROBES);
+        ok = nob_cmd_run(&cmd, .stdout_path = stdout_path, .stderr_path = stderr_path);
+        if (!ok) {
+            report_captured_test_output(
+                &(Test_Module){ .name = "result-type-conventions" },
+                NULL,
+                stdout_path,
+                stderr_path);
+        }
+    }
+
     nob_cmd_free(cmd);
+    nob_temp_rewind(temp_mark);
     return ok;
 }
 
 static bool run_test_preflight(const Test_Profile *profile) {
+    if (!ensure_temp_tests_layout(profile)) return false;
     if (!run_result_type_conventions_check()) return false;
     nob_log(NOB_INFO, "[v2] validate workspace infra");
-    if (!ensure_temp_tests_layout(profile)) return false;
     return validate_test_profile_support(profile);
 }
 
-static bool run_test_module(const Test_Module *module, const Test_Profile *profile) {
+static bool run_test_module(const Test_Module *module, const Test_Profile *profile, bool verbose) {
     bool ok = false;
     bool lock_acquired = false;
     size_t temp_mark = nob_temp_save();
@@ -960,7 +1120,7 @@ static bool run_test_module(const Test_Module *module, const Test_Profile *profi
     }
     lock_acquired = false;
 
-    ok = run_binary_in_workspace(module, profile, binary_rel_path);
+    ok = run_binary_in_workspace(module, profile, binary_rel_path, verbose);
 
 defer:
     if (lock_acquired) {
@@ -970,14 +1130,21 @@ defer:
     return ok;
 }
 
-static bool run_all_test_modules(const Test_Profile *profile) {
+static bool run_all_test_modules(const Test_Profile *profile, bool verbose) {
     size_t passed_modules = 0;
     size_t failed_modules = 0;
+    size_t skipped_modules = 0;
     size_t count = sizeof(TEST_MODULES) / sizeof(TEST_MODULES[0]);
 
     for (size_t i = 0; i < count; i++) {
         Test_Module module = TEST_MODULES[i];
-        bool ok = run_test_module(&module, profile);
+        bool ok = false;
+        if (!module.include_in_aggregate) {
+            skipped_modules++;
+            continue;
+        }
+
+        ok = run_test_module(&module, profile, verbose);
         if (ok) {
             passed_modules++;
             nob_log(NOB_INFO, "[v2] module %s: PASS", module.name);
@@ -987,7 +1154,11 @@ static bool run_all_test_modules(const Test_Profile *profile) {
         }
     }
 
-    nob_log(NOB_INFO, "[v2] summary: passed_modules=%zu failed_modules=%zu", passed_modules, failed_modules);
+    nob_log(NOB_INFO,
+            "[v2] summary: passed_modules=%zu failed_modules=%zu skipped_modules=%zu",
+            passed_modules,
+            failed_modules,
+            skipped_modules);
     return failed_modules == 0;
 }
 
@@ -1044,25 +1215,55 @@ static bool resolve_test_command(const char *cmd,
     return *module != NULL;
 }
 
-static bool run_test_command(const Test_Module *module, const Test_Profile *profile, bool run_all) {
+static bool run_test_command(const Test_Module *module,
+                             const Test_Profile *profile,
+                             bool run_all,
+                             bool verbose) {
+    bool ok = false;
+
     if (!run_test_preflight(profile)) return false;
-    if (run_all) return run_all_test_modules(profile);
-    return run_test_module(module, profile);
+    if (run_all) return run_all_test_modules(profile, verbose);
+
+    ok = run_test_module(module, profile, verbose);
+    nob_log(ok ? NOB_INFO : NOB_ERROR,
+            "[v2] module %s: %s",
+            module->name,
+            ok ? "PASS" : "FAIL");
+    return ok;
 }
 
 int main(int argc, char **argv) {
-    const char *cmd = (argc > 1) ? argv[1] : "test-v2";
+    const char *cmd = "test-v2";
     const Test_Module *module = NULL;
     const Test_Profile *profile = NULL;
     bool run_all = false;
+    bool verbose = false;
+    bool command_seen = false;
+
+    nob_set_log_handler(runner_log_handler);
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--verbose") == 0) {
+            verbose = true;
+            g_runner_verbose = true;
+            continue;
+        }
+        if (!command_seen) {
+            cmd = argv[i];
+            command_seen = true;
+            continue;
+        }
+        nob_log(NOB_ERROR, "unexpected argument: %s", argv[i]);
+        return 1;
+    }
 
     if (strcmp(cmd, "clean-tests") == 0) return test_fs_remove_tree(TEMP_TESTS_ROOT) ? 0 : 1;
     if (resolve_test_command(cmd, &module, &profile, &run_all)) {
-        return run_test_command(module, profile, run_all) ? 0 : 1;
+        return run_test_command(module, profile, run_all, verbose) ? 0 : 1;
     }
 
     nob_log(NOB_INFO,
-            "Usage: %s [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-pipeline|test-codegen|test-v2|test-arena-san|test-lexer-san|test-parser-san|test-evaluator-san|test-pipeline-san|test-codegen-san|test-v2-san]",
+            "Usage: %s [--verbose] [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-arena-san|test-lexer-san|test-parser-san|test-evaluator-san|test-evaluator-integration-san|test-pipeline-san|test-codegen-san|test-v2-san]",
             argv[0]);
     return 1;
 }

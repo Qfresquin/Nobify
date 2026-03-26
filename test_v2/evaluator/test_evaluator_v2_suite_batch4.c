@@ -2721,6 +2721,17 @@ TEST(evaluator_set_and_unset_env_forms) {
 }
 
 TEST(evaluator_process_env_service_overlays_execute_process_and_timestamp) {
+#if defined(_WIN32)
+    char cmd_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("cmd", cmd_path)) {
+        TEST_SKIP("requires cmd on PATH");
+    }
+#else
+    if (!test_ws_host_path_exists("/bin/sh")) {
+        TEST_SKIP("requires /bin/sh");
+    }
+#endif
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -3189,39 +3200,42 @@ TEST(evaluator_var_commands_reject_invalid_option_shapes) {
 }
 
 
-void run_evaluator_v2_batch4(int *passed, int *failed) {
-    test_evaluator_load_cache_supports_documented_legacy_and_prefix_forms(passed, failed);
-    test_evaluator_load_cache_allows_read_with_prefix_but_rejects_legacy_form_in_script_mode(passed, failed);
-    test_evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file(passed, failed);
-    test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed);
-    test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed);
-    test_evaluator_ctest_start_models_documented_group_append_and_checkout_flow(passed, failed);
-    test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed);
-    test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed);
-    test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed);
-    test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed);
-    test_evaluator_ctest_submit_models_documented_local_surface(passed, failed);
-    test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed);
-    test_evaluator_ctest_submit_captures_remote_failures(passed, failed);
-    test_evaluator_ctest_upload_stages_upload_xml_and_submit_part(passed, failed);
-    test_evaluator_ctest_submit_rejects_invalid_parts_and_mixed_signatures(passed, failed);
-    test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed);
-    test_evaluator_ctest_entrypoints_reject_incomplete_argument_shapes(passed, failed);
-    test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed);
-    test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed);
-    test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed);
-    test_evaluator_target_usage_commands_store_canonical_direct_and_interface_properties(passed, failed);
-    test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed);
-    test_evaluator_message_mode_severity_mapping(passed, failed);
-    test_evaluator_message_check_pass_without_start_is_error(passed, failed);
-    test_evaluator_message_deprecation_respects_control_variables(passed, failed);
-    test_evaluator_message_configure_log_persists_yaml_file(passed, failed);
-    test_evaluator_set_and_unset_env_forms(passed, failed);
-    test_evaluator_process_env_service_overlays_execute_process_and_timestamp(passed, failed);
-    test_evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms(passed, failed);
-    test_evaluator_cmake_parse_arguments_rejects_invalid_shapes_and_contexts(passed, failed);
-    test_evaluator_unset_env_rejects_options(passed, failed);
-    test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed);
-    test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed);
-    test_evaluator_var_commands_reject_invalid_option_shapes(passed, failed);
+void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
+    test_evaluator_load_cache_supports_documented_legacy_and_prefix_forms(passed, failed, skipped);
+    test_evaluator_load_cache_allows_read_with_prefix_but_rejects_legacy_form_in_script_mode(passed, failed, skipped);
+    test_evaluator_export_cxx_modules_directory_writes_sidecars_and_default_export_file(passed, failed, skipped);
+    test_evaluator_export_rejects_invalid_extension_and_alias_targets(passed, failed, skipped);
+    test_evaluator_ctest_family_models_metadata_and_safe_local_effects(passed, failed, skipped);
+    test_evaluator_ctest_start_models_documented_group_append_and_checkout_flow(passed, failed, skipped);
+    test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
+    test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed, skipped);
+    test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed, skipped);
+    test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed, skipped);
+    test_evaluator_ctest_submit_models_documented_local_surface(passed, failed, skipped);
+    test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed, skipped);
+    test_evaluator_ctest_submit_captures_remote_failures(passed, failed, skipped);
+    test_evaluator_ctest_upload_stages_upload_xml_and_submit_part(passed, failed, skipped);
+    test_evaluator_ctest_submit_rejects_invalid_parts_and_mixed_signatures(passed, failed, skipped);
+    test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed, skipped);
+    test_evaluator_ctest_entrypoints_reject_incomplete_argument_shapes(passed, failed, skipped);
+    test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed, skipped);
+    test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed, skipped);
+    test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed, skipped);
+    test_evaluator_target_usage_commands_store_canonical_direct_and_interface_properties(passed, failed, skipped);
+    test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed, skipped);
+    test_evaluator_message_mode_severity_mapping(passed, failed, skipped);
+    test_evaluator_message_check_pass_without_start_is_error(passed, failed, skipped);
+    test_evaluator_message_deprecation_respects_control_variables(passed, failed, skipped);
+    test_evaluator_message_configure_log_persists_yaml_file(passed, failed, skipped);
+    test_evaluator_set_and_unset_env_forms(passed, failed, skipped);
+    test_evaluator_cmake_parse_arguments_supports_direct_and_parse_argv_forms(passed, failed, skipped);
+    test_evaluator_cmake_parse_arguments_rejects_invalid_shapes_and_contexts(passed, failed, skipped);
+    test_evaluator_unset_env_rejects_options(passed, failed, skipped);
+    test_evaluator_set_cache_cmp0126_old_and_new_semantics(passed, failed, skipped);
+    test_evaluator_set_cache_policy_version_defaults_cmp0126_to_new(passed, failed, skipped);
+    test_evaluator_var_commands_reject_invalid_option_shapes(passed, failed, skipped);
+}
+
+void run_evaluator_v2_integration_batch4(int *passed, int *failed, int *skipped) {
+    test_evaluator_process_env_service_overlays_execute_process_and_timestamp(passed, failed, skipped);
 }

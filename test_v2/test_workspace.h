@@ -31,6 +31,10 @@ bool test_ws_case_enter(Test_Case_Workspace *ws, const char *test_name);
 bool test_ws_case_leave(const Test_Case_Workspace *ws);
 bool test_ws_should_update_golden(void);
 bool test_ws_update_golden_file(const char *expected_path, const void *data, size_t size);
+bool test_ws_host_program_in_path(const char *program,
+                                  char out_path[_TINYDIR_PATH_MAX]);
+bool test_ws_host_path_exists(const char *path);
+bool test_ws_host_supports_directory_symlink(void);
 const char *test_ws_root(const Test_Workspace *ws);
 const char *test_ws_work(const Test_Workspace *ws);
 const char *test_ws_bin(const Test_Workspace *ws);

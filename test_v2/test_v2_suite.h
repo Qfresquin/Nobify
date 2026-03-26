@@ -6,14 +6,15 @@
 
 #include "test_workspace.h"
 
-typedef void (*Test_Suite_Fn)(int *passed, int *failed);
+typedef void (*Test_Suite_Fn)(int *passed, int *failed, int *skipped);
 
-void run_arena_v2_tests(int *passed, int *failed);
-void run_lexer_v2_tests(int *passed, int *failed);
-void run_parser_v2_tests(int *passed, int *failed);
-void run_evaluator_v2_tests(int *passed, int *failed);
-void run_pipeline_v2_tests(int *passed, int *failed);
-void run_codegen_v2_tests(int *passed, int *failed);
+void run_arena_v2_tests(int *passed, int *failed, int *skipped);
+void run_lexer_v2_tests(int *passed, int *failed, int *skipped);
+void run_parser_v2_tests(int *passed, int *failed, int *skipped);
+void run_evaluator_v2_tests(int *passed, int *failed, int *skipped);
+void run_evaluator_v2_integration_tests(int *passed, int *failed, int *skipped);
+void run_pipeline_v2_tests(int *passed, int *failed, int *skipped);
+void run_codegen_v2_tests(int *passed, int *failed, int *skipped);
 
 static inline int test_v2_require_official_runner(void) {
     const char *runner = getenv(CMK2NOB_TEST_RUNNER_ENV);

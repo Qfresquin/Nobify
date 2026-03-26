@@ -1,5 +1,56 @@
 #include "test_evaluator_v2_support.h"
 
+typedef struct {
+    size_t call_count;
+    bool saw_working_directory;
+    bool saw_tokenized_space_arg;
+} Exec_Program_Mock_Data;
+
+static bool evaluator_exec_program_mock_run(void *user_data,
+                                            Arena *scratch_arena,
+                                            const Eval_Process_Run_Request *request,
+                                            Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Exec_Program_Mock_Data *data = (Exec_Program_Mock_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+    data->call_count++;
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("mock_exec"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    if (request->argc >= 2 && nob_sv_eq(request->argv[1], nob_sv_from_cstr("legacy"))) {
+        out_result->stdout_text = nob_sv_from_cstr("legacy");
+        return true;
+    }
+
+    if (request->argc >= 2 && nob_sv_eq(request->argv[1], nob_sv_from_cstr("pwd"))) {
+        out_result->stdout_text = request->working_directory;
+        if (sv_contains_sv(request->working_directory, nob_sv_from_cstr("ep_exec_dir"))) {
+            data->saw_working_directory = true;
+        }
+        return true;
+    }
+
+    if (request->argc >= 2 &&
+        (nob_sv_eq(request->argv[1], nob_sv_from_cstr("hello world")) ||
+         nob_sv_eq(request->argv[1], nob_sv_from_cstr("hello")))) {
+        data->saw_tokenized_space_arg = true;
+        out_result->stdout_text = nob_sv_from_cstr("hello world");
+        return true;
+    }
+
+    out_result->stdout_text = nob_sv_from_cstr("unused");
+    return true;
+}
+
 TEST(evaluator_list_transform_genex_strip_and_output_variable) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1782,6 +1833,13 @@ TEST(evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomple
 }
 
 TEST(evaluator_host_introspection_and_site_name_cover_supported_queries) {
+#if defined(_WIN32)
+    char hostname_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("hostname", hostname_path)) {
+        TEST_SKIP("requires hostname on PATH");
+    }
+#endif
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -2429,6 +2487,17 @@ TEST(evaluator_try_run_consumes_prefilled_crosscompile_cache_answers) {
 }
 
 TEST(evaluator_try_run_uses_crosscompiling_emulator_when_available) {
+#if defined(_WIN32)
+    char cmd_path[_TINYDIR_PATH_MAX] = {0};
+    if (!test_ws_host_program_in_path("cmd", cmd_path)) {
+        TEST_SKIP("requires cmd on PATH");
+    }
+#else
+    if (!test_ws_host_path_exists("/bin/sh")) {
+        TEST_SKIP("requires /bin/sh");
+    }
+#endif
+
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -2607,73 +2676,58 @@ TEST(evaluator_try_run_rejects_incomplete_argument_shapes) {
 }
 
 TEST(evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface) {
-    Arena *temp_arena = arena_create(3 * 1024 * 1024);
-    Arena *event_arena = arena_create(3 * 1024 * 1024);
-    ASSERT(temp_arena && event_arena);
-
-    Cmake_Event_Stream *stream = event_stream_create(event_arena);
-    ASSERT(stream != NULL);
-
     ASSERT(nob_mkdir_if_not_exists("ep_exec_dir"));
 
-    Eval_Test_Init init = {0};
-    init.arena = temp_arena;
-    init.event_arena = event_arena;
-    init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
-    init.current_file = "CMakeLists.txt";
+    Exec_Program_Mock_Data process_data = {0};
+    EvalServices services = {
+        .user_data = &process_data,
+        .process_run_capture = evaluator_exec_program_mock_run,
+    };
+    Eval_Test_Init init = {
+        .services = &services,
+    };
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(3 * 1024 * 1024,
+                                                          3 * 1024 * 1024,
+                                                          &init);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
 
-    Eval_Test_Runtime *ctx = eval_test_create(&init);
-    ASSERT(ctx != NULL);
-
-#if defined(_WIN32)
     const char *script =
         "cmake_policy(SET CMP0153 NEW)\n"
-        "exec_program(cmd . ARGS [=[/C echo blocked]=] OUTPUT_VARIABLE EP_BLOCKED)\n"
+        "exec_program(mock_exec . ARGS [=[blocked]=] OUTPUT_VARIABLE EP_BLOCKED)\n"
         "cmake_policy(SET CMP0153 OLD)\n"
-        "exec_program(cmd . ARGS [=[/C echo legacy]=] OUTPUT_VARIABLE EP_OUT RETURN_VALUE EP_RES)\n"
-        "exec_program(cmd ep_exec_dir ARGS [=[/C cd]=] OUTPUT_VARIABLE EP_CWD RETURN_VALUE EP_CWD_RES)\n"
-        "exec_program(cmd . ARGS [=[/C echo hello world]=] OUTPUT_VARIABLE EP_TOKEN)\n"
-        "exec_program(cmd . OUTPUT_VARIABLE)\n"
-        "exec_program(cmd . RETURN_VALUE)\n"
-        "exec_program(cmd . BOGUS)\n";
-#else
-    const char *script =
-        "cmake_policy(SET CMP0153 NEW)\n"
-        "exec_program(/bin/sh . ARGS [=[-c \"printf 'blocked'\"]=] OUTPUT_VARIABLE EP_BLOCKED)\n"
-        "cmake_policy(SET CMP0153 OLD)\n"
-        "exec_program(/bin/sh . ARGS [=[-c \"printf 'legacy'\"]=] OUTPUT_VARIABLE EP_OUT RETURN_VALUE EP_RES)\n"
-        "exec_program(/bin/sh ep_exec_dir ARGS [=[-c \"pwd\"]=] OUTPUT_VARIABLE EP_CWD RETURN_VALUE EP_CWD_RES)\n"
-        "exec_program(/bin/sh . ARGS [=[-c \"printf '%s' \\\"$1\\\"\" sh \"hello world\"]=] OUTPUT_VARIABLE EP_TOKEN)\n"
-        "exec_program(/bin/sh . OUTPUT_VARIABLE)\n"
-        "exec_program(/bin/sh . RETURN_VALUE)\n"
-        "exec_program(/bin/sh . BOGUS)\n";
-#endif
+        "exec_program(mock_exec . ARGS [=[legacy]=] OUTPUT_VARIABLE EP_OUT RETURN_VALUE EP_RES)\n"
+        "exec_program(mock_exec ep_exec_dir ARGS [=[pwd]=] OUTPUT_VARIABLE EP_CWD RETURN_VALUE EP_CWD_RES)\n"
+        "exec_program(mock_exec . ARGS [=[hello world]=] OUTPUT_VARIABLE EP_TOKEN)\n"
+        "exec_program(mock_exec . OUTPUT_VARIABLE)\n"
+        "exec_program(mock_exec . RETURN_VALUE)\n"
+        "exec_program(mock_exec . BOGUS)\n";
 
-    Ast_Root root = parse_cmake(temp_arena, script);
-    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+    Ast_Root root = parse_cmake(fixture->temp_arena, script);
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
 
-    const Eval_Run_Report *report = eval_test_report(ctx);
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 4);
 
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("EP_OUT")), nob_sv_from_cstr("legacy")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("EP_RES")), nob_sv_from_cstr("0")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("EP_CWD_RES")), nob_sv_from_cstr("0")));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("EP_CWD")), nob_sv_from_cstr("ep_exec_dir")));
-#if defined(_WIN32)
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("EP_TOKEN")), nob_sv_from_cstr("hello")));
-#else
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("EP_TOKEN")), nob_sv_from_cstr("hello world")));
-#endif
+    ASSERT(sv_contains_sv(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("EP_OUT")),
+                          nob_sv_from_cstr("legacy")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("EP_RES")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("EP_CWD_RES")), nob_sv_from_cstr("0")));
+    ASSERT(sv_contains_sv(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("EP_CWD")),
+                          nob_sv_from_cstr("ep_exec_dir")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("EP_TOKEN")),
+                     nob_sv_from_cstr("hello world")));
+    ASSERT(process_data.call_count == 3);
+    ASSERT(process_data.saw_working_directory);
+    ASSERT(process_data.saw_tokenized_space_arg);
 
     bool saw_cmp0153_diag = false;
     bool saw_output_diag = false;
     bool saw_return_diag = false;
     bool saw_bogus_diag = false;
-    for (size_t i = 0; i < stream->count; i++) {
-        const Cmake_Event *ev = &stream->items[i];
+    for (size_t i = 0; i < fixture->stream->count; i++) {
+        const Cmake_Event *ev = &fixture->stream->items[i];
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
         if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("exec_program() is disallowed by CMP0153"))) {
             saw_cmp0153_diag = true;
@@ -2692,10 +2746,6 @@ TEST(evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface) {
     ASSERT(saw_output_diag);
     ASSERT(saw_return_diag);
     ASSERT(saw_bogus_diag);
-
-    eval_test_destroy(ctx);
-    arena_destroy(temp_arena);
-    arena_destroy(event_arena);
     TEST_PASS();
 }
 
@@ -2943,46 +2993,49 @@ TEST(evaluator_batch6_metadata_commands_reject_incomplete_option_values) {
 }
 
 
-void run_evaluator_v2_batch3(int *passed, int *failed) {
-    test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed);
-    test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed);
-    test_evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations(passed, failed);
-    test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed);
-    test_evaluator_set_target_properties_rejects_alias_target(passed, failed);
-    test_evaluator_add_executable_imported_and_alias_signatures(passed, failed);
-    test_evaluator_add_library_imported_alias_and_default_type(passed, failed);
-    test_evaluator_set_property_target_rejects_alias_and_unknown_target(passed, failed);
-    test_evaluator_define_property_initializes_target_properties_from_variable(passed, failed);
-    test_evaluator_set_property_source_test_directory_clauses_parse_and_apply(passed, failed);
-    test_evaluator_set_property_allows_zero_objects_and_validates_test_lookup(passed, failed);
-    test_evaluator_set_property_cache_requires_existing_entry(passed, failed);
-    test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed);
-    test_evaluator_get_property_target_source_and_test_wrappers(passed, failed);
-    test_evaluator_get_directory_property_missing_materializes_empty_string(passed, failed);
-    test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed);
-    test_evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs(passed, failed);
-    test_evaluator_install_signatures_emit_expected_rules_and_component_inventory(passed, failed);
-    test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed);
-    test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed);
-    test_evaluator_directory_property_inheritance_uses_directory_graph_parent(passed, failed);
-    test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed);
-    test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed);
-    test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed);
-    test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed);
-    test_evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix(passed, failed);
-    test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed);
-    test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed);
-    test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed);
-    test_evaluator_host_build_commands_reject_invalid_shapes_and_warn_on_ignored_project_name(passed, failed);
-    test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed);
-    test_evaluator_try_run_caches_result_vars_by_default_and_respects_no_cache(passed, failed);
-    test_evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeholders(passed, failed);
-    test_evaluator_try_run_consumes_prefilled_crosscompile_cache_answers(passed, failed);
-    test_evaluator_try_run_uses_crosscompiling_emulator_when_available(passed, failed);
-    test_evaluator_try_run_sets_failed_to_run_when_process_cannot_start(passed, failed);
-    test_evaluator_try_run_rejects_incomplete_argument_shapes(passed, failed);
-    test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed);
-    test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed);
-    test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed);
-    test_evaluator_batch6_metadata_commands_reject_incomplete_option_values(passed, failed);
+void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
+    test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed, skipped);
+    test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed, skipped);
+    test_evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations(passed, failed, skipped);
+    test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed, skipped);
+    test_evaluator_set_target_properties_rejects_alias_target(passed, failed, skipped);
+    test_evaluator_add_executable_imported_and_alias_signatures(passed, failed, skipped);
+    test_evaluator_add_library_imported_alias_and_default_type(passed, failed, skipped);
+    test_evaluator_set_property_target_rejects_alias_and_unknown_target(passed, failed, skipped);
+    test_evaluator_define_property_initializes_target_properties_from_variable(passed, failed, skipped);
+    test_evaluator_set_property_source_test_directory_clauses_parse_and_apply(passed, failed, skipped);
+    test_evaluator_set_property_allows_zero_objects_and_validates_test_lookup(passed, failed, skipped);
+    test_evaluator_set_property_cache_requires_existing_entry(passed, failed, skipped);
+    test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed, skipped);
+    test_evaluator_get_property_target_source_and_test_wrappers(passed, failed, skipped);
+    test_evaluator_get_directory_property_missing_materializes_empty_string(passed, failed, skipped);
+    test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed, skipped);
+    test_evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs(passed, failed, skipped);
+    test_evaluator_install_signatures_emit_expected_rules_and_component_inventory(passed, failed, skipped);
+    test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed, skipped);
+    test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed, skipped);
+    test_evaluator_directory_property_inheritance_uses_directory_graph_parent(passed, failed, skipped);
+    test_evaluator_option_mark_as_advanced_and_include_regular_expression_follow_policies(passed, failed, skipped);
+    test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed, skipped);
+    test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed, skipped);
+    test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed, skipped);
+    test_evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix(passed, failed, skipped);
+    test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed, skipped);
+    test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed, skipped);
+    test_evaluator_host_build_commands_reject_invalid_shapes_and_warn_on_ignored_project_name(passed, failed, skipped);
+    test_evaluator_try_run_new_signature_accepts_no_log_and_runs(passed, failed, skipped);
+    test_evaluator_try_run_caches_result_vars_by_default_and_respects_no_cache(passed, failed, skipped);
+    test_evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeholders(passed, failed, skipped);
+    test_evaluator_try_run_consumes_prefilled_crosscompile_cache_answers(passed, failed, skipped);
+    test_evaluator_try_run_sets_failed_to_run_when_process_cannot_start(passed, failed, skipped);
+    test_evaluator_try_run_rejects_incomplete_argument_shapes(passed, failed, skipped);
+    test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed, skipped);
+    test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed, skipped);
+    test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed, skipped);
+    test_evaluator_batch6_metadata_commands_reject_incomplete_option_values(passed, failed, skipped);
+}
+
+void run_evaluator_v2_integration_batch3(int *passed, int *failed, int *skipped) {
+    test_evaluator_host_introspection_and_site_name_cover_supported_queries(passed, failed, skipped);
+    test_evaluator_try_run_uses_crosscompiling_emulator_when_available(passed, failed, skipped);
 }

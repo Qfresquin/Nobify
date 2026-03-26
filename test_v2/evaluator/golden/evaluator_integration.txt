@@ -1,0 +1,34 @@
+MODULE evaluator
+CASES 4
+
+=== CASE file_security_read_rejects_symlink_escape_outside_project_scope ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===
+
+=== CASE file_security_strings_rejects_symlink_escape_outside_project_scope ===
+DIAG errors=0 warnings=0
+EVENTS count=0
+=== END CASE ===
+
+=== CASE file_copy_follow_symlink_chain_regular_file_no_warning ===
+DIAG errors=0 warnings=0
+EVENTS count=4
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='copy_chain_file' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='copy_chain_file' path='main.c'
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='copy_chain_file' key='COMPILE_DEFINITIONS' value='COPY_CHAIN_TXT=ok' op=APPEND_LIST
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='copy_chain_file' item='COPY_CHAIN_TXT=ok' vis=PRIVATE
+=== END CASE ===
+
+=== CASE file_read_symlink_and_create_link ===
+DIAG errors=0 warnings=0
+EVENTS count=8
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=10 col=1 name='file_link_case' type=EXECUTABLE
+EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=10 col=1 target='file_link_case' path='main.c'
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='file_link_case' key='COMPILE_DEFINITIONS' value='FILE_LINK_OK=1' op=APPEND_LIST
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='file_link_case' item='FILE_LINK_OK=1' vis=PRIVATE
+EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='file_link_case' key='COMPILE_DEFINITIONS' value='FILE_LINK_TARGET=./temp_file_link_src.txt' op=APPEND_LIST
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='file_link_case' item='FILE_LINK_TARGET=./temp_file_link_src.txt' vis=PRIVATE
+EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='file_link_case' key='COMPILE_DEFINITIONS' value='FILE_LINK_HARD_TXT=LINKDATA' op=APPEND_LIST
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='file_link_case' item='FILE_LINK_HARD_TXT=LINKDATA' vis=PRIVATE
+=== END CASE ===

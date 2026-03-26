@@ -54,6 +54,54 @@ static bool test_ws_is_absolute_path(const char *path) {
 #endif
 }
 
+static bool test_ws_host_is_executable_file(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    DWORD attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    return (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+static bool test_ws_copy_string(const char *src, char out[_TINYDIR_PATH_MAX]) {
+    int n = 0;
+    if (!src || !out) return false;
+    n = snprintf(out, _TINYDIR_PATH_MAX, "%s", src);
+    if (n < 0 || n >= _TINYDIR_PATH_MAX) {
+        nob_log(NOB_ERROR, "host probe path too long: %s", src);
+        return false;
+    }
+    return true;
+}
+
+static bool test_ws_host_try_program_candidate(const char *dir,
+                                               const char *program,
+                                               char out_path[_TINYDIR_PATH_MAX]) {
+    char candidate[_TINYDIR_PATH_MAX] = {0};
+    if (!dir || !program || !out_path) return false;
+    if (!test_fs_join_path(dir, program, candidate)) return false;
+    if (test_ws_host_is_executable_file(candidate)) {
+        return test_ws_copy_string(candidate, out_path);
+    }
+
+#if defined(_WIN32)
+    if (strchr(program, '.') == NULL) {
+        static const char *k_exts[] = {".exe", ".cmd", ".bat", ".com"};
+        for (size_t i = 0; i < NOB_ARRAY_LEN(k_exts); i++) {
+            int n = snprintf(candidate, sizeof(candidate), "%s/%s%s", dir, program, k_exts[i]);
+            if (n < 0 || n >= (int)sizeof(candidate)) continue;
+            if (test_ws_host_is_executable_file(candidate)) {
+                return test_ws_copy_string(candidate, out_path);
+            }
+        }
+    }
+#endif
+
+    return false;
+}
+
 static bool test_ws_resolve_repo_path(const char *path, char out[_TINYDIR_PATH_MAX]) {
     if (!path || !out) return false;
 
@@ -311,6 +359,96 @@ bool test_ws_update_golden_file(const char *expected_path, const void *data, siz
     if (!expected_path) return false;
     if (!test_ws_resolve_repo_path(expected_path, repo_path)) return false;
     return nob_write_entire_file(repo_path, data, size);
+}
+
+bool test_ws_host_program_in_path(const char *program,
+                                  char out_path[_TINYDIR_PATH_MAX]) {
+    const char *path_env = NULL;
+    char *path_copy = NULL;
+    char *segment = NULL;
+    char *cursor = NULL;
+    bool found = false;
+
+    if (!program || !out_path) return false;
+    out_path[0] = '\0';
+
+    if (test_ws_is_absolute_path(program)) {
+        return test_ws_host_is_executable_file(program) && test_ws_copy_string(program, out_path);
+    }
+
+    path_env = getenv("PATH");
+    if (!path_env || path_env[0] == '\0') return false;
+
+    path_copy = (char*)malloc(strlen(path_env) + 1);
+    if (!path_copy) {
+        nob_log(NOB_ERROR, "host probe: out of memory while reading PATH");
+        return false;
+    }
+    memcpy(path_copy, path_env, strlen(path_env) + 1);
+
+    cursor = path_copy;
+    while (cursor && *cursor != '\0') {
+#if defined(_WIN32)
+        char *next = strchr(cursor, ';');
+#else
+        char *next = strchr(cursor, ':');
+#endif
+        if (next) *next = '\0';
+        segment = cursor;
+        if (segment[0] != '\0' && test_ws_host_try_program_candidate(segment, program, out_path)) {
+            found = true;
+            break;
+        }
+        cursor = next ? next + 1 : NULL;
+    }
+
+    free(path_copy);
+    return found;
+}
+
+bool test_ws_host_path_exists(const char *path) {
+    Test_Fs_Path_Info info = {0};
+    if (!path) return false;
+    if (!test_fs_get_path_info(path, &info)) return false;
+    return info.exists;
+}
+
+bool test_ws_host_supports_directory_symlink(void) {
+    char cwd[_TINYDIR_PATH_MAX] = {0};
+    char target_dir[_TINYDIR_PATH_MAX] = {0};
+    char link_dir[_TINYDIR_PATH_MAX] = {0};
+    unsigned long pid = test_ws_pid();
+    int target_n = 0;
+    int link_n = 0;
+    bool ok = false;
+
+    if (!test_fs_save_current_dir(cwd)) return false;
+    target_n = snprintf(target_dir, sizeof(target_dir), "%s/__symlink_probe_target_%lu", cwd, pid);
+    link_n = snprintf(link_dir, sizeof(link_dir), "%s/__symlink_probe_link_%lu", cwd, pid);
+    if (target_n < 0 || target_n >= (int)sizeof(target_dir) ||
+        link_n < 0 || link_n >= (int)sizeof(link_dir)) {
+        return false;
+    }
+
+    (void)test_fs_remove_tree(link_dir);
+    (void)test_fs_remove_tree(target_dir);
+    if (!nob_mkdir_if_not_exists(target_dir)) return false;
+
+#if defined(_WIN32)
+    {
+        DWORD flags = SYMBOLIC_LINK_FLAG_DIRECTORY;
+        ok = CreateSymbolicLinkA(link_dir,
+                                 target_dir,
+                                 flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+        if (!ok) ok = CreateSymbolicLinkA(link_dir, target_dir, flags) != 0;
+    }
+#else
+    ok = symlink(target_dir, link_dir) == 0;
+#endif
+
+    (void)test_fs_remove_tree(link_dir);
+    (void)test_fs_remove_tree(target_dir);
+    return ok;
 }
 
 const char *test_ws_root(const Test_Workspace *ws) {

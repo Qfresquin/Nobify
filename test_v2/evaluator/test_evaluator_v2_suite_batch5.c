@@ -18,8 +18,13 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
     ASSERT(nob_write_entire_file("src/find_items/nested/marker.txt", "x", 1));
     ASSERT(nob_write_entire_file("src/find_items/include/marker.hpp", "x", 1));
 #if defined(_WIN32)
+    ASSERT(nob_write_entire_file("src/find_items/bin/fake-tool.cmd", "@echo off\r\necho fake-tool\r\n",
+                                 strlen("@echo off\r\necho fake-tool\r\n")));
     ASSERT(nob_write_entire_file("src/find_items/lib/sample.lib", "x", 1));
 #else
+    ASSERT(nob_write_entire_file("src/find_items/bin/fake-tool", "#!/bin/sh\nexit 0\n",
+                                 strlen("#!/bin/sh\nexit 0\n")));
+    ASSERT(chmod("src/find_items/bin/fake-tool", 0755) == 0);
     ASSERT(nob_write_entire_file("src/find_items/lib/libsample.a", "x", 1));
 #endif
 
@@ -48,11 +53,7 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
         sizeof(script),
         "find_file(MY_FILE NAMES marker.txt PATHS find_items PATH_SUFFIXES nested NO_DEFAULT_PATH)\n"
         "find_path(MY_PATH NAMES marker.hpp PATHS find_items PATH_SUFFIXES include NO_DEFAULT_PATH)\n"
-#if defined(_WIN32)
-        "find_program(MY_TOOL NAMES cmd PATHS C:/Windows/System32 NO_DEFAULT_PATH)\n"
-#else
-        "find_program(MY_TOOL NAMES sh PATHS /bin NO_DEFAULT_PATH)\n"
-#endif
+        "find_program(MY_TOOL NAMES fake-tool fake-tool.cmd PATHS find_items/bin NO_DEFAULT_PATH)\n"
         "find_library(MY_LIB NAMES sample PATHS find_items/lib NO_DEFAULT_PATH)\n"
         "set(FOO_ROOT \"%s\")\n"
         "cmake_policy(SET CMP0074 NEW)\n"
@@ -85,12 +86,12 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
                            "find_items/include"));
 #if defined(_WIN32)
     ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("MY_TOOL")),
-                           "System32/cmd.exe"));
+                           "find_items/bin/fake-tool.cmd"));
     ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("MY_LIB")),
                            "find_items/lib/sample.lib"));
 #else
     ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("MY_TOOL")),
-                           "/bin/sh"));
+                           "find_items/bin/fake-tool"));
     ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("MY_LIB")),
                            "find_items/lib/libsample.a"));
 #endif
@@ -1907,12 +1908,6 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         "else()\n"
         "  set(TOUCH_NOCREATE_CREATED 0)\n"
         "endif()\n"
-        "if(EXISTS \"/bin/ls\")\n"
-        "  file(GET_RUNTIME_DEPENDENCIES RESOLVED_DEPENDENCIES_VAR RD_RES UNRESOLVED_DEPENDENCIES_VAR RD_UNRES EXECUTABLES /bin/ls)\n"
-        "  list(LENGTH RD_RES RD_RES_LEN)\n"
-        "else()\n"
-        "  set(RD_RES_LEN 0)\n"
-        "endif()\n"
         "file(WRITE extra_dl_src.txt \"hello\")\n"
         "file(DOWNLOAD extra_dl_src.txt extra_dl_ok.txt EXPECTED_HASH SHA256=2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824)\n"
         "file(READ extra_dl_ok.txt DL_OK_TXT)\n"
@@ -1924,7 +1919,6 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         "\"EXTRA_HASH=${EXTRA_HASH}\" \"EXTRA_CFG=${EXTRA_CFG}\" "
         "\"COPY_RES=${COPY_RES}\" \"COPY_TXT=${COPY_TXT}\" "
         "\"TOUCH_CREATED=${TOUCH_CREATED}\" \"TOUCH_NOCREATE_CREATED=${TOUCH_NOCREATE_CREATED}\" "
-        "\"RD_RES_LEN=${RD_RES_LEN}\" "
         "\"DL_OK_TXT=${DL_OK_TXT}\" \"DL_BAD_LEN=${DL_BAD_LEN}\" \"DL_BAD_CODE=${DL_BAD_CODE}\")\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -1939,11 +1933,9 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     bool saw_copy_txt = false;
     bool saw_touch_created = false;
     bool saw_touch_nocreate_created = false;
-    bool saw_rd_res_len = false;
     bool saw_dl_ok = false;
     bool saw_dl_bad_len = false;
     bool saw_dl_bad_code = false;
-    bool expect_rd_nonempty = (access("/bin/ls", F_OK) == 0);
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -1956,18 +1948,6 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
         if (nob_sv_eq(it, nob_sv_from_cstr("COPY_TXT=abc"))) saw_copy_txt = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("TOUCH_CREATED=1"))) saw_touch_created = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("TOUCH_NOCREATE_CREATED=0"))) saw_touch_nocreate_created = true;
-        if (it.count >= 11 && memcmp(it.data, "RD_RES_LEN=", 11) == 0) {
-            char buf[64] = {0};
-            size_t n = it.count - 11;
-            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
-            memcpy(buf, it.data + 11, n);
-            long v = strtol(buf, NULL, 10);
-            if (expect_rd_nonempty) {
-                if (v > 0) saw_rd_res_len = true;
-            } else {
-                if (v == 0) saw_rd_res_len = true;
-            }
-        }
         if (nob_sv_eq(it, nob_sv_from_cstr("DL_OK_TXT=hello"))) saw_dl_ok = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("DL_BAD_LEN=2"))) saw_dl_bad_len = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("DL_BAD_CODE=1"))) saw_dl_bad_code = true;
@@ -1979,7 +1959,6 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     ASSERT(saw_copy_txt);
     ASSERT(saw_touch_created);
     ASSERT(saw_touch_nocreate_created);
-    ASSERT(saw_rd_res_len);
     ASSERT(saw_dl_ok);
     ASSERT(saw_dl_bad_len);
     ASSERT(saw_dl_bad_code);
@@ -1987,6 +1966,72 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_runtime_dependencies_resolve_known_host_binary) {
+    char host_binary[_TINYDIR_PATH_MAX] = {0};
+#if defined(_WIN32)
+    if (!test_ws_host_program_in_path("cmd", host_binary)) {
+        TEST_SKIP("requires cmd on PATH");
+    }
+#else
+    if (!test_ws_host_path_exists("/bin/ls")) {
+        TEST_SKIP("requires /bin/ls");
+    }
+    ASSERT(snprintf(host_binary, sizeof(host_binary), "%s", "/bin/ls") > 0);
+#endif
+
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024, 2 * 1024 * 1024, NULL);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    char script[2048] = {0};
+    int script_n = snprintf(
+        script,
+        sizeof(script),
+        "file(GET_RUNTIME_DEPENDENCIES "
+        "RESOLVED_DEPENDENCIES_VAR RD_RES "
+        "UNRESOLVED_DEPENDENCIES_VAR RD_UNRES "
+        "EXECUTABLES [=[%s]=])\n"
+        "list(LENGTH RD_RES RD_RES_LEN)\n"
+        "list(LENGTH RD_UNRES RD_UNRES_LEN)\n"
+        "add_executable(file_runtime_dep_probe main.c)\n"
+        "target_compile_definitions(file_runtime_dep_probe PRIVATE "
+        "\"RD_RES_LEN=${RD_RES_LEN}\" \"RD_UNRES_LEN=${RD_UNRES_LEN}\")\n",
+        host_binary);
+    ASSERT(script_n > 0 && script_n < (int)sizeof(script));
+
+    Ast_Root root = parse_cmake(fixture->temp_arena, script);
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_rd_res_len = false;
+    bool saw_rd_unres_len = false;
+    for (size_t i = 0; i < fixture->stream->count; i++) {
+        const Cmake_Event *ev = &fixture->stream->items[i];
+        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("file_runtime_dep_probe"))) {
+            continue;
+        }
+        String_View it = ev->as.target_compile_definitions.item;
+        if (nob_sv_starts_with(it, nob_sv_from_cstr("RD_RES_LEN="))) {
+            char buf[64] = {0};
+            size_t n = it.count - strlen("RD_RES_LEN=");
+            ASSERT(n < sizeof(buf));
+            memcpy(buf, it.data + strlen("RD_RES_LEN="), n);
+            ASSERT(strtol(buf, NULL, 10) > 0);
+            saw_rd_res_len = true;
+        } else if (nob_sv_starts_with(it, nob_sv_from_cstr("RD_UNRES_LEN="))) {
+            saw_rd_unres_len = true;
+        }
+    }
+
+    ASSERT(saw_rd_res_len);
+    ASSERT(saw_rd_unres_len);
     TEST_PASS();
 }
 
@@ -2675,39 +2720,81 @@ TEST(evaluator_try_compile_empty_capture_file_is_silent) {
     TEST_PASS();
 }
 
-void run_evaluator_v2_batch5(int *passed, int *failed) {
-    test_evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies(passed, failed);
-    test_evaluator_find_item_command_rejects_unknown_option(passed, failed);
-    test_evaluator_find_item_command_rejects_missing_output_variable(passed, failed);
-    test_evaluator_find_item_command_rejects_missing_registry_or_validator_values(passed, failed);
-    test_evaluator_find_item_command_rejects_malformed_env_clause(passed, failed);
-    test_evaluator_get_filename_component_covers_documented_modes(passed, failed);
-    test_evaluator_get_filename_component_rejects_invalid_option_shapes(passed, failed);
-    test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed);
-    test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed);
-    test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed);
-    test_evaluator_project_full_signature_and_variable_surface(passed, failed);
-    test_evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg(passed, failed);
-    test_evaluator_project_rejects_invalid_signature_forms(passed, failed);
-    test_evaluator_policy_known_unknown_and_if_predicate(passed, failed);
-    test_evaluator_policy_strict_arity_and_version_validation(passed, failed);
-    test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed);
-    test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed);
-    test_evaluator_cpack_commands_reject_missing_names_and_warn_on_extra_args(passed, failed);
-    test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed);
-    test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed);
-    test_evaluator_string_text_regex_and_misc_dispatch_events(passed, failed);
-    test_evaluator_string_regex_parse_error_keeps_diag_surface(passed, failed);
-    test_evaluator_string_find_compare_configure_random_timestamp_and_uuid_cover_remaining_option_modes(passed, failed);
-    test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed);
-    test_evaluator_file_dispatcher_routes_glob_rw_and_copy_families(passed, failed);
-    test_evaluator_file_glob_and_strings_cover_curl_style_queries(passed, failed);
-    test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed);
-    test_evaluator_file_real_path_cmp0152_old_and_new(passed, failed);
-    test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed);
-    test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed);
-    test_evaluator_file_download_probe_mode_without_destination(passed, failed);
-    test_evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak(passed, failed);
-    test_evaluator_try_compile_failure_populates_output_variable(passed, failed);
-    test_evaluator_try_compile_empty_capture_file_is_silent(passed, failed);
+TEST(evaluator_internal_cleanup_stack_failure_helper) {
+    ASSERT(evaluator_test_begin_nob_log_capture_guarded());
+    ASSERT(evaluator_test_guard_env("NOBIFY_CLEANUP_GUARD", "dirty"));
+    ASSERT(false);
+    TEST_PASS();
+}
+
+TEST(evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure) {
+    int inner_passed = 0;
+    int inner_failed = 0;
+    int inner_skipped = 0;
+    Nob_Log_Handler *saved_handler = nob_get_log_handler();
+    const char *cwd_before = nob_get_current_dir_temp();
+    ASSERT(cwd_before != NULL);
+
+    char cwd_before_copy[_TINYDIR_PATH_MAX] = {0};
+    int cwd_n = snprintf(cwd_before_copy, sizeof(cwd_before_copy), "%s", cwd_before);
+    ASSERT(cwd_n > 0 && (size_t)cwd_n < sizeof(cwd_before_copy));
+    ASSERT(getenv("NOBIFY_CLEANUP_GUARD") == NULL);
+
+    test_evaluator_internal_cleanup_stack_failure_helper(&inner_passed, &inner_failed, &inner_skipped);
+
+    ASSERT(inner_passed == 0);
+    ASSERT(inner_failed == 1);
+    ASSERT(inner_skipped == 0);
+    ASSERT(nob_get_log_handler() == saved_handler);
+    ASSERT(getenv("NOBIFY_CLEANUP_GUARD") == NULL);
+
+    const char *cwd_after = nob_get_current_dir_temp();
+    ASSERT(cwd_after != NULL);
+    ASSERT(strcmp(cwd_before_copy, cwd_after) == 0);
+
+    nob_sb_free(g_evaluator_captured_nob_logs);
+    g_evaluator_captured_nob_logs = (Nob_String_Builder){0};
+    TEST_PASS();
+}
+
+void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
+    test_evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies(passed, failed, skipped);
+    test_evaluator_find_item_command_rejects_unknown_option(passed, failed, skipped);
+    test_evaluator_find_item_command_rejects_missing_output_variable(passed, failed, skipped);
+    test_evaluator_find_item_command_rejects_missing_registry_or_validator_values(passed, failed, skipped);
+    test_evaluator_find_item_command_rejects_malformed_env_clause(passed, failed, skipped);
+    test_evaluator_get_filename_component_covers_documented_modes(passed, failed, skipped);
+    test_evaluator_get_filename_component_rejects_invalid_option_shapes(passed, failed, skipped);
+    test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed, skipped);
+    test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed, skipped);
+    test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed, skipped);
+    test_evaluator_project_full_signature_and_variable_surface(passed, failed, skipped);
+    test_evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg(passed, failed, skipped);
+    test_evaluator_project_rejects_invalid_signature_forms(passed, failed, skipped);
+    test_evaluator_policy_known_unknown_and_if_predicate(passed, failed, skipped);
+    test_evaluator_policy_strict_arity_and_version_validation(passed, failed, skipped);
+    test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed, skipped);
+    test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed, skipped);
+    test_evaluator_cpack_commands_reject_missing_names_and_warn_on_extra_args(passed, failed, skipped);
+    test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed, skipped);
+    test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed, skipped);
+    test_evaluator_string_text_regex_and_misc_dispatch_events(passed, failed, skipped);
+    test_evaluator_string_regex_parse_error_keeps_diag_surface(passed, failed, skipped);
+    test_evaluator_string_find_compare_configure_random_timestamp_and_uuid_cover_remaining_option_modes(passed, failed, skipped);
+    test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed, skipped);
+    test_evaluator_file_dispatcher_routes_glob_rw_and_copy_families(passed, failed, skipped);
+    test_evaluator_file_glob_and_strings_cover_curl_style_queries(passed, failed, skipped);
+    test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed, skipped);
+    test_evaluator_file_real_path_cmp0152_old_and_new(passed, failed, skipped);
+    test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed, skipped);
+    test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed, skipped);
+    test_evaluator_file_download_probe_mode_without_destination(passed, failed, skipped);
+    test_evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak(passed, failed, skipped);
+    test_evaluator_try_compile_failure_populates_output_variable(passed, failed, skipped);
+    test_evaluator_try_compile_empty_capture_file_is_silent(passed, failed, skipped);
+    test_evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure(passed, failed, skipped);
+}
+
+void run_evaluator_v2_integration_batch5(int *passed, int *failed, int *skipped) {
+    test_evaluator_file_runtime_dependencies_resolve_known_host_binary(passed, failed, skipped);
 }

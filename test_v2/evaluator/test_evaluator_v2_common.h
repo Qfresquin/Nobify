@@ -1226,13 +1226,14 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         }
     }
 
-    if (!evaluator_prepare_symlink_escape_fixture()) {
+    if (!evaluator_load_text_file_to_arena(arena, input_path, &input)) {
+        nob_log(NOB_ERROR, "golden: failed to read input: %s", input_path);
         ok = false;
         goto done;
     }
 
-    if (!evaluator_load_text_file_to_arena(arena, input_path, &input)) {
-        nob_log(NOB_ERROR, "golden: failed to read input: %s", input_path);
+    if (sv_contains_sv(input, nob_sv_from_cstr("temp_symlink_escape_link")) &&
+        !evaluator_prepare_symlink_escape_fixture()) {
         ok = false;
         goto done;
     }
@@ -1243,12 +1244,6 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         ok = false;
         goto done;
     }
-    if (cases.count != 107) {
-        nob_log(NOB_ERROR, "golden: unexpected evaluator case count: got=%zu expected=107", cases.count);
-        ok = false;
-        goto done;
-    }
-
     evaluator_set_source_date_epoch_value("0");
 
     if (!render_evaluator_casepack_snapshot_to_arena(arena, cases, &actual)) {

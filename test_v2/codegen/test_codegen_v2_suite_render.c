@@ -76,8 +76,8 @@ TEST(codegen_output_properties_shape_artifact_paths) {
     TEST_PASS();
 }
 
-void run_codegen_v2_render_tests(int *passed, int *failed) {
-    test_codegen_simple_executable_generates_compilable_nob(passed, failed);
-    test_codegen_static_interface_alias_usage_propagates_flags(passed, failed);
-    test_codegen_output_properties_shape_artifact_paths(passed, failed);
+void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
+    test_codegen_simple_executable_generates_compilable_nob(passed, failed, skipped);
+    test_codegen_static_interface_alias_usage_propagates_flags(passed, failed, skipped);
+    test_codegen_output_properties_shape_artifact_paths(passed, failed, skipped);
 }

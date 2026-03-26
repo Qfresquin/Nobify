@@ -62,6 +62,14 @@ typedef struct {
     bool owns_registry;
 } Eval_Test_Runtime;
 
+typedef struct {
+    Arena *temp_arena;
+    Arena *event_arena;
+    Cmake_Event_Stream *stream;
+    Eval_Test_Init init;
+    Eval_Test_Runtime *ctx;
+} Eval_Test_Fixture;
+
 #define EVALUATOR_GOLDEN_DIR "test_v2/evaluator/golden"
 
 typedef struct {
@@ -89,6 +97,13 @@ bool evaluator_create_fetchcontent_git_repo(const char *repo_dir,
                                             const char *cmakelists_text,
                                             const char *version_text,
                                             const char *tag_name);
+Eval_Test_Fixture *eval_test_fixture_create(size_t temp_arena_size,
+                                            size_t event_arena_size,
+                                            const Eval_Test_Init *overrides);
+void eval_test_fixture_destroy(void *ctx);
+bool evaluator_test_begin_nob_log_capture_guarded(void);
+bool evaluator_test_guard_env(const char *name, const char *value);
+bool evaluator_test_guard_source_date_epoch(const char *value);
 Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init);
 void eval_test_destroy(Eval_Test_Runtime *ctx);
 Eval_Result eval_test_run(Eval_Test_Runtime *ctx, Ast_Root ast);

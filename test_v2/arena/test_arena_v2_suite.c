@@ -719,7 +719,7 @@ TEST(arena_golden_all_cases) {
     TEST_PASS();
 }
 
-void run_arena_v2_tests(int *passed, int *failed) {
+void run_arena_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     bool prepared = test_ws_prepare(&ws, "arena");
@@ -739,7 +739,7 @@ void run_arena_v2_tests(int *passed, int *failed) {
         return;
     }
 
-    test_arena_golden_all_cases(passed, failed);
+    test_arena_golden_all_cases(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

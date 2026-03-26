@@ -94,9 +94,9 @@ TEST(codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs) {
     TEST_PASS();
 }
 
-void run_codegen_v2_build_tests(int *passed, int *failed) {
-    test_codegen_write_file_rebases_paths_and_generated_file_compiles(passed, failed);
-    test_codegen_shared_and_module_targets_build_on_posix_backend(passed, failed);
-    test_codegen_cxx_static_dependency_uses_cxx_driver_for_link(passed, failed);
-    test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed);
+void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
+    test_codegen_write_file_rebases_paths_and_generated_file_compiles(passed, failed, skipped);
+    test_codegen_shared_and_module_targets_build_on_posix_backend(passed, failed, skipped);
+    test_codegen_cxx_static_dependency_uses_cxx_driver_for_link(passed, failed, skipped);
+    test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed, skipped);
 }

@@ -11,8 +11,12 @@ int main(void) {
 
     if (!test_v2_require_official_runner()) return 1;
 
-    run_pipeline_v2_tests(&passed, &failed, &skipped);
+    run_evaluator_v2_integration_tests(&passed, &failed, &skipped);
 
-    nob_log(NOB_INFO, "pipeline v2 tests: passed=%d failed=%d skipped=%d", passed, failed, skipped);
+    nob_log(NOB_INFO,
+            "evaluator v2 integration tests: passed=%d failed=%d skipped=%d",
+            passed,
+            failed,
+            skipped);
     return failed == 0 ? 0 : 1;
 }
