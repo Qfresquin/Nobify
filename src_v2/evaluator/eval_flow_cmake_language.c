@@ -521,7 +521,7 @@ static bool flow_set_var_to_deferred_call(EvalExecContext *ctx,
         }
     }
 
-    char *copy = arena_strndup(ctx->arena, sb.items, sb.count);
+    char *copy = arena_strndup(ctx->arena, sb.items ? sb.items : "", sb.count);
     nob_sb_free(sb);
     EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
     return eval_var_set_current(ctx, out_var, nob_sv_from_parts(copy, strlen(copy)));

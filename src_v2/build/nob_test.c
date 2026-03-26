@@ -33,6 +33,7 @@
 #define TEMP_TESTS_OBJ_ROOT TEMP_TESTS_ROOT "/obj"
 #define TEMP_TESTS_LOCKS TEMP_TESTS_ROOT "/locks"
 #define TEMP_TESTS_PROBES TEMP_TESTS_ROOT "/probes"
+#define TEMP_TESTS_COVERAGE TEMP_TESTS_ROOT "/coverage"
 
 typedef void (*Append_Source_List_Fn)(Nob_Cmd *cmd);
 
@@ -47,6 +48,7 @@ typedef struct {
     bool use_asan;
     bool use_ubsan;
     bool use_msan;
+    bool use_coverage;
     const char *asan_options_default;
     const char *ubsan_options_default;
     const char *msan_options_default;
@@ -57,7 +59,15 @@ typedef struct {
     char suite_copy[_TINYDIR_PATH_MAX];
 } Test_Run_Workspace;
 
+typedef struct {
+    bool active;
+    char session_dir[_TINYDIR_PATH_MAX];
+    Nob_File_Paths binary_paths;
+    Nob_File_Paths profraw_paths;
+} Coverage_Context;
+
 static bool g_runner_verbose = false;
+static Coverage_Context g_coverage_ctx = {0};
 
 static void append_test_arena_all_sources(Nob_Cmd *cmd);
 static void append_test_lexer_all_sources(Nob_Cmd *cmd);
@@ -74,12 +84,14 @@ static void report_captured_test_output(const Test_Module *module,
                                         const char *stderr_path);
 static bool ensure_temp_tests_layout(const Test_Profile *profile);
 static bool run_test_preflight(const Test_Profile *profile);
+static const Test_Module *find_test_module(const char *name);
 
 static const Test_Profile TEST_PROFILE_DEFAULT = {
     .name = "default",
     .use_asan = false,
     .use_ubsan = false,
     .use_msan = false,
+    .use_coverage = false,
     .asan_options_default = NULL,
     .ubsan_options_default = NULL,
     .msan_options_default = NULL,
@@ -89,6 +101,7 @@ static const Test_Profile TEST_PROFILE_ASAN_UBSAN = {
     .use_asan = true,
     .use_ubsan = true,
     .use_msan = false,
+    .use_coverage = false,
     .asan_options_default =
         "detect_leaks=1:detect_stack_use_after_return=1:abort_on_error=1:symbolize=1",
     .ubsan_options_default =
@@ -100,6 +113,7 @@ static const Test_Profile TEST_PROFILE_ASAN = {
     .use_asan = true,
     .use_ubsan = false,
     .use_msan = false,
+    .use_coverage = false,
     .asan_options_default =
         "detect_leaks=1:detect_stack_use_after_return=1:abort_on_error=1:symbolize=1",
     .ubsan_options_default = NULL,
@@ -110,6 +124,7 @@ static const Test_Profile TEST_PROFILE_UBSAN = {
     .use_asan = false,
     .use_ubsan = true,
     .use_msan = false,
+    .use_coverage = false,
     .asan_options_default = NULL,
     .ubsan_options_default =
         "print_stacktrace=1:halt_on_error=1",
@@ -120,10 +135,21 @@ static const Test_Profile TEST_PROFILE_MSAN = {
     .use_asan = false,
     .use_ubsan = false,
     .use_msan = true,
+    .use_coverage = false,
     .asan_options_default = NULL,
     .ubsan_options_default = NULL,
     .msan_options_default =
         "abort_on_error=1:symbolize=1:track_origins=2:poison_in_dtor=1",
+};
+static const Test_Profile TEST_PROFILE_COVERAGE = {
+    .name = "coverage",
+    .use_asan = false,
+    .use_ubsan = false,
+    .use_msan = false,
+    .use_coverage = true,
+    .asan_options_default = NULL,
+    .ubsan_options_default = NULL,
+    .msan_options_default = NULL,
 };
 
 static Test_Module TEST_MODULES[] = {
@@ -143,12 +169,187 @@ static bool starts_with(const char *text, const char *prefix) {
     return strncmp(text, prefix, prefix_len) == 0;
 }
 
-static bool test_profile_is_sanitized(const Test_Profile *profile) {
-    return profile && (profile->use_asan || profile->use_ubsan || profile->use_msan);
+static bool cstr_equals(const char *a, const char *b) {
+    if (!a || !b) return false;
+    return strcmp(a, b) == 0;
+}
+
+static bool file_paths_contains(const Nob_File_Paths *paths, const char *path) {
+    if (!paths || !path) return false;
+    for (size_t i = 0; i < paths->count; i++) {
+        if (cstr_equals(paths->items[i], path)) return true;
+    }
+    return false;
+}
+
+static bool file_paths_append_unique_dup(Nob_File_Paths *paths, const char *path) {
+    char *copy = NULL;
+    if (!paths || !path) return false;
+    if (file_paths_contains(paths, path)) return true;
+    copy = strdup(path);
+    if (!copy) {
+        nob_log(NOB_ERROR, "failed to duplicate path %s", path);
+        return false;
+    }
+    nob_da_append(paths, copy);
+    return true;
+}
+
+static void file_paths_free_owned(Nob_File_Paths *paths) {
+    if (!paths) return;
+    for (size_t i = 0; i < paths->count; i++) {
+        free((void*)paths->items[i]);
+    }
+    nob_da_free(*paths);
+}
+
+static bool test_profile_is_instrumented(const Test_Profile *profile) {
+    return profile && (profile->use_asan ||
+                       profile->use_ubsan ||
+                       profile->use_msan ||
+                       profile->use_coverage);
+}
+
+static bool test_profile_uses_clang(const Test_Profile *profile) {
+    return profile && (profile->use_msan || profile->use_coverage);
+}
+
+static bool test_profile_needs_llvm_cov_tools(const Test_Profile *profile) {
+    return profile && profile->use_coverage;
+}
+
+static bool path_is_executable(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    DWORD attrs = GetFileAttributesA(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+static bool find_executable_in_path(const char *name,
+                                    char out_path[_TINYDIR_PATH_MAX]) {
+    if (!name || !out_path) return false;
+
+    if (strchr(name, '/') || strchr(name, '\\')) {
+        if (!path_is_executable(name)) return false;
+        if (snprintf(out_path, _TINYDIR_PATH_MAX, "%s", name) >= _TINYDIR_PATH_MAX) return false;
+        return true;
+    }
+
+#if defined(_WIN32)
+    {
+        DWORD n = SearchPathA(NULL, name, NULL, _TINYDIR_PATH_MAX, out_path, NULL);
+        return n > 0 && n < _TINYDIR_PATH_MAX;
+    }
+#else
+    {
+        const char *path_env = getenv("PATH");
+        size_t temp_mark = nob_temp_save();
+        if (!path_env || path_env[0] == '\0') return false;
+
+        while (*path_env) {
+            const char *sep = strchr(path_env, ':');
+            size_t dir_len = sep ? (size_t)(sep - path_env) : strlen(path_env);
+            const char *dir = NULL;
+            const char *candidate = NULL;
+
+            if (dir_len == 0) {
+                dir = ".";
+            } else {
+                dir = nob_temp_strndup(path_env, dir_len);
+                if (!dir) {
+                    nob_temp_rewind(temp_mark);
+                    return false;
+                }
+            }
+
+            candidate = nob_temp_sprintf("%s/%s", dir, name);
+            if (candidate && path_is_executable(candidate)) {
+                if (snprintf(out_path, _TINYDIR_PATH_MAX, "%s", candidate) >= _TINYDIR_PATH_MAX) {
+                    nob_temp_rewind(temp_mark);
+                    return false;
+                }
+                nob_temp_rewind(temp_mark);
+                return true;
+            }
+
+            if (!sep) break;
+            path_env = sep + 1;
+        }
+
+        nob_temp_rewind(temp_mark);
+        return false;
+    }
+#endif
+}
+
+static bool resolve_executable_from_env_or_fallbacks(const char *env_var,
+                                                     const char *const *fallbacks,
+                                                     size_t fallback_count,
+                                                     char out_path[_TINYDIR_PATH_MAX]) {
+    const char *env_value = NULL;
+    if (!out_path) return false;
+    out_path[0] = '\0';
+
+    env_value = env_var ? getenv(env_var) : NULL;
+    if (env_value && env_value[0] != '\0') {
+        if (find_executable_in_path(env_value, out_path)) return true;
+        nob_log(NOB_ERROR, "configured tool %s=%s is not executable", env_var, env_value);
+        return false;
+    }
+
+    for (size_t i = 0; i < fallback_count; i++) {
+        if (find_executable_in_path(fallbacks[i], out_path)) return true;
+    }
+    return false;
+}
+
+static bool resolve_clang_tidy_path(char out_path[_TINYDIR_PATH_MAX]) {
+    static const char *const fallbacks[] = {
+        "clang-tidy",
+        "clang-tidy-19",
+        "clang-tidy-18",
+        "clang-tidy-17",
+        "clang-tidy-16",
+    };
+    return resolve_executable_from_env_or_fallbacks("CLANG_TIDY",
+                                                    fallbacks,
+                                                    NOB_ARRAY_LEN(fallbacks),
+                                                    out_path);
+}
+
+static bool resolve_llvm_cov_path(char out_path[_TINYDIR_PATH_MAX]) {
+    static const char *const fallbacks[] = {
+        "llvm-cov",
+        "llvm-cov-19",
+        "llvm-cov-18",
+        "llvm-cov-17",
+        "llvm-cov-16",
+    };
+    return resolve_executable_from_env_or_fallbacks("LLVM_COV",
+                                                    fallbacks,
+                                                    NOB_ARRAY_LEN(fallbacks),
+                                                    out_path);
+}
+
+static bool resolve_llvm_profdata_path(char out_path[_TINYDIR_PATH_MAX]) {
+    static const char *const fallbacks[] = {
+        "llvm-profdata",
+        "llvm-profdata-19",
+        "llvm-profdata-18",
+        "llvm-profdata-17",
+        "llvm-profdata-16",
+    };
+    return resolve_executable_from_env_or_fallbacks("LLVM_PROFDATA",
+                                                    fallbacks,
+                                                    NOB_ARRAY_LEN(fallbacks),
+                                                    out_path);
 }
 
 static void append_test_profile_compiler(Nob_Cmd *cmd, const Test_Profile *profile) {
-    if (profile && profile->use_msan) {
+    if (test_profile_uses_clang(profile)) {
         nob_cmd_append(cmd, "clang");
         return;
     }
@@ -179,6 +380,8 @@ static void runner_emit_log_line(Nob_Log_Level level, const char *message) {
 static bool runner_should_show_info_message(const char *message) {
     if (!message) return false;
     return starts_with(message, "[v2] module ") ||
+           starts_with(message, "[v2] clang-tidy") ||
+           starts_with(message, "[v2] coverage ") ||
            starts_with(message, "[v2] summary:") ||
            starts_with(message, "Usage:");
 }
@@ -205,8 +408,17 @@ static void runner_log_handler(Nob_Log_Level level, const char *fmt, va_list arg
 }
 
 static void append_test_profile_compile_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
-    if (!test_profile_is_sanitized(profile)) {
+    if (!test_profile_is_instrumented(profile)) {
         nob_cmd_append(cmd, "-O3", "-ggdb");
+        return;
+    }
+
+    if (profile->use_coverage) {
+        nob_cmd_append(cmd,
+            "-O0",
+            "-ggdb",
+            "-fprofile-instr-generate",
+            "-fcoverage-mapping");
         return;
     }
 
@@ -239,7 +451,14 @@ static void append_test_profile_compile_flags(Nob_Cmd *cmd, const Test_Profile *
 }
 
 static void append_test_profile_link_flags(Nob_Cmd *cmd, const Test_Profile *profile) {
-    if (!test_profile_is_sanitized(profile)) return;
+    if (!test_profile_is_instrumented(profile)) return;
+
+    if (profile->use_coverage) {
+        nob_cmd_append(cmd,
+            "-fprofile-instr-generate",
+            "-fcoverage-mapping");
+        return;
+    }
 
     nob_cmd_append(cmd, "-fno-omit-frame-pointer");
     if (profile->use_msan) {
@@ -999,6 +1218,7 @@ static bool ensure_temp_tests_layout(const Test_Profile *profile) {
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_OBJ_ROOT)) goto defer;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_LOCKS)) goto defer;
     if (!nob_mkdir_if_not_exists(TEMP_TESTS_PROBES)) goto defer;
+    if (!nob_mkdir_if_not_exists(TEMP_TESTS_COVERAGE)) goto defer;
     if (profile) {
         if (!nob_mkdir_if_not_exists(test_profile_bin_dir_temp(profile))) goto defer;
         if (!ensure_dir_chain(test_object_config_dir_temp(profile))) goto defer;
@@ -1018,7 +1238,7 @@ static bool validate_test_profile_support(const Test_Profile *profile) {
     const char *probe_program = "int main(void) { return 0; }\n";
     size_t temp_mark = nob_temp_save();
 
-    if (!test_profile_is_sanitized(profile)) {
+    if (!test_profile_is_instrumented(profile)) {
         ok = true;
         goto defer;
     }
@@ -1042,6 +1262,22 @@ defer:
     nob_cmd_free(cmd);
     nob_temp_rewind(temp_mark);
     return ok;
+}
+
+static bool validate_coverage_tools_support(const Test_Profile *profile) {
+    char llvm_cov[_TINYDIR_PATH_MAX] = {0};
+    char llvm_profdata[_TINYDIR_PATH_MAX] = {0};
+    if (!test_profile_needs_llvm_cov_tools(profile)) return true;
+    if (!resolve_llvm_cov_path(llvm_cov)) {
+        nob_log(NOB_ERROR, "[v2] missing llvm-cov executable; set LLVM_COV or install llvm-cov");
+        return false;
+    }
+    if (!resolve_llvm_profdata_path(llvm_profdata)) {
+        nob_log(NOB_ERROR, "[v2] missing llvm-profdata executable; set LLVM_PROFDATA or install llvm-profdata");
+        return false;
+    }
+    nob_log(NOB_INFO, "[v2] coverage tools: llvm-cov=%s llvm-profdata=%s", llvm_cov, llvm_profdata);
+    return true;
 }
 
 static bool prepare_test_run_workspace(Test_Run_Workspace *ws,
@@ -1114,6 +1350,165 @@ static void report_captured_test_output(const Test_Module *module,
     }
 }
 
+static void coverage_context_reset(void) {
+    file_paths_free_owned(&g_coverage_ctx.binary_paths);
+    file_paths_free_owned(&g_coverage_ctx.profraw_paths);
+    memset(g_coverage_ctx.session_dir, 0, sizeof(g_coverage_ctx.session_dir));
+    g_coverage_ctx.active = false;
+}
+
+static bool coverage_context_begin(const char *label) {
+    const char *cwd = nob_get_current_dir_temp();
+    char rel_dir[_TINYDIR_PATH_MAX] = {0};
+    int n = 0;
+
+    coverage_context_reset();
+    if (!cwd || !label) return false;
+    if (!ensure_temp_tests_layout(&TEST_PROFILE_COVERAGE)) return false;
+
+    n = snprintf(rel_dir,
+                 sizeof(rel_dir),
+                 "%s/%s-%lu-%lld",
+                 TEMP_TESTS_COVERAGE,
+                 label,
+                 test_process_id(),
+                 (long long)time(NULL));
+    if (n < 0 || n >= (int)sizeof(rel_dir)) {
+        nob_log(NOB_ERROR, "coverage session path is too long");
+        return false;
+    }
+
+    if (!build_abs_path(cwd, rel_dir, g_coverage_ctx.session_dir)) return false;
+    if (!test_fs_remove_tree(g_coverage_ctx.session_dir)) return false;
+    if (!ensure_dir_chain(g_coverage_ctx.session_dir)) return false;
+
+    g_coverage_ctx.active = true;
+    nob_log(NOB_INFO, "[v2] coverage session: %s", g_coverage_ctx.session_dir);
+    return true;
+}
+
+static bool coverage_context_register_module(const Test_Module *module,
+                                             const char *binary_rel_path) {
+    char binary_abs[_TINYDIR_PATH_MAX] = {0};
+    char profraw_abs[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = NULL;
+    int n = 0;
+
+    if (!g_coverage_ctx.active || !module || !binary_rel_path) return true;
+    cwd = nob_get_current_dir_temp();
+    if (!cwd) return false;
+    if (!build_abs_path(cwd, binary_rel_path, binary_abs)) return false;
+    n = snprintf(profraw_abs,
+                 sizeof(profraw_abs),
+                 "%s/%s.profraw",
+                 g_coverage_ctx.session_dir,
+                 module->name);
+    if (n < 0 || n >= (int)sizeof(profraw_abs)) {
+        nob_log(NOB_ERROR, "coverage raw profile path is too long for %s", module->name);
+        return false;
+    }
+
+    if (!file_paths_append_unique_dup(&g_coverage_ctx.binary_paths, binary_abs)) return false;
+    if (!file_paths_append_unique_dup(&g_coverage_ctx.profraw_paths, profraw_abs)) return false;
+    return true;
+}
+
+static const char *coverage_profraw_path_for_module_temp(const Test_Module *module) {
+    if (!g_coverage_ctx.active || !module) return NULL;
+    return nob_temp_sprintf("%s/%s.profraw", g_coverage_ctx.session_dir, module->name);
+}
+
+static bool run_command_capture_stdout(Nob_Cmd *cmd, const char *stdout_path) {
+    if (!cmd || !stdout_path) return false;
+    return nob_cmd_run(cmd, .stdout_path = stdout_path);
+}
+
+static bool generate_coverage_report(const Test_Module *module, bool run_all) {
+    char llvm_cov[_TINYDIR_PATH_MAX] = {0};
+    char llvm_profdata[_TINYDIR_PATH_MAX] = {0};
+    char profdata_path[_TINYDIR_PATH_MAX] = {0};
+    char summary_path[_TINYDIR_PATH_MAX] = {0};
+    char html_dir[_TINYDIR_PATH_MAX] = {0};
+    char ignore_regex[] = "^(test_v2/|vendor/|/usr/)";
+    Nob_Cmd merge_cmd = {0};
+    Nob_Cmd report_cmd = {0};
+    Nob_Cmd show_cmd = {0};
+    bool ok = false;
+
+    if (!g_coverage_ctx.active) return true;
+    if (g_coverage_ctx.binary_paths.count == 0 || g_coverage_ctx.profraw_paths.count == 0) {
+        nob_log(NOB_ERROR, "[v2] no coverage artifacts were collected");
+        goto defer;
+    }
+    if (!resolve_llvm_cov_path(llvm_cov) || !resolve_llvm_profdata_path(llvm_profdata)) goto defer;
+
+    if (snprintf(profdata_path, sizeof(profdata_path), "%s/coverage.profdata", g_coverage_ctx.session_dir) >= (int)sizeof(profdata_path)) {
+        nob_log(NOB_ERROR, "coverage profdata path is too long");
+        goto defer;
+    }
+    if (snprintf(summary_path, sizeof(summary_path), "%s/summary.txt", g_coverage_ctx.session_dir) >= (int)sizeof(summary_path)) {
+        nob_log(NOB_ERROR, "coverage summary path is too long");
+        goto defer;
+    }
+    if (snprintf(html_dir, sizeof(html_dir), "%s/html", g_coverage_ctx.session_dir) >= (int)sizeof(html_dir)) {
+        nob_log(NOB_ERROR, "coverage html path is too long");
+        goto defer;
+    }
+
+    nob_cmd_append(&merge_cmd, llvm_profdata, "merge", "-sparse");
+    for (size_t i = 0; i < g_coverage_ctx.profraw_paths.count; i++) {
+        if (!nob_file_exists(g_coverage_ctx.profraw_paths.items[i])) continue;
+        nob_cmd_append(&merge_cmd, g_coverage_ctx.profraw_paths.items[i]);
+    }
+    nob_cmd_append(&merge_cmd, "-o", profdata_path);
+    if (!nob_cmd_run(&merge_cmd)) goto defer;
+
+    nob_cmd_append(&report_cmd,
+                   llvm_cov,
+                   "report",
+                   g_coverage_ctx.binary_paths.items[0],
+                   "-instr-profile",
+                   profdata_path,
+                   "-ignore-filename-regex",
+                   ignore_regex);
+    for (size_t i = 1; i < g_coverage_ctx.binary_paths.count; i++) {
+        nob_cmd_append(&report_cmd, "-object", g_coverage_ctx.binary_paths.items[i]);
+    }
+    if (!run_command_capture_stdout(&report_cmd, summary_path)) goto defer;
+
+    if (!ensure_dir_chain(html_dir)) goto defer;
+    nob_cmd_append(&show_cmd,
+                   llvm_cov,
+                   "show",
+                   g_coverage_ctx.binary_paths.items[0],
+                   "-format",
+                   "html",
+                   "-output-dir",
+                   html_dir,
+                   "-instr-profile",
+                   profdata_path,
+                   "-ignore-filename-regex",
+                   ignore_regex);
+    for (size_t i = 1; i < g_coverage_ctx.binary_paths.count; i++) {
+        nob_cmd_append(&show_cmd, "-object", g_coverage_ctx.binary_paths.items[i]);
+    }
+    if (!nob_cmd_run(&show_cmd)) goto defer;
+
+    nob_log(NOB_INFO,
+            "[v2] coverage report generated for %s at %s (summary: %s, html: %s)",
+            run_all ? "test-v2" : module->name,
+            g_coverage_ctx.session_dir,
+            summary_path,
+            html_dir);
+    ok = true;
+
+defer:
+    nob_cmd_free(merge_cmd);
+    nob_cmd_free(report_cmd);
+    nob_cmd_free(show_cmd);
+    return ok;
+}
+
 static bool run_binary_in_workspace(const Test_Module *module,
                                     const Test_Profile *profile,
                                     const char *binary_rel_path,
@@ -1128,12 +1523,14 @@ static bool run_binary_in_workspace(const Test_Module *module,
     char *prev_asan_options = NULL;
     char *prev_ubsan_options = NULL;
     char *prev_msan_options = NULL;
+    char *prev_llvm_profile_file = NULL;
     bool had_prev_runner = false;
     bool had_prev_reuse_cwd = false;
     bool had_prev_repo_root = false;
     bool had_prev_asan_options = false;
     bool had_prev_ubsan_options = false;
     bool had_prev_msan_options = false;
+    bool had_prev_llvm_profile_file = false;
     Test_Run_Workspace workspace = {0};
     Nob_Cmd cmd = {0};
     bool ok = false;
@@ -1152,6 +1549,7 @@ static bool run_binary_in_workspace(const Test_Module *module,
     if (!preserve_env_for_restore("ASAN_OPTIONS", &prev_asan_options, &had_prev_asan_options)) goto defer;
     if (!preserve_env_for_restore("UBSAN_OPTIONS", &prev_ubsan_options, &had_prev_ubsan_options)) goto defer;
     if (!preserve_env_for_restore("MSAN_OPTIONS", &prev_msan_options, &had_prev_msan_options)) goto defer;
+    if (!preserve_env_for_restore("LLVM_PROFILE_FILE", &prev_llvm_profile_file, &had_prev_llvm_profile_file)) goto defer;
     (void)had_prev_runner;
     (void)had_prev_reuse_cwd;
     (void)had_prev_repo_root;
@@ -1168,6 +1566,12 @@ static bool run_binary_in_workspace(const Test_Module *module,
     }
     if (!had_prev_msan_options && profile && profile->msan_options_default) {
         set_env_or_unset("MSAN_OPTIONS", profile->msan_options_default);
+    }
+    if (profile && profile->use_coverage && g_coverage_ctx.active) {
+        const char *profraw_path = coverage_profraw_path_for_module_temp(module);
+        if (!profraw_path) goto defer;
+        if (nob_file_exists(profraw_path) && !nob_delete_file(profraw_path)) goto defer;
+        set_env_or_unset("LLVM_PROFILE_FILE", profraw_path);
     }
 
     nob_cmd_append(&cmd, binary_abs);
@@ -1209,12 +1613,16 @@ defer:
     if (profile && profile->msan_options_default) {
         set_env_or_unset("MSAN_OPTIONS", had_prev_msan_options ? prev_msan_options : NULL);
     }
+    if (profile && profile->use_coverage) {
+        set_env_or_unset("LLVM_PROFILE_FILE", had_prev_llvm_profile_file ? prev_llvm_profile_file : NULL);
+    }
     free(prev_runner);
     free(prev_reuse_cwd);
     free(prev_repo_root);
     free(prev_asan_options);
     free(prev_ubsan_options);
     free(prev_msan_options);
+    free(prev_llvm_profile_file);
     nob_cmd_free(cmd);
     if (!workspace_preserved && !cleanup_ok && workspace.root[0] != '\0') {
         cleanup_ok = cleanup_test_run_workspace(&workspace);
@@ -1253,6 +1661,7 @@ static bool run_test_preflight(const Test_Profile *profile) {
     if (!ensure_temp_tests_layout(profile)) return false;
     if (!run_result_type_conventions_check()) return false;
     nob_log(NOB_INFO, "[v2] validate workspace infra");
+    if (!validate_coverage_tools_support(profile)) return false;
     return validate_test_profile_support(profile);
 }
 
@@ -1268,6 +1677,7 @@ static bool run_test_module(const Test_Module *module, const Test_Profile *profi
     lock_acquired = acquire_build_lock(lock_path);
     if (!lock_acquired) goto defer;
     if (!build_incremental_test_binary(binary_rel_path, module->append_sources, profile)) goto defer;
+    if (profile && profile->use_coverage && !coverage_context_register_module(module, binary_rel_path)) goto defer;
     if (!release_build_lock(lock_path)) {
         lock_acquired = false;
         goto defer;
@@ -1316,6 +1726,111 @@ static bool run_all_test_modules(const Test_Profile *profile, bool verbose) {
     return failed_modules == 0;
 }
 
+static bool collect_module_sources_unique(const Test_Module *module, Nob_File_Paths *out_sources) {
+    Nob_Cmd sources = {0};
+    bool ok = false;
+    if (!module || !out_sources) return false;
+
+    module->append_sources(&sources);
+    for (size_t i = 0; i < sources.count; i++) {
+        if (!file_paths_append_unique_dup(out_sources, sources.items[i])) goto defer;
+    }
+    ok = true;
+
+defer:
+    nob_cmd_free(sources);
+    return ok;
+}
+
+static bool collect_all_tidy_sources_unique(Nob_File_Paths *out_sources) {
+    size_t count = sizeof(TEST_MODULES) / sizeof(TEST_MODULES[0]);
+    if (!out_sources) return false;
+    for (size_t i = 0; i < count; i++) {
+        if (!TEST_MODULES[i].include_in_aggregate) continue;
+        if (!collect_module_sources_unique(&TEST_MODULES[i], out_sources)) return false;
+    }
+    return true;
+}
+
+static bool run_clang_tidy_for_sources(const Nob_File_Paths *sources) {
+    char clang_tidy[_TINYDIR_PATH_MAX] = {0};
+    size_t passed = 0;
+    size_t failed = 0;
+
+    if (!sources || sources->count == 0) {
+        nob_log(NOB_ERROR, "[v2] no sources collected for clang-tidy");
+        return false;
+    }
+    if (!resolve_clang_tidy_path(clang_tidy)) {
+        nob_log(NOB_ERROR, "[v2] missing clang-tidy executable; set CLANG_TIDY or install clang-tidy");
+        return false;
+    }
+
+    nob_log(NOB_INFO, "[v2] clang-tidy executable: %s", clang_tidy);
+    for (size_t i = 0; i < sources->count; i++) {
+        Nob_Cmd cmd = {0};
+        bool ok = false;
+        const char *source_path = sources->items[i];
+
+        nob_log(NOB_INFO, "[v2] clang-tidy %s", source_path);
+        nob_cmd_append(&cmd,
+                       clang_tidy,
+                       source_path,
+                       "--quiet",
+                       "--",
+                       "-x",
+                       "c");
+        append_v2_common_flags(&cmd, &TEST_PROFILE_DEFAULT);
+        ok = nob_cmd_run(&cmd);
+        nob_cmd_free(cmd);
+        if (ok) passed++;
+        else failed++;
+    }
+
+    nob_log(NOB_INFO,
+            "[v2] clang-tidy summary: passed=%zu failed=%zu",
+            passed,
+            failed);
+    return failed == 0;
+}
+
+static bool resolve_tidy_command(const char *cmd,
+                                 const Test_Module **module,
+                                 bool *run_all) {
+    const char *module_name = NULL;
+    if (!cmd || !module || !run_all) return false;
+    *module = NULL;
+    *run_all = false;
+
+    if (!starts_with(cmd, "clang-tidy-")) return false;
+    module_name = cmd + strlen("clang-tidy-");
+    if (strcmp(module_name, "v2") == 0) {
+        *run_all = true;
+        return true;
+    }
+
+    *module = find_test_module(module_name);
+    return *module != NULL;
+}
+
+static bool run_tidy_command(const Test_Module *module, bool run_all) {
+    Nob_File_Paths sources = {0};
+    bool ok = false;
+
+    if (!ensure_temp_tests_layout(&TEST_PROFILE_DEFAULT)) return false;
+    if (run_all) {
+        if (!collect_all_tidy_sources_unique(&sources)) goto defer;
+    } else {
+        if (!collect_module_sources_unique(module, &sources)) goto defer;
+    }
+
+    ok = run_clang_tidy_for_sources(&sources);
+
+defer:
+    file_paths_free_owned(&sources);
+    return ok;
+}
+
 static const Test_Module *find_test_module(const char *name) {
     size_t count = sizeof(TEST_MODULES) / sizeof(TEST_MODULES[0]);
     for (size_t i = 0; i < count; ++i) {
@@ -1346,7 +1861,13 @@ static bool resolve_test_command(const char *cmd,
     *profile = &TEST_PROFILE_DEFAULT;
     *run_all = false;
 
-    if (has_suffix(cmd, "-msan")) {
+    if (has_suffix(cmd, "-cov")) {
+        base_len = strlen(cmd) - strlen("-cov");
+        if (base_len + 1 > sizeof(base_command)) return false;
+        memcpy(base_command, cmd, base_len);
+        base_command[base_len] = '\0';
+        *profile = &TEST_PROFILE_COVERAGE;
+    } else if (has_suffix(cmd, "-msan")) {
         base_len = strlen(cmd) - strlen("-msan");
         if (base_len + 1 > sizeof(base_command)) return false;
         memcpy(base_command, cmd, base_len);
@@ -1392,15 +1913,28 @@ static bool run_test_command(const Test_Module *module,
                              bool run_all,
                              bool verbose) {
     bool ok = false;
+    bool coverage_started = false;
 
     if (!run_test_preflight(profile)) return false;
-    if (run_all) return run_all_test_modules(profile, verbose);
+    if (profile && profile->use_coverage) {
+        if (!coverage_context_begin(run_all ? "test-v2" : module->name)) return false;
+        coverage_started = true;
+    }
+    if (run_all) {
+        ok = run_all_test_modules(profile, verbose);
+        if (coverage_started && ok) ok = generate_coverage_report(module, true);
+        goto defer;
+    }
 
     ok = run_test_module(module, profile, verbose);
     nob_log(ok ? NOB_INFO : NOB_ERROR,
             "[v2] module %s: %s",
             module->name,
             ok ? "PASS" : "FAIL");
+    if (coverage_started && ok) ok = generate_coverage_report(module, false);
+
+defer:
+    if (coverage_started) coverage_context_reset();
     return ok;
 }
 
@@ -1430,12 +1964,15 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "clean-tests") == 0) return test_fs_remove_tree(TEMP_TESTS_ROOT) ? 0 : 1;
+    if (resolve_tidy_command(cmd, &module, &run_all)) {
+        return run_tidy_command(module, run_all) ? 0 : 1;
+    }
     if (resolve_test_command(cmd, &module, &profile, &run_all)) {
         return run_test_command(module, profile, run_all, verbose) ? 0 : 1;
     }
 
     nob_log(NOB_INFO,
-            "Usage: %s [--verbose] [clean-tests|test-arena|test-lexer|test-parser|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
+            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
             argv[0]);
     return 1;
 }

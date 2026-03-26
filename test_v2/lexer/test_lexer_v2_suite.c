@@ -40,7 +40,7 @@ static bool load_text_file_to_arena(Arena *arena, const char *path, String_View 
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(path, &sb)) return false;
 
-    char *text = arena_strndup(arena, sb.items, sb.count);
+    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
     size_t len = sb.count;
     nob_sb_free(sb);
     if (!text) return false;
@@ -135,7 +135,7 @@ static bool render_lexer_casepack_snapshot_to_arena(Arena *arena, Lexer_Case_Lis
     }
 
     size_t len = sb.count;
-    char *text = arena_strndup(arena, sb.items, sb.count);
+    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
     nob_sb_free(sb);
     if (!text) return false;
 

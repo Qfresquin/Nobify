@@ -590,7 +590,7 @@ static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, St
         return true;
     }
 
-    char *text = arena_strndup(arena, sb.items, sb.count);
+    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
     size_t len = sb.count;
     nob_sb_free(sb);
     if (!text) return false;
@@ -1198,7 +1198,7 @@ static bool render_evaluator_casepack_snapshot_to_arena(Arena *arena,
     }
 
     size_t len = sb.count;
-    char *text = arena_strndup(arena, sb.items, sb.count);
+    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
     nob_sb_free(sb);
     if (!text) return false;
 

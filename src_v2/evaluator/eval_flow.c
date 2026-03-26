@@ -117,7 +117,7 @@ bool flow_build_call_script(EvalExecContext *ctx,
     }
     nob_sb_append_cstr(&sb, ")\n");
 
-    char *copy = arena_strndup(ctx->arena, sb.items, sb.count);
+    char *copy = arena_strndup(ctx->arena, sb.items ? sb.items : "", sb.count);
     nob_sb_free(sb);
     EVAL_OOM_RETURN_IF_NULL(ctx, copy, false);
     *out_script = nob_sv_from_parts(copy, strlen(copy));
