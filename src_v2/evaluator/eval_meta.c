@@ -1301,7 +1301,51 @@ static bool meta_file_api_stage_query(EvalExecContext *ctx, const Meta_File_Api_
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::QUERY_FILE", query_file)) return false;
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::REPLY_DIR", reply_dir)) return false;
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::INDEX_FILE", index_file)) return false;
-    return true;
+
+    Eval_Canonical_Draft draft = {0};
+    eval_canonical_draft_init(&draft);
+
+    Eval_Canonical_Artifact query_artifact = {
+        .producer = nob_sv_from_cstr("cmake_file_api"),
+        .kind = nob_sv_from_cstr("QUERY_FILE"),
+        .status = nob_sv_from_cstr("STAGED"),
+        .base_dir = query_dir,
+        .primary_path = query_file,
+    };
+    if (!eval_canonical_draft_add_artifact(ctx, &draft, &query_artifact, NULL)) return false;
+
+    Eval_Canonical_Artifact index_artifact = {
+        .producer = nob_sv_from_cstr("cmake_file_api"),
+        .kind = nob_sv_from_cstr("INDEX_FILE"),
+        .status = nob_sv_from_cstr("STAGED"),
+        .base_dir = reply_dir,
+        .primary_path = index_file,
+    };
+    if (!eval_canonical_draft_add_artifact(ctx, &draft, &index_artifact, NULL)) return false;
+
+    for (size_t i = 0; i < arena_arr_len(*requests); i++) {
+        Meta_File_Api_Request req = (*requests)[i];
+        SV_List versions = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req.versions, &versions)) return false;
+
+        for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
+            String_View reply_name = meta_file_api_reply_filename_temp(ctx, req.kind_json, versions[vi]);
+            if (eval_should_stop(ctx)) return false;
+            String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, reply_name);
+            if (eval_should_stop(ctx)) return false;
+
+            Eval_Canonical_Artifact reply_artifact = {
+                .producer = nob_sv_from_cstr("cmake_file_api"),
+                .kind = meta_concat3_temp(ctx, "REPLY_", req.kind_upper, ""),
+                .status = nob_sv_from_cstr("STAGED"),
+                .base_dir = reply_dir,
+                .primary_path = reply_path,
+            };
+            if (!eval_canonical_draft_add_artifact(ctx, &draft, &reply_artifact, NULL)) return false;
+        }
+    }
+
+    return eval_canonical_draft_commit(ctx, &draft);
 }
 
 static bool meta_file_api_parse_request(EvalExecContext *ctx,

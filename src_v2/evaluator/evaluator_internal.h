@@ -459,6 +459,60 @@ typedef struct {
 } Eval_Process_State;
 
 typedef struct {
+    String_View producer;
+    String_View kind;
+    String_View status;
+    String_View base_dir;
+    String_View primary_path;
+    String_View aux_paths;
+} Eval_Canonical_Artifact;
+
+typedef Eval_Canonical_Artifact *Eval_Canonical_Artifact_List;
+
+typedef enum {
+    EVAL_CTEST_STEP_START = 0,
+    EVAL_CTEST_STEP_UPDATE,
+    EVAL_CTEST_STEP_CONFIGURE,
+    EVAL_CTEST_STEP_BUILD,
+    EVAL_CTEST_STEP_TEST,
+    EVAL_CTEST_STEP_COVERAGE,
+    EVAL_CTEST_STEP_MEMCHECK,
+    EVAL_CTEST_STEP_UPLOAD,
+    EVAL_CTEST_STEP_SUBMIT,
+} Eval_Ctest_Step_Kind;
+
+typedef struct {
+    Eval_Ctest_Step_Kind kind;
+    String_View command_name;
+    String_View submit_part;
+    String_View status;
+    String_View model;
+    String_View track;
+    String_View source_dir;
+    String_View build_dir;
+    String_View testing_dir;
+    String_View tag;
+    String_View tag_file;
+    String_View tag_dir;
+    String_View manifest;
+    String_View submit_files;
+    bool has_primary_artifact;
+    size_t primary_artifact_index;
+} Eval_Ctest_Step_Record;
+
+typedef Eval_Ctest_Step_Record *Eval_Ctest_Step_Record_List;
+
+typedef struct {
+    Eval_Canonical_Artifact_List artifacts;
+    Eval_Ctest_Step_Record_List ctest_steps;
+} Eval_Canonical_State;
+
+typedef struct {
+    Eval_Canonical_Artifact_List artifacts;
+    Eval_Ctest_Step_Record_List ctest_steps;
+} Eval_Canonical_Draft;
+
+typedef struct {
     Eval_Var_Entry *entries;
     size_t count;
 } Eval_Var_Table_Snapshot;
@@ -579,6 +633,10 @@ typedef struct Eval_Command_Transaction {
     String_View *generated_deferred_ids;
     size_t generated_deferred_id_count;
     size_t next_deferred_call_id;
+    Eval_Canonical_Artifact *canonical_artifacts;
+    size_t canonical_artifact_count;
+    Eval_Ctest_Step_Record *ctest_steps;
+    size_t ctest_step_count;
 
     bool cpack_component_module_loaded;
     bool fetchcontent_module_loaded;
@@ -591,6 +649,7 @@ typedef struct {
     Eval_Semantic_State semantic_state;
     Eval_Command_State command_state;
     Eval_Process_State process_state;
+    Eval_Canonical_State canonical_state;
     Eval_Property_Definition_List property_definitions;
     Eval_Policy_Level *policy_levels;
     size_t visible_policy_depth;
@@ -622,6 +681,7 @@ struct EvalExecContext {
     Eval_Command_State command_state;
     Eval_File_State file_state;
     Eval_Process_State process_state;
+    Eval_Canonical_State canonical_state;
     Eval_Property_Definition_List property_definitions;
     Eval_Policy_Level *policy_levels;
     Eval_Exec_Context_Stack exec_contexts;
@@ -796,6 +856,14 @@ static inline Eval_Process_State *eval_process_slice(EvalExecContext *ctx) {
 
 static inline const Eval_Process_State *eval_process_slice_const(const EvalExecContext *ctx) {
     return ctx ? &ctx->process_state : NULL;
+}
+
+static inline Eval_Canonical_State *eval_canonical_slice(EvalExecContext *ctx) {
+    return ctx ? &ctx->canonical_state : NULL;
+}
+
+static inline const Eval_Canonical_State *eval_canonical_slice_const(const EvalExecContext *ctx) {
+    return ctx ? &ctx->canonical_state : NULL;
 }
 
 static inline bool eval_mark_oom_if_null(EvalExecContext *ctx, const void *ptr) {
@@ -2237,6 +2305,21 @@ bool eval_mkdirs_for_parent(EvalExecContext *ctx, String_View path);
 bool eval_write_text_file(EvalExecContext *ctx, String_View path, String_View contents, bool append);
 bool eval_ctest_publish_metadata(EvalExecContext *ctx, String_View command_name, const SV_List *argv, String_View status);
 bool eval_legacy_publish_args(EvalExecContext *ctx, String_View command_name, const SV_List *argv);
+void eval_canonical_draft_init(Eval_Canonical_Draft *draft);
+bool eval_canonical_draft_add_artifact(EvalExecContext *ctx,
+                                       Eval_Canonical_Draft *draft,
+                                       const Eval_Canonical_Artifact *artifact,
+                                       size_t *out_index);
+bool eval_canonical_draft_add_ctest_step(EvalExecContext *ctx,
+                                         Eval_Canonical_Draft *draft,
+                                         const Eval_Ctest_Step_Record *step);
+bool eval_canonical_draft_commit(EvalExecContext *ctx, const Eval_Canonical_Draft *draft);
+const Eval_Canonical_Artifact *eval_canonical_artifact_at(const EvalExecContext *ctx, size_t index);
+const Eval_Ctest_Step_Record *eval_ctest_find_last_step_by_command(const EvalExecContext *ctx,
+                                                                   String_View command_name);
+const Eval_Ctest_Step_Record *eval_ctest_find_last_step_by_part(const EvalExecContext *ctx,
+                                                                String_View submit_part);
+String_View eval_ctest_step_submit_files(EvalExecContext *ctx, const Eval_Ctest_Step_Record *step);
 String_View eval_path_resolve_for_cmake_arg(EvalExecContext *ctx,
                                             String_View raw_path,
                                             String_View base_dir,

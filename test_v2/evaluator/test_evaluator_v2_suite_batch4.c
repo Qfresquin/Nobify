@@ -635,6 +635,9 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_write_entire_file("ctest_custom/CTestCustom.cmake",
                                  "set(CTEST_CUSTOM_LOADED yes)\n",
                                  strlen("set(CTEST_CUSTOM_LOADED yes)\n")));
+    ASSERT(nob_write_entire_file("ctest_custom/CTestCustom.ctest",
+                                 "set(CTEST_CUSTOM_LEGACY yes)\n",
+                                 strlen("set(CTEST_CUSTOM_LEGACY yes)\n")));
     ASSERT(nob_write_entire_file("ctest_script.cmake",
                                  "set(CTEST_SCRIPT_LOADED 1)\n",
                                  strlen("set(CTEST_SCRIPT_LOADED 1)\n")));
@@ -675,6 +678,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         "ctest_submit(PARTS Start Build Test FILES notes.txt RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n"
         "ctest_upload(FILES a.txt b.txt CAPTURE_CMAKE_ERROR UPLOAD_CE)\n"
         "ctest_empty_binary_directory(wipe)\n"
+        "ctest_empty_binary_directory(fresh)\n"
         "ctest_read_custom_files(ctest_custom)\n"
         "ctest_run_script(ctest_script.cmake RETURN_VALUE SCRIPT_RV)\n"
         "ctest_run_script(NEW_PROCESS ctest_script_child.cmake RETURN_VALUE SCRIPT_CHILD_RV)\n"
@@ -724,11 +728,24 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::SCHEDULE_RANDOM")),
                      nob_sv_from_cstr("ON")));
+    ASSERT(eval_test_ctest_step_count(ctx) >= 8);
+    String_View step_status = {0};
+    String_View submit_part = {0};
+    ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_start"), &step_status, &submit_part));
+    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("STAGED")));
+    ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Start")));
+    ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_build"), &step_status, &submit_part));
+    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("MODELED")));
+    ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Build")));
+    ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_upload"), &step_status, &submit_part));
+    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("STAGED")));
+    ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Upload")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SCRIPT_RV")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SCRIPT_CHILD_RV")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_VAR_LEAK")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_FN_LEAK")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_CUSTOM_LOADED")), nob_sv_from_cstr("yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_CUSTOM_LEGACY")), nob_sv_from_cstr("yes")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_SCRIPT_LOADED")), nob_sv_from_cstr("1")));
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_SCRIPT_CHILD_ONLY")).count == 0);
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::SOURCE")),
@@ -749,6 +766,14 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
                           nob_sv_from_cstr("ctest_bin")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::RESOLVED_SOURCE")),
                           nob_sv_from_cstr("ctest_src")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::TAG_FILE")),
+                          nob_sv_from_cstr("ctest_bin/Testing/TAG")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::TESTING_DIR")),
+                          nob_sv_from_cstr("ctest_bin/Testing")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::TAG_DIR")),
+                          ctest_tag));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::TAG_FILE")),
+                          nob_sv_from_cstr("ctest_bin/Testing/TAG")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::TAG")), ctest_tag));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG_FILE")),
                           nob_sv_from_cstr("ctest_bin/Testing/TAG")));
@@ -803,6 +828,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
 
     ASSERT(!nob_file_exists("ctest_bin/wipe/sub/junk.txt"));
     ASSERT(nob_file_exists("ctest_bin/wipe"));
+    ASSERT(nob_file_exists("ctest_bin/fresh"));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1043,6 +1069,7 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
         "set(CTEST_LABELS_FOR_SUBPROJECTS \"core;ui\")\n"
         "ctest_start(Experimental ctest_configure_exec_src .)\n"
         "ctest_configure(OPTIONS \"--preset;dev\" RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE APPEND QUIET)\n"
+        "unset(NOBIFY_CTEST::ctest_configure::CONFIGURE_XML)\n"
         "ctest_submit(PARTS Configure RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -1074,7 +1101,11 @@ TEST(evaluator_ctest_configure_executes_documented_command_and_stages_submit_par
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("Configure.xml")));
 
-    String_View configure_xml = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML"));
+    String_View configure_xml = {0};
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("ctest_configure"),
+                                             nob_sv_from_cstr("CONFIGURE_XML"),
+                                             &configure_xml));
     char *configure_xml_c = arena_strndup(temp_arena, configure_xml.data, configure_xml.count);
     ASSERT(configure_xml_c != NULL);
     ASSERT(nob_file_exists(configure_xml_c));
@@ -1149,6 +1180,11 @@ TEST(evaluator_ctest_configure_captures_missing_command_without_fatal_error) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::STATUS")),
                      nob_sv_from_cstr("FAILED")));
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")).count == 0);
+    String_View step_status = {0};
+    String_View submit_part = {0};
+    ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_configure"), &step_status, &submit_part));
+    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("FAILED")));
+    ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Configure")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1378,6 +1414,54 @@ TEST(evaluator_ctest_coverage_captures_missing_command_without_fatal_error) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::STATUS")),
                      nob_sv_from_cstr("FAILED")));
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")).count == 0);
+    String_View step_status = {0};
+    String_View submit_part = {0};
+    ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_coverage"), &step_status, &submit_part));
+    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("FAILED")));
+    ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Coverage")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_run_script_returns_last_script_status) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_write_entire_file("ctest_script_error_then_ok_1.cmake",
+                                 "message(SEND_ERROR first_script_failed)\n",
+                                 strlen("message(SEND_ERROR first_script_failed)\n")));
+    ASSERT(nob_write_entire_file("ctest_script_error_then_ok_2.cmake",
+                                 "set(CTEST_LAST_SCRIPT_OK 1)\n",
+                                 strlen("set(CTEST_LAST_SCRIPT_OK 1)\n")));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "ctest_run_script(ctest_script_error_then_ok_1.cmake ctest_script_error_then_ok_2.cmake RETURN_VALUE SCRIPT_LAST_RV)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SCRIPT_LAST_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_LAST_SCRIPT_OK")), nob_sv_from_cstr("1")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1536,6 +1620,10 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
         "ctest_start(Experimental . . TRACK Nightly)\n"
         "ctest_build()\n"
         "ctest_upload(FILES upload.bin)\n"
+        "unset(NOBIFY_CTEST::ctest_start::STATUS)\n"
+        "unset(NOBIFY_CTEST::ctest_build::STATUS)\n"
+        "unset(NOBIFY_CTEST::ctest_upload::UPLOAD_XML)\n"
+        "unset(NOBIFY_CTEST::ctest_upload::RESOLVED_FILES)\n"
         "ctest_submit(HTTPHEADER \"Authorization: Bearer one\" HTTPHEADER \"X-Nobify: yes\" RETRY_COUNT 1 RETRY_DELAY 0 RETURN_VALUE SUBMIT_RV BUILD_ID SUBMIT_BUILD_ID)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -3571,6 +3659,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed, skipped);
     test_evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_coverage_captures_missing_command_without_fatal_error(passed, failed, skipped);
+    test_evaluator_ctest_run_script_returns_last_script_status(passed, failed, skipped);
     test_evaluator_ctest_memcheck_models_documented_request_surface(passed, failed, skipped);
     test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed, skipped);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed, skipped);

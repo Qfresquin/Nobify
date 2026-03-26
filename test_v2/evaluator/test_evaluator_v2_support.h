@@ -121,6 +121,16 @@ bool eval_test_var_defined(const Eval_Test_Runtime *ctx, String_View key);
 bool eval_test_cache_defined(const Eval_Test_Runtime *ctx, String_View key);
 bool eval_test_target_known(const Eval_Test_Runtime *ctx, String_View target_name);
 bool eval_test_var_event_seen(const Cmake_Event_Stream *stream, String_View key);
+size_t eval_test_canonical_artifact_count(const Eval_Test_Runtime *ctx);
+size_t eval_test_ctest_step_count(const Eval_Test_Runtime *ctx);
+bool eval_test_canonical_artifact_find(const Eval_Test_Runtime *ctx,
+                                       String_View producer,
+                                       String_View kind,
+                                       String_View *out_primary_path);
+bool eval_test_ctest_step_find(const Eval_Test_Runtime *ctx,
+                               String_View command_name,
+                               String_View *out_status,
+                               String_View *out_submit_part);
 Eval_Result native_test_handler_set_hit(EvalExecContext *ctx, const Node *node);
 Eval_Result native_test_handler_runtime_mutation(EvalExecContext *ctx, const Node *node);
 Eval_Result native_test_handler_snapshot_set_strict_and_warn(EvalExecContext *ctx, const Node *node);

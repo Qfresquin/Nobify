@@ -48,6 +48,7 @@
 #define evaluator_stream_has_monotonic_sequence evaluator_support_impl_evaluator_stream_has_monotonic_sequence
 
 #include "test_evaluator_v2_common.h"
+#include "evaluator_internal.h"
 
 #undef g_evaluator_captured_nob_logs
 #undef evaluator_begin_nob_log_capture
@@ -405,6 +406,51 @@ bool eval_test_target_known(const Eval_Test_Runtime *ctx, String_View target_nam
 
 bool eval_test_var_event_seen(const Cmake_Event_Stream *stream, String_View key) {
     return evaluator_support_impl_eval_test_var_event_seen(stream, key);
+}
+
+size_t eval_test_canonical_artifact_count(const Eval_Test_Runtime *ctx) {
+    if (!ctx || !ctx->session) return 0;
+    return arena_arr_len(ctx->session->state.canonical_state.artifacts);
+}
+
+size_t eval_test_ctest_step_count(const Eval_Test_Runtime *ctx) {
+    if (!ctx || !ctx->session) return 0;
+    return arena_arr_len(ctx->session->state.canonical_state.ctest_steps);
+}
+
+bool eval_test_canonical_artifact_find(const Eval_Test_Runtime *ctx,
+                                       String_View producer,
+                                       String_View kind,
+                                       String_View *out_primary_path) {
+    if (out_primary_path) *out_primary_path = nob_sv_from_cstr("");
+    if (!ctx || !ctx->session) return false;
+
+    const Eval_Canonical_State *state = &ctx->session->state.canonical_state;
+    for (size_t i = arena_arr_len(state->artifacts); i-- > 0;) {
+        if (!nob_sv_eq(state->artifacts[i].producer, producer)) continue;
+        if (!nob_sv_eq(state->artifacts[i].kind, kind)) continue;
+        if (out_primary_path) *out_primary_path = state->artifacts[i].primary_path;
+        return true;
+    }
+    return false;
+}
+
+bool eval_test_ctest_step_find(const Eval_Test_Runtime *ctx,
+                               String_View command_name,
+                               String_View *out_status,
+                               String_View *out_submit_part) {
+    if (out_status) *out_status = nob_sv_from_cstr("");
+    if (out_submit_part) *out_submit_part = nob_sv_from_cstr("");
+    if (!ctx || !ctx->session) return false;
+
+    const Eval_Canonical_State *state = &ctx->session->state.canonical_state;
+    for (size_t i = arena_arr_len(state->ctest_steps); i-- > 0;) {
+        if (!nob_sv_eq(state->ctest_steps[i].command_name, command_name)) continue;
+        if (out_status) *out_status = state->ctest_steps[i].status;
+        if (out_submit_part) *out_submit_part = state->ctest_steps[i].submit_part;
+        return true;
+    }
+    return false;
 }
 
 Eval_Result native_test_handler_set_hit(EvalExecContext *ctx, const Node *node) {

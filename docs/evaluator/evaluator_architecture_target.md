@@ -152,6 +152,8 @@ Required canonical models:
 - `ExportModel`
 - `PackageModel`
 - `FetchContentModel`
+- `CanonicalArtifactStore`
+- `CtestStepStore`
 
 Variables remain important, but they are projections over these models.
 

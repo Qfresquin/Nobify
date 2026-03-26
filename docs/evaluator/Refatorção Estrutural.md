@@ -130,6 +130,7 @@ Snapshot status (March 25, 2026):
 - `EvalSession` now owns canonical persistent state directly through `EvalSessionState`; it no longer stores a hidden persisted execution context.
 - `eval_session_create(...)` initializes canonical session state directly and no longer bootstraps it through a temporary `Event_Stream`.
 - `eval_session_run(...)` instantiates a fresh per-run `EvalExecContext`, loads the current `EvalSessionState`, and commits only canonical persistent state back into `EvalSession` at the end of the run.
+- Canonical artifact records and typed `ctest_*` step records now live inside `EvalSessionState`, so `ctest_submit` and `cmake_file_api` no longer need `NOBIFY_CTEST::*` variables as their source of truth.
 - Flow control (`break` / `continue` / `return`) is modeled on execution frames instead of global run booleans.
 - Registry mutation is blocked during `eval_session_run(...)`.
 - `test_v2/evaluator`, `test_v2/pipeline`, `test_v2/codegen`, and `src_v2/app` no longer include evaluator internals and now use the public session/request API.

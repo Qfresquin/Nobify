@@ -2854,6 +2854,23 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
                      nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::TOOLCHAINS")),
                      nob_sv_from_cstr("1")));
+    ASSERT(eval_test_canonical_artifact_count(ctx) >= 6);
+    String_View file_api_artifact = {0};
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("cmake_file_api"),
+                                             nob_sv_from_cstr("QUERY_FILE"),
+                                             &file_api_artifact));
+    ASSERT(sv_contains_sv(file_api_artifact, nob_sv_from_cstr(".cmake/api/v1/query/client-nobify/query.json")));
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("cmake_file_api"),
+                                             nob_sv_from_cstr("INDEX_FILE"),
+                                             &file_api_artifact));
+    ASSERT(sv_contains_sv(file_api_artifact, nob_sv_from_cstr(".cmake/api/v1/reply/index-nobify-v1.json")));
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("cmake_file_api"),
+                                             nob_sv_from_cstr("REPLY_CODEMODEL"),
+                                             &file_api_artifact));
+    ASSERT(sv_contains_sv(file_api_artifact, nob_sv_from_cstr("codemodel-v2.json")));
 
     String_View export_text = {0};
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, "meta-export.cmake", &export_text));

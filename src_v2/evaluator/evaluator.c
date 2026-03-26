@@ -53,6 +53,151 @@ static String_View sv_copy_to_tx_arena(EvalExecContext *ctx, String_View sv) {
     return out;
 }
 
+static Eval_Canonical_Artifact eval_canonical_artifact_copy_to_event(EvalExecContext *ctx,
+                                                                     const Eval_Canonical_Artifact *src) {
+    Eval_Canonical_Artifact out = {0};
+    if (!ctx || !src) return out;
+    out.producer = sv_copy_to_event_arena(ctx, src->producer);
+    out.kind = sv_copy_to_event_arena(ctx, src->kind);
+    out.status = sv_copy_to_event_arena(ctx, src->status);
+    out.base_dir = sv_copy_to_event_arena(ctx, src->base_dir);
+    out.primary_path = sv_copy_to_event_arena(ctx, src->primary_path);
+    out.aux_paths = sv_copy_to_event_arena(ctx, src->aux_paths);
+    return out;
+}
+
+static Eval_Ctest_Step_Record eval_ctest_step_record_copy_to_event(EvalExecContext *ctx,
+                                                                   const Eval_Ctest_Step_Record *src) {
+    Eval_Ctest_Step_Record out = {0};
+    if (!ctx || !src) return out;
+    out.kind = src->kind;
+    out.command_name = sv_copy_to_event_arena(ctx, src->command_name);
+    out.submit_part = sv_copy_to_event_arena(ctx, src->submit_part);
+    out.status = sv_copy_to_event_arena(ctx, src->status);
+    out.model = sv_copy_to_event_arena(ctx, src->model);
+    out.track = sv_copy_to_event_arena(ctx, src->track);
+    out.source_dir = sv_copy_to_event_arena(ctx, src->source_dir);
+    out.build_dir = sv_copy_to_event_arena(ctx, src->build_dir);
+    out.testing_dir = sv_copy_to_event_arena(ctx, src->testing_dir);
+    out.tag = sv_copy_to_event_arena(ctx, src->tag);
+    out.tag_file = sv_copy_to_event_arena(ctx, src->tag_file);
+    out.tag_dir = sv_copy_to_event_arena(ctx, src->tag_dir);
+    out.manifest = sv_copy_to_event_arena(ctx, src->manifest);
+    out.submit_files = sv_copy_to_event_arena(ctx, src->submit_files);
+    out.has_primary_artifact = src->has_primary_artifact;
+    out.primary_artifact_index = src->primary_artifact_index;
+    return out;
+}
+
+void eval_canonical_draft_init(Eval_Canonical_Draft *draft) {
+    if (draft) memset(draft, 0, sizeof(*draft));
+}
+
+bool eval_canonical_draft_add_artifact(EvalExecContext *ctx,
+                                       Eval_Canonical_Draft *draft,
+                                       const Eval_Canonical_Artifact *artifact,
+                                       size_t *out_index) {
+    if (!ctx || !draft || !artifact) return false;
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), draft->artifacts, *artifact)) return false;
+    if (out_index) *out_index = arena_arr_len(draft->artifacts) - 1;
+    return true;
+}
+
+bool eval_canonical_draft_add_ctest_step(EvalExecContext *ctx,
+                                         Eval_Canonical_Draft *draft,
+                                         const Eval_Ctest_Step_Record *step) {
+    if (!ctx || !draft || !step) return false;
+    return EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), draft->ctest_steps, *step);
+}
+
+bool eval_canonical_draft_commit(EvalExecContext *ctx, const Eval_Canonical_Draft *draft) {
+    if (!ctx || !draft) return false;
+    Eval_Canonical_State *state = eval_canonical_slice(ctx);
+    if (!state) return false;
+
+    for (size_t i = 0; i < arena_arr_len(draft->artifacts); i++) {
+        Eval_Canonical_Artifact copied = eval_canonical_artifact_copy_to_event(ctx, &draft->artifacts[i]);
+        if (eval_should_stop(ctx)) return false;
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, state->artifacts, copied)) return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(draft->ctest_steps); i++) {
+        Eval_Ctest_Step_Record copied = eval_ctest_step_record_copy_to_event(ctx, &draft->ctest_steps[i]);
+        if (eval_should_stop(ctx)) return false;
+        if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, state->ctest_steps, copied)) return false;
+    }
+
+    return true;
+}
+
+const Eval_Canonical_Artifact *eval_canonical_artifact_at(const EvalExecContext *ctx, size_t index) {
+    const Eval_Canonical_State *state = eval_canonical_slice_const(ctx);
+    if (!state || index >= arena_arr_len(state->artifacts)) return NULL;
+    return &state->artifacts[index];
+}
+
+const Eval_Ctest_Step_Record *eval_ctest_find_last_step_by_command(const EvalExecContext *ctx,
+                                                                   String_View command_name) {
+    const Eval_Canonical_State *state = eval_canonical_slice_const(ctx);
+    if (!state || command_name.count == 0) return NULL;
+    for (size_t i = arena_arr_len(state->ctest_steps); i-- > 0;) {
+        if (nob_sv_eq(state->ctest_steps[i].command_name, command_name)) return &state->ctest_steps[i];
+    }
+    return NULL;
+}
+
+const Eval_Ctest_Step_Record *eval_ctest_find_last_step_by_part(const EvalExecContext *ctx,
+                                                                String_View submit_part) {
+    const Eval_Canonical_State *state = eval_canonical_slice_const(ctx);
+    if (!state || submit_part.count == 0) return NULL;
+    for (size_t i = arena_arr_len(state->ctest_steps); i-- > 0;) {
+        if (nob_sv_eq(state->ctest_steps[i].submit_part, submit_part)) return &state->ctest_steps[i];
+    }
+    return NULL;
+}
+
+String_View eval_ctest_step_submit_files(EvalExecContext *ctx, const Eval_Ctest_Step_Record *step) {
+    if (!ctx || !step) return nob_sv_from_cstr("");
+
+    SV_List files = {0};
+    if (step->has_primary_artifact) {
+        const Eval_Canonical_Artifact *artifact = eval_canonical_artifact_at(ctx, step->primary_artifact_index);
+        if (artifact) {
+            if (artifact->primary_path.count > 0 && !eval_sv_arr_push_temp(ctx, &files, artifact->primary_path)) {
+                return nob_sv_from_cstr("");
+            }
+            if (artifact->aux_paths.count > 0) {
+                SV_List aux = {0};
+                if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), artifact->aux_paths, &aux)) {
+                    return nob_sv_from_cstr("");
+                }
+                for (size_t i = 0; i < arena_arr_len(aux); i++) {
+                    if (aux[i].count == 0) continue;
+                    if (!eval_sv_arr_push_temp(ctx, &files, aux[i])) return nob_sv_from_cstr("");
+                }
+            }
+        }
+    }
+    if (step->submit_files.count > 0) {
+        SV_List extra = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), step->submit_files, &extra)) {
+            return nob_sv_from_cstr("");
+        }
+        for (size_t i = 0; i < arena_arr_len(extra); i++) {
+            if (extra[i].count == 0) continue;
+            bool seen = false;
+            for (size_t j = 0; j < arena_arr_len(files); j++) {
+                if (nob_sv_eq(files[j], extra[i])) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen && !eval_sv_arr_push_temp(ctx, &files, extra[i])) return nob_sv_from_cstr("");
+        }
+    }
+    return eval_sv_join_semi_temp(ctx, files, arena_arr_len(files));
+}
+
 Event_Origin eval_origin_from_node(const EvalExecContext *ctx, const Node *node) {
     Event_Origin o = {0};
     const Eval_Exec_Context *exec = eval_exec_current_const(ctx);
@@ -861,6 +1006,22 @@ bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
                                    &tx->generated_deferred_ids)) {
         return false;
     }
+    tx->canonical_artifact_count = arena_arr_len(ctx->canonical_state.artifacts);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->canonical_state.artifacts,
+                                sizeof(*ctx->canonical_state.artifacts),
+                                tx->canonical_artifact_count,
+                                (void**)&tx->canonical_artifacts)) {
+        return false;
+    }
+    tx->ctest_step_count = arena_arr_len(ctx->canonical_state.ctest_steps);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->canonical_state.ctest_steps,
+                                sizeof(*ctx->canonical_state.ctest_steps),
+                                tx->ctest_step_count,
+                                (void**)&tx->ctest_steps)) {
+        return false;
+    }
 
     ctx->active_transaction = tx;
     return true;
@@ -994,6 +1155,14 @@ bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, 
                               tx->generated_deferred_ids,
                               tx->generated_deferred_id_count);
         ctx->file_state.next_deferred_call_id = tx->next_deferred_call_id;
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->canonical_state.artifacts,
+                              tx->canonical_artifacts,
+                              tx->canonical_artifact_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->canonical_state.ctest_steps,
+                              tx->ctest_steps,
+                              tx->ctest_step_count);
         ctx->cpack_component_module_loaded = tx->cpack_component_module_loaded;
         ctx->fetchcontent_module_loaded = tx->fetchcontent_module_loaded;
     }
@@ -1833,6 +2002,7 @@ static void eval_exec_load_session_state(EvalExecContext *ctx, EvalSession *sess
     ctx->semantic_state = session->state.semantic_state;
     ctx->command_state = session->state.command_state;
     ctx->process_state = session->state.process_state;
+    ctx->canonical_state = session->state.canonical_state;
     ctx->property_definitions = session->state.property_definitions;
     ctx->policy_levels = session->state.policy_levels;
     ctx->visible_policy_depth = session->state.visible_policy_depth;
@@ -1869,6 +2039,7 @@ static void eval_session_commit_state_from_exec(EvalSession *session, const Eval
     session->state.semantic_state = exec->semantic_state;
     session->state.command_state = exec->command_state;
     session->state.process_state = exec->process_state;
+    session->state.canonical_state = exec->canonical_state;
     session->state.property_definitions = exec->property_definitions;
     session->state.policy_levels = exec->policy_levels;
     session->state.visible_policy_depth = exec->visible_policy_depth;

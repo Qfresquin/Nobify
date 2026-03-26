@@ -5,6 +5,7 @@
 #include "sv_utils.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,14 +60,16 @@ typedef struct {
 } Ctest_New_Process_State;
 
 typedef struct {
+    Eval_Ctest_Step_Kind step_kind;
     String_View command_name;
+    String_View submit_part;
     String_View status;
     const Ctest_Parse_Spec *spec;
     bool needs_source;
     bool needs_build;
     SV_List argv;
     Ctest_Parse_Result parsed;
-} Ctest_Metadata_Request;
+} Ctest_Modeled_Step_Request;
 
 typedef struct {
     SV_List argv;
@@ -327,6 +330,7 @@ static const Ctest_Parse_Spec s_ctest_upload_parse_spec = {
 
 static String_View ctest_current_binary_dir(EvalExecContext *ctx);
 static String_View ctest_binary_root(EvalExecContext *ctx);
+static String_View ctest_get_session_field(EvalExecContext *ctx, const char *field_name);
 static bool ctest_resolve_files(EvalExecContext *ctx,
                                 const Node *node,
                                 String_View command_name,
@@ -361,6 +365,134 @@ static bool ctest_set_field(EvalExecContext *ctx,
                      field_name);
     if (n < 0) return ctx_oom(ctx);
     return eval_var_set_current(ctx, nob_sv_from_cstr(buf), value);
+}
+
+static bool ctest_step_kind_requires_submit_files(Eval_Ctest_Step_Kind kind) {
+    return kind == EVAL_CTEST_STEP_CONFIGURE ||
+           kind == EVAL_CTEST_STEP_COVERAGE ||
+           kind == EVAL_CTEST_STEP_MEMCHECK ||
+           kind == EVAL_CTEST_STEP_UPLOAD;
+}
+
+static const char *ctest_step_primary_artifact_field(Eval_Ctest_Step_Kind kind) {
+    switch (kind) {
+    case EVAL_CTEST_STEP_CONFIGURE: return "CONFIGURE_XML";
+    case EVAL_CTEST_STEP_COVERAGE: return "COVERAGE_XML";
+    case EVAL_CTEST_STEP_MEMCHECK: return "MEMCHECK_XML";
+    case EVAL_CTEST_STEP_UPLOAD: return "UPLOAD_XML";
+    default: return NULL;
+    }
+}
+
+static bool ctest_project_committed_step(EvalExecContext *ctx,
+                                         const Eval_Ctest_Step_Record *step,
+                                         const SV_List *argv) {
+    if (!ctx || !step || !argv || step->command_name.count == 0) return false;
+
+    if (step->source_dir.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "RESOLVED_SOURCE", step->source_dir)) {
+        return false;
+    }
+    if (step->build_dir.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "RESOLVED_BUILD", step->build_dir)) {
+        return false;
+    }
+    if (step->track.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "TRACK", step->track)) {
+        return false;
+    }
+    if (step->tag.count > 0 && !ctest_set_field(ctx, step->command_name, "TAG", step->tag)) return false;
+    if (step->testing_dir.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "TESTING_DIR", step->testing_dir)) {
+        return false;
+    }
+    if (step->tag_file.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "TAG_FILE", step->tag_file)) {
+        return false;
+    }
+    if (step->tag_dir.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "TAG_DIR", step->tag_dir)) {
+        return false;
+    }
+    if (step->manifest.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "MANIFEST", step->manifest)) {
+        return false;
+    }
+    if (step->submit_files.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "RESOLVED_FILES", step->submit_files)) {
+        return false;
+    }
+    if (step->has_primary_artifact) {
+        const Eval_Canonical_Artifact *artifact = eval_canonical_artifact_at(ctx, step->primary_artifact_index);
+        const char *artifact_field = ctest_step_primary_artifact_field(step->kind);
+        if (artifact_field && artifact && artifact->primary_path.count > 0 &&
+            !ctest_set_field(ctx, step->command_name, artifact_field, artifact->primary_path)) {
+            return false;
+        }
+    }
+
+    return eval_ctest_publish_metadata(ctx, step->command_name, argv, step->status);
+}
+
+static void ctest_step_fill_session_context(EvalExecContext *ctx, Eval_Ctest_Step_Record *step) {
+    if (!ctx || !step) return;
+    if (step->model.count == 0) step->model = ctest_get_session_field(ctx, "MODEL");
+    if (step->track.count == 0) step->track = ctest_get_session_field(ctx, "TRACK");
+    if (step->source_dir.count == 0) step->source_dir = ctest_get_session_field(ctx, "SOURCE");
+    if (step->build_dir.count == 0) step->build_dir = ctest_get_session_field(ctx, "BUILD");
+    if (step->tag.count == 0) step->tag = ctest_get_session_field(ctx, "TAG");
+    if (step->testing_dir.count == 0) step->testing_dir = ctest_get_session_field(ctx, "TESTING_DIR");
+    if (step->tag_file.count == 0) step->tag_file = ctest_get_session_field(ctx, "TAG_FILE");
+    if (step->tag_dir.count == 0) step->tag_dir = ctest_get_session_field(ctx, "TAG_DIR");
+}
+
+static bool ctest_commit_step_record(EvalExecContext *ctx,
+                                     const SV_List *argv,
+                                     Eval_Ctest_Step_Record step,
+                                     const Eval_Canonical_Artifact *primary_artifact) {
+    if (!ctx || !argv || step.command_name.count == 0) return false;
+
+    ctest_step_fill_session_context(ctx, &step);
+
+    Eval_Canonical_Draft draft = {0};
+    eval_canonical_draft_init(&draft);
+
+    if (primary_artifact) {
+        size_t artifact_base = arena_arr_len(ctx->canonical_state.artifacts);
+        size_t local_index = 0;
+        if (!eval_canonical_draft_add_artifact(ctx, &draft, primary_artifact, &local_index)) return false;
+        step.has_primary_artifact = true;
+        step.primary_artifact_index = artifact_base + local_index;
+    }
+
+    if (!eval_canonical_draft_add_ctest_step(ctx, &draft, &step)) return false;
+    if (!eval_canonical_draft_commit(ctx, &draft)) return false;
+
+    const Eval_Ctest_Step_Record *stored = eval_ctest_find_last_step_by_command(ctx, step.command_name);
+    if (!stored) return false;
+    return ctest_project_committed_step(ctx, stored, argv);
+}
+
+static bool ctest_commit_failed_step_record(EvalExecContext *ctx,
+                                            const SV_List *argv,
+                                            Eval_Ctest_Step_Kind kind,
+                                            String_View command_name,
+                                            String_View submit_part,
+                                            String_View model,
+                                            String_View source_dir,
+                                            String_View build_dir) {
+    if (!ctx || !argv || command_name.count == 0) return false;
+
+    Eval_Ctest_Step_Record step = {
+        .kind = kind,
+        .command_name = command_name,
+        .submit_part = submit_part,
+        .status = nob_sv_from_cstr("FAILED"),
+        .model = model,
+        .source_dir = source_dir,
+        .build_dir = build_dir,
+    };
+    return ctest_commit_step_record(ctx, argv, step, NULL);
 }
 
 static bool ctest_record_parsed_field(Arena *arena, Ctest_Parse_Result *out_res, String_View key, String_View value) {
@@ -1243,7 +1375,9 @@ static bool ctest_apply_resolved_context(EvalExecContext *ctx,
                                          String_View command_name,
                                          const Ctest_Parse_Result *parsed,
                                          bool needs_source,
-                                         bool needs_build) {
+                                         bool needs_build,
+                                         String_View *out_resolved_source,
+                                         String_View *out_resolved_build) {
     if (!ctx || !parsed) return false;
 
     String_View resolved_source = nob_sv_from_cstr("");
@@ -1271,6 +1405,8 @@ static bool ctest_apply_resolved_context(EvalExecContext *ctx,
         if (!ctest_set_field(ctx, command_name, "RESOLVED_BUILD", resolved_build)) return false;
     }
 
+    if (out_resolved_source) *out_resolved_source = resolved_source;
+    if (out_resolved_build) *out_resolved_build = resolved_build;
     return ctest_publish_common_dirs(ctx, resolved_source, resolved_build);
 }
 
@@ -1382,20 +1518,6 @@ static const Ctest_Submit_Part_Def s_ctest_submit_part_defs[] = {
     {"Done", NULL},
 };
 
-static String_View ctest_get_command_status(EvalExecContext *ctx, const char *command_name) {
-    if (!ctx || !command_name) return nob_sv_from_cstr("");
-
-    size_t total = sizeof("NOBIFY_CTEST::") - 1 + strlen(command_name) + sizeof("::STATUS") - 1;
-    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
-    int n = snprintf(buf, total + 1, "NOBIFY_CTEST::%s::STATUS", command_name);
-    if (n < 0) {
-        (void)ctx_oom(ctx);
-        return nob_sv_from_cstr("");
-    }
-    return eval_var_get_visible(ctx, nob_sv_from_cstr(buf));
-}
-
 static String_View ctest_submit_canonical_part(String_View raw_part) {
     for (size_t i = 0; i < sizeof(s_ctest_submit_part_defs) / sizeof(s_ctest_submit_part_defs[0]); i++) {
         if (eval_sv_eq_ci_lit(raw_part, s_ctest_submit_part_defs[i].name)) {
@@ -1405,19 +1527,18 @@ static String_View ctest_submit_canonical_part(String_View raw_part) {
     return nob_sv_from_cstr("");
 }
 
+static bool ctest_submit_step_is_available(EvalExecContext *ctx, const Eval_Ctest_Step_Record *step) {
+    if (!ctx || !step || step->status.count == 0) return false;
+    if (!ctest_step_kind_requires_submit_files(step->kind)) return true;
+    return eval_ctest_step_submit_files(ctx, step).count > 0;
+}
+
 static bool ctest_submit_part_is_available(EvalExecContext *ctx, const Ctest_Submit_Part_Def *part_def) {
     if (!ctx || !part_def || !part_def->name) return false;
     if (part_def->status_command) {
-        if (strcmp(part_def->name, "Configure") == 0) {
-            return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")).count > 0;
-        }
-        if (strcmp(part_def->name, "Coverage") == 0) {
-            return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")).count > 0;
-        }
-        if (strcmp(part_def->name, "MemCheck") == 0) {
-            return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::MEMCHECK_XML")).count > 0;
-        }
-        return ctest_get_command_status(ctx, part_def->status_command).count > 0;
+        const Eval_Ctest_Step_Record *step =
+            eval_ctest_find_last_step_by_part(ctx, nob_sv_from_cstr(part_def->name));
+        return ctest_submit_step_is_available(ctx, step);
     }
     if (strcmp(part_def->name, "Notes") == 0) {
         return eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_NOTES_FILES")).count > 0;
@@ -2012,38 +2133,10 @@ static bool ctest_submit_append_part_files(EvalExecContext *ctx,
                                                     out_files)) {
                 return false;
             }
-        } else if (eval_sv_eq_ci_lit(part_items[i], "Upload")) {
-            if (!ctest_append_joined_list_unique(ctx,
-                                                 eval_var_get_visible(ctx,
-                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::UPLOAD_XML")),
-                                                 out_files)) {
-                return false;
-            }
-            if (!ctest_append_joined_list_unique(ctx,
-                                                 eval_var_get_visible(ctx,
-                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_upload::RESOLVED_FILES")),
-                                                 out_files)) {
-                return false;
-            }
-        } else if (eval_sv_eq_ci_lit(part_items[i], "Configure")) {
-            if (!ctest_append_joined_list_unique(ctx,
-                                                 eval_var_get_visible(ctx,
-                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_configure::CONFIGURE_XML")),
-                                                 out_files)) {
-                return false;
-            }
-        } else if (eval_sv_eq_ci_lit(part_items[i], "Coverage")) {
-            if (!ctest_append_joined_list_unique(ctx,
-                                                 eval_var_get_visible(ctx,
-                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")),
-                                                 out_files)) {
-                return false;
-            }
-        } else if (eval_sv_eq_ci_lit(part_items[i], "MemCheck")) {
-            if (!ctest_append_joined_list_unique(ctx,
-                                                 eval_var_get_visible(ctx,
-                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::MEMCHECK_XML")),
-                                                 out_files)) {
+        } else {
+            const Eval_Ctest_Step_Record *step = eval_ctest_find_last_step_by_part(ctx, part_items[i]);
+            if (!step) continue;
+            if (!ctest_append_joined_list_unique(ctx, eval_ctest_step_submit_files(ctx, step), out_files)) {
                 return false;
             }
         }
@@ -2118,18 +2211,22 @@ static bool ctest_remove_tree(const char *path) {
     return state.ok;
 }
 
-static bool ctest_parse_metadata_request(EvalExecContext *ctx,
-                                         const Node *node,
-                                         String_View command_name,
-                                         const Ctest_Parse_Spec *spec,
-                                         bool needs_source,
-                                         bool needs_build,
-                                         String_View status,
-                                         Ctest_Metadata_Request *out_req) {
+static bool ctest_parse_modeled_step(EvalExecContext *ctx,
+                                     const Node *node,
+                                     Eval_Ctest_Step_Kind step_kind,
+                                     String_View command_name,
+                                     String_View submit_part,
+                                     const Ctest_Parse_Spec *spec,
+                                     bool needs_source,
+                                     bool needs_build,
+                                     String_View status,
+                                     Ctest_Modeled_Step_Request *out_req) {
     if (!ctx || !node || !spec || !out_req) return false;
     memset(out_req, 0, sizeof(*out_req));
 
+    out_req->step_kind = step_kind;
     out_req->command_name = command_name;
+    out_req->submit_part = submit_part;
     out_req->status = status;
     out_req->spec = spec;
     out_req->needs_source = needs_source;
@@ -2139,31 +2236,57 @@ static bool ctest_parse_metadata_request(EvalExecContext *ctx,
     return ctest_parse_generic(ctx, node, command_name, &out_req->argv, spec, &out_req->parsed);
 }
 
-static bool ctest_execute_metadata_request(EvalExecContext *ctx, const Ctest_Metadata_Request *req) {
+static bool ctest_execute_modeled_step(EvalExecContext *ctx, const Ctest_Modeled_Step_Request *req) {
     if (!ctx || !req) return false;
+    String_View resolved_source = nob_sv_from_cstr("");
+    String_View resolved_build = nob_sv_from_cstr("");
     if (!ctest_apply_resolved_context(ctx,
                                       req->command_name,
                                       &req->parsed,
                                       req->needs_source,
-                                      req->needs_build)) {
+                                      req->needs_build,
+                                      &resolved_source,
+                                      &resolved_build)) {
         return false;
     }
-    return eval_ctest_publish_metadata(ctx, req->command_name, &req->argv, req->status);
+
+    Eval_Ctest_Step_Record step = {
+        .kind = req->step_kind,
+        .command_name = req->command_name,
+        .submit_part = req->submit_part,
+        .status = req->status,
+        .model = ctest_get_session_field(ctx, "MODEL"),
+        .track = ctest_get_session_field(ctx, "TRACK"),
+        .source_dir = resolved_source,
+        .build_dir = resolved_build,
+    };
+    return ctest_commit_step_record(ctx, &req->argv, step, NULL);
 }
 
-static Eval_Result ctest_handle_metadata_request(EvalExecContext *ctx,
-                                                 const Node *node,
-                                                 String_View command_name,
-                                                 const Ctest_Parse_Spec *spec,
-                                                 bool needs_source,
-                                                 bool needs_build,
-                                                 String_View status) {
+static Eval_Result ctest_handle_modeled_step(EvalExecContext *ctx,
+                                             const Node *node,
+                                             Eval_Ctest_Step_Kind step_kind,
+                                             String_View command_name,
+                                             String_View submit_part,
+                                             const Ctest_Parse_Spec *spec,
+                                             bool needs_source,
+                                             bool needs_build,
+                                             String_View status) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    Ctest_Metadata_Request req = {0};
-    if (!ctest_parse_metadata_request(ctx, node, command_name, spec, needs_source, needs_build, status, &req)) {
+    Ctest_Modeled_Step_Request req = {0};
+    if (!ctest_parse_modeled_step(ctx,
+                                  node,
+                                  step_kind,
+                                  command_name,
+                                  submit_part,
+                                  spec,
+                                  needs_source,
+                                  needs_build,
+                                  status,
+                                  &req)) {
         return eval_result_from_ctx(ctx);
     }
-    if (!ctest_execute_metadata_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_modeled_step(ctx, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
 
@@ -2369,7 +2492,9 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
                                       nob_sv_from_cstr("ctest_memcheck"),
                                       &req->parsed,
                                       false,
-                                      true)) {
+                                      true,
+                                      NULL,
+                                      NULL)) {
         return false;
     }
 
@@ -2418,11 +2543,16 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
                          req->output_junit)) {
         return false;
     }
-
-    return eval_ctest_publish_metadata(ctx,
-                                       nob_sv_from_cstr("ctest_memcheck"),
-                                       &req->argv,
-                                       nob_sv_from_cstr("MODELED"));
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_MEMCHECK,
+        .command_name = nob_sv_from_cstr("ctest_memcheck"),
+        .submit_part = nob_sv_from_cstr("MemCheck"),
+        .status = nob_sv_from_cstr("MODELED"),
+        .model = ctest_get_session_field(ctx, "MODEL"),
+        .track = ctest_get_session_field(ctx, "TRACK"),
+        .build_dir = req->build_dir,
+    };
+    return ctest_commit_step_record(ctx, &req->argv, step, NULL);
 }
 
 static bool ctest_parse_empty_binary_directory_request(EvalExecContext *ctx,
@@ -2467,7 +2597,15 @@ static bool ctest_execute_empty_binary_directory_request(EvalExecContext *ctx,
     char *target_c = eval_sv_to_cstr_temp(ctx, req->target);
     EVAL_OOM_RETURN_IF_NULL(ctx, target_c, false);
 
-    if (nob_file_exists(target_c) && nob_get_file_type(target_c) == NOB_FILE_DIRECTORY) {
+    if (nob_file_exists(target_c)) {
+        if (nob_get_file_type(target_c) != NOB_FILE_DIRECTORY) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_empty_binary_directory() requires a directory path"),
+                                  req->target);
+            return false;
+        }
         if (!ctest_remove_tree(target_c)) {
             (void)ctest_emit_diag(ctx,
                                   node,
@@ -2476,14 +2614,14 @@ static bool ctest_execute_empty_binary_directory_request(EvalExecContext *ctx,
                                   req->target);
             return false;
         }
-        if (!nob_mkdir_if_not_exists(target_c)) {
-            (void)ctest_emit_diag(ctx,
-                                  node,
-                                  EV_DIAG_ERROR,
-                                  nob_sv_from_cstr("ctest_empty_binary_directory() failed to recreate directory"),
-                                  req->target);
-            return false;
-        }
+    }
+    if (!nob_mkdir_if_not_exists(target_c)) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_empty_binary_directory() failed to recreate directory"),
+                              req->target);
+        return false;
     }
 
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_empty_binary_directory"), "DIRECTORY", req->target)) return false;
@@ -2511,15 +2649,19 @@ static bool ctest_parse_read_custom_files_request(EvalExecContext *ctx,
     }
 
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
+    static const char *const custom_names[] = {"CTestCustom.ctest", "CTestCustom.cmake"};
     for (size_t i = 0; i < arena_arr_len(out_req->argv); i++) {
         String_View dir = eval_path_resolve_for_cmake_arg(ctx, out_req->argv[i], base_dir, false);
-        String_View custom = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr("CTestCustom.cmake"));
         if (eval_should_stop(ctx)) return false;
+        for (size_t name_i = 0; name_i < NOB_ARRAY_LEN(custom_names); name_i++) {
+            String_View custom = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr(custom_names[name_i]));
+            if (eval_should_stop(ctx)) return false;
 
-        char *custom_c = eval_sv_to_cstr_temp(ctx, custom);
-        EVAL_OOM_RETURN_IF_NULL(ctx, custom_c, false);
-        if (nob_file_exists(custom_c) && nob_get_file_type(custom_c) != NOB_FILE_DIRECTORY) {
-            if (!svu_list_push_temp(ctx, &out_req->loaded_files, custom)) return false;
+            char *custom_c = eval_sv_to_cstr_temp(ctx, custom);
+            EVAL_OOM_RETURN_IF_NULL(ctx, custom_c, false);
+            if (nob_file_exists(custom_c) && nob_get_file_type(custom_c) != NOB_FILE_DIRECTORY) {
+                if (!svu_list_push_temp(ctx, &out_req->loaded_files, custom)) return false;
+            }
         }
     }
 
@@ -2548,13 +2690,15 @@ static bool ctest_execute_read_custom_files_request(EvalExecContext *ctx,
 }
 
 Eval_Result eval_handle_ctest_build(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_metadata_request(ctx,
-                                         node,
-                                         nob_sv_from_cstr("ctest_build"),
-                                         &s_ctest_build_parse_spec,
-                                         false,
-                                         true,
-                                         nob_sv_from_cstr("MODELED"));
+    return ctest_handle_modeled_step(ctx,
+                                     node,
+                                     EVAL_CTEST_STEP_BUILD,
+                                     nob_sv_from_cstr("ctest_build"),
+                                     nob_sv_from_cstr("Build"),
+                                     &s_ctest_build_parse_spec,
+                                     false,
+                                     true,
+                                     nob_sv_from_cstr("MODELED"));
 }
 
 static bool ctest_parse_configure_request(EvalExecContext *ctx,
@@ -2629,10 +2773,24 @@ static bool ctest_execute_configure_request(EvalExecContext *ctx,
         }
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_configure"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_CONFIGURE,
+                                                   nob_sv_from_cstr("ctest_configure"),
+                                                   nob_sv_from_cstr("Configure"),
+                                                   req->model,
+                                                   req->resolved_source,
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_CONFIGURE,
+                                             nob_sv_from_cstr("ctest_configure"),
+                                             nob_sv_from_cstr("Configure"),
+                                             req->model,
+                                             req->resolved_source,
+                                             req->build_dir)) {
+            return false;
         }
         (void)ctest_emit_diag(ctx,
                               node,
@@ -2648,10 +2806,24 @@ static bool ctest_execute_configure_request(EvalExecContext *ctx,
         }
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_configure"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_CONFIGURE,
+                                                   nob_sv_from_cstr("ctest_configure"),
+                                                   nob_sv_from_cstr("Configure"),
+                                                   req->model,
+                                                   req->resolved_source,
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_CONFIGURE,
+                                             nob_sv_from_cstr("ctest_configure"),
+                                             nob_sv_from_cstr("Configure"),
+                                             req->model,
+                                             req->resolved_source,
+                                             req->build_dir)) {
+            return false;
         }
         (void)ctest_emit_diag(ctx,
                               node,
@@ -2669,10 +2841,24 @@ static bool ctest_execute_configure_request(EvalExecContext *ctx,
         }
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_configure"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_CONFIGURE,
+                                                   nob_sv_from_cstr("ctest_configure"),
+                                                   nob_sv_from_cstr("Configure"),
+                                                   req->model,
+                                                   req->resolved_source,
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_CONFIGURE,
+                                             nob_sv_from_cstr("ctest_configure"),
+                                             nob_sv_from_cstr("Configure"),
+                                             req->model,
+                                             req->resolved_source,
+                                             req->build_dir)) {
+            return false;
         }
         (void)ctest_emit_diag(ctx,
                               node,
@@ -2716,10 +2902,24 @@ static bool ctest_execute_configure_request(EvalExecContext *ctx,
     if (!success) {
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_configure"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_CONFIGURE,
+                                                   nob_sv_from_cstr("ctest_configure"),
+                                                   nob_sv_from_cstr("Configure"),
+                                                   req->model,
+                                                   req->resolved_source,
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_CONFIGURE,
+                                             nob_sv_from_cstr("ctest_configure"),
+                                             nob_sv_from_cstr("Configure"),
+                                             req->model,
+                                             req->resolved_source,
+                                             req->build_dir)) {
+            return false;
         }
 
         String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
@@ -2777,18 +2977,30 @@ static bool ctest_execute_configure_request(EvalExecContext *ctx,
         return false;
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "TAG", tag)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "TAG_FILE", tag_file)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "TESTING_DIR", testing_dir)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "CONFIGURE_XML", configure_xml)) {
-        return false;
-    }
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_configure"), "MANIFEST", manifest)) return false;
-
-    return eval_ctest_publish_metadata(ctx,
-                                       nob_sv_from_cstr("ctest_configure"),
-                                       &req->argv,
-                                       nob_sv_from_cstr("CONFIGURED"));
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_configure"),
+        .kind = nob_sv_from_cstr("CONFIGURE_XML"),
+        .status = nob_sv_from_cstr("CONFIGURED"),
+        .base_dir = tag_dir_path,
+        .primary_path = configure_xml,
+        .aux_paths = manifest,
+    };
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_CONFIGURE,
+        .command_name = nob_sv_from_cstr("ctest_configure"),
+        .submit_part = nob_sv_from_cstr("Configure"),
+        .status = nob_sv_from_cstr("CONFIGURED"),
+        .model = req->model,
+        .track = track,
+        .source_dir = req->resolved_source,
+        .build_dir = req->build_dir,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+    };
+    return ctest_commit_step_record(ctx, &req->argv, step, &artifact);
 }
 
 Eval_Result eval_handle_ctest_configure(EvalExecContext *ctx, const Node *node) {
@@ -2859,10 +3071,24 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
         }
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_coverage"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_COVERAGE,
+                                                   nob_sv_from_cstr("ctest_coverage"),
+                                                   nob_sv_from_cstr("Coverage"),
+                                                   req->model,
+                                                   nob_sv_from_cstr(""),
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_COVERAGE,
+                                             nob_sv_from_cstr("ctest_coverage"),
+                                             nob_sv_from_cstr("Coverage"),
+                                             req->model,
+                                             nob_sv_from_cstr(""),
+                                             req->build_dir)) {
+            return false;
         }
         (void)ctest_emit_diag(ctx,
                               node,
@@ -2880,10 +3106,24 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
         }
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_coverage"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_COVERAGE,
+                                                   nob_sv_from_cstr("ctest_coverage"),
+                                                   nob_sv_from_cstr("Coverage"),
+                                                   req->model,
+                                                   nob_sv_from_cstr(""),
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_COVERAGE,
+                                             nob_sv_from_cstr("ctest_coverage"),
+                                             nob_sv_from_cstr("Coverage"),
+                                             req->model,
+                                             nob_sv_from_cstr(""),
+                                             req->build_dir)) {
+            return false;
         }
         (void)ctest_emit_diag(ctx,
                               node,
@@ -2931,10 +3171,24 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
     if (!success) {
         if (req->capture_cmake_error_var.count > 0) {
             if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
-            return eval_ctest_publish_metadata(ctx,
-                                               nob_sv_from_cstr("ctest_coverage"),
-                                               &req->argv,
-                                               nob_sv_from_cstr("FAILED"));
+            return ctest_commit_failed_step_record(ctx,
+                                                   &req->argv,
+                                                   EVAL_CTEST_STEP_COVERAGE,
+                                                   nob_sv_from_cstr("ctest_coverage"),
+                                                   nob_sv_from_cstr("Coverage"),
+                                                   req->model,
+                                                   nob_sv_from_cstr(""),
+                                                   req->build_dir);
+        }
+        if (!ctest_commit_failed_step_record(ctx,
+                                             &req->argv,
+                                             EVAL_CTEST_STEP_COVERAGE,
+                                             nob_sv_from_cstr("ctest_coverage"),
+                                             nob_sv_from_cstr("Coverage"),
+                                             req->model,
+                                             nob_sv_from_cstr(""),
+                                             req->build_dir)) {
+            return false;
         }
 
         String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
@@ -2985,16 +3239,29 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
         return false;
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "TAG", tag)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "TAG_FILE", tag_file)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "TESTING_DIR", testing_dir)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "COVERAGE_XML", coverage_xml)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_coverage"), "MANIFEST", manifest)) return false;
-
-    return eval_ctest_publish_metadata(ctx,
-                                       nob_sv_from_cstr("ctest_coverage"),
-                                       &req->argv,
-                                       nob_sv_from_cstr("COLLECTED"));
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_coverage"),
+        .kind = nob_sv_from_cstr("COVERAGE_XML"),
+        .status = nob_sv_from_cstr("COLLECTED"),
+        .base_dir = tag_dir_path,
+        .primary_path = coverage_xml,
+        .aux_paths = manifest,
+    };
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_COVERAGE,
+        .command_name = nob_sv_from_cstr("ctest_coverage"),
+        .submit_part = nob_sv_from_cstr("Coverage"),
+        .status = nob_sv_from_cstr("COLLECTED"),
+        .model = req->model,
+        .track = track,
+        .build_dir = req->build_dir,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+    };
+    return ctest_commit_step_record(ctx, &req->argv, step, &artifact);
 }
 
 Eval_Result eval_handle_ctest_coverage(EvalExecContext *ctx, const Node *node) {
@@ -3041,6 +3308,20 @@ static bool ctest_parse_double(String_View sv, double *out_value) {
     if (!end || *end != '\0') return false;
     *out_value = v;
     return true;
+}
+
+static void ctest_sleep_for_duration(double seconds) {
+    if (seconds <= 0.0) return;
+
+    double millis_f = (seconds * 1000.0) + 0.5;
+    if (millis_f <= 0.0) return;
+
+    unsigned millis = millis_f >= (double)UINT_MAX ? UINT_MAX : (unsigned)millis_f;
+#if defined(_WIN32)
+    Sleep((DWORD)millis);
+#else
+    usleep((useconds_t)millis * 1000u);
+#endif
 }
 
 static bool ctest_parse_run_script_request(EvalExecContext *ctx,
@@ -3105,12 +3386,8 @@ static bool ctest_execute_run_script_request(EvalExecContext *ctx, const Ctest_R
         } else {
             exec_res = eval_execute_file(ctx, req->resolved_scripts[i], false, nob_sv_from_cstr(""));
         }
-        bool script_failed = eval_result_is_fatal(exec_res) ||
-                             ctx->runtime_state.run_report.error_count > error_count_before;
-        if (script_failed) {
-            rv_text = "1";
-            break;
-        }
+        if (eval_result_is_fatal(exec_res)) return false;
+        rv_text = ctx->runtime_state.run_report.error_count > error_count_before ? "1" : "0";
     }
 
     if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr(rv_text))) return false;
@@ -3184,6 +3461,9 @@ static bool ctest_parse_sleep_request(EvalExecContext *ctx,
 
 static bool ctest_execute_sleep_request(EvalExecContext *ctx, const Ctest_Sleep_Request *req) {
     if (!ctx || !req) return false;
+    double duration_value = 0.0;
+    if (!ctest_parse_double(req->duration, &duration_value)) return false;
+    ctest_sleep_for_duration(duration_value);
     if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_sleep"), "DURATION", req->duration)) return false;
     return eval_ctest_publish_metadata(ctx,
                                        nob_sv_from_cstr("ctest_sleep"),
@@ -3342,15 +3622,21 @@ static bool ctest_execute_start_request(EvalExecContext *ctx,
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_GROUP"), effective_group)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CTEST_TRACK"), effective_group)) return false;
     if (!ctest_publish_common_dirs(ctx, req->resolved_source, req->resolved_build)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG", tag)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TESTING_DIR", testing_dir)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG_FILE", tag_file)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_start"), "TAG_DIR", tag_dir_path)) return false;
-
-    return eval_ctest_publish_metadata(ctx,
-                                       nob_sv_from_cstr("ctest_start"),
-                                       &req->argv,
-                                       nob_sv_from_cstr("STAGED"));
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_START,
+        .command_name = nob_sv_from_cstr("ctest_start"),
+        .submit_part = nob_sv_from_cstr("Start"),
+        .status = nob_sv_from_cstr("STAGED"),
+        .model = effective_model,
+        .track = effective_group,
+        .source_dir = req->resolved_source,
+        .build_dir = req->resolved_build,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+    };
+    return ctest_commit_step_record(ctx, &req->argv, step, NULL);
 }
 
 static bool ctest_parse_submit_request(EvalExecContext *ctx,
@@ -3684,17 +3970,30 @@ static bool ctest_execute_upload_request(EvalExecContext *ctx, const Ctest_Uploa
         return false;
     }
 
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG", tag)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TAG_FILE", tag_file)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "TESTING_DIR", testing_dir)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "UPLOAD_XML", upload_xml)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "MANIFEST", manifest)) return false;
-    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_upload"), "RESOLVED_FILES", req->files)) return false;
-
-    return eval_ctest_publish_metadata(ctx,
-                                       nob_sv_from_cstr("ctest_upload"),
-                                       &req->argv,
-                                       nob_sv_from_cstr("STAGED"));
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_upload"),
+        .kind = nob_sv_from_cstr("UPLOAD_XML"),
+        .status = nob_sv_from_cstr("STAGED"),
+        .base_dir = tag_dir_path,
+        .primary_path = upload_xml,
+        .aux_paths = req->files,
+    };
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_UPLOAD,
+        .command_name = nob_sv_from_cstr("ctest_upload"),
+        .submit_part = nob_sv_from_cstr("Upload"),
+        .status = nob_sv_from_cstr("STAGED"),
+        .model = req->model,
+        .track = ctest_get_session_field(ctx, "TRACK"),
+        .build_dir = req->build_dir,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+        .submit_files = req->files,
+    };
+    return ctest_commit_step_record(ctx, &req->argv, step, &artifact);
 }
 
 Eval_Result eval_handle_ctest_run_script(EvalExecContext *ctx, const Node *node) {
@@ -3730,23 +4029,27 @@ Eval_Result eval_handle_ctest_submit(EvalExecContext *ctx, const Node *node) {
 }
 
 Eval_Result eval_handle_ctest_test(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_metadata_request(ctx,
-                                         node,
-                                         nob_sv_from_cstr("ctest_test"),
-                                         &s_ctest_test_parse_spec,
-                                         false,
-                                         true,
-                                         nob_sv_from_cstr("MODELED"));
+    return ctest_handle_modeled_step(ctx,
+                                     node,
+                                     EVAL_CTEST_STEP_TEST,
+                                     nob_sv_from_cstr("ctest_test"),
+                                     nob_sv_from_cstr("Test"),
+                                     &s_ctest_test_parse_spec,
+                                     false,
+                                     true,
+                                     nob_sv_from_cstr("MODELED"));
 }
 
 Eval_Result eval_handle_ctest_update(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_metadata_request(ctx,
-                                         node,
-                                         nob_sv_from_cstr("ctest_update"),
-                                         &s_ctest_update_parse_spec,
-                                         true,
-                                         false,
-                                         nob_sv_from_cstr("MODELED"));
+    return ctest_handle_modeled_step(ctx,
+                                     node,
+                                     EVAL_CTEST_STEP_UPDATE,
+                                     nob_sv_from_cstr("ctest_update"),
+                                     nob_sv_from_cstr("Update"),
+                                     &s_ctest_update_parse_spec,
+                                     true,
+                                     false,
+                                     nob_sv_from_cstr("MODELED"));
 }
 
 Eval_Result eval_handle_ctest_upload(EvalExecContext *ctx, const Node *node) {
