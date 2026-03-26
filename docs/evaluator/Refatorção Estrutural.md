@@ -172,3 +172,204 @@ Textual closure checks for this wave:
 - no `run_active`
 - no `Evaluator_Native_Command_Def`
 - no public `Evaluator_Context`
+
+## 7. Post-Landed CTest Completion Waves
+
+These waves do not reopen the landed architecture documented in
+[evaluator_v2_spec.md](./evaluator_v2_spec.md) and
+[evaluator_architecture_target.md](./evaluator_architecture_target.md).
+
+Guardrails for all waves below:
+- no public API changes beyond the landed `EvalSession` /
+  `EvalExec_Request` / `EvalRunResult` boundary
+- no reintroduction of `Evaluator_Context` as a public ownership boundary
+- every implementation wave must follow the canonical pipeline:
+  typed parse -> validation -> semantic resolution -> draft/mutation log ->
+  commit -> variable/diagnostic/Event IR projection
+- no `ctest_*` command may be upgraded to `FULL` in
+  `evaluator_coverage_matrix.md` unless the delivered semantics match the
+  documented CMake 3.28 surface actually implemented
+- these waves extend internal evaluator implementation only; they do not
+  authorize target-architecture changes by implication
+
+Point-in-time `ctest_*` status for this follow-up plan:
+- already `FULL`: `ctest_configure`, `ctest_empty_binary_directory`,
+  `ctest_read_custom_files`, `ctest_run_script`, `ctest_sleep`,
+  `ctest_start`, `ctest_submit`, `ctest_upload`
+- still `PARTIAL`: `ctest_build`, `ctest_coverage`, `ctest_memcheck`,
+  `ctest_test`, `ctest_update`
+
+### Wave C0: Landed Foundation
+
+Status:
+- completed; prerequisite for all remaining `ctest_*` completion work
+
+Delivered structural base:
+- canonical artifact records now live in `EvalSessionState`
+- typed `ctest_*` step records now live in `EvalSessionState`
+- `ctest_submit` already consumes committed step/artifact state as its source
+  of truth instead of relying on `NOBIFY_CTEST::*` variables
+
+Implication for later waves:
+- remaining work is semantic completion on top of the landed
+  `CanonicalArtifactStore` / `CtestStepStore` model, not a second architecture
+  migration
+
+### Wave C1: Finish `ctest_coverage`
+
+Target:
+- raise only `ctest_coverage` from `PARTIAL` to `FULL`
+
+Why this wave is first:
+- `ctest_coverage` already executes a real process-backed coverage step
+- `Coverage.xml` and the coverage manifest are already staged as canonical
+  committed artifacts
+- `ctest_submit(PARTS Coverage)` already reuses those committed artifacts
+
+Allowed implementation scope:
+- finish the remaining command-local semantics without introducing a new public
+  subsystem
+- complete effective `LABELS` filtering so it affects the staged coverage
+  result, not just metadata projection
+- align `QUIET` behavior with the documented local evaluator/reporting path
+
+Explicit non-goals:
+- no generic new step runner for unrelated `ctest_*` commands in this wave
+- no public API changes
+
+Exit criteria:
+- the documented coverage tool still executes through evaluator services
+- `Coverage.xml` and the manifest remain canonical committed artifacts
+- `LABELS` affects the staged coverage output rather than only projected
+  metadata
+- `ctest_submit(PARTS Coverage)` still resolves files from committed artifacts
+- `evaluator_coverage_matrix.md` upgrades `ctest_coverage` to `FULL`
+
+### Wave C2: Shared Internal CTest Step Runtime
+
+Target:
+- extract the shared internal runtime needed by the remaining operational
+  `ctest_*` steps without upgrading any command to `FULL` by itself
+
+Internal responsibilities to make explicit:
+- `Ctest step core`: defaults, session/tag context, success/failure commit path
+- `Ctest runner normalization`: normalize external execution into canonical step
+  results
+- `Ctest artifact staging`: stage step XML/manifests before commit
+- `Ctest submit integration`: resolve `PARTS`/files from committed step records
+
+Explicit prohibitions:
+- no new public API surface
+- do not move semantic source of truth back to `NOBIFY_CTEST::*` variables
+- do not use Event IR as evaluator state storage
+
+Exit criteria:
+- `ctest_build`, `ctest_update`, `ctest_test`, and `ctest_memcheck` no longer
+  depend only on `ctest_handle_modeled_step(...)`
+- the shared runtime is documented and implemented as an internal evaluator
+  subsystem over the landed canonical stores
+
+### Wave C3: Full `ctest_update`
+
+Target:
+- raise `ctest_update` from `PARTIAL` to `FULL`
+
+Dependency:
+- requires Wave C2
+
+Required semantic surface:
+- resolve the documented source/update context against canonical session state
+- execute the update step through the evaluator service/backend path
+- materialize the documented `RETURN_VALUE` and `CAPTURE_CMAKE_ERROR` outcomes
+- stage and commit `Update.xml` plus a manifest for
+  `ctest_submit(PARTS Update)`
+
+Explicit non-goals:
+- no public-boundary changes
+
+Exit criteria:
+- `ctest_update` no longer reports only `MODELED`
+- `ctest_submit(PARTS Update)` resolves committed update artifacts
+- `evaluator_coverage_matrix.md` upgrades `ctest_update` to `FULL`
+
+### Wave C4: Full `ctest_build`
+
+Target:
+- raise `ctest_build` from `PARTIAL` to `FULL`
+
+Dependency:
+- requires Wave C2
+
+Required semantic surface:
+- resolve the documented build context and build command
+- execute the build step rather than publishing metadata only
+- materialize canonical `NUMBER_ERRORS`, `NUMBER_WARNINGS`, `RETURN_VALUE`, and
+  `CAPTURE_CMAKE_ERROR` from the executed result
+- stage and commit `Build.xml` plus a manifest for
+  `ctest_submit(PARTS Build)`
+
+Exit criteria:
+- `ctest_build` produces a committed canonical build artifact
+- published counters come from executed build results
+- `evaluator_coverage_matrix.md` upgrades `ctest_build` to `FULL`
+
+### Wave C5: Full `ctest_test`
+
+Target:
+- raise `ctest_test` from `PARTIAL` to `FULL`
+
+Dependency:
+- requires Wave C2
+
+Required semantic surface:
+- resolve the test plan against the canonical session test model
+- execute the test step with the documented filters/options already accepted by
+  the evaluator surface
+- commit the canonical step result instead of a metadata-only record
+- stage and commit `Test.xml`
+- preserve `OUTPUT_JUNIT` as an output of the committed test step without
+  treating it as the source of truth
+- integrate the committed test artifact with `ctest_submit(PARTS Test)`
+
+Exit criteria:
+- `ctest_test` is no longer a modeled-only step
+- `Test.xml` and test-step metadata are committed canonical artifacts
+- `evaluator_coverage_matrix.md` upgrades `ctest_test` to `FULL`
+
+### Wave C6: Full `ctest_memcheck`
+
+Target:
+- raise `ctest_memcheck` from `PARTIAL` to `FULL`
+
+Dependencies:
+- requires Waves C2 and C5
+
+Required semantic surface:
+- resolve the memcheck backend and runtime configuration
+- execute memcheck on top of the canonical `ctest_test` plan/runtime path
+- extract real defect counts from executed results
+- materialize `DEFECT_COUNT`, `RETURN_VALUE`, and `CAPTURE_CMAKE_ERROR` from
+  execution, not placeholders
+- stage and commit `MemCheck.xml` plus a manifest for
+  `ctest_submit(PARTS MemCheck)`
+
+Explicit requirement:
+- `ctest_memcheck` must not be upgraded to `FULL` from parse/validation/metadata
+  work alone
+
+Exit criteria:
+- `MemCheck.xml` exists as a committed canonical artifact
+- `DEFECT_COUNT` reflects real memcheck execution results
+- `evaluator_coverage_matrix.md` upgrades `ctest_memcheck` to `FULL`
+
+### Wave Closure
+
+Completion rule for the `ctest_*` family:
+- the family is not fully closed until the five remaining `PARTIAL` rows above
+  are removed from `evaluator_coverage_matrix.md`
+
+Architecture escalation rule:
+- if any later wave discovers a real blocker in the public target architecture,
+  the implementer must update `evaluator_architecture_target.md` and
+  `evaluator_v2_spec.md` first; this document does not authorize such a change
+  on its own
