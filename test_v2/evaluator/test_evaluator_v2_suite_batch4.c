@@ -45,6 +45,17 @@ typedef struct {
     char source_arg[512];
 } Ctest_Configure_Mock_Process_Data;
 
+typedef struct {
+    size_t call_count;
+    bool saw_coverage_tool;
+    bool saw_fast_flag;
+    bool saw_xml_flag;
+    bool saw_mode_flag;
+    bool saw_mode_value;
+    bool args_in_expected_order;
+    char working_directory[512];
+} Ctest_Coverage_Mock_Process_Data;
+
 static bool ctest_submit_mock_has_prefix(String_View value, const char *prefix) {
     size_t prefix_len = strlen(prefix);
     return value.count >= prefix_len && memcmp(value.data, prefix, prefix_len) == 0;
@@ -235,6 +246,53 @@ static bool ctest_configure_mock_process_run(void *user_data,
 
     out_result->exit_code = 0;
     out_result->stdout_text = nob_sv_from_cstr("Configuring done\nGenerating done\n");
+    return true;
+}
+
+static bool ctest_coverage_mock_process_run(void *user_data,
+                                            Arena *scratch_arena,
+                                            const Eval_Process_Run_Request *request,
+                                            Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Coverage_Mock_Process_Data *data = (Ctest_Coverage_Mock_Process_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+    data->call_count++;
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("coverage-tool"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    data->saw_coverage_tool = true;
+    data->args_in_expected_order =
+        request->argc == 5 &&
+        nob_sv_eq(request->argv[1], nob_sv_from_cstr("--fast")) &&
+        nob_sv_eq(request->argv[2], nob_sv_from_cstr("--xml")) &&
+        nob_sv_eq(request->argv[3], nob_sv_from_cstr("--mode")) &&
+        nob_sv_eq(request->argv[4], nob_sv_from_cstr("scan"));
+    for (size_t i = 1; i < request->argc; i++) {
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--fast"))) data->saw_fast_flag = true;
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--xml"))) data->saw_xml_flag = true;
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--mode"))) data->saw_mode_flag = true;
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("scan"))) data->saw_mode_value = true;
+    }
+
+    if (request->working_directory.count > 0) {
+        size_t n = request->working_directory.count < sizeof(data->working_directory) - 1
+            ? request->working_directory.count
+            : sizeof(data->working_directory) - 1;
+        memcpy(data->working_directory, request->working_directory.data, n);
+        data->working_directory[n] = '\0';
+    }
+
+    out_result->exit_code = 0;
+    out_result->stdout_text = nob_sv_from_cstr("Covered: 42\n");
     return true;
 }
 
@@ -1168,6 +1226,156 @@ TEST(evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_
                           nob_sv_from_cstr("ctest_configure_defaults_src")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CTEST_BINARY_DIRECTORY")),
                           nob_sv_from_cstr("ctest_configure_defaults_bin")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_coverage_exec_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_coverage_exec_bin"));
+
+    Ctest_Coverage_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_coverage_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_coverage_exec_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_coverage_exec_bin)\n"
+        "set(COVERAGE_COMMAND \"coverage-tool --mode scan\")\n"
+        "set(COVERAGE_EXTRA_FLAGS \"--fast;--xml\")\n"
+        "ctest_start(Experimental ctest_coverage_exec_src .)\n"
+        "ctest_coverage(LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE APPEND QUIET)\n"
+        "ctest_submit(PARTS Coverage RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_coverage_tool);
+    ASSERT(mock.saw_fast_flag);
+    ASSERT(mock.saw_xml_flag);
+    ASSERT(mock.saw_mode_flag);
+    ASSERT(mock.saw_mode_value);
+    ASSERT(mock.args_in_expected_order);
+    ASSERT(strstr(mock.working_directory, "ctest_coverage_exec_bin") != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COV_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COV_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::STATUS")),
+                     nob_sv_from_cstr("COLLECTED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::LABELS_RESOLVED")),
+                     nob_sv_from_cstr("core;ui")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::RESOLVED_BUILD")),
+                          nob_sv_from_cstr("ctest_coverage_exec_bin")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                          nob_sv_from_cstr("Coverage")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("Coverage.xml")));
+
+    String_View coverage_xml = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML"));
+    char *coverage_xml_c = arena_strndup(temp_arena, coverage_xml.data, coverage_xml.count);
+    ASSERT(coverage_xml_c != NULL);
+    ASSERT(nob_file_exists(coverage_xml_c));
+
+    Nob_String_Builder coverage_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(coverage_xml_c, &coverage_sb));
+    ASSERT(strstr(coverage_sb.items, "<Coverage>") != NULL);
+    ASSERT(strstr(coverage_sb.items, "coverage-tool --mode scan") != NULL);
+    ASSERT(strstr(coverage_sb.items, "--fast;--xml") != NULL);
+    ASSERT(strstr(coverage_sb.items, "<Append>true</Append>") != NULL);
+    ASSERT(strstr(coverage_sb.items, "<Label>core</Label>") != NULL);
+    ASSERT(strstr(coverage_sb.items, "<Label>ui</Label>") != NULL);
+    nob_sb_free(coverage_sb);
+
+    String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::MANIFEST"));
+    char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
+    ASSERT(manifest_c != NULL);
+    ASSERT(nob_file_exists(manifest_c));
+
+    Nob_String_Builder manifest_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(manifest_c, &manifest_sb));
+    ASSERT(strstr(manifest_sb.items, "COMMAND=ctest_coverage") != NULL);
+    ASSERT(strstr(manifest_sb.items, "PARTS=Coverage") != NULL);
+    ASSERT(strstr(manifest_sb.items, "Coverage.xml") != NULL);
+    nob_sb_free(manifest_sb);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_coverage_captures_missing_command_without_fatal_error) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_coverage_missing_bin"));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_coverage_missing_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_coverage_missing_bin)\n"
+        "set(CTEST_BINARY_DIRECTORY ctest_coverage_missing_bin)\n"
+        "ctest_coverage(RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COV_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COV_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")).count == 0);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3210,6 +3418,8 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed, skipped);
     test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed, skipped);
+    test_evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part(passed, failed, skipped);
+    test_evaluator_ctest_coverage_captures_missing_command_without_fatal_error(passed, failed, skipped);
     test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed, skipped);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed, skipped);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed, skipped);

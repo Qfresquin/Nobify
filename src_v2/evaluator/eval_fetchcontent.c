@@ -1181,7 +1181,7 @@ static bool fetchcontent_invoke_dependency_provider(EvalExecContext *ctx,
     }
 
     ctx->semantic_state.package.dependency_provider.active_fetchcontent_makeavailable_depth++;
-    Eval_Result invoke_result = eval_result_ok();
+    Eval_Result invoke_result;
     if (!eval_user_cmd_invoke(ctx, provider_command_name, &provider_args, eval_origin_from_node(ctx, node))) {
         invoke_result = eval_result_from_ctx(ctx);
     } else {

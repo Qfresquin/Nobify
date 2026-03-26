@@ -357,7 +357,7 @@ static void append_test_profile_compiler(Nob_Cmd *cmd, const Test_Profile *profi
 }
 
 static void runner_emit_log_line(Nob_Log_Level level, const char *message) {
-    const char *prefix = "[INFO] ";
+    const char *prefix = NULL;
     FILE *stream = stderr;
     size_t len = 0;
 

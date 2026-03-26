@@ -2581,9 +2581,9 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
         return false;
     }
 
-    SV_List argv = {0};
-    if (!ctest_append_command_tokens_temp(ctx, req->coverage_command, &argv)) return false;
-    if (arena_arr_len(argv) == 0) {
+    SV_List command_argv = {0};
+    if (!ctest_append_command_tokens_temp(ctx, req->coverage_command, &command_argv)) return false;
+    if (arena_arr_len(command_argv) == 0) {
         if (req->return_var.count > 0 && !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("1"))) {
             return false;
         }
@@ -2601,7 +2601,13 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
                               req->coverage_command);
         return false;
     }
+
+    SV_List argv = {0};
+    if (!svu_list_push_temp(ctx, &argv, command_argv[0])) return false;
     if (!ctest_append_command_tokens_temp(ctx, req->coverage_extra_flags, &argv)) return false;
+    for (size_t i = 1; i < arena_arr_len(command_argv); i++) {
+        if (!svu_list_push_temp(ctx, &argv, command_argv[i])) return false;
+    }
 
     Eval_Process_Run_Request process_req = {
         .argv = argv,
@@ -2800,7 +2806,7 @@ static bool ctest_execute_run_script_request(EvalExecContext *ctx, const Ctest_R
     const char *rv_text = "0";
     for (size_t i = 0; i < arena_arr_len(req->resolved_scripts); i++) {
         size_t error_count_before = ctx->runtime_state.run_report.error_count;
-        Eval_Result exec_res = eval_result_fatal();
+        Eval_Result exec_res;
         if (req->new_process) {
             Ctest_New_Process_State child_state = {0};
             if (!ctest_new_process_begin(ctx, &child_state)) return false;

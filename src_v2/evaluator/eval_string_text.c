@@ -71,7 +71,10 @@ static bool string_configure_expand_temp(EvalExecContext *ctx,
                 if (key.count > 5 && memcmp(key.data, "ENV{", 4) == 0 && key.data[key.count - 1] == '}') {
                     String_View env_key = nob_sv_from_parts(key.data + 4, key.count - 5);
                     char *env_buf = (char*)arena_alloc(eval_temp_arena(ctx), env_key.count + 1);
-                    EVAL_OOM_RETURN_IF_NULL(ctx, env_buf, false);
+                    if (!env_buf) {
+                        nob_sb_free(sb);
+                        EVAL_OOM_RETURN_IF_NULL(ctx, env_buf, false);
+                    }
                     memcpy(env_buf, env_key.data, env_key.count);
                     env_buf[env_key.count] = '\0';
                     const char *env_val = eval_getenv_temp(ctx, env_buf);

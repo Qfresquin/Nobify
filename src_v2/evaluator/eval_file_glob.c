@@ -134,15 +134,13 @@ bool eval_file_glob_match_sv(String_View pat, String_View str, bool ci) {
 
         if (star_pi != (size_t)-1) {
             if (star_si < str.count && svu_is_path_sep(str.data[star_si])) {
-                star_pi = (size_t)-1;
+                return false;
             } else {
                 pi = star_pi + 1;
                 si = ++star_si;
                 continue;
             }
         }
-
-        return false;
     }
 
     while (pi < pat.count && pat.data[pi] == '*') pi++;

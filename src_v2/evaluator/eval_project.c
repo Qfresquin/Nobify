@@ -695,7 +695,6 @@ Eval_Result eval_handle_project(EvalExecContext *ctx, const Node *node) {
         }
 
         if (eval_sv_eq_ci_lit(token, "LANGUAGES")) {
-            seen_named_options = true;
             if (seen_languages_keyword) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_DUPLICATE_ARGUMENT, "dispatcher", nob_sv_from_cstr("project() received duplicate LANGUAGES keyword"), nob_sv_from_cstr("Use LANGUAGES only once"));
                 return eval_result_from_ctx(ctx);

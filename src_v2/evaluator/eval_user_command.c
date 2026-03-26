@@ -197,7 +197,6 @@ bool eval_user_cmd_invoke(EvalExecContext *ctx, String_View name, const SV_List 
 
     bool ok = false;
     bool did_return = false;
-    Eval_Result body_result = eval_result_ok();
     for (size_t i = 0; i < arena_arr_len(cmd->params); i++) {
         String_View val = nob_sv_from_cstr("");
         if (i < arg_count) val = (*args)[i];
@@ -254,8 +253,7 @@ bool eval_user_cmd_invoke(EvalExecContext *ctx, String_View name, const SV_List 
         }
     }
 
-    body_result = eval_execute_node_list(ctx, &cmd->body);
-    ok = !eval_result_is_fatal(body_result);
+    ok = !eval_result_is_fatal(eval_execute_node_list(ctx, &cmd->body));
 cleanup:
     did_return = exec_pushed &&
                  eval_exec_current(ctx) &&
