@@ -670,7 +670,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         "ctest_build(TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
         "ctest_test(RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE PARALLEL_LEVEL 2 SCHEDULE_RANDOM)\n"
         "ctest_coverage(LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE)\n"
-        "ctest_memcheck(RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS SCHEDULE_RANDOM)\n"
+        "ctest_memcheck(RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS SCHEDULE_RANDOM ON)\n"
         "ctest_update(RETURN_VALUE UPD_RV CAPTURE_CMAKE_ERROR UPD_CE QUIET)\n"
         "ctest_submit(PARTS Start Build Test FILES notes.txt RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n"
         "ctest_upload(FILES a.txt b.txt CAPTURE_CMAKE_ERROR UPLOAD_CE)\n"
@@ -722,6 +722,8 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_ERRS")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_WARNS")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::SCHEDULE_RANDOM")),
+                     nob_sv_from_cstr("ON")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SCRIPT_RV")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SCRIPT_CHILD_RV")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_VAR_LEAK")), nob_sv_from_cstr("0")));
@@ -1383,6 +1385,81 @@ TEST(evaluator_ctest_coverage_captures_missing_command_without_fatal_error) {
     TEST_PASS();
 }
 
+TEST(evaluator_ctest_memcheck_models_documented_request_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_memcheck_modeled_bin"));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_memcheck_modeled_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_memcheck_modeled_bin)\n"
+        "set(CTEST_BINARY_DIRECTORY ctest_memcheck_modeled_bin)\n"
+        "set(CTEST_TEST_LOAD 7)\n"
+        "set(CTEST_RESOURCE_SPEC_FILE ctest-resource.json)\n"
+        "ctest_memcheck(START 2 END 10 STRIDE 2 EXCLUDE bad INCLUDE good EXCLUDE_LABEL slow INCLUDE_LABEL smoke EXCLUDE_FIXTURE fx EXCLUDE_FIXTURE_SETUP fxsetup EXCLUDE_FIXTURE_CLEANUP fxcleanup PARALLEL_LEVEL 3 SCHEDULE_RANDOM off STOP_ON_FAILURE STOP_TIME 23:59 RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE REPEAT until_pass:4 OUTPUT_JUNIT reports/memcheck.xml DEFECT_COUNT MEM_DEFECTS APPEND QUIET)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STATUS")),
+                     nob_sv_from_cstr("MODELED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::APPEND")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STOP_ON_FAILURE")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::START")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::END")),
+                     nob_sv_from_cstr("10")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STRIDE")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::PARALLEL_LEVEL")),
+                     nob_sv_from_cstr("3")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::SCHEDULE_RANDOM")),
+                     nob_sv_from_cstr("OFF")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::REPEAT")),
+                     nob_sv_from_cstr("UNTIL_PASS:4")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_BUILD")),
+                          nob_sv_from_cstr("ctest_memcheck_modeled_bin")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_TEST_LOAD")),
+                     nob_sv_from_cstr("7")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx,
+                                            nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_RESOURCE_SPEC_FILE")),
+                          nob_sv_from_cstr("ctest_memcheck_modeled_bin/ctest-resource.json")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx,
+                                            nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_OUTPUT_JUNIT")),
+                          nob_sv_from_cstr("ctest_memcheck_modeled_bin/reports/memcheck.xml")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::MEMCHECK_XML")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_test_workspace_golden_updates_target_repo_root) {
     const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
     const char *probe_rel = "Temp_tests/golden_update_probe.txt";
@@ -1877,6 +1954,80 @@ TEST(evaluator_ctest_family_rejects_invalid_and_unsupported_forms) {
     ASSERT(report->error_count == 3);
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SCRIPT_BAD_RV")), nob_sv_from_cstr("0")));
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("UNUSED")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_memcheck_rejects_invalid_documented_shapes) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_memcheck_invalid_bin"));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_memcheck_invalid_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_memcheck_invalid_bin)\n"
+        "ctest_memcheck(SCHEDULE_RANDOM)\n"
+        "ctest_memcheck(SCHEDULE_RANDOM maybe)\n"
+        "ctest_memcheck(PARALLEL_LEVEL 0)\n"
+        "ctest_memcheck(REPEAT SOMEDAY:3)\n"
+        "ctest_memcheck(REPEAT UNTIL_PASS:0)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 5);
+
+    bool saw_missing_value = false;
+    bool saw_schedule_random = false;
+    bool saw_parallel_level = false;
+    bool saw_repeat_mode = false;
+    bool saw_repeat_count = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("ctest command keyword requires a value"))) {
+            saw_missing_value = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_memcheck() SCHEDULE_RANDOM requires ON or OFF"))) {
+            saw_schedule_random = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_memcheck() PARALLEL_LEVEL requires a positive integer"))) {
+            saw_parallel_level = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_memcheck() REPEAT mode is not supported"))) {
+            saw_repeat_mode = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("ctest_memcheck() REPEAT count requires a positive integer"))) {
+            saw_repeat_count = true;
+        }
+    }
+
+    ASSERT(saw_missing_value);
+    ASSERT(saw_schedule_random);
+    ASSERT(saw_parallel_level);
+    ASSERT(saw_repeat_mode);
+    ASSERT(saw_repeat_count);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3420,6 +3571,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed, skipped);
     test_evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_coverage_captures_missing_command_without_fatal_error(passed, failed, skipped);
+    test_evaluator_ctest_memcheck_models_documented_request_surface(passed, failed, skipped);
     test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed, skipped);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed, skipped);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed, skipped);
@@ -3427,6 +3579,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_ctest_upload_stages_upload_xml_and_submit_part(passed, failed, skipped);
     test_evaluator_ctest_submit_rejects_invalid_parts_and_mixed_signatures(passed, failed, skipped);
     test_evaluator_ctest_family_rejects_invalid_and_unsupported_forms(passed, failed, skipped);
+    test_evaluator_ctest_memcheck_rejects_invalid_documented_shapes(passed, failed, skipped);
     test_evaluator_ctest_entrypoints_reject_incomplete_argument_shapes(passed, failed, skipped);
     test_evaluator_batch8_legacy_commands_register_and_model_compat_paths(passed, failed, skipped);
     test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed, skipped);

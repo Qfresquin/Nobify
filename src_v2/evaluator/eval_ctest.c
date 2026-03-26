@@ -160,6 +160,21 @@ typedef struct {
 typedef struct {
     SV_List argv;
     Ctest_Parse_Result parsed;
+    String_View build_dir;
+    String_View start;
+    String_View end;
+    String_View stride;
+    String_View parallel_level;
+    String_View resource_spec_file;
+    String_View test_load;
+    String_View schedule_random;
+    String_View repeat;
+    String_View output_junit;
+} Ctest_Memcheck_Request;
+
+typedef struct {
+    SV_List argv;
+    Ctest_Parse_Result parsed;
     String_View model;
     String_View build_dir;
     String_View files;
@@ -215,9 +230,17 @@ static const Ctest_Parse_Spec s_ctest_coverage_parse_spec = {
 };
 
 static const char *const s_ctest_memcheck_single_keywords[] = {
-    "BUILD", "RETURN_VALUE", "CAPTURE_CMAKE_ERROR", "DEFECT_COUNT", "PARALLEL_LEVEL"
+    "BUILD", "START", "END", "STRIDE", "EXCLUDE", "INCLUDE",
+    "EXCLUDE_LABEL", "INCLUDE_LABEL", "EXCLUDE_FIXTURE",
+    "EXCLUDE_FIXTURE_SETUP", "EXCLUDE_FIXTURE_CLEANUP",
+    "PARALLEL_LEVEL", "RESOURCE_SPEC_FILE", "TEST_LOAD",
+    "SCHEDULE_RANDOM", "STOP_TIME", "RETURN_VALUE",
+    "CAPTURE_CMAKE_ERROR", "REPEAT", "OUTPUT_JUNIT",
+    "DEFECT_COUNT"
 };
-static const char *const s_ctest_memcheck_flag_keywords[] = {"APPEND", "QUIET", "SCHEDULE_RANDOM"};
+static const char *const s_ctest_memcheck_flag_keywords[] = {
+    "APPEND", "STOP_ON_FAILURE", "QUIET"
+};
 static const Ctest_Parse_Spec s_ctest_memcheck_parse_spec = {
     s_ctest_memcheck_single_keywords,
     sizeof(s_ctest_memcheck_single_keywords) / sizeof(s_ctest_memcheck_single_keywords[0]),
@@ -1391,6 +1414,9 @@ static bool ctest_submit_part_is_available(EvalExecContext *ctx, const Ctest_Sub
         if (strcmp(part_def->name, "Coverage") == 0) {
             return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_XML")).count > 0;
         }
+        if (strcmp(part_def->name, "MemCheck") == 0) {
+            return eval_var_get_visible(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::MEMCHECK_XML")).count > 0;
+        }
         return ctest_get_command_status(ctx, part_def->status_command).count > 0;
     }
     if (strcmp(part_def->name, "Notes") == 0) {
@@ -2013,6 +2039,13 @@ static bool ctest_submit_append_part_files(EvalExecContext *ctx,
                                                  out_files)) {
                 return false;
             }
+        } else if (eval_sv_eq_ci_lit(part_items[i], "MemCheck")) {
+            if (!ctest_append_joined_list_unique(ctx,
+                                                 eval_var_get_visible(ctx,
+                                                                      nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::MEMCHECK_XML")),
+                                                 out_files)) {
+                return false;
+            }
         }
     }
 
@@ -2132,6 +2165,264 @@ static Eval_Result ctest_handle_metadata_request(EvalExecContext *ctx,
     }
     if (!ctest_execute_metadata_request(ctx, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
+}
+
+static bool ctest_resolve_path_from_base(EvalExecContext *ctx,
+                                         String_View raw_path,
+                                         String_View base_dir,
+                                         String_View *out_path) {
+    if (!ctx || !out_path) return false;
+    *out_path = nob_sv_from_cstr("");
+    if (raw_path.count == 0) return true;
+
+    String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw_path, base_dir, false);
+    if (eval_should_stop(ctx)) return false;
+    *out_path = eval_sv_path_normalize_temp(ctx, resolved);
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_memcheck_parse_integer_field(EvalExecContext *ctx,
+                                               const Node *node,
+                                               const Ctest_Parse_Result *parsed,
+                                               const char *field_name,
+                                               bool require_positive,
+                                               String_View *out_value) {
+    if (!ctx || !node || !parsed || !field_name || !out_value) return false;
+    *out_value = nob_sv_from_cstr("");
+
+    String_View raw = ctest_parsed_field_value(parsed, field_name);
+    if (raw.count == 0) return true;
+
+    size_t parsed_value = 0;
+    if (!ctest_parse_size_value_sv(raw, &parsed_value) || (require_positive && parsed_value == 0)) {
+        Nob_String_Builder sb = {0};
+        nob_sb_append_cstr(&sb, "ctest_memcheck() ");
+        nob_sb_append_cstr(&sb, field_name);
+        nob_sb_append_cstr(&sb, require_positive ? " requires a positive integer" : " requires a non-negative integer");
+        String_View cause = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+        nob_sb_free(sb);
+        if (eval_should_stop(ctx)) return false;
+        (void)ctest_emit_diag(ctx, node, EV_DIAG_ERROR, cause, raw);
+        return false;
+    }
+
+    *out_value = ctest_submit_format_size_temp(ctx, parsed_value);
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_memcheck_parse_schedule_random(EvalExecContext *ctx,
+                                                 const Node *node,
+                                                 const Ctest_Parse_Result *parsed,
+                                                 String_View *out_value) {
+    if (!ctx || !node || !parsed || !out_value) return false;
+    *out_value = nob_sv_from_cstr("");
+
+    String_View raw = ctest_parsed_field_value(parsed, "SCHEDULE_RANDOM");
+    if (raw.count == 0) return true;
+    if (eval_sv_eq_ci_lit(raw, "ON")) {
+        *out_value = nob_sv_from_cstr("ON");
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(raw, "OFF")) {
+        *out_value = nob_sv_from_cstr("OFF");
+        return true;
+    }
+
+    (void)ctest_emit_diag(ctx,
+                          node,
+                          EV_DIAG_ERROR,
+                          nob_sv_from_cstr("ctest_memcheck() SCHEDULE_RANDOM requires ON or OFF"),
+                          raw);
+    return false;
+}
+
+static bool ctest_memcheck_parse_repeat(EvalExecContext *ctx,
+                                        const Node *node,
+                                        const Ctest_Parse_Result *parsed,
+                                        String_View *out_value) {
+    if (!ctx || !node || !parsed || !out_value) return false;
+    *out_value = nob_sv_from_cstr("");
+
+    String_View raw = ctest_parsed_field_value(parsed, "REPEAT");
+    if (raw.count == 0) return true;
+
+    size_t colon_index = raw.count;
+    for (size_t i = 0; i < raw.count; i++) {
+        if (raw.data[i] == ':') {
+            colon_index = i;
+            break;
+        }
+    }
+    if (colon_index == 0 || colon_index + 1 >= raw.count) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_memcheck() REPEAT requires <mode>:<n>"),
+                              raw);
+        return false;
+    }
+
+    String_View mode = nob_sv_from_parts(raw.data, colon_index);
+    String_View canonical_mode = nob_sv_from_cstr("");
+    if (eval_sv_eq_ci_lit(mode, "UNTIL_FAIL")) canonical_mode = nob_sv_from_cstr("UNTIL_FAIL");
+    else if (eval_sv_eq_ci_lit(mode, "UNTIL_PASS")) canonical_mode = nob_sv_from_cstr("UNTIL_PASS");
+    else if (eval_sv_eq_ci_lit(mode, "AFTER_TIMEOUT")) canonical_mode = nob_sv_from_cstr("AFTER_TIMEOUT");
+    else {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_memcheck() REPEAT mode is not supported"),
+                              mode);
+        return false;
+    }
+
+    String_View raw_count = nob_sv_from_parts(raw.data + colon_index + 1, raw.count - colon_index - 1);
+    size_t repeat_count = 0;
+    if (!ctest_parse_size_value_sv(raw_count, &repeat_count) || repeat_count == 0) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_memcheck() REPEAT count requires a positive integer"),
+                              raw_count);
+        return false;
+    }
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_buf(&sb, canonical_mode.data, canonical_mode.count);
+    nob_sb_append_cstr(&sb, ":");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", repeat_count));
+    *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_parse_memcheck_request(EvalExecContext *ctx,
+                                         const Node *node,
+                                         Ctest_Memcheck_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_parse_generic(ctx,
+                             node,
+                             nob_sv_from_cstr("ctest_memcheck"),
+                             &out_req->argv,
+                             &s_ctest_memcheck_parse_spec,
+                             &out_req->parsed)) {
+        return false;
+    }
+
+    String_View build = ctest_parsed_field_value(&out_req->parsed, "BUILD");
+    out_req->build_dir = build.count > 0 ? ctest_resolve_binary_dir(ctx, build) : ctest_session_resolved_build_dir(ctx);
+    if (eval_should_stop(ctx)) return false;
+
+    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->parsed, "START", false, &out_req->start)) return false;
+    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->parsed, "END", false, &out_req->end)) return false;
+    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->parsed, "STRIDE", true, &out_req->stride)) return false;
+    if (!ctest_memcheck_parse_integer_field(ctx,
+                                            node,
+                                            &out_req->parsed,
+                                            "PARALLEL_LEVEL",
+                                            true,
+                                            &out_req->parallel_level)) {
+        return false;
+    }
+    if (!ctest_memcheck_parse_schedule_random(ctx, node, &out_req->parsed, &out_req->schedule_random)) return false;
+    if (!ctest_memcheck_parse_repeat(ctx, node, &out_req->parsed, &out_req->repeat)) return false;
+
+    String_View resource_spec_file = ctest_parsed_field_value(&out_req->parsed, "RESOURCE_SPEC_FILE");
+    if (resource_spec_file.count == 0) {
+        resource_spec_file = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_RESOURCE_SPEC_FILE"));
+    }
+    if (!ctest_resolve_path_from_base(ctx,
+                                      resource_spec_file,
+                                      ctest_current_binary_dir(ctx),
+                                      &out_req->resource_spec_file)) {
+        return false;
+    }
+
+    out_req->test_load = ctest_parsed_field_value(&out_req->parsed, "TEST_LOAD");
+    if (out_req->test_load.count == 0) {
+        out_req->test_load = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_TEST_LOAD"));
+    }
+
+    if (!ctest_resolve_path_from_base(ctx,
+                                      ctest_parsed_field_value(&out_req->parsed, "OUTPUT_JUNIT"),
+                                      out_req->build_dir,
+                                      &out_req->output_junit)) {
+        return false;
+    }
+
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
+                                           const Ctest_Memcheck_Request *req) {
+    if (!ctx || !req) return false;
+
+    if (!ctest_apply_resolved_context(ctx,
+                                      nob_sv_from_cstr("ctest_memcheck"),
+                                      &req->parsed,
+                                      false,
+                                      true)) {
+        return false;
+    }
+
+    if (req->start.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "START", req->start)) {
+        return false;
+    }
+    if (req->end.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "END", req->end)) {
+        return false;
+    }
+    if (req->stride.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "STRIDE", req->stride)) {
+        return false;
+    }
+    if (req->parallel_level.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "PARALLEL_LEVEL", req->parallel_level)) {
+        return false;
+    }
+    if (req->schedule_random.count > 0 &&
+        !ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "SCHEDULE_RANDOM",
+                         req->schedule_random)) {
+        return false;
+    }
+    if (req->repeat.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "REPEAT", req->repeat)) {
+        return false;
+    }
+    if (req->resource_spec_file.count > 0 &&
+        !ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "RESOLVED_RESOURCE_SPEC_FILE",
+                         req->resource_spec_file)) {
+        return false;
+    }
+    if (req->test_load.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "RESOLVED_TEST_LOAD", req->test_load)) {
+        return false;
+    }
+    if (req->output_junit.count > 0 &&
+        !ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "RESOLVED_OUTPUT_JUNIT",
+                         req->output_junit)) {
+        return false;
+    }
+
+    return eval_ctest_publish_metadata(ctx,
+                                       nob_sv_from_cstr("ctest_memcheck"),
+                                       &req->argv,
+                                       nob_sv_from_cstr("MODELED"));
 }
 
 static bool ctest_parse_empty_binary_directory_request(EvalExecContext *ctx,
@@ -2723,13 +3014,11 @@ Eval_Result eval_handle_ctest_empty_binary_directory(EvalExecContext *ctx, const
 }
 
 Eval_Result eval_handle_ctest_memcheck(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_metadata_request(ctx,
-                                         node,
-                                         nob_sv_from_cstr("ctest_memcheck"),
-                                         &s_ctest_memcheck_parse_spec,
-                                         false,
-                                         true,
-                                         nob_sv_from_cstr("MODELED"));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Memcheck_Request req = {0};
+    if (!ctest_parse_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_memcheck_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_ctest_read_custom_files(EvalExecContext *ctx, const Node *node) {
