@@ -26,7 +26,7 @@ Lexer lexer_init(String_View content) {
     };
 }
 
-// --- Funções Auxiliares de Navegação ---
+// --- Navigation Helpers ---
 
 static char peek(Lexer *l, size_t offset) {
     if (l->cursor + offset >= l->content.count) return 0;
@@ -39,6 +39,7 @@ static char current(Lexer *l) {
 
 static void advance(Lexer *l) {
     if (l->cursor < l->content.count) {
+        // `bol` stores the index of the current line start for cheap column tracking.
         if (current(l) == '\n') {
             l->line++;
             l->bol = l->cursor + 1;
@@ -51,25 +52,29 @@ static void advance_n(Lexer *l, size_t n) {
     for (size_t i = 0; i < n; ++i) advance(l);
 }
 
-// --- Lógica de Bracket Arguments (Raw Strings e Comentários de Bloco) ---
+// --- Bracket Argument Logic (Raw Strings and Block Comments) ---
 
 static size_t get_bracket_open_len(Lexer *l) {
     if (current(l) != '[') return 0;
-    
+
+    // In CMake, `[[`, `[=[`, `[==[` and similar forms share the same rule:
+    // the number of `=` in the closer must match the opener.
     size_t k = 1;
     while (l->cursor + k < l->content.count && peek(l, k) == '=') {
         k++;
     }
-    
+
     if (l->cursor + k < l->content.count && peek(l, k) == '[') {
-        return k + 1; 
+        return k + 1;
     }
     return 0;
 }
 
 static void skip_bracket_content(Lexer *l, size_t open_len) {
     size_t eq_count = open_len - 2;
-    
+
+    // This helper is reused for both raw strings and `#[[ ... ]]` comments,
+    // while still preserving line/column tracking through `advance()`.
     while (l->cursor < l->content.count) {
         if (current(l) == ']') {
             bool match = true;
@@ -85,39 +90,43 @@ static void skip_bracket_content(Lexer *l, size_t open_len) {
     }
 }
 
-// --- Funções de Verificação de Variável ---
+// --- Variable Detection Helpers ---
 
 static size_t check_var_start(Lexer *l) {
     if (current(l) != '$') return 0;
     if (peek(l, 1) == '{') return 2;
-    if (peek(l, 1) == '<') return 0; 
-    
+    if (peek(l, 1) == '<') return 0;
+
+    // `$<...>` is a generator expression; this helper only recognizes
+    // variable-style prefixes such as `${VAR}` and `$ENV{VAR}`.
     size_t k = 1;
     while (isalnum((unsigned char)peek(l, k)) || peek(l, k) == '_') {
         k++;
     }
     if (peek(l, k) == '{') return k + 1;
-    
+
     return 0;
 }
 
-// --- Lógica Principal ---
+// --- Main Lexing Logic ---
 
 Token lexer_next(Lexer *l) {
     size_t start_cursor = l->cursor;
 
-    // 1. Pular Espaços, Comentários e Line Continuations
+    // Normalize the cursor to the start of the next visible token.
+    // Anything consumed here makes `has_space_left = true`.
     while (l->cursor < l->content.count) {
         char c = current(l);
-        
+
         if (isspace((unsigned char)c)) {
             advance(l);
-        } 
+        }
         else if (c == '#') {
-            advance(l); 
+            advance(l);
             size_t open_len = get_bracket_open_len(l);
             if (open_len > 0) {
-                advance_n(l, open_len); 
+                // After `#`, a bracket opener starts a block comment.
+                advance_n(l, open_len);
                 skip_bracket_content(l, open_len);
             } else {
                 while (l->cursor < l->content.count && current(l) != '\n') {
@@ -128,13 +137,13 @@ Token lexer_next(Lexer *l) {
         else if (c == '\\') {
             char next = peek(l, 1);
             if (next == '\n') {
-                advance_n(l, 2); 
+                advance_n(l, 2);
             } else if (next == '\r' && peek(l, 2) == '\n') {
                 advance_n(l, 3);
             } else {
-                break; // Barra literal, sai do loop
+                break; // Literal backslash, stop skipping trivia
             }
-        } 
+        }
         else {
             break;
         }
@@ -155,7 +164,7 @@ Token lexer_next(Lexer *l) {
     const char *start_ptr = &l->content.data[l->cursor];
     char c = current(l);
 
-    // --- Símbolos Simples ---
+    // --- Single-Character Tokens ---
     if (c == '(') {
         token.kind = TOKEN_LPAREN;
         token.text = sv_from_parts(start_ptr, 1);
@@ -175,13 +184,14 @@ Token lexer_next(Lexer *l) {
         return token;
     }
 
-    // --- Strings Normais ---
+    // --- Quoted Strings ---
     if (c == '"') {
         token.kind = TOKEN_STRING;
-        advance(l); 
+        advance(l);
         size_t len = 1;
         bool closed = false;
 
+        // Keep the raw lexeme, including quotes and escapes.
         while (l->cursor < l->content.count) {
             char cc = current(l);
             if (cc == '"') {
@@ -210,12 +220,14 @@ Token lexer_next(Lexer *l) {
     if (bracket_len > 0) {
         token.kind = TOKEN_RAW_STRING;
         advance_n(l, bracket_len);
-        
+
         size_t content_start = l->cursor;
         skip_bracket_content(l, bracket_len);
         size_t total_len = bracket_len + (l->cursor - content_start);
         if (l->cursor >= l->content.count) {
             bool has_closer = false;
+            // If we reached EOF, only accept the token as valid when the
+            // suffix still matches the expected closing delimiter.
             if (l->content.count >= bracket_len) {
                 size_t closer_start = l->content.count - bracket_len;
                 has_closer = (l->content.data[closer_start] == ']');
@@ -237,13 +249,14 @@ Token lexer_next(Lexer *l) {
         return token;
     }
 
-    // --- Variáveis e Generator Expressions ---
+    // --- Variables and Generator Expressions ---
     if (c == '$') {
         if (peek(l, 1) == '<') {
             token.kind = TOKEN_GEN_EXP;
-            advance_n(l, 2); 
+            advance_n(l, 2);
             size_t len = 2;
             int depth = 1;
+            // Generator expressions can nest `<` and `>` in some forms.
             while (l->cursor < l->content.count && depth > 0) {
                 char cc = current(l);
                 if (cc == '<') depth++;
@@ -264,6 +277,8 @@ Token lexer_next(Lexer *l) {
             size_t len = var_prefix;
 
             int depth = 1;
+            // Track brace depth so nested forms like `${outer_${inner}}`
+            // remain a single token.
             while (l->cursor < l->content.count && depth > 0) {
                 char cc = current(l);
                 if (cc == '{') depth++;
@@ -284,39 +299,43 @@ Token lexer_next(Lexer *l) {
             return token;
         }
 
-        // CMake files in the wild can embed foreign syntax (e.g. make snippets).
-        // Treat bare '$' as an identifier token to keep parsing resilient.
+        // Real-world CMake files sometimes embed foreign syntax
+        // (for example make snippets). Treat a bare `$` as an identifier
+        // to keep the lexer resilient to that noise.
         token.kind = TOKEN_IDENTIFIER;
         token.text = sv_from_parts(start_ptr, 1);
         advance(l);
         return token;
     }
 
-    // --- Identificadores / Argumentos ---
+    // --- Identifiers / Arguments ---
     if (!isspace((unsigned char)c)) {
         token.kind = TOKEN_IDENTIFIER;
         size_t len = 0;
-        
+
         while (l->cursor < l->content.count) {
             char cc = current(l);
-            
+
             if (isspace((unsigned char)cc) || cc == '(' || cc == ')' || cc == '"' || cc == '#' || cc == ';') {
                 break;
             }
-            
+
             if (cc == '$') {
+                // `$` starts a new token only when it actually opens a variable
+                // or generator expression; otherwise it stays in the literal.
                 if (peek(l, 1) == '<' || check_var_start(l) > 0) {
                     break;
                 }
             }
-            
-            // Verificar se é Line Continuation ANTES de tratar como escape
+
+            // A line continuation splits tokens; a regular backslash stays inside
+            // the same argument.
             if (cc == '\\') {
                 char next = peek(l, 1);
                 if (next == '\n' || (next == '\r' && peek(l, 2) == '\n')) {
                     break;
                 }
-                
+
                 advance(l); len++;
                 if (l->cursor < l->content.count) { advance(l); len++; }
                 continue;
@@ -325,7 +344,7 @@ Token lexer_next(Lexer *l) {
             advance(l);
             len++;
         }
-        
+
         token.text = sv_from_parts(start_ptr, len);
         return token;
     }

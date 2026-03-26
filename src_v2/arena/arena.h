@@ -9,64 +9,64 @@
 typedef struct Arena Arena;
 typedef void (*Arena_Cleanup_Fn)(void *userdata);
 
-// Cria uma arena com capacidade inicial (em bytes)
+// Create an arena with an initial block capacity in bytes.
 Arena* arena_create(size_t initial_capacity);
 
-// Destroi a arena, liberando toda a memoria
+// Destroy the arena and release all backing blocks.
 void arena_destroy(Arena* arena);
 
-// Registra um callback de cleanup (ordem LIFO)
-// Os callbacks podem ser executados por arena_rewind, arena_reset ou arena_destroy.
+// Register a cleanup callback in LIFO order.
+// Callbacks may run during arena_rewind(), arena_reset() or arena_destroy().
 bool arena_on_destroy(Arena *arena, Arena_Cleanup_Fn fn, void *userdata);
 
-// Aloca memoria na arena (alinhada para 8 bytes)
+// Allocate memory from the arena. Returned memory is max_align_t-aligned.
 void* arena_alloc(Arena* arena, size_t size);
 
-// Aloca memoria e zera os bytes
+// Allocate memory and zero the requested byte range.
 void* arena_alloc_zero(Arena* arena, size_t size);
 
-// Aloca memoria para um array de itens
+// Allocate storage for an array of items.
 #define arena_alloc_array(arena, type, count) \
     ((type*)arena_alloc((arena), sizeof(type) * (count)))
 
-// Aloca memoria para um array e zera
+// Allocate zeroed storage for an array of items.
 #define arena_alloc_array_zero(arena, type, count) \
     ((type*)arena_alloc_zero((arena), sizeof(type) * (count)))
 
-// Realoca o ultimo bloco alocado (util para dynamic arrays)
-// So funciona se ptr for a ultima alocacao!
+// Reallocate the most recent allocation when possible.
+// Falls back to allocate+copy when `ptr` is not the last live allocation.
 void* arena_realloc_last(Arena* arena, void* ptr, size_t old_size, size_t new_size);
 
-// Reinicia a arena (executa cleanups pendentes e libera todas as alocacoes,
-// mantendo os blocos de memoria)
+// Reset the arena, running pending cleanups and releasing logical allocations
+// while keeping the backing blocks for reuse.
 void arena_reset(Arena* arena);
 
-// Retorna o tamanho total alocado na arena
+// Return the total number of bytes currently marked as used.
 size_t arena_total_allocated(const Arena* arena);
 
-// Retorna o tamanho total da capacidade da arena
+// Return the total capacity across all allocated blocks.
 size_t arena_total_capacity(const Arena* arena);
 
-// Salva a posicao atual da arena para restaurar depois
+// Save the current arena position so it can be restored later.
 typedef struct {
     void *block;
     size_t used;
     void *cleanup_head;
 } Arena_Mark;
 
-// Marca a posicao atual
+// Capture a rewind mark at the current allocation point.
 Arena_Mark arena_mark(Arena* arena);
 
-// Restaura para uma marca anterior (libera tudo apos a marca)
+// Restore a previous mark, discarding allocations and cleanups created after it.
 void arena_rewind(Arena* arena, Arena_Mark mark);
 
-// Duplica uma string na arena
+// Duplicate a NUL-terminated string into arena storage.
 char* arena_strdup(Arena* arena, const char* str);
 
-// Duplica uma string com tamanho maximo
+// Duplicate up to max_len bytes from a string and always append a trailing NUL.
 char* arena_strndup(Arena* arena, const char* str, size_t max_len);
 
-// Duplica uma memoria na arena
+// Duplicate an arbitrary byte range into arena storage.
 void* arena_memdup(Arena* arena, const void* src, size_t size);
 
 #endif // ARENA_H_

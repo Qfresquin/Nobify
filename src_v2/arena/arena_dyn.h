@@ -16,6 +16,7 @@ typedef struct {
 
 static inline Arena_Arr_Header *arena_arr__hdr_mut(void *arr) {
     if (!arr) return NULL;
+    // User-facing array pointers point right after the hidden header.
     return &((Arena_Arr_Header*)arr)[-1];
 }
 
@@ -50,6 +51,7 @@ static inline bool arena_da_reserve(
     if (!arena || !items || !capacity || item_size == 0) return false;
     if (min_count <= *capacity) return true;
 
+    // Grow geometrically to keep append-heavy code amortized O(1).
     size_t new_cap = *capacity ? *capacity : ARENA_ARR_INIT_CAPACITY;
     while (new_cap < min_count) {
         if (new_cap > SIZE_MAX / 2) {
@@ -65,6 +67,7 @@ static inline bool arena_da_reserve(
     void *new_items = arena_alloc(arena, new_cap * item_size);
     if (!new_items) return false;
 
+    // Legacy arrays have no hidden header, so reserve always allocates and copies.
     if (*items && *capacity > 0) {
         memcpy(new_items, *items, (*capacity) * item_size);
     }
@@ -85,6 +88,7 @@ static inline bool arena_arr__grow(
     size_t current_cap = arena_arr_cap(*arr);
     if (min_capacity <= current_cap) return true;
 
+    // Header-backed arrays use the same doubling policy as the legacy helper.
     size_t new_cap = current_cap == 0 ? ARENA_ARR_INIT_CAPACITY : current_cap;
     while (new_cap < min_capacity) {
         if (new_cap > SIZE_MAX / 2) {
@@ -102,6 +106,8 @@ static inline bool arena_arr__grow(
     size_t old_bytes = old_cap == 0 ? 0 : sizeof(Arena_Arr_Header) + (old_cap * item_size);
     size_t new_bytes = sizeof(Arena_Arr_Header) + (new_cap * item_size);
     Arena_Arr_Header *old_hdr = arena_arr__hdr_mut(*arr);
+    // When the array header is the arena's last allocation, this often grows
+    // in place via arena_realloc_last(); otherwise it transparently relocates.
     Arena_Arr_Header *new_hdr = arena_realloc_last(arena, old_hdr, old_bytes, new_bytes);
     if (!new_hdr) return false;
 
@@ -126,6 +132,7 @@ static inline void *arena_arr__append_n(
     if (!arena_arr__grow(arena, arr, item_size, new_count)) return NULL;
 
     Arena_Arr_Header *hdr = arena_arr__hdr_mut(*arr);
+    // Return the first newly reserved slot and only then bump the logical count.
     void *slot = (unsigned char*)(*arr) + (old_count * item_size);
     hdr->count = new_count;
     return slot;
@@ -141,6 +148,7 @@ static inline bool arena_arr__fit_impl(Arena *arena, void **arr, size_t item_siz
     size_t old_bytes = sizeof(Arena_Arr_Header) + (cap * item_size);
     size_t new_bytes = sizeof(Arena_Arr_Header) + (count * item_size);
     Arena_Arr_Header *old_hdr = arena_arr__hdr_mut(*arr);
+    // Shrinking only works when the array is still the arena's most recent allocation.
     Arena_Arr_Header *new_hdr = arena_realloc_last(arena, old_hdr, old_bytes, new_bytes);
     if (!new_hdr) return false;
     new_hdr->capacity = count;

@@ -9,7 +9,7 @@
 #include <limits.h>
 
 // ============================================================================
-// Infra interna de parsing
+// Internal parser infrastructure
 // ============================================================================
 
 typedef struct {
@@ -41,6 +41,7 @@ static inline bool parser_has_oom(const Parser_Context *ctx) {
     do { if (parser_has_oom((ctx))) return (ret_value); } while (0)
 
 static size_t parser_fail_after_from_env(void) {
+    // Test-only fault injection hook used to exercise arena/append failure paths.
     const char *env = getenv("CMK2NOB_PARSER_FAIL_APPEND_AFTER");
     if (!env || env[0] == '\0') return SIZE_MAX;
     char *end = NULL;
@@ -51,6 +52,7 @@ static size_t parser_fail_after_from_env(void) {
 }
 
 static size_t parser_limit_from_env(const char *name, size_t fallback, size_t min_value) {
+    // Clamp env-driven limits so misconfiguration cannot disable safety checks.
     const char *env = getenv(name);
     if (!env || env[0] == '\0') return fallback;
     char *end = NULL;
@@ -82,6 +84,8 @@ static bool parser_consume_append_budget(Parser_Context *ctx) {
 static bool parser_append_token(Parser_Context *ctx, Arg *arg, Token tok) {
     if (!ctx || !arg) return false;
     if (!parser_consume_append_budget(ctx)) return parser_report_oom(ctx);
+    // Arguments preserve the original token stream so later stages can decide
+    // how much interpretation to apply.
     if (!arena_arr_push(ctx->arena, arg->items, tok)) return parser_report_oom(ctx);
     return true;
 }
@@ -120,6 +124,8 @@ static void parser_emit_unexpected_token(Token t, const char *hint) {
 
 static void parser_sync_after_statement_error(Token_List *tokens, size_t *cursor, size_t start_line) {
     if (!tokens || !cursor) return;
+    // Recovery stays line-local: once a statement is known to be malformed,
+    // skip the remaining tokens from that same source line and try again.
     while (*cursor < arena_arr_len(*tokens)) {
         Token t = (*tokens)[*cursor];
         if (t.line != start_line) break;
@@ -137,6 +143,7 @@ static Node parser_make_empty_statement(size_t line, size_t col) {
 
 static bool match_token_text(Token t, const char *text) {
     if (t.kind != TOKEN_IDENTIFIER) return false;
+    // CMake command names are case-insensitive, so parser dispatch is too.
     String_View sv = nob_sv_from_cstr(text);
     if (t.text.count != sv.count) return false;
     for (size_t i = 0; i < sv.count; i++) {
@@ -169,6 +176,7 @@ static bool sv_eq_ci_sv(String_View a, String_View b) {
 static String_View parser_first_arg_text(const Args *args) {
     if (!args || arena_arr_len(*args) == 0) return nob_sv_from_cstr("");
     if (arena_arr_len((*args)[0].items) == 0) return nob_sv_from_cstr("");
+    // End-* signature checks only care about the first logical argument.
     return (*args)[0].items[0].text;
 }
 
@@ -182,6 +190,8 @@ static bool is_cmake_bracket_literal(String_View sv) {
     if (sv.count < 4 || !sv.data) return false;
     if (sv.data[0] != '[') return false;
 
+    // The parser double-checks bracket literals here because some callers only
+    // have the raw token text and not the original token kind.
     size_t i = 1;
     while (i < sv.count && sv.data[i] == '=') i++;
     if (i >= sv.count || sv.data[i] != '[') return false;
@@ -200,6 +210,8 @@ static bool is_cmake_bracket_literal(String_View sv) {
 static bool parser_append_new_arg_with_token(Parser_Context *ctx, Args *args, Token tok, Arg_Kind kind) {
     Arg arg = {0};
     arg.kind = kind;
+    // A new logical argument starts whenever the lexer reported separating space
+    // or when parser-specific merge rules reject concatenation.
     if (!parser_append_token(ctx, &arg, tok)) return false;
     if (!parser_append_arg(ctx, args, arg)) return false;
     return true;
@@ -208,6 +220,8 @@ static bool parser_append_new_arg_with_token(Parser_Context *ctx, Args *args, To
 static bool parser_append_to_last_or_new(Parser_Context *ctx, Args *args, Token tok, Arg_Kind kind) {
     if (!ctx || !args) return false;
     if (arena_arr_len(*args) > 0 && !tok.has_space_left) {
+        // Adjacent tokens with no separating trivia still belong to the same
+        // CMake argument, e.g. `foo${bar}` or `name-suffix`.
         if (!parser_append_token(ctx, &(*args)[arena_arr_len(*args) - 1], tok)) return false;
         return true;
     }
@@ -223,6 +237,8 @@ static bool parser_append_with_condition_merge_rules(Parser_Context *ctx, Args *
         Arg *last = &(*args)[arena_arr_len(*args) - 1];
         if (arena_arr_len(last->items) > 0) {
             Token prev = last->items[arena_arr_len(last->items) - 1];
+            // In condition expressions, parentheses must stay as standalone
+            // arguments so later evaluation can preserve grouping.
             if (prev.kind == TOKEN_LPAREN || prev.kind == TOKEN_RPAREN) {
                 can_merge = false;
             }
@@ -237,12 +253,14 @@ static bool parser_append_with_condition_merge_rules(Parser_Context *ctx, Args *
 }
 
 static Arg_Kind parser_infer_arg_kind(Token tok) {
+    // Keep quoting style in the AST because later evaluation differs between
+    // quoted, bracket and unquoted arguments.
     if (tok.kind == TOKEN_STRING) return ARG_QUOTED;
     if (tok.kind == TOKEN_RAW_STRING || is_cmake_bracket_literal(tok.text)) return ARG_BRACKET;
     return ARG_UNQUOTED;
 }
 
-// Consome argumentos entre '(' e ')'
+// Consume the argument list between the opening and closing `(` / `)`.
 static Args parse_args(Parser_Context *ctx,
                       Token_List *tokens,
                       size_t *cursor,
@@ -260,17 +278,21 @@ static Args parse_args(Parser_Context *ctx,
     bool reported_paren_depth = false;
 
     if (*cursor >= arena_arr_len(*tokens) || (*tokens)[*cursor].kind != TOKEN_LPAREN) {
+        // Caller already validated syntax in most paths, but this keeps helpers
+        // robust when reused during recovery.
         ok = false;
         if (out_ok) *out_ok = ok;
         return args;
     }
-    (*cursor)++; // Pula '('
+    (*cursor)++; // Skip the opening `(`
     depth = 1;
 
     while (*cursor < arena_arr_len(*tokens)) {
         Token t = (*tokens)[*cursor];
 
         if (overflow_extra > 0) {
+            // Once the nesting limit is exceeded, fast-forward until the parser
+            // reaches the matching depth again, then resume normal parsing.
             if (t.kind == TOKEN_LPAREN) overflow_extra++;
             if (t.kind == TOKEN_RPAREN) overflow_extra--;
             (*cursor)++;
@@ -292,6 +314,7 @@ static Args parse_args(Parser_Context *ctx,
             }
             depth++;
             if (mode == ARGS_CONDITION_EXPR) {
+                // Condition mode preserves explicit grouping as standalone args.
                 if (!parser_append_new_arg_with_token(ctx, &args, t, ARG_UNQUOTED)) return NULL;
             } else {
                 if (!parser_append_to_last_or_new(ctx, &args, t, ARG_UNQUOTED)) return NULL;
@@ -302,7 +325,7 @@ static Args parse_args(Parser_Context *ctx,
 
         if (t.kind == TOKEN_RPAREN) {
             if (depth == 1) {
-                (*cursor)++; // Consome ')' que fecha o comando
+                (*cursor)++; // Consume the `)` that closes this command
                 closed = true;
                 break;
             }
@@ -317,11 +340,14 @@ static Args parse_args(Parser_Context *ctx,
         }
 
         if (t.kind == TOKEN_SEMICOLON && depth == 1) {
-            (*cursor)++; // Ignora ';' solto
+            // At top-level argument depth, raw `;` separators do not become AST tokens.
+            (*cursor)++;
             continue;
         }
 
         if (mode == ARGS_CONDITION_EXPR) {
+            // Condition expressions use slightly different merge rules so nested
+            // parenthesized groups survive as separate argument boundaries.
             if (!parser_append_with_condition_merge_rules(ctx, &args, t)) return NULL;
         } else {
             if (!parser_append_to_last_or_new(ctx, &args, t, parser_infer_arg_kind(t))) return NULL;
@@ -340,6 +366,7 @@ static Args parse_args(Parser_Context *ctx,
 
 static bool is_valid_command_name(String_View name) {
     if (name.count == 0) return false;
+    // Match CMake's command identifier shape: keyword-like names only.
     unsigned char c0 = (unsigned char)name.data[0];
     if (!(isalpha(c0) || c0 == '_')) return false;
     for (size_t i = 1; i < name.count; i++) {
@@ -366,9 +393,13 @@ static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, si
     const char *terminators[] = {"else", "elseif", "endif"};
     String_View found_term = {0};
 
+    // The initial block runs until the first control-flow boundary inside the
+    // `if` chain: `elseif`, `else` or `endif`.
     node.as.if_stmt.then_block = parse_block(ctx, tokens, cursor, terminators, 3, &found_term);
     PARSER_OOM_RETURN(ctx, (Node){0});
 
+    // `elseif()` is represented as repeated condition + block pairs attached
+    // to the same `if` node, mirroring CMake's chained control flow.
     while (sv_eq_ci_lit(found_term, "elseif")) {
         ElseIf_Clause clause = {0};
         bool elseif_ok = true;
@@ -385,6 +416,8 @@ static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, si
     }
 
     if (sv_eq_ci_lit(found_term, "else")) {
+        // `else()` may legally carry an optional signature. We parse it so the
+        // cursor stays aligned even though the AST does not store those args.
         bool else_args_ok = true;
         Args else_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &else_args_ok);
         (void)else_args;
@@ -400,6 +433,7 @@ static Node parse_if(Parser_Context *ctx, Token_List *tokens, size_t *cursor, si
                 "if sem terminador endif()", "adicione endif() ao bloco");
             return parser_make_empty_statement(line, col);
         } else if (*cursor < arena_arr_len(*tokens) && (*tokens)[*cursor].kind == TOKEN_LPAREN) {
+            // CMake allows an optional closing signature such as `endif(VAR)`.
             bool end_args_ok = true;
             Args end_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &end_args_ok);
             PARSER_OOM_RETURN(ctx, (Node){0});
@@ -444,6 +478,8 @@ static Node parse_foreach(Parser_Context *ctx, Token_List *tokens, size_t *curso
 
     const char *terminators[] = {"endforeach"};
     String_View found_term = {0};
+    // `foreach()` bodies are parsed opaquely; semantic validation of the loop
+    // form happens later in evaluation.
     node.as.foreach_stmt.body = parse_block(ctx, tokens, cursor, terminators, 1, &found_term);
     PARSER_OOM_RETURN(ctx, (Node){0});
     if (!sv_eq_ci_lit(found_term, "endforeach")) {
@@ -480,6 +516,8 @@ static Node parse_while(Parser_Context *ctx, Token_List *tokens, size_t *cursor,
 
     const char *terminators[] = {"endwhile"};
     String_View found_term = {0};
+    // Like `if()`, `while()` keeps its condition in expression mode so grouped
+    // subexpressions survive token merging.
     node.as.while_stmt.body = parse_block(ctx, tokens, cursor, terminators, 1, &found_term);
     PARSER_OOM_RETURN(ctx, (Node){0});
     if (!sv_eq_ci_lit(found_term, "endwhile")) {
@@ -513,8 +551,10 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
     Args all_args = parse_args(ctx, tokens, cursor, ARGS_COMMAND_DEFAULT, line, col, &def_args_ok);
     PARSER_OOM_RETURN(ctx, (Node){0});
     if (!def_args_ok) return parser_make_empty_statement(line, col);
-    
+
     if (arena_arr_len(all_args) > 0) {
+        // The first argument names the function/macro; remaining arguments are
+        // stored as the declared parameter list.
         if (arena_arr_len(all_args[0].items) > 0) {
             node.as.func_def.name = all_args[0].items[0].text;
         }
@@ -525,6 +565,8 @@ static Node parse_function_macro(Parser_Context *ctx, Token_List *tokens, size_t
 
     const char *terms[] = { is_macro ? "endmacro" : "endfunction" };
     String_View found_term = {0};
+    // Functions and macros share the same AST layout; only the node kind and
+    // accepted closing keyword differ.
     node.as.func_def.body = parse_block(ctx, tokens, cursor, terms, 1, &found_term);
     PARSER_OOM_RETURN(ctx, (Node){0});
     if (!sv_eq_ci_lit(found_term, is_macro ? "endmacro" : "endfunction")) {
@@ -561,6 +603,8 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", line, col, "depth",
             "profundidade maxima de blocos excedida",
             "reduza aninhamento ou ajuste CMK2NOB_PARSER_MAX_BLOCK_DEPTH");
+        // Recovery mode: scan forward until a matching block terminator so the
+        // caller can resume from a stable boundary.
         while (*cursor < arena_arr_len(*tokens)) {
             Token t = (*tokens)[*cursor];
             if (t.kind == TOKEN_IDENTIFIER && terminators != NULL) {
@@ -582,6 +626,7 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
         Token t = (*tokens)[*cursor];
 
         if (t.kind == TOKEN_LPAREN || t.kind == TOKEN_RPAREN) {
+            // Bare parentheses are only valid inside a command argument list.
             parser_emit_unexpected_token(t, "parenteses no nivel de bloco exigem um comando valido");
             (*cursor)++;
             continue;
@@ -590,6 +635,8 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
         if (t.kind == TOKEN_IDENTIFIER && terminators != NULL) {
             for (size_t i = 0; i < term_count; ++i) {
                 if (match_token_text(t, terminators[i])) {
+                    // The terminator token itself belongs to the enclosing block,
+                    // so consume it here and let the caller decide what follows.
                     if (found_terminator) *found_terminator = t.text;
                     (*cursor)++;
                     ctx->block_depth--;
@@ -604,6 +651,8 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
             return NULL;
         }
         if (node.kind != NODE_COMMAND || node.as.cmd.name.count > 0) {
+            // Empty placeholder nodes are only used for local recovery and
+            // should not leak into the final block list.
             if (!parser_append_node(ctx, &list, node)) {
                 ctx->block_depth--;
                 return (Node_List){0};
@@ -615,7 +664,7 @@ static Node_List parse_block(Parser_Context *ctx, Token_List *tokens, size_t *cu
     return list;
 }
 
-// --- Dispatcher Principal ---
+// --- Main Statement Dispatcher ---
 
 static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cursor) {
     PARSER_OOM_RETURN(ctx, (Node){0});
@@ -627,6 +676,8 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
     
     if (t.kind != TOKEN_IDENTIFIER) {
         Node node = parser_make_empty_statement(t.line, t.col);
+        // Statement parsing always starts from a command name. Anything else at
+        // block level is reported and then skipped with line-local recovery.
         if (t.kind == TOKEN_INVALID) {
             diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "token",
                 nob_temp_sprintf("token invalido: "SV_Fmt, SV_Arg(t.text)),
@@ -640,7 +691,7 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
         return node;
     }
     
-    (*cursor)++; // Consome o nome do comando
+    (*cursor)++; // Consume the command name token
 
     if (!is_valid_command_name(t.text)) {
         Node node = parser_make_empty_statement(t.line, t.col);
@@ -652,6 +703,8 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
     }
 
     if (*cursor >= arena_arr_len(*tokens) || (*tokens)[*cursor].kind != TOKEN_LPAREN) {
+        // The lexer already split punctuation, so a missing `(` here means the
+        // statement cannot be interpreted as a command invocation.
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", t.line, t.col, "command",
             nob_temp_sprintf("comando sem parenteses: "SV_Fmt, SV_Arg(t.text)),
             "use sintaxe nome_do_comando(...)");
@@ -659,17 +712,17 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
         return parser_make_empty_statement(t.line, t.col);
     }
 
-    // Passa a origem (linha e coluna) para os sub-parsers
+    // Pass the original source location through to specialized sub-parsers.
     if (match_token_text(t, "if")) return parse_if(ctx, tokens, cursor, t.line, t.col);
     if (match_token_text(t, "foreach")) return parse_foreach(ctx, tokens, cursor, t.line, t.col);
     if (match_token_text(t, "while")) return parse_while(ctx, tokens, cursor, t.line, t.col);
     if (match_token_text(t, "function")) return parse_function_macro(ctx, tokens, cursor, false, t.line, t.col);
     if (match_token_text(t, "macro")) return parse_function_macro(ctx, tokens, cursor, true, t.line, t.col);
 
-    // Comando Comum (set, project, etc)
+    // Regular command node, e.g. `set()` or `project()`.
     Node node = {0};
     node.kind = NODE_COMMAND;
-    node.line = t.line; // Origem Salva!
+    node.line = t.line;
     node.col = t.col;
     node.as.cmd.name = t.text;
     bool args_ok = true;
@@ -698,6 +751,7 @@ Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
     ctx.max_block_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", PARSER_DEFAULT_MAX_BLOCK_DEPTH, 1);
     ctx.max_paren_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_PAREN_DEPTH", PARSER_DEFAULT_MAX_PAREN_DEPTH, 1);
 
+    // Parse the entire file as a single implicit top-level block.
     Ast_Root root = parse_block(&ctx, &tokens, &cursor, NULL, 0, NULL);
     if (ctx.oom) return NULL;
     return root;
@@ -720,7 +774,7 @@ void print_node(Node *node, int indent) {
     switch (node->kind) {
         case NODE_COMMAND:
             printf("\x1b[36mCMD\x1b[0m "SV_Fmt" (L:%zu)\n", SV_Arg(node->as.cmd.name), node->line);
-            // Mostrar os args de forma compacta para debug
+            // Print arguments compactly for debug output.
             for (size_t i = 0; i < arena_arr_len(node->as.cmd.args); i++) {
                 print_indent(indent + 1);
                 Arg a = node->as.cmd.args[i];

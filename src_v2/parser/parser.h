@@ -5,23 +5,23 @@
 #include "lexer.h"
 #include "arena.h" 
 
-// --- Estruturas de Argumentos ---
+// --- Argument Structures ---
 
-// Novo: Define como o argumento foi encapsulado no arquivo CMake
+// Tracks how an argument was quoted in the original CMake source.
 typedef enum {
-    ARG_UNQUOTED = 0, // Argumento normal (ex: lib${V}.a) - Sujeito a quebra por ';'
-    ARG_QUOTED,       // Entre aspas (ex: "lib${V}.a") - Protege os ';'
-    ARG_BRACKET       // Entre colchetes (ex: [[texto puro]]) - ignora expansao e ';'
+    ARG_UNQUOTED = 0, // Plain argument, e.g. lib${V}.a; can still split on ';'
+    ARG_QUOTED,       // Quoted argument, e.g. "lib${V}.a"; protects ';'
+    ARG_BRACKET       // Bracket argument, e.g. [[raw text]]; no expansion or ';' splitting
 } Arg_Kind;
 
 typedef struct {
     Token *items;
-    Arg_Kind kind;    // Rastreia o tipo de quoting deste argumento
+    Arg_Kind kind;    // Preserves the original quoting style of this argument
 } Arg;
 
 typedef Arg *Args;
 
-// --- Estruturas da AST ---
+// --- AST Structures ---
 
 typedef enum {
     NODE_COMMAND,   // set(), project(), add_executable()
@@ -45,7 +45,7 @@ typedef ElseIf_Clause *ElseIf_Clause_List;
 struct Node {
     Node_Kind kind;
     
-    // Rastreio de origem (linha/coluna) para diagnosticos.
+    // Source location used for diagnostics and debugging output.
     size_t line;
     size_t col;
     
@@ -80,18 +80,18 @@ struct Node {
     } as;
 };
 
-// Resultado do parsing: bloco raiz.
+// Parsing result: the root block of statements.
 typedef Node_List Ast_Root;
 
-// Funcao principal do parser.
-// Recovery: emite diagnosticos para sintaxe invalida e tenta continuar.
-// Limites (via env): CMK2NOB_PARSER_MAX_BLOCK_DEPTH e CMK2NOB_PARSER_MAX_PAREN_DEPTH.
+// Main parser entry point.
+// Recovery: emits diagnostics for invalid syntax and tries to continue.
+// Limits (via env): CMK2NOB_PARSER_MAX_BLOCK_DEPTH and CMK2NOB_PARSER_MAX_PAREN_DEPTH.
 Ast_Root parse_tokens(Arena *arena, Token_List tokens);
 
-// Em alocacao por arena, ast_free() e no-op; use arena_destroy() para liberar memoria.
+// With arena allocation, ast_free() is a no-op; destroy the arena instead.
 void ast_free(Ast_Root root);
 
-// Funcao auxiliar para imprimir a AST (debug)
+// Helper for debug printing of the AST.
 void print_ast(Ast_Root root, int indent);
 
 #endif // PARSER_H_
