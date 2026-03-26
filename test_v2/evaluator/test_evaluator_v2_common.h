@@ -433,24 +433,11 @@ static bool eval_test_var_defined(const Eval_Test_Runtime *ctx, String_View key)
 }
 
 static bool eval_test_cache_defined(const Eval_Test_Runtime *ctx, String_View key) {
-    if (!ctx || !ctx->stream) return false;
-    for (size_t i = 0; i < ctx->stream->count; i++) {
-        const Cmake_Event *ev = &ctx->stream->items[i];
-        if (ev->h.kind != EV_VAR_SET) continue;
-        if (ev->as.var_set.target_kind != EVENT_VAR_TARGET_CACHE) continue;
-        if (nob_sv_eq(ev->as.var_set.key, key)) return true;
-    }
-    return false;
+    return ctx && ctx->session && eval_session_cache_defined(ctx->session, key);
 }
 
 static bool eval_test_target_known(const Eval_Test_Runtime *ctx, String_View target_name) {
-    if (!ctx || !ctx->stream) return false;
-    for (size_t i = 0; i < ctx->stream->count; i++) {
-        const Cmake_Event *ev = &ctx->stream->items[i];
-        if (ev->h.kind != EV_TARGET_DECLARE) continue;
-        if (nob_sv_eq(ev->as.target_declare.name, target_name)) return true;
-    }
-    return false;
+    return ctx && ctx->session && eval_session_target_known(ctx->session, target_name);
 }
 
 static bool eval_test_var_event_seen(const Cmake_Event_Stream *stream, String_View key) {

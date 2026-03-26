@@ -2353,6 +2353,20 @@ bool eval_session_get_visible_var(const EvalSession *session,
     return eval_var_defined_visible(&exec, key);
 }
 
+bool eval_session_cache_defined(const EvalSession *session, String_View key) {
+    if (!session || key.count == 0) return false;
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, (EvalSession*)session);
+    return eval_cache_defined(&exec, key);
+}
+
+bool eval_session_target_known(const EvalSession *session, String_View target_name) {
+    if (!session || target_name.count == 0) return false;
+    EvalExecContext exec = {0};
+    eval_exec_prepare_session_view(&exec, (EvalSession*)session);
+    return eval_target_known(&exec, target_name) || eval_target_alias_known(&exec, target_name);
+}
+
 const EvalServices *eval_exec_services(const EvalExecContext *exec) {
     return exec ? exec->services : NULL;
 }

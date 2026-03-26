@@ -224,6 +224,8 @@ bool eval_session_command_exists(const EvalSession *session, String_View command
 bool eval_session_get_visible_var(const EvalSession *session,
                                   String_View key,
                                   String_View *out_value);
+bool eval_session_cache_defined(const EvalSession *session, String_View key);
+bool eval_session_target_known(const EvalSession *session, String_View target_name);
 
 EvalRegistry *eval_registry_create(Arena *arena);
 void eval_registry_destroy(EvalRegistry *registry);

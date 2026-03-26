@@ -1104,10 +1104,18 @@ TEST(evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    ASSERT(nob_mkdir_if_not_exists("ctest_configure_defaults_src"));
-    ASSERT(nob_mkdir_if_not_exists("ctest_configure_defaults_bin"));
-    ASSERT(nob_mkdir_if_not_exists("ctest_configure_wrong_src"));
-    ASSERT(nob_mkdir_if_not_exists("ctest_configure_wrong_bin"));
+    ASSERT(nob_mkdir_if_not_exists("src"));
+    ASSERT(nob_mkdir_if_not_exists("build"));
+    ASSERT(nob_mkdir_if_not_exists("src/ctest_configure_defaults_src"));
+    ASSERT(nob_mkdir_if_not_exists("build/ctest_configure_defaults_bin"));
+    ASSERT(nob_mkdir_if_not_exists("src/ctest_configure_wrong_src"));
+    ASSERT(nob_mkdir_if_not_exists("build/ctest_configure_wrong_bin"));
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    char source_root[_TINYDIR_PATH_MAX] = {0};
+    char binary_root[_TINYDIR_PATH_MAX] = {0};
+    ASSERT(snprintf(source_root, sizeof(source_root), "%s/src", cwd) > 0);
+    ASSERT(snprintf(binary_root, sizeof(binary_root), "%s/build", cwd) > 0);
 
     Ctest_Configure_Mock_Process_Data mock = {0};
     EvalServices services = {
@@ -1119,8 +1127,8 @@ TEST(evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
+    init.source_dir = nob_sv_from_cstr(source_root);
+    init.binary_dir = nob_sv_from_cstr(binary_root);
     init.current_file = "CMakeLists.txt";
     init.services = &services;
 

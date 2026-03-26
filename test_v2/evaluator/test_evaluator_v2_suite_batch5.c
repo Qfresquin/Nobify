@@ -8,33 +8,39 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    ASSERT(nob_mkdir_if_not_exists("find_items"));
-    ASSERT(nob_mkdir_if_not_exists("find_items/nested"));
-    ASSERT(nob_mkdir_if_not_exists("find_items/include"));
-    ASSERT(nob_mkdir_if_not_exists("find_items/bin"));
-    ASSERT(nob_mkdir_if_not_exists("find_items/lib"));
-    ASSERT(nob_write_entire_file("find_items/nested/marker.txt", "x", 1));
-    ASSERT(nob_write_entire_file("find_items/include/marker.hpp", "x", 1));
+    ASSERT(nob_mkdir_if_not_exists("src"));
+    ASSERT(nob_mkdir_if_not_exists("build"));
+    ASSERT(nob_mkdir_if_not_exists("src/find_items"));
+    ASSERT(nob_mkdir_if_not_exists("src/find_items/nested"));
+    ASSERT(nob_mkdir_if_not_exists("src/find_items/include"));
+    ASSERT(nob_mkdir_if_not_exists("src/find_items/bin"));
+    ASSERT(nob_mkdir_if_not_exists("src/find_items/lib"));
+    ASSERT(nob_write_entire_file("src/find_items/nested/marker.txt", "x", 1));
+    ASSERT(nob_write_entire_file("src/find_items/include/marker.hpp", "x", 1));
 #if defined(_WIN32)
-    ASSERT(nob_write_entire_file("find_items/lib/sample.lib", "x", 1));
+    ASSERT(nob_write_entire_file("src/find_items/lib/sample.lib", "x", 1));
 #else
-    ASSERT(nob_write_entire_file("find_items/lib/libsample.a", "x", 1));
+    ASSERT(nob_write_entire_file("src/find_items/lib/libsample.a", "x", 1));
 #endif
 
-    ASSERT(nob_mkdir_if_not_exists("foo_root"));
-    ASSERT(nob_mkdir_if_not_exists("foo_root/include"));
-    ASSERT(nob_mkdir_if_not_exists("foo_root/lib"));
-    ASSERT(nob_mkdir_if_not_exists("foo_root/lib/cmake"));
-    ASSERT(nob_mkdir_if_not_exists("foo_root/lib/cmake/Foo"));
-    ASSERT(nob_write_entire_file("foo_root/include/foo-marker.h", "x", 1));
-    ASSERT(nob_write_entire_file("foo_root/lib/cmake/Foo/FooConfig.cmake",
+    ASSERT(nob_mkdir_if_not_exists("src/foo_root"));
+    ASSERT(nob_mkdir_if_not_exists("src/foo_root/include"));
+    ASSERT(nob_mkdir_if_not_exists("src/foo_root/lib"));
+    ASSERT(nob_mkdir_if_not_exists("src/foo_root/lib/cmake"));
+    ASSERT(nob_mkdir_if_not_exists("src/foo_root/lib/cmake/Foo"));
+    ASSERT(nob_write_entire_file("src/foo_root/include/foo-marker.h", "x", 1));
+    ASSERT(nob_write_entire_file("src/foo_root/lib/cmake/Foo/FooConfig.cmake",
                                  "find_path(FOO_INCLUDE_DIR NAMES foo-marker.h)\n",
                                  strlen("find_path(FOO_INCLUDE_DIR NAMES foo-marker.h)\n")));
 
     const char *cwd = nob_get_current_dir_temp();
     ASSERT(cwd != NULL);
-    const char *foo_root_abs = nob_temp_sprintf("%s/foo_root", cwd);
-    ASSERT(foo_root_abs != NULL);
+    char source_root[_TINYDIR_PATH_MAX] = {0};
+    char binary_root[_TINYDIR_PATH_MAX] = {0};
+    char foo_root_abs[_TINYDIR_PATH_MAX] = {0};
+    ASSERT(snprintf(source_root, sizeof(source_root), "%s/src", cwd) > 0);
+    ASSERT(snprintf(binary_root, sizeof(binary_root), "%s/build", cwd) > 0);
+    ASSERT(snprintf(foo_root_abs, sizeof(foo_root_abs), "%s/foo_root", source_root) > 0);
 
     char script[4096];
     int n = snprintf(
@@ -59,8 +65,8 @@ TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_pol
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
+    init.source_dir = nob_sv_from_cstr(source_root);
+    init.binary_dir = nob_sv_from_cstr(binary_root);
     init.current_file = "CMakeLists.txt";
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
@@ -2145,6 +2151,14 @@ TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
+    ASSERT(nob_mkdir_if_not_exists("src"));
+    ASSERT(nob_mkdir_if_not_exists("build"));
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    char source_root[_TINYDIR_PATH_MAX] = {0};
+    char binary_root[_TINYDIR_PATH_MAX] = {0};
+    ASSERT(snprintf(source_root, sizeof(source_root), "%s/src", cwd) > 0);
+    ASSERT(snprintf(binary_root, sizeof(binary_root), "%s/build", cwd) > 0);
     const char *cfg_template =
         "NAME=@NAME@\n"
         "LITERAL=${NAME}\n"
@@ -2154,16 +2168,16 @@ TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
         "#cmakedefine01 ENABLE_FEATURE\n"
         "#cmakedefine01 DISABLE_FEATURE\n";
     const char *cfg_copy = "@NAME@\n${NAME}\n";
-    ASSERT(nob_write_entire_file("cfg_template.in", cfg_template, strlen(cfg_template)));
-    ASSERT(nob_write_entire_file("cfg_copy.in", cfg_copy, strlen(cfg_copy)));
-    ASSERT(nob_mkdir_if_not_exists("cfg_out_dir"));
+    ASSERT(nob_write_entire_file("src/cfg_template.in", cfg_template, strlen(cfg_template)));
+    ASSERT(nob_write_entire_file("src/cfg_copy.in", cfg_copy, strlen(cfg_copy)));
+    ASSERT(nob_mkdir_if_not_exists("build/cfg_out_dir"));
 
     Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
+    init.source_dir = nob_sv_from_cstr(source_root);
+    init.binary_dir = nob_sv_from_cstr(binary_root);
     init.current_file = "CMakeLists.txt";
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
@@ -2185,8 +2199,8 @@ TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
 
     String_View configured = {0};
     String_View copied = {0};
-    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "cfg_configured.txt", &configured));
-    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "cfg_out_dir/cfg_copy.in", &copied));
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "build/cfg_configured.txt", &configured));
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, "build/cfg_out_dir/cfg_copy.in", &copied));
 
     ASSERT(nob_sv_eq(configured,
                      nob_sv_from_cstr("NAME=Demo\r\n"
@@ -2290,12 +2304,21 @@ TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
+    ASSERT(nob_mkdir_if_not_exists("src"));
+    ASSERT(nob_mkdir_if_not_exists("build"));
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    char source_root[_TINYDIR_PATH_MAX] = {0};
+    char binary_root[_TINYDIR_PATH_MAX] = {0};
+    ASSERT(snprintf(source_root, sizeof(source_root), "%s/src", cwd) > 0);
+    ASSERT(snprintf(binary_root, sizeof(binary_root), "%s/build", cwd) > 0);
+
     Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
+    init.source_dir = nob_sv_from_cstr(source_root);
+    init.binary_dir = nob_sv_from_cstr(binary_root);
     init.current_file = "CMakeLists.txt";
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
@@ -2303,11 +2326,15 @@ TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "file(WRITE gen_in.txt \"IN\")\n"
-        "file(GENERATE OUTPUT gen_out_content.txt CONTENT \"OUT\")\n"
-        "file(GENERATE OUTPUT gen_out_input.txt INPUT gen_in.txt)\n"
-        "file(GENERATE OUTPUT gen_out_skip.txt CONTENT \"SKIP\" CONDITION 0)\n"
-        "if(EXISTS gen_out_content.txt)\n"
+        "set(GEN_IN_PATH \"${CMAKE_CURRENT_SOURCE_DIR}/gen_in.txt\")\n"
+        "set(GEN_OUT_CONTENT \"${CMAKE_CURRENT_BINARY_DIR}/gen_out_content.txt\")\n"
+        "set(GEN_OUT_INPUT \"${CMAKE_CURRENT_BINARY_DIR}/gen_out_input.txt\")\n"
+        "set(GEN_OUT_SKIP \"${CMAKE_CURRENT_BINARY_DIR}/gen_out_skip.txt\")\n"
+        "file(WRITE \"${GEN_IN_PATH}\" \"IN\")\n"
+        "file(GENERATE OUTPUT \"${GEN_OUT_CONTENT}\" CONTENT \"OUT\")\n"
+        "file(GENERATE OUTPUT \"${GEN_OUT_INPUT}\" INPUT \"${GEN_IN_PATH}\")\n"
+        "file(GENERATE OUTPUT \"${GEN_OUT_SKIP}\" CONTENT \"SKIP\" CONDITION 0)\n"
+        "if(EXISTS \"${GEN_OUT_CONTENT}\")\n"
         "  set(GEN_BEFORE 1)\n"
         "else()\n"
         "  set(GEN_BEFORE 0)\n"
@@ -2333,9 +2360,9 @@ TEST(evaluator_file_generate_is_deferred_until_end_of_run) {
 
     Ast_Root verify = parse_cmake(
         temp_arena,
-        "file(READ gen_out_content.txt GEN_OUT)\n"
-        "file(READ gen_out_input.txt GEN_IN)\n"
-        "if(EXISTS gen_out_skip.txt)\n"
+        "file(READ \"${CMAKE_CURRENT_BINARY_DIR}/gen_out_content.txt\" GEN_OUT)\n"
+        "file(READ \"${CMAKE_CURRENT_BINARY_DIR}/gen_out_input.txt\" GEN_IN)\n"
+        "if(EXISTS \"${CMAKE_CURRENT_BINARY_DIR}/gen_out_skip.txt\")\n"
         "  set(GEN_SKIP 1)\n"
         "else()\n"
         "  set(GEN_SKIP 0)\n"

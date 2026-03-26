@@ -536,19 +536,27 @@ TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    ASSERT(nob_mkdir_if_not_exists("fc_url_archive_root"));
-    ASSERT(nob_mkdir_if_not_exists("fc_url_archive_root/url_src"));
-    ASSERT(nob_write_entire_file("fc_url_archive_root/url_src/CMakeLists.txt",
+    ASSERT(nob_mkdir_if_not_exists("src"));
+    ASSERT(nob_mkdir_if_not_exists("build"));
+    ASSERT(nob_mkdir_if_not_exists("src/fc_url_archive_root"));
+    ASSERT(nob_mkdir_if_not_exists("src/fc_url_archive_root/url_src"));
+    ASSERT(nob_write_entire_file("src/fc_url_archive_root/url_src/CMakeLists.txt",
                                  "add_library(url_from_fetch INTERFACE)\n",
                                  strlen("add_library(url_from_fetch INTERFACE)\n")));
-    ASSERT(evaluator_create_tar_archive("fc_url_dep.tar", "fc_url_archive_root", "url_src"));
+    ASSERT(evaluator_create_tar_archive("build/fc_url_dep.tar", "src/fc_url_archive_root", "url_src"));
+    const char *cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    char source_root[_TINYDIR_PATH_MAX] = {0};
+    char binary_root[_TINYDIR_PATH_MAX] = {0};
+    ASSERT(snprintf(source_root, sizeof(source_root), "%s/src", cwd) > 0);
+    ASSERT(snprintf(binary_root, sizeof(binary_root), "%s/build", cwd) > 0);
 
     Eval_Test_Init init = {0};
     init.arena = temp_arena;
     init.event_arena = event_arena;
     init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
+    init.source_dir = nob_sv_from_cstr(source_root);
+    init.binary_dir = nob_sv_from_cstr(binary_root);
     init.current_file = "CMakeLists.txt";
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
@@ -557,7 +565,7 @@ TEST(evaluator_fetchcontent_url_population_and_redirect_override) {
     Ast_Root root = parse_cmake(
         temp_arena,
         "include(FetchContent)\n"
-        "file(SHA256 fc_url_dep.tar FC_URL_HASH)\n"
+        "file(SHA256 \"${CMAKE_CURRENT_BINARY_DIR}/fc_url_dep.tar\" FC_URL_HASH)\n"
         "FetchContent_Declare(UrlDep\n"
         "  URL \"${CMAKE_CURRENT_BINARY_DIR}/fc_url_dep.tar\"\n"
         "  URL_HASH \"SHA256=${FC_URL_HASH}\"\n"
