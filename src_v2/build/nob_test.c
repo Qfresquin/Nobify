@@ -40,6 +40,7 @@ typedef void (*Append_Source_List_Fn)(Nob_Cmd *cmd);
 typedef struct {
     const char *name;
     Append_Source_List_Fn append_sources;
+    /* Governs default test-v2 aggregate membership and clang-tidy-v2 source selection. */
     bool include_in_aggregate;
 } Test_Module;
 
@@ -154,11 +155,13 @@ static const Test_Profile TEST_PROFILE_COVERAGE = {
 };
 
 static Test_Module TEST_MODULES[] = {
+    /* Default aggregate smoke path: core unit, semantic, and end-to-end coverage. */
     {"arena", append_test_arena_all_sources, true},
     {"lexer", append_test_lexer_all_sources, true},
     {"parser", append_test_parser_all_sources, true},
     {"build-model", append_test_build_model_all_sources, true},
     {"evaluator", append_test_evaluator_all_sources, true},
+    /* Explicit-only: heavier host-sensitive scenarios stay opt-in outside test-v2. */
     {"evaluator-integration", append_test_evaluator_integration_all_sources, false},
     {"pipeline", append_test_pipeline_all_sources, true},
     {"codegen", append_test_codegen_all_sources, true},

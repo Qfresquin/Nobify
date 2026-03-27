@@ -29,6 +29,6 @@ refactors must preserve:
 - [Tests structural refactor plan](./tests_structural_refactor_plan.md)
 
 - `tests_architecture.md` is the canonical baseline for ownership boundaries,
-  suite taxonomy, and preserved runner behavior.
+  suite taxonomy, aggregate/CI policy, and preserved runner behavior.
 - `tests_structural_refactor_plan.md` is the active roadmap for changing that
   architecture in waves without reopening product-level semantic contracts.

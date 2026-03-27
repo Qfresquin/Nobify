@@ -74,8 +74,9 @@ code.
 
 - `evaluator`
   Focus: evaluator public execution/report/event behavior across command
-  families. This is structurally a semantic integration suite even though parts
-  of its support stack still rely on implementation-private helpers.
+  families. This is structurally a semantic integration suite and the aggregate
+  path now exercises it through public execution/report/query surfaces by
+  default.
   Current aggregate status: included.
 
 - `pipeline`
@@ -150,7 +151,9 @@ Current owners:
 Current state:
 - the shared-support boundary is still incomplete overall
 - snapshot/golden plumbing and semantic pipeline bootstrap are now centralized
-- host fixtures and some evaluator-specific support remain suite-local
+- host fixtures are now centralized
+- evaluator-specific and codegen-specific support remains suite-local only where
+  the logic is truly module-specific
 
 Target direction:
 - generic support belongs here, not inside suite-local copies
@@ -197,5 +200,93 @@ Target direction:
 - `build-model` owns standalone frozen-model semantics directly
 - `pipeline` stays focused on cross-layer integration instead of serving as the
   direct home for standalone build-model coverage
-- aggregate policy beyond the current baseline is intentionally deferred to the
-  refactor plan's later aggregate-policy wave
+
+## Default Aggregate Policy
+
+The default aggregate command is `./build/nob_test test-v2`.
+
+The runner also defaults to `test-v2` when no command is provided. Aggregate
+membership is owned by `src_v2/build/nob_test.c` through each module's
+`include_in_aggregate` flag, and the same membership is reused by
+`clang-tidy-v2`.
+
+Current default aggregate membership and intent:
+
+- `arena`
+  Included because allocator behavior is foundational and cheap enough for every
+  smoke pass.
+
+- `lexer`
+  Included because tokenization regressions invalidate every higher semantic
+  layer.
+
+- `parser`
+  Included because AST and diagnostics are a required baseline for all semantic
+  suites.
+
+- `build-model`
+  Included because frozen-model semantics are now first-class and should fail as
+  a direct architectural boundary.
+
+- `evaluator`
+  Included because evaluator public execution/report/event behavior is part of
+  the core semantic contract.
+
+- `pipeline`
+  Included because the evaluator-to-Event-Stream-to-build-model path is the
+  canonical cross-layer smoke boundary.
+
+- `codegen`
+  Included because generated output and generated-binary execution are part of
+  the default end-to-end confidence story.
+
+- `evaluator-integration`
+  Excluded from `test-v2` because it is heavier and more host-sensitive than the
+  default smoke tier. It remains a first-class module with explicit commands,
+  but it is not part of the default aggregate path.
+
+Guardrails:
+
+- important architectural suites are not silently dropped from `test-v2`
+- explicit-only status requires a concrete host-sensitivity or runtime-cost
+  reason
+- aggregate membership is runner-owned, not suite-owned
+
+## Smoke And CI Shape
+
+The intended execution tiers are:
+
+- default smoke:
+  `./build/nob_test`
+  `./build/nob_test test-v2`
+
+- aggregate profile variants:
+  `./build/nob_test test-v2-san`
+  `./build/nob_test test-v2-asan`
+  `./build/nob_test test-v2-ubsan`
+  `./build/nob_test test-v2-msan`
+  `./build/nob_test test-v2-cov`
+
+- explicit heavier module path:
+  `./build/nob_test test-evaluator-integration`
+  plus the same profile suffix variants when a targeted host-sensitive run is
+  needed
+
+Current versioned CI baseline:
+
+- `.github/workflows/evaluator-file-parity.yml` runs result-type-convention
+  preflight plus `test-v2` on Linux and Windows
+- that workflow therefore validates the default aggregate smoke contract, not
+  every explicit-only suite
+
+Runner-owned ergonomics that apply equally to aggregate and explicit commands:
+
+- per-module build orchestration
+- isolated run workspaces under `Temp_tests/runs`
+- captured stdout/stderr logs
+- preserved failed workspaces for debugging
+- profile-specific coverage and sanitizer handling
+
+This is the canonical T5 baseline: `test-v2` is the required smoke tier,
+explicit-only suites remain first-class but opt-in, and workflow expectations
+match that split.

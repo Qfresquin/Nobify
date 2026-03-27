@@ -408,6 +408,22 @@ Closure checks:
 
 ### Wave T5: Aggregate Policy And CI Shape
 
+Status:
+- completed (March 27, 2026)
+
+Delivered artifacts:
+- default aggregate membership is now documented per module in
+  `docs/tests/tests_architecture.md`
+- the runner module registry explicitly documents that aggregate membership is
+  owned by `include_in_aggregate`
+- the architecture baseline now defines the smoke path as `./build/nob_test`
+  or `./build/nob_test test-v2`, with profile variants kept on the same module
+  set
+- explicit-only status for `evaluator-integration` is documented with a concrete
+  host-sensitivity/runtime-cost reason
+- the versioned CI baseline is now tied to `.github/workflows/evaluator-file-parity.yml`
+  and documented as validating the aggregate smoke contract
+
 Deliverables:
 - define which suites belong in default aggregate execution and why
 - preserve current smoke workflow and captured-failure ergonomics
