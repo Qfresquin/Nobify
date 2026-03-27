@@ -173,12 +173,22 @@ static bool emit_bool_target_prop_true(EvalExecContext *ctx,
                                        Cmake_Event_Origin o,
                                        String_View target_name,
                                        const char *key) {
-    return eval_emit_target_prop_set(ctx,
-                                     o,
-                                     target_name,
-                                     nob_sv_from_cstr(key),
-                                     nob_sv_from_cstr("1"),
-                                     EV_PROP_SET);
+    if (!eval_emit_target_prop_set(ctx,
+                                   o,
+                                   target_name,
+                                   nob_sv_from_cstr(key),
+                                   nob_sv_from_cstr("1"),
+                                   EV_PROP_SET)) {
+        return false;
+    }
+    return eval_property_write(ctx,
+                               o,
+                               nob_sv_from_cstr("TARGET"),
+                               target_name,
+                               nob_sv_from_cstr(key),
+                               nob_sv_from_cstr("1"),
+                               EV_PROP_SET,
+                               false);
 }
 
 static bool add_target_name_must_be_new(EvalExecContext *ctx,
@@ -205,6 +215,7 @@ static bool add_alias_target_validate(EvalExecContext *ctx,
     }
     if (!eval_target_register(ctx, alias_name)) return false;
     if (!eval_target_alias_register(ctx, alias_name)) return false;
+    if (!eval_target_set_alias(ctx, alias_name, real_target)) return false;
     return true;
 }
 
@@ -886,12 +897,14 @@ Eval_Result eval_handle_add_executable(EvalExecContext *ctx, const Node *node) {
     }
 
     (void)eval_target_register(ctx, name);
+    if (!eval_target_set_type(ctx, name, EV_TARGET_EXECUTABLE)) return eval_result_from_ctx(ctx);
 
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return eval_result_from_ctx(ctx);
     if (is_imported) {
         if (!eval_target_set_imported(ctx, name, true)) return eval_result_from_ctx(ctx);
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return eval_result_from_ctx(ctx);
         if (is_global) {
+            if (!eval_target_set_imported_global(ctx, name, true)) return eval_result_from_ctx(ctx);
             if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED_GLOBAL")) return eval_result_from_ctx(ctx);
         }
     } else {
@@ -1026,11 +1039,13 @@ Eval_Result eval_handle_add_library(EvalExecContext *ctx, const Node *node) {
         }
     }
 
+    if (!eval_target_set_type(ctx, name, ty)) return eval_result_from_ctx(ctx);
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return eval_result_from_ctx(ctx);
     if (is_imported) {
         if (!eval_target_set_imported(ctx, name, true)) return eval_result_from_ctx(ctx);
         if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED")) return eval_result_from_ctx(ctx);
         if (is_global) {
+            if (!eval_target_set_imported_global(ctx, name, true)) return eval_result_from_ctx(ctx);
             if (!emit_bool_target_prop_true(ctx, o, name, "IMPORTED_GLOBAL")) return eval_result_from_ctx(ctx);
         }
     } else {

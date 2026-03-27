@@ -111,6 +111,36 @@ static bool property_query_request_execute(EvalExecContext *ctx,
     return true;
 }
 
+static bool get_directory_property_definition_value(EvalExecContext *ctx,
+                                                    String_View directory,
+                                                    String_View var_name,
+                                                    String_View *out_value) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (!ctx || !out_value) return false;
+
+    String_View current_dir = eval_current_source_dir_for_paths(ctx);
+    current_dir = eval_sv_path_normalize_temp(ctx, current_dir);
+    if (eval_should_stop(ctx)) return false;
+    if (svu_eq_ci_sv(current_dir, directory)) {
+        *out_value = eval_var_get_visible(ctx, var_name);
+        return true;
+    }
+
+    Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
+    for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
+        const Eval_Directory_Node *node = &graph->nodes[i];
+        if (!svu_eq_ci_sv(node->source_dir, directory)) continue;
+        for (size_t j = 0; j < arena_arr_len(node->definition_bindings); j++) {
+            if (!eval_sv_key_eq(node->definition_bindings[j].key, var_name)) continue;
+            *out_value = node->definition_bindings[j].value;
+            return true;
+        }
+        return true;
+    }
+
+    return true;
+}
+
 static bool get_property_scope_from_upper(String_View scope_upper,
                                           Get_Property_Scope *out_scope) {
     if (!out_scope) return false;
@@ -794,7 +824,10 @@ Eval_Result eval_handle_get_directory_property(EvalExecContext *ctx, const Node 
     }
 
     if (req.kind == GET_DIRECTORY_PROPERTY_QUERY_DEFINITION) {
-        String_View value = eval_var_get_visible(ctx, req.query_name);
+        String_View value = nob_sv_from_cstr("");
+        if (!get_directory_property_definition_value(ctx, req.directory, req.query_name, &value)) {
+            return eval_result_from_ctx(ctx);
+        }
         if (!eval_var_set_current(ctx, req.out_var, value)) {
             return eval_result_from_ctx(ctx);
         }

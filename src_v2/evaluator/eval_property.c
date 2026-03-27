@@ -1,4 +1,5 @@
 #include "evaluator_internal.h"
+#include "eval_expr.h"
 
 #include "stb_ds.h"
 #include "sv_utils.h"
@@ -123,6 +124,496 @@ static bool emit_property_write_semantic_event(EvalExecContext *ctx,
 static bool target_get_declared_dir_temp(EvalExecContext *ctx, String_View target_name, String_View *out_dir) {
     if (!ctx || !out_dir) return false;
     return eval_target_declared_dir(ctx, target_name, out_dir);
+}
+
+static bool property_append_unique_temp(EvalExecContext *ctx, SV_List *list, String_View value);
+
+typedef struct {
+    bool has_directory_scope;
+    String_View directory;
+    String_View object_name;
+} Property_Directory_Scoped_Object;
+
+static String_View property_bool_value(bool value) {
+    return value ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
+}
+
+static String_View property_target_type_value(Cmake_Target_Type target_type) {
+    switch (target_type) {
+        case EV_TARGET_EXECUTABLE:
+            return nob_sv_from_cstr("EXECUTABLE");
+        case EV_TARGET_LIBRARY_STATIC:
+            return nob_sv_from_cstr("STATIC_LIBRARY");
+        case EV_TARGET_LIBRARY_SHARED:
+            return nob_sv_from_cstr("SHARED_LIBRARY");
+        case EV_TARGET_LIBRARY_MODULE:
+            return nob_sv_from_cstr("MODULE_LIBRARY");
+        case EV_TARGET_LIBRARY_INTERFACE:
+            return nob_sv_from_cstr("INTERFACE_LIBRARY");
+        case EV_TARGET_LIBRARY_OBJECT:
+            return nob_sv_from_cstr("OBJECT_LIBRARY");
+        case EV_TARGET_LIBRARY_UNKNOWN:
+        default:
+            return nob_sv_from_cstr("UNKNOWN_LIBRARY");
+    }
+}
+
+static bool property_parse_directory_scoped_object(String_View object_id,
+                                                   Property_Directory_Scoped_Object *out_parts) {
+    static const char prefix[] = "DIRECTORY::";
+    if (!out_parts) return false;
+    memset(out_parts, 0, sizeof(*out_parts));
+    if (object_id.count <= (sizeof(prefix) - 1)) return true;
+    if (memcmp(object_id.data, prefix, sizeof(prefix) - 1) != 0) return true;
+
+    size_t rest_start = sizeof(prefix) - 1;
+    for (size_t i = rest_start; i + 1 < object_id.count; i++) {
+        if (object_id.data[i] != ':' || object_id.data[i + 1] != ':') continue;
+        out_parts->has_directory_scope = true;
+        out_parts->directory = nob_sv_from_parts(object_id.data + rest_start, i - rest_start);
+        out_parts->object_name = nob_sv_from_parts(object_id.data + i + 2, object_id.count - (i + 2));
+        return true;
+    }
+
+    return true;
+}
+
+static const Eval_Directory_Node *property_directory_node_const(EvalExecContext *ctx, String_View source_dir) {
+    if (!ctx || source_dir.count == 0) return NULL;
+    Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
+    for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
+        if (svu_eq_ci_sv(graph->nodes[i].source_dir, source_dir)) return &graph->nodes[i];
+    }
+    return NULL;
+}
+
+static bool property_selected_directory_is_current(EvalExecContext *ctx, String_View source_dir) {
+    if (!ctx || source_dir.count == 0) return false;
+    String_View current = eval_current_source_dir_for_paths(ctx);
+    if (current.count == 0) return false;
+    current = eval_sv_path_normalize_temp(ctx, current);
+    if (eval_should_stop(ctx)) return false;
+    return svu_eq_ci_sv(current, source_dir);
+}
+
+static bool property_collect_current_macro_names_temp(EvalExecContext *ctx, SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->user_commands); i++) {
+        if (commands->user_commands[i].kind != USER_CMD_MACRO) continue;
+        if (!property_append_unique_temp(ctx, out_names, commands->user_commands[i].name)) return false;
+    }
+
+    return true;
+}
+
+static bool property_collect_current_listfile_stack_temp(EvalExecContext *ctx, SV_List *out_stack) {
+    if (!ctx || !out_stack) return false;
+    *out_stack = NULL;
+
+    for (size_t i = 0; i < arena_arr_len(ctx->exec_contexts); i++) {
+        const Eval_Exec_Context *exec = &ctx->exec_contexts[i];
+        if (!exec->current_file) continue;
+        if (!property_append_unique_temp(ctx, out_stack, nob_sv_from_cstr(exec->current_file))) return false;
+    }
+
+    if (arena_arr_len(*out_stack) == 0 && ctx->current_file) {
+        if (!property_append_unique_temp(ctx, out_stack, nob_sv_from_cstr(ctx->current_file))) return false;
+    }
+    return true;
+}
+
+static bool property_collect_directory_variables_temp(EvalExecContext *ctx,
+                                                      String_View source_dir,
+                                                      SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    if (property_selected_directory_is_current(ctx, source_dir)) {
+        SV_List visible_names = NULL;
+        if (!eval_var_collect_visible_names(ctx, &visible_names)) return false;
+        for (size_t i = 0; i < arena_arr_len(visible_names); i++) {
+            if (!property_append_unique_temp(ctx, out_names, visible_names[i])) return false;
+        }
+        return true;
+    }
+
+    const Eval_Directory_Node *node = property_directory_node_const(ctx, source_dir);
+    if (!node) return true;
+    for (size_t i = 0; i < arena_arr_len(node->definition_bindings); i++) {
+        if (!property_append_unique_temp(ctx, out_names, node->definition_bindings[i].key)) return false;
+    }
+    return true;
+}
+
+static bool property_collect_directory_macros_temp(EvalExecContext *ctx,
+                                                   String_View source_dir,
+                                                   SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    if (property_selected_directory_is_current(ctx, source_dir)) {
+        return property_collect_current_macro_names_temp(ctx, out_names);
+    }
+
+    const Eval_Directory_Node *node = property_directory_node_const(ctx, source_dir);
+    if (!node) return true;
+    for (size_t i = 0; i < arena_arr_len(node->macro_names); i++) {
+        if (!property_append_unique_temp(ctx, out_names, node->macro_names[i])) return false;
+    }
+    return true;
+}
+
+static bool property_collect_directory_listfile_stack_temp(EvalExecContext *ctx,
+                                                           String_View source_dir,
+                                                           SV_List *out_stack) {
+    if (!ctx || !out_stack) return false;
+    *out_stack = NULL;
+
+    if (property_selected_directory_is_current(ctx, source_dir)) {
+        return property_collect_current_listfile_stack_temp(ctx, out_stack);
+    }
+
+    const Eval_Directory_Node *node = property_directory_node_const(ctx, source_dir);
+    if (!node) return true;
+    for (size_t i = 0; i < arena_arr_len(node->listfile_stack); i++) {
+        if (!property_append_unique_temp(ctx, out_stack, node->listfile_stack[i])) return false;
+    }
+    return true;
+}
+
+static bool property_collect_directory_subdirs_temp(EvalExecContext *ctx,
+                                                    String_View source_dir,
+                                                    SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    Eval_Directory_Graph *graph = &ctx->semantic_state.directories;
+    for (size_t i = 0; i < arena_arr_len(graph->nodes); i++) {
+        const Eval_Directory_Node *node = &graph->nodes[i];
+        if (!svu_eq_ci_sv(node->parent_source_dir, source_dir)) continue;
+        if (!property_append_unique_temp(ctx, out_names, node->source_dir)) return false;
+    }
+    return true;
+}
+
+static bool property_collect_directory_targets_temp(EvalExecContext *ctx,
+                                                    String_View source_dir,
+                                                    bool imported_only,
+                                                    SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    const Eval_Directory_Node *node = property_directory_node_const(ctx, source_dir);
+    if (!node) return true;
+    for (size_t i = 0; i < arena_arr_len(node->declared_targets); i++) {
+        String_View target_name = node->declared_targets[i];
+        bool imported = eval_target_is_imported(ctx, target_name);
+        bool alias = eval_target_alias_known(ctx, target_name);
+        if (imported_only) {
+            if (!imported || alias) continue;
+        } else {
+            if (imported || alias) continue;
+        }
+        if (!property_append_unique_temp(ctx, out_names, target_name)) return false;
+    }
+    return true;
+}
+
+static bool property_collect_directory_tests_temp(EvalExecContext *ctx,
+                                                  String_View source_dir,
+                                                  SV_List *out_names) {
+    if (!ctx || !out_names) return false;
+    *out_names = NULL;
+
+    const Eval_Directory_Node *node = property_directory_node_const(ctx, source_dir);
+    if (!node) return true;
+    for (size_t i = 0; i < arena_arr_len(node->declared_tests); i++) {
+        if (!property_append_unique_temp(ctx, out_names, node->declared_tests[i])) return false;
+    }
+    return true;
+}
+
+static bool property_resolve_source_object_temp(EvalExecContext *ctx,
+                                                String_View object_id,
+                                                String_View inherit_directory,
+                                                String_View *out_source_name,
+                                                String_View *out_source_path) {
+    if (out_source_name) *out_source_name = nob_sv_from_cstr("");
+    if (out_source_path) *out_source_path = nob_sv_from_cstr("");
+    if (!ctx) return false;
+
+    Property_Directory_Scoped_Object parts = {0};
+    if (!property_parse_directory_scoped_object(object_id, &parts)) return false;
+
+    String_View source_name = parts.has_directory_scope ? parts.object_name : object_id;
+    String_View base_dir = parts.has_directory_scope
+        ? parts.directory
+        : (inherit_directory.count > 0 ? inherit_directory : eval_current_source_dir_for_paths(ctx));
+
+    String_View source_path = eval_path_resolve_for_cmake_arg(ctx, source_name, base_dir, true);
+    if (eval_should_stop(ctx)) return false;
+    source_path = eval_sv_path_normalize_temp(ctx, source_path);
+    if (eval_should_stop(ctx)) return false;
+
+    if (out_source_name) *out_source_name = source_name;
+    if (out_source_path) *out_source_path = source_path;
+    return true;
+}
+
+static bool property_source_generated_set_temp(EvalExecContext *ctx,
+                                               String_View canonical_source_path,
+                                               bool *out_set) {
+    if (out_set) *out_set = false;
+    if (!ctx) return false;
+
+    Eval_Property_Engine *engine = &ctx->semantic_state.properties;
+    for (size_t i = 0; i < arena_arr_len(engine->records); i++) {
+        const Eval_Property_Record *record = &engine->records[i];
+        if (!eval_sv_eq_ci_lit(record->scope_upper, "SOURCE")) continue;
+        if (!eval_sv_eq_ci_lit(record->property_upper, "GENERATED")) continue;
+
+        Property_Directory_Scoped_Object parts = {0};
+        if (!property_parse_directory_scoped_object(record->object_id, &parts)) return false;
+
+        String_View candidate_name = record->object_id;
+        String_View candidate_base = eval_current_source_dir_for_paths(ctx);
+        if (parts.has_directory_scope) {
+            candidate_name = parts.object_name;
+            candidate_base = parts.directory;
+        } else if (eval_sv_is_abs_path(record->object_id)) {
+            candidate_base = nob_sv_from_cstr("");
+        }
+
+        String_View candidate_path = parts.has_directory_scope || eval_sv_is_abs_path(candidate_name)
+            ? candidate_name
+            : eval_path_resolve_for_cmake_arg(ctx, candidate_name, candidate_base, true);
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_sv_is_abs_path(candidate_path)) {
+            candidate_path = eval_path_resolve_for_cmake_arg(ctx,
+                                                             candidate_path,
+                                                             eval_current_source_dir_for_paths(ctx),
+                                                             true);
+            if (eval_should_stop(ctx)) return false;
+        }
+        candidate_path = eval_sv_path_normalize_temp(ctx, candidate_path);
+        if (eval_should_stop(ctx)) return false;
+        if (!svu_eq_ci_sv(candidate_path, canonical_source_path)) continue;
+
+        if (out_set) *out_set = eval_truthy(ctx, record->value);
+        return true;
+    }
+
+    return true;
+}
+
+static bool property_synthetic_value_temp(EvalExecContext *ctx,
+                                          String_View scope_upper,
+                                          String_View object_id,
+                                          String_View prop_upper,
+                                          String_View inherit_directory,
+                                          String_View *out_value,
+                                          bool *out_set,
+                                          bool *out_known) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (out_set) *out_set = false;
+    if (out_known) *out_known = false;
+    if (!ctx) return false;
+
+    if (eval_sv_eq_ci_lit(scope_upper, "GLOBAL")) {
+        if (eval_sv_eq_ci_lit(prop_upper, "CMAKE_ROLE")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) {
+                if (arena_arr_len(ctx->semantic_state.package.active_find_packages) > 0) {
+                    *out_value = nob_sv_from_cstr("FIND_PACKAGE");
+                } else if (ctx->mode == EVAL_EXEC_MODE_SCRIPT) {
+                    *out_value = nob_sv_from_cstr("SCRIPT");
+                } else if (ctx->mode == EVAL_EXEC_MODE_CTEST_SCRIPT) {
+                    *out_value = nob_sv_from_cstr("CTEST");
+                } else {
+                    *out_value = nob_sv_from_cstr("PROJECT");
+                }
+            }
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "IN_TRY_COMPILE")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_bool_value(false);
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "GENERATOR_IS_MULTI_CONFIG")) {
+            String_View config_types = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CONFIGURATION_TYPES"));
+            bool is_multi_config = config_types.count > 0 && eval_truthy(ctx, config_types);
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_bool_value(is_multi_config);
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "PACKAGES_FOUND") ||
+            eval_sv_eq_ci_lit(prop_upper, "PACKAGES_NOT_FOUND")) {
+            Eval_Package_Model *package = &ctx->semantic_state.package;
+            SV_List values =
+                eval_sv_eq_ci_lit(prop_upper, "PACKAGES_FOUND")
+                    ? package->found_packages
+                    : package->not_found_packages;
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = eval_sv_join_semi_temp(ctx, values, arena_arr_len(values));
+            return true;
+        }
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY")) {
+        const Eval_Directory_Node *node = property_directory_node_const(ctx, object_id);
+        if (eval_sv_eq_ci_lit(prop_upper, "SOURCE_DIR")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = object_id;
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "BINARY_DIR")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = node ? node->binary_dir : nob_sv_from_cstr("");
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "PARENT_DIRECTORY")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = node ? node->parent_source_dir : nob_sv_from_cstr("");
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "SUBDIRECTORIES") ||
+            eval_sv_eq_ci_lit(prop_upper, "BUILDSYSTEM_TARGETS") ||
+            eval_sv_eq_ci_lit(prop_upper, "IMPORTED_TARGETS") ||
+            eval_sv_eq_ci_lit(prop_upper, "TESTS") ||
+            eval_sv_eq_ci_lit(prop_upper, "VARIABLES") ||
+            eval_sv_eq_ci_lit(prop_upper, "MACROS") ||
+            eval_sv_eq_ci_lit(prop_upper, "LISTFILE_STACK")) {
+            SV_List values = NULL;
+            if (eval_sv_eq_ci_lit(prop_upper, "SUBDIRECTORIES")) {
+                if (!property_collect_directory_subdirs_temp(ctx, object_id, &values)) return false;
+            } else if (eval_sv_eq_ci_lit(prop_upper, "BUILDSYSTEM_TARGETS")) {
+                if (!property_collect_directory_targets_temp(ctx, object_id, false, &values)) return false;
+            } else if (eval_sv_eq_ci_lit(prop_upper, "IMPORTED_TARGETS")) {
+                if (!property_collect_directory_targets_temp(ctx, object_id, true, &values)) return false;
+            } else if (eval_sv_eq_ci_lit(prop_upper, "TESTS")) {
+                if (!property_collect_directory_tests_temp(ctx, object_id, &values)) return false;
+            } else if (eval_sv_eq_ci_lit(prop_upper, "VARIABLES")) {
+                if (!property_collect_directory_variables_temp(ctx, object_id, &values)) return false;
+            } else if (eval_sv_eq_ci_lit(prop_upper, "MACROS")) {
+                if (!property_collect_directory_macros_temp(ctx, object_id, &values)) return false;
+            } else {
+                if (!property_collect_directory_listfile_stack_temp(ctx, object_id, &values)) return false;
+            }
+
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = eval_sv_join_semi_temp(ctx, values, arena_arr_len(values));
+            return true;
+        }
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
+        if (eval_sv_eq_ci_lit(prop_upper, "TYPE")) {
+            Cmake_Target_Type target_type = EV_TARGET_LIBRARY_UNKNOWN;
+            if (!eval_target_get_type(ctx, object_id, &target_type)) return false;
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_target_type_value(target_type);
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "IMPORTED")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_bool_value(eval_target_is_imported(ctx, object_id));
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "IMPORTED_GLOBAL")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_bool_value(eval_target_is_imported_global(ctx, object_id));
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "ALIASED_TARGET")) {
+            if (out_known) *out_known = true;
+            if (!eval_target_alias_known(ctx, object_id)) return true;
+            if (out_set) *out_set = true;
+            if (out_value && !eval_target_alias_of(ctx, object_id, out_value)) return false;
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "ALIAS_GLOBAL")) {
+            if (out_known) *out_known = true;
+            if (!eval_target_alias_known(ctx, object_id)) return true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_bool_value(eval_target_alias_is_global(ctx, object_id));
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "SOURCE_DIR") || eval_sv_eq_ci_lit(prop_upper, "BINARY_DIR")) {
+            String_View declared_dir = nob_sv_from_cstr("");
+            String_View binary_dir = nob_sv_from_cstr("");
+            if (!target_get_declared_dir_temp(ctx, object_id, &declared_dir)) return false;
+            if (eval_should_stop(ctx)) return false;
+            if (!eval_directory_binary_dir(ctx, declared_dir, &binary_dir)) return false;
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) {
+                *out_value = eval_sv_eq_ci_lit(prop_upper, "SOURCE_DIR") ? declared_dir : binary_dir;
+            }
+            return true;
+        }
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "SOURCE")) {
+        String_View source_name = nob_sv_from_cstr("");
+        String_View source_path = nob_sv_from_cstr("");
+        if (!property_resolve_source_object_temp(ctx,
+                                                 object_id,
+                                                 inherit_directory,
+                                                 &source_name,
+                                                 &source_path)) {
+            return false;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "LOCATION")) {
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = source_path;
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "GENERATED")) {
+            bool generated = false;
+            if (!property_source_generated_set_temp(ctx, source_path, &generated)) return false;
+            if (out_known) *out_known = true;
+            if (!generated) return true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = property_bool_value(true);
+            return true;
+        }
+        (void)source_name;
+    }
+
+    if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
+        if (eval_sv_eq_ci_lit(prop_upper, "WORKING_DIRECTORY")) {
+            Property_Directory_Scoped_Object parts = {0};
+            if (!property_parse_directory_scoped_object(object_id, &parts)) return false;
+            String_View test_name = parts.has_directory_scope ? parts.object_name : object_id;
+            String_View test_dir = parts.has_directory_scope
+                ? parts.directory
+                : (inherit_directory.count > 0 ? inherit_directory : eval_current_source_dir_for_paths(ctx));
+            String_View working_directory = nob_sv_from_cstr("");
+            if (!eval_test_working_directory(ctx, test_name, test_dir, &working_directory)) return false;
+            if (out_known) *out_known = true;
+            if (out_set) *out_set = true;
+            if (out_value) *out_value = working_directory;
+            return true;
+        }
+    }
+
+    return true;
 }
 
 static bool property_append_unique_temp(EvalExecContext *ctx, SV_List *list, String_View value) {
@@ -452,6 +943,25 @@ static String_View resolve_property_value_temp(EvalExecContext *ctx,
         if (out_set) *out_set = true;
         return value;
     }
+
+    bool synthetic_known = false;
+    String_View synthetic_value = nob_sv_from_cstr("");
+    if (!property_synthetic_value_temp(ctx,
+                                       scope_upper,
+                                       object_id,
+                                       prop_upper,
+                                       inherit_directory,
+                                       &synthetic_value,
+                                       &have,
+                                       &synthetic_known)) {
+        return nob_sv_from_cstr("");
+    }
+    if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    (void)synthetic_known;
+    if (have) {
+        if (out_set) *out_set = true;
+        return synthetic_value;
+    }
     if (!allow_inherit) return nob_sv_from_cstr("");
 
     if (eval_sv_eq_ci_lit(scope_upper, "DIRECTORY")) {
@@ -485,6 +995,24 @@ static bool property_known_for_scope(EvalExecContext *ctx,
         return true;
     }
     if (eval_should_stop(ctx)) return false;
+
+    String_View prop_upper = eval_property_upper_name_temp(ctx, prop_name);
+    if (eval_should_stop(ctx)) return false;
+
+    bool synthetic_have = false;
+    bool synthetic_known = false;
+    if (!property_synthetic_value_temp(ctx,
+                                       scope_upper,
+                                       object_id,
+                                       prop_upper,
+                                       inherit_directory,
+                                       NULL,
+                                       &synthetic_have,
+                                       &synthetic_known)) {
+        return false;
+    }
+    if (eval_should_stop(ctx)) return false;
+    if (synthetic_known) return true;
 
     bool have = false;
     (void)resolve_property_value_temp(ctx,

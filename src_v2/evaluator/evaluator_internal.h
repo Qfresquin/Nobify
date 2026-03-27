@@ -88,7 +88,12 @@ typedef User_Command *User_Command_List;
 typedef struct {
     String_View name;
     String_View declared_dir;
+    Cmake_Target_Type target_type;
     bool imported;
+    bool imported_global;
+    bool alias;
+    bool alias_global;
+    String_View alias_of;
 } Eval_Target_Record;
 
 typedef Eval_Target_Record *Eval_Target_Record_List;
@@ -96,6 +101,7 @@ typedef Eval_Target_Record *Eval_Target_Record_List;
 typedef struct {
     String_View name;
     String_View declared_dir;
+    String_View working_directory;
 } Eval_Test_Record;
 
 typedef Eval_Test_Record *Eval_Test_Record_List;
@@ -418,6 +424,9 @@ typedef struct {
     String_View parent_binary_dir;
     SV_List declared_targets;
     SV_List declared_tests;
+    Var_Binding *definition_bindings;
+    SV_List macro_names;
+    SV_List listfile_stack;
 } Eval_Directory_Node;
 
 typedef Eval_Directory_Node *Eval_Directory_Node_List;
@@ -469,6 +478,8 @@ typedef struct {
 typedef struct {
     Eval_Dependency_Provider_State dependency_provider;
     SV_List active_find_packages;
+    SV_List found_packages;
+    SV_List not_found_packages;
 } Eval_Package_Model;
 
 typedef struct {
@@ -586,6 +597,12 @@ typedef struct {
     size_t declared_target_count;
     String_View *declared_tests;
     size_t declared_test_count;
+    Var_Binding *definition_bindings;
+    size_t definition_binding_count;
+    String_View *macro_names;
+    size_t macro_name_count;
+    String_View *listfile_stack;
+    size_t listfile_stack_count;
 } Eval_Directory_Node_Snapshot;
 
 typedef struct {
@@ -659,6 +676,10 @@ typedef struct Eval_Command_Transaction {
     size_t export_count;
     String_View *active_find_packages;
     size_t active_find_package_count;
+    String_View *found_packages;
+    size_t found_package_count;
+    String_View *not_found_packages;
+    size_t not_found_package_count;
     Eval_Dependency_Provider_State dependency_provider;
     Eval_FetchContent_Declaration *fetchcontent_declarations;
     size_t fetchcontent_declaration_count;
@@ -2214,16 +2235,32 @@ bool eval_directory_parent(EvalExecContext *ctx, String_View source_dir, String_
 bool eval_directory_binary_dir(EvalExecContext *ctx, String_View source_dir, String_View *out_binary_dir);
 bool eval_directory_note_target(EvalExecContext *ctx, String_View source_dir, String_View target_name);
 bool eval_directory_note_test(EvalExecContext *ctx, String_View source_dir, String_View test_name);
+bool eval_directory_capture_current_scope(EvalExecContext *ctx);
 bool eval_target_known(EvalExecContext *ctx, String_View name);
 bool eval_target_register(EvalExecContext *ctx, String_View name);
+bool eval_target_set_type(EvalExecContext *ctx, String_View name, Cmake_Target_Type target_type);
+bool eval_target_get_type(EvalExecContext *ctx, String_View name, Cmake_Target_Type *out_target_type);
 bool eval_target_set_imported(EvalExecContext *ctx, String_View name, bool imported);
+bool eval_target_set_imported_global(EvalExecContext *ctx, String_View name, bool imported_global);
 bool eval_target_declared_dir(EvalExecContext *ctx, String_View name, String_View *out_dir);
 bool eval_target_is_imported(EvalExecContext *ctx, String_View name);
+bool eval_target_is_imported_global(EvalExecContext *ctx, String_View name);
 bool eval_target_alias_known(EvalExecContext *ctx, String_View name);
 bool eval_target_alias_register(EvalExecContext *ctx, String_View name);
+bool eval_target_set_alias(EvalExecContext *ctx, String_View alias_name, String_View real_target);
+bool eval_target_alias_of(EvalExecContext *ctx, String_View name, String_View *out_real_target);
+bool eval_target_alias_is_global(EvalExecContext *ctx, String_View name);
 bool eval_test_known(EvalExecContext *ctx, String_View name);
 bool eval_test_known_in_directory(EvalExecContext *ctx, String_View name, String_View declared_dir);
 bool eval_test_register(EvalExecContext *ctx, String_View name, String_View declared_dir);
+bool eval_test_set_working_directory(EvalExecContext *ctx,
+                                     String_View name,
+                                     String_View declared_dir,
+                                     String_View working_directory);
+bool eval_test_working_directory(EvalExecContext *ctx,
+                                 String_View name,
+                                 String_View declared_dir,
+                                 String_View *out_working_directory);
 bool eval_install_component_known(EvalExecContext *ctx, String_View name);
 bool eval_install_component_register(EvalExecContext *ctx, String_View name);
 bool eval_property_define(EvalExecContext *ctx, const Eval_Property_Definition *definition);

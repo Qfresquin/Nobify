@@ -1121,6 +1121,189 @@ TEST(evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs
     TEST_PASS();
 }
 
+TEST(evaluator_get_cmake_and_directory_property_synthetic_providers_cover_documented_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("gp_provider_pkg"));
+    ASSERT(nob_mkdir_if_not_exists("gp_provider_pkg/lib"));
+    ASSERT(nob_mkdir_if_not_exists("gp_provider_pkg/lib/cmake"));
+    ASSERT(nob_mkdir_if_not_exists("gp_provider_pkg/lib/cmake/SynthPkg"));
+    ASSERT(nob_write_entire_file("gp_provider_pkg/lib/cmake/SynthPkg/SynthPkgConfig.cmake",
+                                 "set(SynthPkg_CONFIG_HIT 1)\n",
+                                 strlen("set(SynthPkg_CONFIG_HIT 1)\n")));
+
+    ASSERT(nob_mkdir_if_not_exists("gp_provider_sub"));
+    ASSERT(nob_write_entire_file("gp_provider_sub/local.c", "int gp_provider_local;\n", 23));
+    {
+        const char *sub_cmake =
+            "set(CHILD_ONLY child_scope)\n"
+            "macro(child_macro)\n"
+            "endmacro()\n"
+            "add_library(child_real STATIC local.c)\n"
+            "add_library(child_imp STATIC IMPORTED)\n"
+            "add_test(NAME child_test COMMAND child_cmd)\n";
+        ASSERT(nob_write_entire_file("gp_provider_sub/CMakeLists.txt", sub_cmake, strlen(sub_cmake)));
+    }
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_PREFIX_PATH gp_provider_pkg)\n"
+        "macro(root_macro)\n"
+        "endmacro()\n"
+        "add_subdirectory(gp_provider_sub gp_provider_build)\n"
+        "set(CHILD_ONLY root_shadow)\n"
+        "find_package(SynthPkg CONFIG QUIET)\n"
+        "find_package(MissingPkg CONFIG QUIET)\n"
+        "get_cmake_property(CP_ROLE CMAKE_ROLE)\n"
+        "get_cmake_property(CP_TRY IN_TRY_COMPILE)\n"
+        "get_cmake_property(CP_MULTI GENERATOR_IS_MULTI_CONFIG)\n"
+        "get_cmake_property(CP_FOUND PACKAGES_FOUND)\n"
+        "get_cmake_property(CP_NOT_FOUND PACKAGES_NOT_FOUND)\n"
+        "get_directory_property(CHILD_DEF DIRECTORY gp_provider_sub DEFINITION CHILD_ONLY)\n"
+        "get_directory_property(CHILD_SOURCE DIRECTORY gp_provider_sub SOURCE_DIR)\n"
+        "get_directory_property(CHILD_BINARY DIRECTORY gp_provider_sub BINARY_DIR)\n"
+        "get_directory_property(CHILD_PARENT DIRECTORY gp_provider_sub PARENT_DIRECTORY)\n"
+        "get_directory_property(ROOT_SUBDIRS SUBDIRECTORIES)\n"
+        "get_directory_property(CHILD_BUILDSYSTEM DIRECTORY gp_provider_sub BUILDSYSTEM_TARGETS)\n"
+        "get_directory_property(CHILD_IMPORTED DIRECTORY gp_provider_sub IMPORTED_TARGETS)\n"
+        "get_directory_property(CHILD_TESTS DIRECTORY gp_provider_sub TESTS)\n"
+        "get_directory_property(CHILD_VARIABLES DIRECTORY gp_provider_sub VARIABLES)\n"
+        "get_directory_property(CHILD_MACROS DIRECTORY gp_provider_sub MACROS)\n"
+        "get_directory_property(CHILD_LISTFILES DIRECTORY gp_provider_sub LISTFILE_STACK)\n"
+        "list(FIND CHILD_VARIABLES CHILD_ONLY IDX_CHILD_VAR)\n"
+        "list(FIND CHILD_MACROS child_macro IDX_CHILD_MACRO)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CP_ROLE")), nob_sv_from_cstr("PROJECT")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CP_TRY")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CP_MULTI")), nob_sv_from_cstr("0")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CP_FOUND")),
+                          nob_sv_from_cstr("SynthPkg")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CP_NOT_FOUND")),
+                          nob_sv_from_cstr("MissingPkg")));
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_DEF")),
+                     nob_sv_from_cstr("child_scope")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_SOURCE")),
+                          nob_sv_from_cstr("gp_provider_sub")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_BINARY")),
+                          nob_sv_from_cstr("gp_provider_build")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_PARENT")),
+                     nob_sv_from_cstr(".")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_SUBDIRS")),
+                          nob_sv_from_cstr("gp_provider_sub")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_BUILDSYSTEM")),
+                     nob_sv_from_cstr("child_real")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORTED")),
+                     nob_sv_from_cstr("child_imp")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_TESTS")),
+                     nob_sv_from_cstr("child_test")));
+    ASSERT(!nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IDX_CHILD_VAR")), nob_sv_from_cstr("-1")));
+    ASSERT(!nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IDX_CHILD_MACRO")), nob_sv_from_cstr("-1")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_LISTFILES")),
+                          nob_sv_from_cstr("gp_provider_sub/CMakeLists.txt")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_get_source_and_test_property_synthetic_providers_cover_location_generated_and_working_directory) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("gp_source_scope"));
+    ASSERT(nob_write_entire_file("gp_source_scope/gen.c", "int gp_generated_source;\n", 25));
+    {
+        const char *sub_cmake =
+            "add_library(gen_target STATIC gen.c)\n"
+            "set_source_files_properties(gen.c PROPERTIES GENERATED 1)\n"
+            "add_test(NAME scoped_test COMMAND scoped_cmd)\n";
+        ASSERT(nob_write_entire_file("gp_source_scope/CMakeLists.txt", sub_cmake, strlen(sub_cmake)));
+    }
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_executable(local_target main.c)\n"
+        "add_test(NAME root_test COMMAND root_cmd)\n"
+        "get_source_file_property(ROOT_LOC main.c LOCATION)\n"
+        "get_property(ROOT_LOC_GENERIC SOURCE main.c PROPERTY LOCATION)\n"
+        "get_test_property(root_test WORKING_DIRECTORY ROOT_WD_DEFAULT)\n"
+        "set_tests_properties(root_test PROPERTIES WORKING_DIRECTORY custom_work)\n"
+        "get_test_property(root_test WORKING_DIRECTORY ROOT_WD_OVERRIDE)\n"
+        "add_subdirectory(gp_source_scope gp_source_scope_build)\n"
+        "get_source_file_property(CHILD_GEN gen.c DIRECTORY gp_source_scope GENERATED)\n"
+        "get_property(CHILD_GEN_GENERIC SOURCE gen.c DIRECTORY gp_source_scope PROPERTY GENERATED)\n"
+        "get_source_file_property(CHILD_LOC gen.c DIRECTORY gp_source_scope LOCATION)\n"
+        "get_source_file_property(CHILD_LOC_TGT gen.c TARGET_DIRECTORY gen_target LOCATION)\n"
+        "get_test_property(scoped_test WORKING_DIRECTORY DIRECTORY gp_source_scope CHILD_WD)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_LOC")),
+                          nob_sv_from_cstr("main.c")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_LOC_GENERIC")),
+                          nob_sv_from_cstr("main.c")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_WD_DEFAULT")),
+                     nob_sv_from_cstr(".")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_WD_OVERRIDE")),
+                     nob_sv_from_cstr("custom_work")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_GEN")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_GEN_GENERIC")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_LOC")),
+                          nob_sv_from_cstr("gp_source_scope/gen.c")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_LOC_TGT")),
+                          nob_sv_from_cstr("gp_source_scope/gen.c")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_WD")),
+                          nob_sv_from_cstr("gp_source_scope_build")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3035,6 +3218,8 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_get_directory_property_missing_materializes_empty_string(passed, failed, skipped);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed, skipped);
     test_evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs(passed, failed, skipped);
+    test_evaluator_get_cmake_and_directory_property_synthetic_providers_cover_documented_surface(passed, failed, skipped);
+    test_evaluator_get_source_and_test_property_synthetic_providers_cover_location_generated_and_working_directory(passed, failed, skipped);
     test_evaluator_install_signatures_emit_expected_rules_and_component_inventory(passed, failed, skipped);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed, skipped);
     test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed, skipped);

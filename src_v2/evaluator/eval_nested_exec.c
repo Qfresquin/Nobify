@@ -116,6 +116,7 @@ static bool eval_push_external_context(EvalExecContext *ctx,
     String_View current_binary_dir = eval_current_binary_dir(ctx);
 
     if (is_add_subdirectory) {
+        if (!eval_directory_capture_current_scope(ctx)) return false;
         if (!eval_scope_push(ctx)) return false;
         state->scope_pushed = true;
     }
@@ -191,6 +192,7 @@ Eval_Result eval_execute_file(EvalExecContext *ctx,
     }
     eval_clear_return_state(ctx);
     if (is_add_subdirectory) {
+        if (!eval_directory_capture_current_scope(ctx)) result = eval_result_fatal();
         if (!eval_defer_pop_directory(ctx)) result = eval_result_fatal();
         state.defer_pushed = false;
     }

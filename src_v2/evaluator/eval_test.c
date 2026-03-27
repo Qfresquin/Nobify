@@ -181,7 +181,11 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
     if (!eval_var_set_current(ctx, global_marker, nob_sv_from_cstr("1"))) return eval_result_from_ctx(ctx);
 
     String_View test_dir = eval_current_source_dir_for_paths(ctx);
+    String_View effective_working_dir = working_dir.count > 0 ? working_dir : test_current_bin_dir(ctx);
     if (!eval_test_register(ctx, name, test_dir)) return eval_result_from_ctx(ctx);
+    if (!eval_test_set_working_directory(ctx, name, test_dir, effective_working_dir)) {
+        return eval_result_from_ctx(ctx);
+    }
     String_View scoped_marker = eval_test_scoped_marker_key_temp(ctx, test_dir, name);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (!eval_var_set_current(ctx, scoped_marker, nob_sv_from_cstr("1"))) return eval_result_from_ctx(ctx);

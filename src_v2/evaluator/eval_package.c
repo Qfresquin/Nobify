@@ -1,5 +1,42 @@
 #include "eval_package_internal.h"
 
+#include <string.h>
+
+static bool package_list_append_unique(EvalExecContext *ctx, SV_List *list, String_View name) {
+    if (!ctx || !list || name.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (eval_sv_key_eq((*list)[i], name)) return true;
+    }
+    name = sv_copy_to_event_arena(ctx, name);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, *list, name);
+}
+
+static void package_list_remove(SV_List *list, String_View name) {
+    if (!list) return;
+    for (size_t i = 0; i < arena_arr_len(*list); i++) {
+        if (!eval_sv_key_eq((*list)[i], name)) continue;
+        size_t count = arena_arr_len(*list);
+        if (i + 1 < count) {
+            memmove(&(*list)[i], &(*list)[i + 1], (count - (i + 1)) * sizeof((*list)[0]));
+        }
+        arena_arr_set_len(*list, count - 1);
+        return;
+    }
+}
+
+static bool package_record_find_result(EvalExecContext *ctx, String_View package_name, bool found) {
+    if (!ctx || package_name.count == 0) return false;
+    Eval_Package_Model *model = &ctx->semantic_state.package;
+    if (found) {
+        package_list_remove(&model->not_found_packages, package_name);
+        return package_list_append_unique(ctx, &model->found_packages, package_name);
+    }
+
+    package_list_remove(&model->found_packages, package_name);
+    return package_list_append_unique(ctx, &model->not_found_packages, package_name);
+}
+
 bool file_exists_sv(EvalExecContext *ctx, String_View path) {
     bool exists = false;
     return eval_service_file_exists(ctx, path, &exists) && exists;
@@ -1275,6 +1312,7 @@ Eval_Result eval_handle_find_package(EvalExecContext *ctx, const Node *node) {
         return eval_result_from_ctx(ctx);
     }
     find_package_finalize_found_var(ctx, &opt, &found);
+    if (!package_record_find_result(ctx, opt.pkg, found)) return eval_result_from_ctx(ctx);
     find_package_emit_result(ctx, node, o, &opt, found, found_path);
     return eval_result_from_ctx(ctx);
 }

@@ -3612,6 +3612,110 @@ TEST(evaluator_target_usage_commands_store_canonical_direct_and_interface_proper
     TEST_PASS();
 }
 
+TEST(evaluator_get_target_property_synthetic_providers_cover_type_imported_alias_and_directory_metadata) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("gtp_sub"));
+    ASSERT(nob_write_entire_file("gtp_sub/local.c", "int gtp_local;\n", 15));
+    {
+        const char *sub_cmake =
+            "add_library(child_local STATIC local.c)\n"
+            "add_library(child_imported_local STATIC IMPORTED)\n"
+            "add_library(child_local_alias ALIAS child_local)\n"
+            "add_library(child_imported_alias ALIAS child_imported_local)\n";
+        ASSERT(nob_write_entire_file("gtp_sub/CMakeLists.txt", sub_cmake, strlen(sub_cmake)));
+    }
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(root_real STATIC root.c)\n"
+        "add_library(root_imported SHARED IMPORTED GLOBAL)\n"
+        "add_library(root_alias ALIAS root_real)\n"
+        "add_subdirectory(gtp_sub gtp_sub_build)\n"
+        "get_target_property(ROOT_TYPE root_real TYPE)\n"
+        "get_target_property(ROOT_IMPORTED root_real IMPORTED)\n"
+        "get_target_property(ROOT_IMPORT_FLAG root_imported IMPORTED)\n"
+        "get_target_property(ROOT_IMPORTED_GLOBAL root_imported IMPORTED_GLOBAL)\n"
+        "get_target_property(ROOT_IMPORT_TYPE root_imported TYPE)\n"
+        "get_target_property(ROOT_ALIAS_OF root_alias ALIASED_TARGET)\n"
+        "get_target_property(ROOT_ALIAS_GLOBAL root_alias ALIAS_GLOBAL)\n"
+        "get_target_property(ROOT_ALIAS_TYPE root_alias TYPE)\n"
+        "get_target_property(ROOT_ALIAS_SRC root_alias SOURCE_DIR)\n"
+        "get_target_property(ROOT_ALIAS_BIN root_alias BINARY_DIR)\n"
+        "get_target_property(CHILD_TYPE child_local TYPE)\n"
+        "get_target_property(CHILD_SRC child_local SOURCE_DIR)\n"
+        "get_target_property(CHILD_BIN child_local BINARY_DIR)\n"
+        "get_target_property(CHILD_IMPORT_FLAG child_imported_local IMPORTED)\n"
+        "get_target_property(CHILD_IMPORT_GLOBAL child_imported_local IMPORTED_GLOBAL)\n"
+        "get_target_property(CHILD_ALIAS_OF child_local_alias ALIASED_TARGET)\n"
+        "get_target_property(CHILD_ALIAS_GLOBAL child_imported_alias ALIAS_GLOBAL)\n"
+        "get_target_property(CHILD_ALIAS_MISSING child_local ALIASED_TARGET)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_TYPE")),
+                     nob_sv_from_cstr("STATIC_LIBRARY")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORTED")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORT_FLAG")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORTED_GLOBAL")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORT_TYPE")),
+                     nob_sv_from_cstr("SHARED_LIBRARY")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_OF")),
+                     nob_sv_from_cstr("root_real")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_GLOBAL")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_TYPE")),
+                     nob_sv_from_cstr("STATIC_LIBRARY")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_SRC")),
+                     nob_sv_from_cstr(".")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_BIN")),
+                     nob_sv_from_cstr(".")));
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_TYPE")),
+                     nob_sv_from_cstr("STATIC_LIBRARY")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_SRC")),
+                          nob_sv_from_cstr("gtp_sub")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_BIN")),
+                          nob_sv_from_cstr("gtp_sub_build")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_FLAG")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_GLOBAL")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_OF")),
+                     nob_sv_from_cstr("child_local")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_GLOBAL")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_MISSING")),
+                     nob_sv_from_cstr("CHILD_ALIAS_MISSING-NOTFOUND")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_source_group_supports_files_tree_and_regex_forms) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -4498,6 +4602,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed, skipped);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed, skipped);
     test_evaluator_target_usage_commands_store_canonical_direct_and_interface_properties(passed, failed, skipped);
+    test_evaluator_get_target_property_synthetic_providers_cover_type_imported_alias_and_directory_metadata(passed, failed, skipped);
     test_evaluator_source_group_supports_files_tree_and_regex_forms(passed, failed, skipped);
     test_evaluator_message_mode_severity_mapping(passed, failed, skipped);
     test_evaluator_message_check_pass_without_start_is_error(passed, failed, skipped);

@@ -588,6 +588,9 @@ static bool eval_tx_snapshot_directory_nodes(EvalExecContext *ctx,
         copy[i].parent_binary_dir = nodes[i].parent_binary_dir;
         copy[i].declared_target_count = arena_arr_len(nodes[i].declared_targets);
         copy[i].declared_test_count = arena_arr_len(nodes[i].declared_tests);
+        copy[i].definition_binding_count = arena_arr_len(nodes[i].definition_bindings);
+        copy[i].macro_name_count = arena_arr_len(nodes[i].macro_names);
+        copy[i].listfile_stack_count = arena_arr_len(nodes[i].listfile_stack);
         if (!eval_tx_snapshot_sv_array(ctx,
                                        nodes[i].declared_targets,
                                        copy[i].declared_target_count,
@@ -598,6 +601,25 @@ static bool eval_tx_snapshot_directory_nodes(EvalExecContext *ctx,
                                        nodes[i].declared_tests,
                                        copy[i].declared_test_count,
                                        &copy[i].declared_tests)) {
+            return false;
+        }
+        if (!eval_tx_snapshot_bytes(ctx,
+                                    nodes[i].definition_bindings,
+                                    sizeof(*nodes[i].definition_bindings),
+                                    copy[i].definition_binding_count,
+                                    (void**)&copy[i].definition_bindings)) {
+            return false;
+        }
+        if (!eval_tx_snapshot_sv_array(ctx,
+                                       nodes[i].macro_names,
+                                       copy[i].macro_name_count,
+                                       &copy[i].macro_names)) {
+            return false;
+        }
+        if (!eval_tx_snapshot_sv_array(ctx,
+                                       nodes[i].listfile_stack,
+                                       copy[i].listfile_stack_count,
+                                       &copy[i].listfile_stack)) {
             return false;
         }
     }
@@ -665,6 +687,30 @@ static bool eval_tx_restore_directory_nodes(EvalExecContext *ctx,
                                ctx->event_arena,
                                node->declared_tests,
                                snapshot[i].declared_tests[j])) {
+                return false;
+            }
+        }
+        for (size_t j = 0; j < snapshot[i].definition_binding_count; j++) {
+            if (!EVAL_ARR_PUSH(ctx,
+                               ctx->event_arena,
+                               node->definition_bindings,
+                               snapshot[i].definition_bindings[j])) {
+                return false;
+            }
+        }
+        for (size_t j = 0; j < snapshot[i].macro_name_count; j++) {
+            if (!EVAL_ARR_PUSH(ctx,
+                               ctx->event_arena,
+                               node->macro_names,
+                               snapshot[i].macro_names[j])) {
+                return false;
+            }
+        }
+        for (size_t j = 0; j < snapshot[i].listfile_stack_count; j++) {
+            if (!EVAL_ARR_PUSH(ctx,
+                               ctx->event_arena,
+                               node->listfile_stack,
+                               snapshot[i].listfile_stack[j])) {
                 return false;
             }
         }
@@ -930,6 +976,20 @@ bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
                                    &tx->active_find_packages)) {
         return false;
     }
+    tx->found_package_count = arena_arr_len(ctx->semantic_state.package.found_packages);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.package.found_packages,
+                                   tx->found_package_count,
+                                   &tx->found_packages)) {
+        return false;
+    }
+    tx->not_found_package_count = arena_arr_len(ctx->semantic_state.package.not_found_packages);
+    if (!eval_tx_snapshot_sv_array(ctx,
+                                   ctx->semantic_state.package.not_found_packages,
+                                   tx->not_found_package_count,
+                                   &tx->not_found_packages)) {
+        return false;
+    }
     tx->fetchcontent_declaration_count = arena_arr_len(ctx->semantic_state.fetchcontent.declarations);
     if (!eval_tx_snapshot_bytes(ctx,
                                 ctx->semantic_state.fetchcontent.declarations,
@@ -1108,6 +1168,14 @@ bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, 
                               ctx->semantic_state.package.active_find_packages,
                               tx->active_find_packages,
                               tx->active_find_package_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.package.found_packages,
+                              tx->found_packages,
+                              tx->found_package_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.package.not_found_packages,
+                              tx->not_found_packages,
+                              tx->not_found_package_count);
         ctx->semantic_state.package.dependency_provider = tx->dependency_provider;
         EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
                               ctx->semantic_state.fetchcontent.declarations,
@@ -1496,6 +1564,31 @@ bool eval_target_known(EvalExecContext *ctx, String_View name) {
     return false;
 }
 
+static Eval_Target_Record *eval_target_find_record(EvalExecContext *ctx, String_View name) {
+    if (!ctx) return NULL;
+    Eval_Target_Model *targets = &ctx->semantic_state.targets;
+    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
+        if (eval_sv_key_eq(targets->records[i].name, name)) return &targets->records[i];
+    }
+    return NULL;
+}
+
+static Eval_Test_Record *eval_test_find_record(EvalExecContext *ctx,
+                                               String_View name,
+                                               String_View declared_dir) {
+    if (!ctx) return NULL;
+    if (declared_dir.count == 0) declared_dir = eval_current_source_dir_for_paths(ctx);
+    declared_dir = eval_sv_path_normalize_temp(ctx, declared_dir);
+    if (eval_should_stop(ctx)) return NULL;
+
+    Eval_Test_Model *tests = &ctx->semantic_state.tests;
+    for (size_t i = 0; i < arena_arr_len(tests->records); i++) {
+        if (!eval_sv_key_eq(tests->records[i].name, name)) continue;
+        if (svu_eq_ci_sv(tests->records[i].declared_dir, declared_dir)) return &tests->records[i];
+    }
+    return NULL;
+}
+
 bool eval_target_register(EvalExecContext *ctx, String_View name) {
     if (!ctx || eval_target_known(ctx, name)) return true;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
@@ -1506,20 +1599,39 @@ bool eval_target_register(EvalExecContext *ctx, String_View name) {
     String_View declared_dir = eval_current_source_dir_for_paths(ctx);
     record.declared_dir = sv_copy_to_arena(targets->arena, declared_dir);
     if (declared_dir.count > 0 && record.declared_dir.count == 0) return ctx_oom(ctx);
+    record.target_type = EV_TARGET_LIBRARY_UNKNOWN;
 
     if (!EVAL_ARR_PUSH(ctx, targets->arena, targets->records, record)) return false;
     return eval_directory_note_target(ctx, declared_dir, record.name);
 }
 
+bool eval_target_set_type(EvalExecContext *ctx, String_View name, Cmake_Target_Type target_type) {
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    if (!record) return false;
+    record->target_type = target_type;
+    return true;
+}
+
+bool eval_target_get_type(EvalExecContext *ctx, String_View name, Cmake_Target_Type *out_target_type) {
+    if (out_target_type) *out_target_type = EV_TARGET_LIBRARY_UNKNOWN;
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    if (!record) return false;
+    if (out_target_type) *out_target_type = record->target_type;
+    return true;
+}
+
 bool eval_target_set_imported(EvalExecContext *ctx, String_View name, bool imported) {
-    if (!ctx) return false;
-    Eval_Target_Model *targets = &ctx->semantic_state.targets;
-    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
-        if (!eval_sv_key_eq(targets->records[i].name, name)) continue;
-        targets->records[i].imported = imported;
-        return true;
-    }
-    return false;
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    if (!record) return false;
+    record->imported = imported;
+    return true;
+}
+
+bool eval_target_set_imported_global(EvalExecContext *ctx, String_View name, bool imported_global) {
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    if (!record) return false;
+    record->imported_global = imported_global;
+    return true;
 }
 
 bool eval_target_declared_dir(EvalExecContext *ctx, String_View name, String_View *out_dir) {
@@ -1537,13 +1649,13 @@ bool eval_target_declared_dir(EvalExecContext *ctx, String_View name, String_Vie
 }
 
 bool eval_target_is_imported(EvalExecContext *ctx, String_View name) {
-    if (!ctx) return false;
-    Eval_Target_Model *targets = &ctx->semantic_state.targets;
-    for (size_t i = 0; i < arena_arr_len(targets->records); i++) {
-        if (!eval_sv_key_eq(targets->records[i].name, name)) continue;
-        return targets->records[i].imported;
-    }
-    return false;
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    return record ? record->imported : false;
+}
+
+bool eval_target_is_imported_global(EvalExecContext *ctx, String_View name) {
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    return record ? record->imported_global : false;
 }
 
 bool eval_target_alias_known(EvalExecContext *ctx, String_View name) {
@@ -1561,6 +1673,33 @@ bool eval_target_alias_register(EvalExecContext *ctx, String_View name) {
     name = sv_copy_to_event_arena(ctx, name);
     if (eval_should_stop(ctx)) return false;
     return EVAL_ARR_PUSH(ctx, targets->arena, targets->aliases, name);
+}
+
+bool eval_target_set_alias(EvalExecContext *ctx, String_View alias_name, String_View real_target) {
+    if (!ctx) return false;
+    Eval_Target_Record *alias_record = eval_target_find_record(ctx, alias_name);
+    Eval_Target_Record *real_record = eval_target_find_record(ctx, real_target);
+    if (!alias_record || !real_record) return false;
+
+    alias_record->alias = true;
+    alias_record->alias_global = real_record->imported ? real_record->imported_global : true;
+    alias_record->target_type = real_record->target_type;
+    alias_record->alias_of = sv_copy_to_arena(ctx->semantic_state.targets.arena, real_target);
+    if (real_target.count > 0 && alias_record->alias_of.count == 0) return ctx_oom(ctx);
+    return true;
+}
+
+bool eval_target_alias_of(EvalExecContext *ctx, String_View name, String_View *out_real_target) {
+    if (out_real_target) *out_real_target = nob_sv_from_cstr("");
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    if (!record) return false;
+    if (out_real_target) *out_real_target = record->alias_of;
+    return true;
+}
+
+bool eval_target_alias_is_global(EvalExecContext *ctx, String_View name) {
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    return record ? (record->alias && record->alias_global) : false;
 }
 
 bool eval_test_known(EvalExecContext *ctx, String_View name) {
@@ -1601,6 +1740,28 @@ bool eval_test_register(EvalExecContext *ctx, String_View name, String_View decl
     if (declared_dir.count > 0 && record.declared_dir.count == 0) return ctx_oom(ctx);
     if (!EVAL_ARR_PUSH(ctx, tests->arena, tests->records, record)) return false;
     return eval_directory_note_test(ctx, declared_dir, record.name);
+}
+
+bool eval_test_set_working_directory(EvalExecContext *ctx,
+                                     String_View name,
+                                     String_View declared_dir,
+                                     String_View working_directory) {
+    Eval_Test_Record *record = eval_test_find_record(ctx, name, declared_dir);
+    if (!record) return false;
+    record->working_directory = sv_copy_to_arena(ctx->semantic_state.tests.arena, working_directory);
+    if (working_directory.count > 0 && record->working_directory.count == 0) return ctx_oom(ctx);
+    return true;
+}
+
+bool eval_test_working_directory(EvalExecContext *ctx,
+                                 String_View name,
+                                 String_View declared_dir,
+                                 String_View *out_working_directory) {
+    if (out_working_directory) *out_working_directory = nob_sv_from_cstr("");
+    Eval_Test_Record *record = eval_test_find_record(ctx, name, declared_dir);
+    if (!record) return false;
+    if (out_working_directory) *out_working_directory = record->working_directory;
+    return true;
 }
 
 bool eval_install_component_known(EvalExecContext *ctx, String_View name) {

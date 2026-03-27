@@ -113,6 +113,25 @@ static bool eval_directory_list_append_unique(EvalExecContext *ctx, SV_List *lis
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, *list, value);
 }
 
+static bool eval_directory_binding_upsert(EvalExecContext *ctx,
+                                          Var_Binding **bindings,
+                                          String_View key,
+                                          String_View value) {
+    if (!ctx || !bindings || key.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(*bindings); i++) {
+        if (!eval_sv_key_eq((*bindings)[i].key, key)) continue;
+        (*bindings)[i].value = sv_copy_to_event_arena(ctx, value);
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    Var_Binding binding = {0};
+    binding.key = sv_copy_to_event_arena(ctx, key);
+    binding.value = sv_copy_to_event_arena(ctx, value);
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, *bindings, binding);
+}
+
 bool eval_directory_register_node(EvalExecContext *ctx,
                                   String_View source_dir,
                                   String_View binary_dir,
@@ -269,6 +288,63 @@ bool eval_directory_note_test(EvalExecContext *ctx, String_View source_dir, Stri
     Eval_Directory_Node *node = eval_directory_find_node(ctx, normalized);
     if (!node) return false;
     return eval_directory_list_append_unique(ctx, &node->declared_tests, test_name);
+}
+
+bool eval_directory_capture_current_scope(EvalExecContext *ctx) {
+    if (!ctx) return false;
+
+    String_View current_source = eval_current_source_dir_for_paths(ctx);
+    if (current_source.count == 0) return true;
+    if (!eval_directory_register_known(ctx, current_source)) return false;
+
+    String_View normalized = eval_sv_path_normalize_temp(ctx, current_source);
+    if (eval_should_stop(ctx)) return false;
+    Eval_Directory_Node *node = eval_directory_find_node(ctx, normalized);
+    if (!node) return false;
+
+    Var_Binding *definitions = NULL;
+    Eval_Scope_State *scope_state = eval_scope_slice(ctx);
+    for (size_t depth = 0; depth < eval_scope_visible_depth(ctx); depth++) {
+        Var_Scope *scope = &scope_state->scopes[depth];
+        ptrdiff_t n = stbds_shlen(scope->vars);
+        for (ptrdiff_t i = 0; i < n; i++) {
+            if (!scope->vars[i].key) continue;
+            if (!eval_directory_binding_upsert(ctx,
+                                               &definitions,
+                                               nob_sv_from_cstr(scope->vars[i].key),
+                                               scope->vars[i].value)) {
+                return false;
+            }
+        }
+    }
+
+    SV_List macro_names = NULL;
+    Eval_Command_State *commands = eval_command_slice(ctx);
+    for (size_t i = 0; i < arena_arr_len(commands->user_commands); i++) {
+        if (commands->user_commands[i].kind != USER_CMD_MACRO) continue;
+        if (!eval_directory_list_append_unique(ctx, &macro_names, commands->user_commands[i].name)) {
+            return false;
+        }
+    }
+
+    SV_List listfile_stack = NULL;
+    for (size_t i = 0; i < arena_arr_len(ctx->exec_contexts); i++) {
+        const Eval_Exec_Context *exec = &ctx->exec_contexts[i];
+        if (!exec->current_file) continue;
+        if (!eval_directory_list_append_unique(ctx, &listfile_stack, nob_sv_from_cstr(exec->current_file))) {
+            return false;
+        }
+    }
+    if (arena_arr_len(listfile_stack) == 0 && ctx->current_file) {
+        if (!eval_directory_list_append_unique(ctx, &listfile_stack, nob_sv_from_cstr(ctx->current_file))) {
+            return false;
+        }
+    }
+
+    node->definition_bindings = definitions;
+    node->macro_names = macro_names;
+    node->listfile_stack = listfile_stack;
+    return true;
 }
 
 String_View eval_detect_host_system_name(void) {
