@@ -78,6 +78,7 @@ The implementation-level contracts for v2 live in focused docs under `docs/`.
 - `docs/lexer/`: lexer tokenization and source-position contract.
 - `docs/parser/`: parser AST, grammar, and recovery contract.
 - `docs/arena/`: arena allocator and `arena_dyn.h` memory helper contract.
+- `docs/tests/`: test architecture baseline, suite taxonomy, and structural refactor roadmap for the v2 test stack.
 
 ---
 
