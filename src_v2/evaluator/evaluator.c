@@ -2539,6 +2539,53 @@ bool eval_session_target_known(const EvalSession *session, String_View target_na
     return eval_target_known(&exec, target_name) || eval_target_alias_known(&exec, target_name);
 }
 
+size_t eval_session_canonical_artifact_count(const EvalSession *session) {
+    if (!session) return 0;
+    return arena_arr_len(session->state.canonical_state.artifacts);
+}
+
+bool eval_session_find_canonical_artifact(const EvalSession *session,
+                                          String_View producer,
+                                          String_View kind,
+                                          String_View *out_primary_path) {
+    const Eval_Canonical_Artifact_List artifacts = session ? session->state.canonical_state.artifacts : NULL;
+
+    if (out_primary_path) *out_primary_path = nob_sv_from_cstr("");
+    if (!session) return false;
+
+    for (size_t i = arena_arr_len(artifacts); i-- > 0;) {
+        if (!nob_sv_eq(artifacts[i].producer, producer)) continue;
+        if (!nob_sv_eq(artifacts[i].kind, kind)) continue;
+        if (out_primary_path) *out_primary_path = artifacts[i].primary_path;
+        return true;
+    }
+    return false;
+}
+
+size_t eval_session_ctest_step_count(const EvalSession *session) {
+    if (!session) return 0;
+    return arena_arr_len(session->state.canonical_state.ctest_steps);
+}
+
+bool eval_session_find_ctest_step(const EvalSession *session,
+                                  String_View command_name,
+                                  String_View *out_status,
+                                  String_View *out_submit_part) {
+    const Eval_Ctest_Step_Record_List ctest_steps = session ? session->state.canonical_state.ctest_steps : NULL;
+
+    if (out_status) *out_status = nob_sv_from_cstr("");
+    if (out_submit_part) *out_submit_part = nob_sv_from_cstr("");
+    if (!session) return false;
+
+    for (size_t i = arena_arr_len(ctest_steps); i-- > 0;) {
+        if (!nob_sv_eq(ctest_steps[i].command_name, command_name)) continue;
+        if (out_status) *out_status = ctest_steps[i].status;
+        if (out_submit_part) *out_submit_part = ctest_steps[i].submit_part;
+        return true;
+    }
+    return false;
+}
+
 const EvalServices *eval_exec_services(const EvalExecContext *exec) {
     return exec ? exec->services : NULL;
 }

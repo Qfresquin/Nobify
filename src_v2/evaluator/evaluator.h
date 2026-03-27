@@ -226,6 +226,16 @@ bool eval_session_get_visible_var(const EvalSession *session,
                                   String_View *out_value);
 bool eval_session_cache_defined(const EvalSession *session, String_View key);
 bool eval_session_target_known(const EvalSession *session, String_View target_name);
+size_t eval_session_canonical_artifact_count(const EvalSession *session);
+bool eval_session_find_canonical_artifact(const EvalSession *session,
+                                          String_View producer,
+                                          String_View kind,
+                                          String_View *out_primary_path);
+size_t eval_session_ctest_step_count(const EvalSession *session);
+bool eval_session_find_ctest_step(const EvalSession *session,
+                                  String_View command_name,
+                                  String_View *out_status,
+                                  String_View *out_submit_part);
 
 EvalRegistry *eval_registry_create(Arena *arena);
 void eval_registry_destroy(EvalRegistry *registry);

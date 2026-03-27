@@ -3,6 +3,7 @@
 
 #include "test_v2_assert.h"
 #include "test_case_pack.h"
+#include "test_host_fixture_support.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
@@ -131,6 +132,7 @@ bool eval_test_ctest_step_find(const Eval_Test_Runtime *ctx,
                                String_View command_name,
                                String_View *out_status,
                                String_View *out_submit_part);
+const char *eval_test_current_file(const Eval_Test_Runtime *ctx);
 Eval_Result native_test_handler_set_hit(EvalExecContext *ctx, const Node *node);
 Eval_Result native_test_handler_runtime_mutation(EvalExecContext *ctx, const Node *node);
 Eval_Result native_test_handler_snapshot_set_strict_and_warn(EvalExecContext *ctx, const Node *node);

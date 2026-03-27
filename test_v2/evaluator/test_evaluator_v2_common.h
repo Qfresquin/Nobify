@@ -3,6 +3,7 @@
 
 #include "test_v2_assert.h"
 #include "test_case_pack.h"
+#include "test_host_fixture_support.h"
 #include "test_snapshot_support.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
@@ -101,137 +102,23 @@ static void evaluator_end_nob_log_capture(void) {
 }
 
 static void evaluator_set_source_date_epoch_value(const char *value) {
-#if defined(_WIN32)
-    _putenv_s("SOURCE_DATE_EPOCH", value ? value : "");
-#else
-    if (value) {
-        setenv("SOURCE_DATE_EPOCH", value, 1);
-    } else {
-        unsetenv("SOURCE_DATE_EPOCH");
-    }
-#endif
-}
-
-static bool evaluator_remove_link_like_path(const char *path) {
-    if (!path) return false;
-#if defined(_WIN32)
-    DWORD attrs = GetFileAttributesA(path);
-    if (attrs == INVALID_FILE_ATTRIBUTES) {
-        DWORD err = GetLastError();
-        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
-    }
-    if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
-        if (RemoveDirectoryA(path)) return true;
-    }
-    if (DeleteFileA(path)) return true;
-    if (RemoveDirectoryA(path)) return true;
-    return false;
-#else
-    struct stat st = {0};
-    if (lstat(path, &st) != 0) {
-        return errno == ENOENT;
-    }
-    if (S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode)) {
-        return rmdir(path) == 0;
-    }
-    return unlink(path) == 0;
-#endif
+    (void)test_host_set_env_value("SOURCE_DATE_EPOCH", value);
 }
 
 static bool evaluator_prepare_symlink_escape_fixture(void) {
-    const char *outside_dir = "../evaluator_symlink_outside";
-    const char *outside_file = "../evaluator_symlink_outside/outside.txt";
-    const char *inside_link = "temp_symlink_escape_link";
-
-    if (!nob_mkdir_if_not_exists(outside_dir)) {
-        nob_log(NOB_ERROR, "evaluator fixture: failed to create %s", outside_dir);
-        return false;
-    }
-    if (!nob_write_entire_file(outside_file, "outside\n", 8)) {
-        nob_log(NOB_ERROR, "evaluator fixture: failed to write %s", outside_file);
-        return false;
-    }
-
-    if (!evaluator_remove_link_like_path(inside_link)) {
-        nob_log(NOB_ERROR, "evaluator fixture: failed to clean %s", inside_link);
-        return false;
-    }
-
-#if defined(_WIN32)
-    DWORD flags = SYMBOLIC_LINK_FLAG_DIRECTORY;
-    if (CreateSymbolicLinkA(inside_link, "..\\evaluator_symlink_outside",
-                            flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
-        return true;
-    }
-    if (CreateSymbolicLinkA(inside_link, "..\\evaluator_symlink_outside", flags) != 0) {
-        return true;
-    }
-
-    int mklink_rc = system("cmd /C mklink /J temp_symlink_escape_link ..\\evaluator_symlink_outside >NUL 2>NUL");
-    if (mklink_rc == 0) return true;
-
-    nob_log(NOB_ERROR, "evaluator fixture: failed to create symlink/junction at %s", inside_link);
-    return false;
-#else
-    if (symlink("../evaluator_symlink_outside", inside_link) == 0) return true;
-    if (errno == EEXIST) return true;
-
-    nob_log(NOB_ERROR, "evaluator fixture: failed to create symlink %s -> %s: %s",
-            inside_link, outside_dir, strerror(errno));
-    return false;
-#endif
+    return test_host_prepare_symlink_escape_fixture("../evaluator_symlink_outside",
+                                                    "../evaluator_symlink_outside/outside.txt",
+                                                    "outside\n",
+                                                    "temp_symlink_escape_link",
+                                                    "../evaluator_symlink_outside");
 }
 
 static bool evaluator_create_directory_link_like(const char *link_path, const char *target_path) {
-    if (!link_path || !target_path) return false;
-    if (!evaluator_remove_link_like_path(link_path)) return false;
-
-#if defined(_WIN32)
-    char link_win[512] = {0};
-    char target_win[512] = {0};
-    int link_n = snprintf(link_win, sizeof(link_win), "%s", link_path);
-    int target_n = snprintf(target_win, sizeof(target_win), "%s", target_path);
-    if (link_n < 0 || link_n >= (int)sizeof(link_win) ||
-        target_n < 0 || target_n >= (int)sizeof(target_win)) {
-        return false;
-    }
-    for (size_t i = 0; link_win[i] != '\0'; i++) if (link_win[i] == '/') link_win[i] = '\\';
-    for (size_t i = 0; target_win[i] != '\0'; i++) if (target_win[i] == '/') target_win[i] = '\\';
-
-    DWORD flags = SYMBOLIC_LINK_FLAG_DIRECTORY;
-    if (CreateSymbolicLinkA(link_win, target_win, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
-        return true;
-    }
-    if (CreateSymbolicLinkA(link_win, target_win, flags) != 0) return true;
-
-    char cmd[1200] = {0};
-    int n = snprintf(cmd, sizeof(cmd), "cmd /C mklink /J %s %s >NUL 2>NUL", link_win, target_win);
-    if (n < 0 || n >= (int)sizeof(cmd)) return false;
-    return system(cmd) == 0;
-#else
-    if (symlink(target_path, link_path) == 0) return true;
-    return errno == EEXIST;
-#endif
+    return test_host_create_directory_link_like(link_path, target_path);
 }
 
 static bool evaluator_prepare_site_name_command(char *out_path, size_t out_path_size) {
-    if (!out_path || out_path_size == 0) return false;
-#if defined(_WIN32)
-    int n = snprintf(out_path, out_path_size, "%s", "hostname");
-    return n > 0 && (size_t)n < out_path_size;
-#else
-    const char *path = "./temp_site_name_cmd.sh";
-    const char *script = "#!/bin/sh\nprintf 'mock-site\\n'\n";
-    if (!nob_write_entire_file(path, script, strlen(script))) return false;
-    if (chmod(path, 0755) != 0) return false;
-    int n = snprintf(out_path, out_path_size, "%s", path);
-    return n > 0 && (size_t)n < out_path_size;
-#endif
-}
-
-static bool evaluator_run_system_command(const char *cmd) {
-    if (!cmd) return false;
-    return system(cmd) == 0;
+    return test_host_prepare_mock_site_name_command(out_path, out_path_size);
 }
 
 static bool evaluator_sv_is_decimal(String_View value) {
@@ -264,59 +151,17 @@ static bool evaluator_sv_list_contains(String_View list, String_View wanted) {
 static bool evaluator_create_tar_archive(const char *archive_path,
                                          const char *parent_dir,
                                          const char *entry_name) {
-    if (!archive_path || !parent_dir || !entry_name) return false;
-    char cmd[2048] = {0};
-    int n = snprintf(cmd,
-                     sizeof(cmd),
-                     "tar -cf \"%s\" -C \"%s\" \"%s\"",
-                     archive_path,
-                     parent_dir,
-                     entry_name);
-    if (n < 0 || n >= (int)sizeof(cmd)) return false;
-    return evaluator_run_system_command(cmd);
+    return test_host_create_tar_archive(archive_path, parent_dir, entry_name);
 }
 
 static bool evaluator_create_fetchcontent_git_repo(const char *repo_dir,
                                                    const char *cmakelists_text,
                                                    const char *version_text,
                                                    const char *tag_name) {
-    if (!repo_dir || !cmakelists_text || !version_text || !tag_name) return false;
-
-    char cmakelists_path[1024] = {0};
-    char version_path[1024] = {0};
-    int cmakelists_n = snprintf(cmakelists_path, sizeof(cmakelists_path), "%s/CMakeLists.txt", repo_dir);
-    int version_n = snprintf(version_path, sizeof(version_path), "%s/version.txt", repo_dir);
-    if (cmakelists_n < 0 || cmakelists_n >= (int)sizeof(cmakelists_path) ||
-        version_n < 0 || version_n >= (int)sizeof(version_path)) {
-        return false;
-    }
-
-    if (!nob_mkdir_if_not_exists(repo_dir)) return false;
-    if (!nob_write_entire_file(cmakelists_path, cmakelists_text, strlen(cmakelists_text))) return false;
-    if (!nob_write_entire_file(version_path, version_text, strlen(version_text))) return false;
-
-    char git_init[2048] = {0};
-    char git_add[2048] = {0};
-    char git_commit[2048] = {0};
-    char git_tag[2048] = {0};
-    int init_n = snprintf(git_init, sizeof(git_init), "git -C \"%s\" init", repo_dir);
-    int add_n = snprintf(git_add, sizeof(git_add), "git -C \"%s\" add .", repo_dir);
-    int commit_n = snprintf(git_commit,
-                            sizeof(git_commit),
-                            "git -C \"%s\" -c user.name=\"Nobify Tests\" -c user.email=\"tests@example.com\" commit -m init",
-                            repo_dir);
-    int tag_n = snprintf(git_tag, sizeof(git_tag), "git -C \"%s\" tag \"%s\"", repo_dir, tag_name);
-    if (init_n < 0 || init_n >= (int)sizeof(git_init) ||
-        add_n < 0 || add_n >= (int)sizeof(git_add) ||
-        commit_n < 0 || commit_n >= (int)sizeof(git_commit) ||
-        tag_n < 0 || tag_n >= (int)sizeof(git_tag)) {
-        return false;
-    }
-
-    return evaluator_run_system_command(git_init) &&
-           evaluator_run_system_command(git_add) &&
-           evaluator_run_system_command(git_commit) &&
-           evaluator_run_system_command(git_tag);
+    return test_host_create_git_repo_with_tag(repo_dir,
+                                              cmakelists_text,
+                                              version_text,
+                                              tag_name);
 }
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
@@ -446,6 +291,38 @@ static bool eval_test_var_event_seen(const Cmake_Event_Stream *stream, String_Vi
         if (nob_sv_eq(ev->as.var_set.key, key)) return true;
     }
     return false;
+}
+
+static size_t eval_test_canonical_artifact_count(const Eval_Test_Runtime *ctx) {
+    return ctx ? eval_session_canonical_artifact_count(ctx->session) : 0;
+}
+
+static bool eval_test_canonical_artifact_find(const Eval_Test_Runtime *ctx,
+                                              String_View producer,
+                                              String_View kind,
+                                              String_View *out_primary_path) {
+    return ctx && eval_session_find_canonical_artifact(ctx->session,
+                                                       producer,
+                                                       kind,
+                                                       out_primary_path);
+}
+
+static size_t eval_test_ctest_step_count(const Eval_Test_Runtime *ctx) {
+    return ctx ? eval_session_ctest_step_count(ctx->session) : 0;
+}
+
+static bool eval_test_ctest_step_find(const Eval_Test_Runtime *ctx,
+                                      String_View command_name,
+                                      String_View *out_status,
+                                      String_View *out_submit_part) {
+    return ctx && eval_session_find_ctest_step(ctx->session,
+                                               command_name,
+                                               out_status,
+                                               out_submit_part);
+}
+
+static const char *eval_test_current_file(const Eval_Test_Runtime *ctx) {
+    return ctx ? ctx->current_file : NULL;
 }
 
 static Eval_Result native_test_handler_set_hit(EvalExecContext *ctx, const Node *node) {

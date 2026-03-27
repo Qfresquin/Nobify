@@ -12,6 +12,8 @@ As of March 27, 2026:
 - the generic framework under `test_v2/` owns per-suite and per-case lifecycle
 - generic snapshot/case-pack and semantic pipeline support are now centralized
   under shared helpers in `test_v2/`
+- generic host-fixture support for env/symlink/git/tar helpers is now
+  centralized under shared helpers in `test_v2/`
 - `build-model` is now a first-class runner module and aggregate participant
 
 This file is the canonical baseline for test architecture, ownership, and suite
@@ -140,6 +142,7 @@ Current owners:
 - `test_v2/test_fs.h`
 - `test_v2/test_snapshot_support.*`
 - `test_v2/test_semantic_pipeline.*`
+- `test_v2/test_host_fixture_support.*`
 - suite-local support files such as:
   - `test_v2/evaluator/test_evaluator_v2_support.*`
   - `test_v2/codegen/test_codegen_v2_support.*`

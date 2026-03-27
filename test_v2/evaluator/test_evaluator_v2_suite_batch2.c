@@ -1074,8 +1074,8 @@ TEST(evaluator_cmake_language_eval_inline_soft_error_preserves_context) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BEFORE_INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("INLINE_FILE")), nob_sv_from_cstr("CMakeLists.txt")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("AFTER_INLINE")), nob_sv_from_cstr("ok")));
-    ASSERT(ctx->current_file != NULL);
-    ASSERT(strcmp(ctx->current_file, "CMakeLists.txt") == 0);
+    ASSERT(eval_test_current_file(ctx) != NULL);
+    ASSERT(strcmp(eval_test_current_file(ctx), "CMakeLists.txt") == 0);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);

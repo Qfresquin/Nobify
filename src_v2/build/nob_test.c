@@ -662,6 +662,7 @@ static void append_v2_build_model_test_sources(Nob_Cmd *cmd) {
 
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_host_fixture_support.c",
         "test_v2/test_v2_assert.c",
         "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
@@ -677,6 +678,7 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
 
 static void append_v2_evaluator_integration_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
+        "test_v2/test_host_fixture_support.c",
         "test_v2/test_v2_assert.c",
         "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",

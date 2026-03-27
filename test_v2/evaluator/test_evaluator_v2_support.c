@@ -26,6 +26,11 @@
 #define eval_test_cache_defined evaluator_support_impl_eval_test_cache_defined
 #define eval_test_target_known evaluator_support_impl_eval_test_target_known
 #define eval_test_var_event_seen evaluator_support_impl_eval_test_var_event_seen
+#define eval_test_canonical_artifact_count evaluator_support_impl_eval_test_canonical_artifact_count
+#define eval_test_canonical_artifact_find evaluator_support_impl_eval_test_canonical_artifact_find
+#define eval_test_ctest_step_count evaluator_support_impl_eval_test_ctest_step_count
+#define eval_test_ctest_step_find evaluator_support_impl_eval_test_ctest_step_find
+#define eval_test_current_file evaluator_support_impl_eval_test_current_file
 #define native_test_handler_set_hit evaluator_support_impl_native_test_handler_set_hit
 #define native_test_handler_runtime_mutation evaluator_support_impl_native_test_handler_runtime_mutation
 #define native_test_handler_snapshot_set_strict_and_warn evaluator_support_impl_native_test_handler_snapshot_set_strict_and_warn
@@ -48,7 +53,6 @@
 #define evaluator_stream_has_monotonic_sequence evaluator_support_impl_evaluator_stream_has_monotonic_sequence
 
 #include "test_evaluator_v2_common.h"
-#include "evaluator_internal.h"
 
 #undef g_evaluator_captured_nob_logs
 #undef evaluator_begin_nob_log_capture
@@ -78,6 +82,11 @@
 #undef eval_test_cache_defined
 #undef eval_test_target_known
 #undef eval_test_var_event_seen
+#undef eval_test_canonical_artifact_count
+#undef eval_test_canonical_artifact_find
+#undef eval_test_ctest_step_count
+#undef eval_test_ctest_step_find
+#undef eval_test_current_file
 #undef native_test_handler_set_hit
 #undef native_test_handler_runtime_mutation
 #undef native_test_handler_snapshot_set_strict_and_warn
@@ -168,33 +177,6 @@ typedef struct {
 Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init);
 void eval_test_destroy(Eval_Test_Runtime *ctx);
 
-typedef struct {
-    char *name;
-    char *prev_value;
-    bool had_prev_value;
-} Eval_Test_Env_Guard;
-
-static void evaluator_test_env_guard_cleanup(void *ctx) {
-    Eval_Test_Env_Guard *guard = (Eval_Test_Env_Guard*)ctx;
-    if (!guard) return;
-#if defined(_WIN32)
-    if (guard->had_prev_value) {
-        _putenv_s(guard->name, guard->prev_value ? guard->prev_value : "");
-    } else {
-        _putenv_s(guard->name, "");
-    }
-#else
-    if (guard->had_prev_value) {
-        setenv(guard->name, guard->prev_value ? guard->prev_value : "", 1);
-    } else {
-        unsetenv(guard->name);
-    }
-#endif
-    free(guard->name);
-    free(guard->prev_value);
-    free(guard);
-}
-
 static void evaluator_test_log_capture_cleanup(void *ctx) {
     (void)ctx;
     evaluator_end_nob_log_capture();
@@ -280,61 +262,20 @@ bool evaluator_test_begin_nob_log_capture_guarded(void) {
 }
 
 bool evaluator_test_guard_env(const char *name, const char *value) {
-    const char *prev_value = NULL;
-    Eval_Test_Env_Guard *guard = NULL;
-    size_t name_len = 0;
+    Test_Host_Env_Guard *guard = NULL;
 
     if (!name || name[0] == '\0') return false;
 
-    prev_value = getenv(name);
-    guard = (Eval_Test_Env_Guard*)calloc(1, sizeof(*guard));
+    guard = (Test_Host_Env_Guard*)calloc(1, sizeof(*guard));
     if (!guard) return false;
 
-    name_len = strlen(name);
-    guard->name = (char*)malloc(name_len + 1);
-    if (!guard->name) {
+    if (!test_host_env_guard_begin(guard, name, value)) {
         free(guard);
         return false;
     }
-    memcpy(guard->name, name, name_len + 1);
 
-    if (prev_value) {
-        size_t prev_len = strlen(prev_value);
-        guard->prev_value = (char*)malloc(prev_len + 1);
-        if (!guard->prev_value) {
-            free(guard->name);
-            free(guard);
-            return false;
-        }
-        memcpy(guard->prev_value, prev_value, prev_len + 1);
-        guard->had_prev_value = true;
-    }
-
-#if defined(_WIN32)
-    if (_putenv_s(name, value ? value : "") != 0) {
-        free(guard->name);
-        free(guard->prev_value);
-        free(guard);
-        return false;
-    }
-#else
-    if (value) {
-        if (setenv(name, value, 1) != 0) {
-            free(guard->name);
-            free(guard->prev_value);
-            free(guard);
-            return false;
-        }
-    } else if (unsetenv(name) != 0) {
-        free(guard->name);
-        free(guard->prev_value);
-        free(guard);
-        return false;
-    }
-#endif
-
-    if (!test_v2_cleanup_push(evaluator_test_env_guard_cleanup, guard)) {
-        evaluator_test_env_guard_cleanup(guard);
+    if (!test_v2_cleanup_push(test_host_env_guard_cleanup, guard)) {
+        test_host_env_guard_cleanup(guard);
         return false;
     }
 
@@ -409,48 +350,33 @@ bool eval_test_var_event_seen(const Cmake_Event_Stream *stream, String_View key)
 }
 
 size_t eval_test_canonical_artifact_count(const Eval_Test_Runtime *ctx) {
-    if (!ctx || !ctx->session) return 0;
-    return arena_arr_len(ctx->session->state.canonical_state.artifacts);
+    return evaluator_support_impl_eval_test_canonical_artifact_count(ctx);
 }
 
 size_t eval_test_ctest_step_count(const Eval_Test_Runtime *ctx) {
-    if (!ctx || !ctx->session) return 0;
-    return arena_arr_len(ctx->session->state.canonical_state.ctest_steps);
+    return evaluator_support_impl_eval_test_ctest_step_count(ctx);
 }
 
 bool eval_test_canonical_artifact_find(const Eval_Test_Runtime *ctx,
                                        String_View producer,
                                        String_View kind,
                                        String_View *out_primary_path) {
-    if (out_primary_path) *out_primary_path = nob_sv_from_cstr("");
-    if (!ctx || !ctx->session) return false;
-
-    const Eval_Canonical_State *state = &ctx->session->state.canonical_state;
-    for (size_t i = arena_arr_len(state->artifacts); i-- > 0;) {
-        if (!nob_sv_eq(state->artifacts[i].producer, producer)) continue;
-        if (!nob_sv_eq(state->artifacts[i].kind, kind)) continue;
-        if (out_primary_path) *out_primary_path = state->artifacts[i].primary_path;
-        return true;
-    }
-    return false;
+    return evaluator_support_impl_eval_test_canonical_artifact_find(
+        ctx, producer, kind, out_primary_path);
 }
 
 bool eval_test_ctest_step_find(const Eval_Test_Runtime *ctx,
                                String_View command_name,
                                String_View *out_status,
                                String_View *out_submit_part) {
-    if (out_status) *out_status = nob_sv_from_cstr("");
-    if (out_submit_part) *out_submit_part = nob_sv_from_cstr("");
-    if (!ctx || !ctx->session) return false;
+    return evaluator_support_impl_eval_test_ctest_step_find(ctx,
+                                                            command_name,
+                                                            out_status,
+                                                            out_submit_part);
+}
 
-    const Eval_Canonical_State *state = &ctx->session->state.canonical_state;
-    for (size_t i = arena_arr_len(state->ctest_steps); i-- > 0;) {
-        if (!nob_sv_eq(state->ctest_steps[i].command_name, command_name)) continue;
-        if (out_status) *out_status = state->ctest_steps[i].status;
-        if (out_submit_part) *out_submit_part = state->ctest_steps[i].submit_part;
-        return true;
-    }
-    return false;
+const char *eval_test_current_file(const Eval_Test_Runtime *ctx) {
+    return evaluator_support_impl_eval_test_current_file(ctx);
 }
 
 Eval_Result native_test_handler_set_hit(EvalExecContext *ctx, const Node *node) {

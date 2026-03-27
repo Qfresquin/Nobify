@@ -365,6 +365,20 @@ Closure checks:
 
 ### Wave T4: Evaluator Test Decoupling
 
+Status:
+- completed (March 27, 2026)
+
+Delivered artifacts:
+- aggregate-path evaluator support no longer includes `evaluator_internal.h`
+- canonical artifact and ctest-step inspection now flow through narrow public
+  `eval_session_*` accessors instead of test-side session-struct peeking
+- generic env, symlink, tar, git, and mock-host-command helpers now live in
+  shared `test_v2/test_host_fixture_support.*`
+- evaluator-specific support now wraps shared host-fixture helpers instead of
+  owning their implementation
+- aggregate evaluator assertions no longer rely on direct `Eval_Test_Runtime`
+  field reads for current-file inspection
+
 Deliverables:
 - remove the architectural dependence on `evaluator_internal.h` from normal
   evaluator tests
@@ -389,6 +403,7 @@ Exit criteria:
 Closure checks:
 - no aggregate evaluator suite includes `evaluator_internal.h`
 - evaluator support layers are organized around public execution/report surfaces
+- canonical artifact and ctest-step checks go through public query helpers
 - any remaining white-box path is explicit, isolated, and non-aggregate
 
 ### Wave T5: Aggregate Policy And CI Shape
