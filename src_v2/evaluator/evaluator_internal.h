@@ -311,6 +311,10 @@ typedef enum {
     EVAL_FETCHCONTENT_TRANSPORT_NONE = 0,
     EVAL_FETCHCONTENT_TRANSPORT_URL,
     EVAL_FETCHCONTENT_TRANSPORT_GIT,
+    EVAL_FETCHCONTENT_TRANSPORT_SVN,
+    EVAL_FETCHCONTENT_TRANSPORT_HG,
+    EVAL_FETCHCONTENT_TRANSPORT_CVS,
+    EVAL_FETCHCONTENT_TRANSPORT_CUSTOM_DOWNLOAD,
 } Eval_FetchContent_Transport;
 
 typedef enum {
@@ -325,27 +329,67 @@ typedef struct {
     SV_List args;
     String_View source_dir;
     String_View binary_dir;
+    String_View subbuild_dir;
     String_View source_subdir;
     bool has_source_dir;
     bool has_binary_dir;
+    bool has_subbuild_dir;
     bool exclude_from_all;
     bool system;
+    bool quiet;
     bool override_find_package;
     bool has_find_package_args;
     SV_List find_package_args;
     Eval_FetchContent_Transport transport;
-    String_View url;
+    SV_List urls;
     String_View url_hash;
     String_View url_md5;
+    String_View download_name;
+    bool has_download_command;
+    SV_List download_command;
     bool download_no_extract;
     bool download_extract_timestamp;
+    bool download_no_progress;
+    bool has_timeout;
+    size_t timeout_sec;
+    bool has_inactivity_timeout;
+    size_t inactivity_timeout_sec;
+    String_View http_username;
+    String_View http_password;
+    SV_List http_headers;
+    bool has_tls_verify;
+    bool tls_verify;
+    String_View tls_cainfo;
+    bool has_netrc_mode;
+    String_View netrc_mode;
+    String_View netrc_file;
     String_View git_repository;
     String_View git_tag;
+    String_View git_remote_name;
     bool git_shallow;
     bool git_progress;
+    SV_List git_config;
+    String_View git_remote_update_strategy;
     bool has_git_submodules;
     SV_List git_submodules;
     bool git_submodules_recurse;
+    String_View svn_repository;
+    String_View svn_revision;
+    String_View svn_username;
+    String_View svn_password;
+    bool has_svn_trust_cert;
+    bool svn_trust_cert;
+    String_View hg_repository;
+    String_View hg_tag;
+    String_View cvs_repository;
+    String_View cvs_module;
+    String_View cvs_tag;
+    bool has_update_command;
+    SV_List update_command;
+    bool has_update_disconnected;
+    bool update_disconnected;
+    bool has_patch_command;
+    SV_List patch_command;
     Eval_FetchContent_Try_Find_Mode try_find_mode;
     bool find_package_targets_global;
 } Eval_FetchContent_Declaration;
@@ -355,7 +399,12 @@ typedef Eval_FetchContent_Declaration *Eval_FetchContent_Declaration_List;
 typedef struct {
     String_View name;
     String_View canonical_name;
+    bool population_processed;
     bool populated;
+    bool source_dir_known;
+    bool binary_dir_known;
+    bool resolved_by_provider;
+    bool resolved_by_find_package;
     String_View source_dir;
     String_View binary_dir;
 } Eval_FetchContent_State;

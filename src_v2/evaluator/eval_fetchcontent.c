@@ -45,6 +45,11 @@ typedef struct {
     String_View binary_dir;
 } FetchContent_SetPopulated_Request;
 
+static bool fetchcontent_git_emit_failure(EvalExecContext *ctx,
+                                          const Node *node,
+                                          String_View cause,
+                                          String_View detail);
+
 static bool fetchcontent_require_module(EvalExecContext *ctx,
                                         String_View command,
                                         Cmake_Event_Origin origin) {
@@ -200,37 +205,71 @@ static bool fetchcontent_active_contains(EvalExecContext *ctx, String_View canon
     return false;
 }
 
-static bool fetchcontent_publish_default_vars(EvalExecContext *ctx,
-                                              String_View dependency_name,
-                                              bool populated,
-                                              String_View source_dir,
-                                              String_View binary_dir) {
+static bool fetchcontent_default_var_names(EvalExecContext *ctx,
+                                           String_View dependency_name,
+                                           String_View *out_source_var,
+                                           String_View *out_binary_var,
+                                           String_View *out_populated_var) {
     if (!ctx || dependency_name.count == 0) return false;
     String_View lower = fetchcontent_lower_temp(ctx, dependency_name);
     if (eval_should_stop(ctx)) return false;
 
-    String_View source_var = svu_concat_suffix_temp(ctx, lower, "_SOURCE_DIR");
-    String_View binary_var = svu_concat_suffix_temp(ctx, lower, "_BINARY_DIR");
-    String_View populated_var = svu_concat_suffix_temp(ctx, lower, "_POPULATED");
+    if (out_source_var) *out_source_var = svu_concat_suffix_temp(ctx, lower, "_SOURCE_DIR");
+    if (out_binary_var) *out_binary_var = svu_concat_suffix_temp(ctx, lower, "_BINARY_DIR");
+    if (out_populated_var) *out_populated_var = svu_concat_suffix_temp(ctx, lower, "_POPULATED");
     if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool fetchcontent_publish_default_vars(EvalExecContext *ctx,
+                                              String_View dependency_name,
+                                              bool publish_populated,
+                                              bool populated,
+                                              String_View source_dir,
+                                              String_View binary_dir) {
+    if (!ctx || dependency_name.count == 0) return false;
+
+    String_View source_var = nob_sv_from_cstr("");
+    String_View binary_var = nob_sv_from_cstr("");
+    String_View populated_var = nob_sv_from_cstr("");
+    if (!fetchcontent_default_var_names(ctx,
+                                        dependency_name,
+                                        &source_var,
+                                        &binary_var,
+                                        &populated_var)) {
+        return false;
+    }
 
     if (!eval_var_set_current(ctx, source_var, source_dir)) return false;
     if (!eval_var_set_current(ctx, binary_var, binary_dir)) return false;
-    if (!eval_var_set_current(ctx, populated_var, populated ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    if (publish_populated &&
+        !eval_var_set_current(ctx, populated_var, populated ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
+        return false;
+    }
     return true;
 }
 
 static bool fetchcontent_upsert_state(EvalExecContext *ctx,
                                       String_View dependency_name,
                                       String_View canonical_name,
+                                      bool population_processed,
                                       bool populated,
+                                      bool source_dir_known,
                                       String_View source_dir,
-                                      String_View binary_dir) {
+                                      bool binary_dir_known,
+                                      String_View binary_dir,
+                                      bool resolved_by_provider,
+                                      bool resolved_by_find_package) {
     if (!ctx || dependency_name.count == 0 || canonical_name.count == 0) return false;
     Eval_FetchContent_State *state = fetchcontent_find_state(ctx, canonical_name);
     if (state) {
         state->name = sv_copy_to_event_arena(ctx, dependency_name);
+        state->population_processed = population_processed;
         state->populated = populated;
+        state->source_dir_known = source_dir_known;
+        state->binary_dir_known = binary_dir_known;
+        state->resolved_by_provider = resolved_by_provider;
+        state->resolved_by_find_package = resolved_by_find_package;
         state->source_dir = sv_copy_to_event_arena(ctx, source_dir);
         state->binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
         if (eval_should_stop(ctx)) return false;
@@ -240,7 +279,12 @@ static bool fetchcontent_upsert_state(EvalExecContext *ctx,
     Eval_FetchContent_State entry = {0};
     entry.name = sv_copy_to_event_arena(ctx, dependency_name);
     entry.canonical_name = sv_copy_to_event_arena(ctx, canonical_name);
+    entry.population_processed = population_processed;
     entry.populated = populated;
+    entry.source_dir_known = source_dir_known;
+    entry.binary_dir_known = binary_dir_known;
+    entry.resolved_by_provider = resolved_by_provider;
+    entry.resolved_by_find_package = resolved_by_find_package;
     entry.source_dir = sv_copy_to_event_arena(ctx, source_dir);
     entry.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     if (eval_should_stop(ctx)) return false;
@@ -266,21 +310,43 @@ static String_View fetchcontent_resolve_local_like_path(EvalExecContext *ctx,
 static bool fetchcontent_is_bool_value_key(String_View token) {
     return eval_sv_eq_ci_lit(token, "DOWNLOAD_NO_EXTRACT") ||
            eval_sv_eq_ci_lit(token, "DOWNLOAD_EXTRACT_TIMESTAMP") ||
+           eval_sv_eq_ci_lit(token, "DOWNLOAD_NO_PROGRESS") ||
+           eval_sv_eq_ci_lit(token, "UPDATE_DISCONNECTED") ||
            eval_sv_eq_ci_lit(token, "GIT_SHALLOW") ||
            eval_sv_eq_ci_lit(token, "GIT_PROGRESS") ||
-           eval_sv_eq_ci_lit(token, "GIT_SUBMODULES_RECURSE");
+           eval_sv_eq_ci_lit(token, "GIT_SUBMODULES_RECURSE") ||
+           eval_sv_eq_ci_lit(token, "TLS_VERIFY") ||
+           eval_sv_eq_ci_lit(token, "SVN_TRUST_CERT");
 }
 
 static bool fetchcontent_is_single_value_key(String_View token) {
     return eval_sv_eq_ci_lit(token, "SOURCE_DIR") ||
            eval_sv_eq_ci_lit(token, "BINARY_DIR") ||
+           eval_sv_eq_ci_lit(token, "SUBBUILD_DIR") ||
            eval_sv_eq_ci_lit(token, "SOURCE_SUBDIR") ||
-           eval_sv_eq_ci_lit(token, "URL") ||
            eval_sv_eq_ci_lit(token, "URL_HASH") ||
            eval_sv_eq_ci_lit(token, "URL_MD5") ||
+           eval_sv_eq_ci_lit(token, "DOWNLOAD_NAME") ||
+           eval_sv_eq_ci_lit(token, "TIMEOUT") ||
+           eval_sv_eq_ci_lit(token, "INACTIVITY_TIMEOUT") ||
+           eval_sv_eq_ci_lit(token, "HTTP_USERNAME") ||
+           eval_sv_eq_ci_lit(token, "HTTP_PASSWORD") ||
+           eval_sv_eq_ci_lit(token, "TLS_CAINFO") ||
+           eval_sv_eq_ci_lit(token, "NETRC") ||
+           eval_sv_eq_ci_lit(token, "NETRC_FILE") ||
            eval_sv_eq_ci_lit(token, "GIT_REPOSITORY") ||
            eval_sv_eq_ci_lit(token, "GIT_TAG") ||
-           eval_sv_eq_ci_lit(token, "SUBBUILD_DIR");
+           eval_sv_eq_ci_lit(token, "GIT_REMOTE_NAME") ||
+           eval_sv_eq_ci_lit(token, "GIT_REMOTE_UPDATE_STRATEGY") ||
+           eval_sv_eq_ci_lit(token, "SVN_REPOSITORY") ||
+           eval_sv_eq_ci_lit(token, "SVN_REVISION") ||
+           eval_sv_eq_ci_lit(token, "SVN_USERNAME") ||
+           eval_sv_eq_ci_lit(token, "SVN_PASSWORD") ||
+           eval_sv_eq_ci_lit(token, "HG_REPOSITORY") ||
+           eval_sv_eq_ci_lit(token, "HG_TAG") ||
+           eval_sv_eq_ci_lit(token, "CVS_REPOSITORY") ||
+           eval_sv_eq_ci_lit(token, "CVS_MODULE") ||
+           eval_sv_eq_ci_lit(token, "CVS_TAG");
 }
 
 static bool fetchcontent_is_flag_key(String_View token) {
@@ -291,14 +357,21 @@ static bool fetchcontent_is_flag_key(String_View token) {
 }
 
 static bool fetchcontent_is_multi_value_key(String_View token) {
-    return eval_sv_eq_ci_lit(token, "FIND_PACKAGE_ARGS") ||
-           eval_sv_eq_ci_lit(token, "GIT_SUBMODULES");
+    return eval_sv_eq_ci_lit(token, "URL") ||
+           eval_sv_eq_ci_lit(token, "FIND_PACKAGE_ARGS") ||
+           eval_sv_eq_ci_lit(token, "GIT_SUBMODULES") ||
+           eval_sv_eq_ci_lit(token, "GIT_CONFIG") ||
+           eval_sv_eq_ci_lit(token, "HTTP_HEADER") ||
+           eval_sv_eq_ci_lit(token, "DOWNLOAD_COMMAND") ||
+           eval_sv_eq_ci_lit(token, "UPDATE_COMMAND") ||
+           eval_sv_eq_ci_lit(token, "PATCH_COMMAND");
 }
 
-static bool fetchcontent_is_unsupported_transport_key(String_View token) {
-    return eval_sv_eq_ci_lit(token, "SVN_REPOSITORY") ||
-           eval_sv_eq_ci_lit(token, "HG_REPOSITORY") ||
-           eval_sv_eq_ci_lit(token, "CVS_REPOSITORY");
+static bool fetchcontent_is_known_option_key(String_View token) {
+    return fetchcontent_is_flag_key(token) ||
+           fetchcontent_is_bool_value_key(token) ||
+           fetchcontent_is_single_value_key(token) ||
+           fetchcontent_is_multi_value_key(token);
 }
 
 static bool fetchcontent_append_list_to_temp(EvalExecContext *ctx, SV_List *out, const SV_List src) {
@@ -343,17 +416,40 @@ static bool fetchcontent_clone_declaration_to_event(EvalExecContext *ctx,
     out_decl->canonical_name = sv_copy_to_event_arena(ctx, src_decl->canonical_name);
     out_decl->source_dir = sv_copy_to_event_arena(ctx, src_decl->source_dir);
     out_decl->binary_dir = sv_copy_to_event_arena(ctx, src_decl->binary_dir);
+    out_decl->subbuild_dir = sv_copy_to_event_arena(ctx, src_decl->subbuild_dir);
     out_decl->source_subdir = sv_copy_to_event_arena(ctx, src_decl->source_subdir);
-    out_decl->url = sv_copy_to_event_arena(ctx, src_decl->url);
     out_decl->url_hash = sv_copy_to_event_arena(ctx, src_decl->url_hash);
     out_decl->url_md5 = sv_copy_to_event_arena(ctx, src_decl->url_md5);
+    out_decl->download_name = sv_copy_to_event_arena(ctx, src_decl->download_name);
+    out_decl->http_username = sv_copy_to_event_arena(ctx, src_decl->http_username);
+    out_decl->http_password = sv_copy_to_event_arena(ctx, src_decl->http_password);
+    out_decl->tls_cainfo = sv_copy_to_event_arena(ctx, src_decl->tls_cainfo);
+    out_decl->netrc_mode = sv_copy_to_event_arena(ctx, src_decl->netrc_mode);
+    out_decl->netrc_file = sv_copy_to_event_arena(ctx, src_decl->netrc_file);
     out_decl->git_repository = sv_copy_to_event_arena(ctx, src_decl->git_repository);
     out_decl->git_tag = sv_copy_to_event_arena(ctx, src_decl->git_tag);
+    out_decl->git_remote_name = sv_copy_to_event_arena(ctx, src_decl->git_remote_name);
+    out_decl->git_remote_update_strategy = sv_copy_to_event_arena(ctx, src_decl->git_remote_update_strategy);
+    out_decl->svn_repository = sv_copy_to_event_arena(ctx, src_decl->svn_repository);
+    out_decl->svn_revision = sv_copy_to_event_arena(ctx, src_decl->svn_revision);
+    out_decl->svn_username = sv_copy_to_event_arena(ctx, src_decl->svn_username);
+    out_decl->svn_password = sv_copy_to_event_arena(ctx, src_decl->svn_password);
+    out_decl->hg_repository = sv_copy_to_event_arena(ctx, src_decl->hg_repository);
+    out_decl->hg_tag = sv_copy_to_event_arena(ctx, src_decl->hg_tag);
+    out_decl->cvs_repository = sv_copy_to_event_arena(ctx, src_decl->cvs_repository);
+    out_decl->cvs_module = sv_copy_to_event_arena(ctx, src_decl->cvs_module);
+    out_decl->cvs_tag = sv_copy_to_event_arena(ctx, src_decl->cvs_tag);
     if (eval_should_stop(ctx)) return false;
 
     if (!fetchcontent_clone_list_to_event(ctx, &out_decl->args, src_decl->args)) return false;
+    if (!fetchcontent_clone_list_to_event(ctx, &out_decl->urls, src_decl->urls)) return false;
     if (!fetchcontent_clone_list_to_event(ctx, &out_decl->find_package_args, src_decl->find_package_args)) return false;
+    if (!fetchcontent_clone_list_to_event(ctx, &out_decl->download_command, src_decl->download_command)) return false;
+    if (!fetchcontent_clone_list_to_event(ctx, &out_decl->http_headers, src_decl->http_headers)) return false;
+    if (!fetchcontent_clone_list_to_event(ctx, &out_decl->git_config, src_decl->git_config)) return false;
     if (!fetchcontent_clone_list_to_event(ctx, &out_decl->git_submodules, src_decl->git_submodules)) return false;
+    if (!fetchcontent_clone_list_to_event(ctx, &out_decl->update_command, src_decl->update_command)) return false;
+    if (!fetchcontent_clone_list_to_event(ctx, &out_decl->patch_command, src_decl->patch_command)) return false;
     if (eval_should_stop(ctx)) return false;
     return true;
 }
@@ -372,6 +468,60 @@ static bool fetchcontent_try_find_mode_from_var(EvalExecContext *ctx,
     return true;
 }
 
+static bool fetchcontent_emit_mixed_transport_diag(EvalExecContext *ctx,
+                                                   const Node *node,
+                                                   String_View dependency_name) {
+    if (!ctx || !node) return false;
+    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                   node,
+                                   eval_origin_from_node(ctx, node),
+                                   EV_DIAG_ERROR,
+                                   EVAL_DIAG_INVALID_VALUE,
+                                   "dispatcher",
+                                   nob_sv_from_cstr("FetchContent_Declare() may not mix download transports"),
+                                   dependency_name);
+    return false;
+}
+
+static bool fetchcontent_set_transport(EvalExecContext *ctx,
+                                       const Node *node,
+                                       String_View dependency_name,
+                                       Eval_FetchContent_Declaration *decl,
+                                       Eval_FetchContent_Transport transport) {
+    if (!ctx || !node || !decl || transport == EVAL_FETCHCONTENT_TRANSPORT_NONE) return false;
+    if (decl->transport != EVAL_FETCHCONTENT_TRANSPORT_NONE &&
+        decl->transport != transport &&
+        decl->transport != EVAL_FETCHCONTENT_TRANSPORT_CUSTOM_DOWNLOAD) {
+        return fetchcontent_emit_mixed_transport_diag(ctx, node, dependency_name);
+    }
+    if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE ||
+        decl->transport == EVAL_FETCHCONTENT_TRANSPORT_CUSTOM_DOWNLOAD) {
+        decl->transport = transport;
+    }
+    return true;
+}
+
+static bool fetchcontent_parse_size_value(String_View value, size_t *out_size) {
+    if (!out_size || value.count == 0) return false;
+    char buf[64] = {0};
+    if (value.count >= sizeof(buf)) return false;
+    memcpy(buf, value.data, value.count);
+    char *end = NULL;
+    unsigned long long raw = strtoull(buf, &end, 10);
+    if (!end || *end != '\0') return false;
+    *out_size = (size_t)raw;
+    return true;
+}
+
+static bool fetchcontent_is_hex_commitish(String_View value) {
+    if (value.count < 7 || value.count > 64) return false;
+    for (size_t i = 0; i < value.count; i++) {
+        unsigned char c = (unsigned char)value.data[i];
+        if (!isxdigit(c)) return false;
+    }
+    return true;
+}
+
 static bool fetchcontent_store_single_value(EvalExecContext *ctx,
                                             const Node *node,
                                             String_View dependency_name,
@@ -379,7 +529,7 @@ static bool fetchcontent_store_single_value(EvalExecContext *ctx,
                                             String_View value,
                                             Eval_FetchContent_Declaration *decl,
                                             bool saved_details_defaults) {
-    (void)dependency_name;
+    (void)saved_details_defaults;
     if (!ctx || !node || !decl) return false;
 
     if (eval_sv_eq_ci_lit(keyword, "SOURCE_DIR")) {
@@ -396,67 +546,163 @@ static bool fetchcontent_store_single_value(EvalExecContext *ctx,
         if (eval_should_stop(ctx)) return false;
         return true;
     }
+    if (eval_sv_eq_ci_lit(keyword, "SUBBUILD_DIR")) {
+        value = eval_path_resolve_for_cmake_arg(ctx, value, fetchcontent_current_binary_dir(ctx), false);
+        decl->subbuild_dir = value;
+        decl->has_subbuild_dir = true;
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
     if (eval_sv_eq_ci_lit(keyword, "SOURCE_SUBDIR")) {
         decl->source_subdir = value;
         return true;
     }
-    if (eval_sv_eq_ci_lit(keyword, "URL")) {
-        if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_GIT) {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
-                                           node,
-                                           eval_origin_from_node(ctx, node),
-                                           EV_DIAG_ERROR,
-                                           EVAL_DIAG_INVALID_VALUE,
-                                           "dispatcher",
-                                           nob_sv_from_cstr("FetchContent_Declare() may not mix URL and GIT transports"),
-                                           dependency_name);
-            return false;
-        }
-        decl->transport = EVAL_FETCHCONTENT_TRANSPORT_URL;
-        decl->url = fetchcontent_resolve_local_like_path(ctx, value, fetchcontent_current_source_dir(ctx));
-        if (eval_should_stop(ctx)) return false;
-        return true;
-    }
     if (eval_sv_eq_ci_lit(keyword, "URL_HASH")) {
-        decl->transport = decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                              ? EVAL_FETCHCONTENT_TRANSPORT_URL
-                              : decl->transport;
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_URL)) return false;
         decl->url_hash = value;
         return true;
     }
     if (eval_sv_eq_ci_lit(keyword, "URL_MD5")) {
-        decl->transport = decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                              ? EVAL_FETCHCONTENT_TRANSPORT_URL
-                              : decl->transport;
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_URL)) return false;
         decl->url_md5 = value;
         return true;
     }
-    if (eval_sv_eq_ci_lit(keyword, "GIT_REPOSITORY")) {
-        if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_URL) {
+    if (eval_sv_eq_ci_lit(keyword, "DOWNLOAD_NAME")) {
+        decl->download_name = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "TIMEOUT")) {
+        if (!fetchcontent_parse_size_value(value, &decl->timeout_sec)) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                            node,
                                            eval_origin_from_node(ctx, node),
                                            EV_DIAG_ERROR,
                                            EVAL_DIAG_INVALID_VALUE,
                                            "dispatcher",
-                                           nob_sv_from_cstr("FetchContent_Declare() may not mix URL and GIT transports"),
-                                           dependency_name);
+                                           nob_sv_from_cstr("FetchContent TIMEOUT requires an integer value"),
+                                           value);
             return false;
         }
-        decl->transport = EVAL_FETCHCONTENT_TRANSPORT_GIT;
+        decl->has_timeout = true;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "INACTIVITY_TIMEOUT")) {
+        if (!fetchcontent_parse_size_value(value, &decl->inactivity_timeout_sec)) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                           node,
+                                           eval_origin_from_node(ctx, node),
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_INVALID_VALUE,
+                                           "dispatcher",
+                                           nob_sv_from_cstr("FetchContent INACTIVITY_TIMEOUT requires an integer value"),
+                                           value);
+            return false;
+        }
+        decl->has_inactivity_timeout = true;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "HTTP_USERNAME")) {
+        decl->http_username = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "HTTP_PASSWORD")) {
+        decl->http_password = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "TLS_CAINFO")) {
+        decl->tls_cainfo = eval_path_resolve_for_cmake_arg(ctx, value, fetchcontent_current_source_dir(ctx), false);
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "NETRC")) {
+        if (!eval_sv_eq_ci_lit(value, "IGNORED") &&
+            !eval_sv_eq_ci_lit(value, "OPTIONAL") &&
+            !eval_sv_eq_ci_lit(value, "REQUIRED")) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                           node,
+                                           eval_origin_from_node(ctx, node),
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_INVALID_VALUE,
+                                           "dispatcher",
+                                           nob_sv_from_cstr("FetchContent NETRC requires IGNORED, OPTIONAL, or REQUIRED"),
+                                           value);
+            return false;
+        }
+        decl->has_netrc_mode = true;
+        decl->netrc_mode = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "NETRC_FILE")) {
+        decl->netrc_file = eval_path_resolve_for_cmake_arg(ctx, value, fetchcontent_current_source_dir(ctx), false);
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "GIT_REPOSITORY")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) return false;
         decl->git_repository = fetchcontent_resolve_local_like_path(ctx, value, fetchcontent_current_source_dir(ctx));
         if (eval_should_stop(ctx)) return false;
         return true;
     }
     if (eval_sv_eq_ci_lit(keyword, "GIT_TAG")) {
-        decl->transport = decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                              ? EVAL_FETCHCONTENT_TRANSPORT_GIT
-                              : decl->transport;
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) return false;
         decl->git_tag = value;
         return true;
     }
-    if (eval_sv_eq_ci_lit(keyword, "SUBBUILD_DIR")) {
-        (void)saved_details_defaults;
+    if (eval_sv_eq_ci_lit(keyword, "GIT_REMOTE_NAME")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) return false;
+        decl->git_remote_name = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "GIT_REMOTE_UPDATE_STRATEGY")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) return false;
+        decl->git_remote_update_strategy = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "SVN_REPOSITORY")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_SVN)) return false;
+        decl->svn_repository = fetchcontent_resolve_local_like_path(ctx, value, fetchcontent_current_source_dir(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "SVN_REVISION")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_SVN)) return false;
+        decl->svn_revision = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "SVN_USERNAME")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_SVN)) return false;
+        decl->svn_username = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "SVN_PASSWORD")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_SVN)) return false;
+        decl->svn_password = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "HG_REPOSITORY")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_HG)) return false;
+        decl->hg_repository = fetchcontent_resolve_local_like_path(ctx, value, fetchcontent_current_source_dir(ctx));
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "HG_TAG")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_HG)) return false;
+        decl->hg_tag = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "CVS_REPOSITORY")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_CVS)) return false;
+        decl->cvs_repository = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "CVS_MODULE")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_CVS)) return false;
+        decl->cvs_module = value;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(keyword, "CVS_TAG")) {
+        if (!fetchcontent_set_transport(ctx, node, dependency_name, decl, EVAL_FETCHCONTENT_TRANSPORT_CVS)) return false;
+        decl->cvs_tag = value;
         return true;
     }
     return true;
@@ -473,7 +719,8 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
 
     out_decl->name = dependency_name;
     out_decl->canonical_name = fetchcontent_lower_temp(ctx, dependency_name);
-    out_decl->download_extract_timestamp = true;
+    out_decl->download_extract_timestamp = false;
+    out_decl->git_submodules_recurse = true;
     out_decl->try_find_mode = EVAL_FETCHCONTENT_TRY_FIND_OPT_IN;
     if (!fetchcontent_try_find_mode_from_var(ctx, &out_decl->try_find_mode)) return false;
     out_decl->find_package_targets_global =
@@ -491,22 +738,11 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
         String_View token = args[i];
         if (!eval_sv_arr_push_temp(ctx, &out_decl->args, token)) return false;
 
-        if (fetchcontent_is_unsupported_transport_key(token)) {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
-                                           node,
-                                           eval_origin_from_node(ctx, node),
-                                           EV_DIAG_ERROR,
-                                           EVAL_DIAG_NOT_IMPLEMENTED,
-                                           "dispatcher",
-                                           nob_sv_from_cstr("FetchContent transport is not supported in this wave"),
-                                           token);
-            return false;
-        }
-
         if (fetchcontent_is_flag_key(token)) {
             if (eval_sv_eq_ci_lit(token, "EXCLUDE_FROM_ALL")) out_decl->exclude_from_all = true;
             else if (eval_sv_eq_ci_lit(token, "SYSTEM")) out_decl->system = true;
             else if (eval_sv_eq_ci_lit(token, "OVERRIDE_FIND_PACKAGE")) out_decl->override_find_package = true;
+            else if (eval_sv_eq_ci_lit(token, "QUIET")) out_decl->quiet = true;
             continue;
         }
 
@@ -526,30 +762,47 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
             if (!eval_sv_arr_push_temp(ctx, &out_decl->args, value)) return false;
             bool truthy = eval_truthy(ctx, value);
             if (eval_sv_eq_ci_lit(token, "DOWNLOAD_NO_EXTRACT")) {
-                out_decl->transport = out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                                          ? EVAL_FETCHCONTENT_TRANSPORT_URL
-                                          : out_decl->transport;
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_URL)) {
+                    return false;
+                }
                 out_decl->download_no_extract = truthy;
             } else if (eval_sv_eq_ci_lit(token, "DOWNLOAD_EXTRACT_TIMESTAMP")) {
-                out_decl->transport = out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                                          ? EVAL_FETCHCONTENT_TRANSPORT_URL
-                                          : out_decl->transport;
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_URL)) {
+                    return false;
+                }
                 out_decl->download_extract_timestamp = truthy;
+            } else if (eval_sv_eq_ci_lit(token, "DOWNLOAD_NO_PROGRESS")) {
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_URL)) {
+                    return false;
+                }
+                out_decl->download_no_progress = truthy;
+            } else if (eval_sv_eq_ci_lit(token, "UPDATE_DISCONNECTED")) {
+                out_decl->has_update_disconnected = true;
+                out_decl->update_disconnected = truthy;
             } else if (eval_sv_eq_ci_lit(token, "GIT_SHALLOW")) {
-                out_decl->transport = out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                                          ? EVAL_FETCHCONTENT_TRANSPORT_GIT
-                                          : out_decl->transport;
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) {
+                    return false;
+                }
                 out_decl->git_shallow = truthy;
             } else if (eval_sv_eq_ci_lit(token, "GIT_PROGRESS")) {
-                out_decl->transport = out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                                          ? EVAL_FETCHCONTENT_TRANSPORT_GIT
-                                          : out_decl->transport;
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) {
+                    return false;
+                }
                 out_decl->git_progress = truthy;
             } else if (eval_sv_eq_ci_lit(token, "GIT_SUBMODULES_RECURSE")) {
-                out_decl->transport = out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                                          ? EVAL_FETCHCONTENT_TRANSPORT_GIT
-                                          : out_decl->transport;
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) {
+                    return false;
+                }
                 out_decl->git_submodules_recurse = truthy;
+            } else if (eval_sv_eq_ci_lit(token, "TLS_VERIFY")) {
+                out_decl->has_tls_verify = true;
+                out_decl->tls_verify = truthy;
+            } else if (eval_sv_eq_ci_lit(token, "SVN_TRUST_CERT")) {
+                if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_SVN)) {
+                    return false;
+                }
+                out_decl->has_svn_trust_cert = true;
+                out_decl->svn_trust_cert = truthy;
             }
             continue;
         }
@@ -575,19 +828,92 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
             continue;
         }
 
+        if (eval_sv_eq_ci_lit(token, "URL")) {
+            if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_URL)) return false;
+            bool saw_url = false;
+            for (size_t j = i + 1; j < arena_arr_len(args); j++) {
+                if (fetchcontent_is_known_option_key(args[j])) break;
+                String_View url = fetchcontent_resolve_local_like_path(ctx, args[j], fetchcontent_current_source_dir(ctx));
+                if (eval_should_stop(ctx)) return false;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->urls, url)) return false;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->args, args[j])) return false;
+                i = j;
+                saw_url = true;
+            }
+            if (!saw_url) {
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                               node,
+                                               eval_origin_from_node(ctx, node),
+                                               EV_DIAG_ERROR,
+                                               EVAL_DIAG_MISSING_REQUIRED,
+                                               "dispatcher",
+                                               nob_sv_from_cstr("FetchContent URL transport requires at least one URL"),
+                                               dependency_name);
+                return false;
+            }
+            continue;
+        }
+
         if (eval_sv_eq_ci_lit(token, "GIT_SUBMODULES")) {
-            out_decl->transport = out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE
-                                      ? EVAL_FETCHCONTENT_TRANSPORT_GIT
-                                      : out_decl->transport;
+            if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) {
+                return false;
+            }
             out_decl->has_git_submodules = true;
             for (size_t j = i + 1; j < arena_arr_len(args); j++) {
-                if (fetchcontent_is_flag_key(args[j]) ||
-                    fetchcontent_is_bool_value_key(args[j]) ||
-                    fetchcontent_is_single_value_key(args[j]) ||
-                    fetchcontent_is_multi_value_key(args[j])) {
-                    break;
-                }
+                if (fetchcontent_is_known_option_key(args[j])) break;
                 if (!eval_sv_arr_push_temp(ctx, &out_decl->git_submodules, args[j])) return false;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->args, args[j])) return false;
+                i = j;
+            }
+            continue;
+        }
+
+        if (eval_sv_eq_ci_lit(token, "GIT_CONFIG")) {
+            if (!fetchcontent_set_transport(ctx, node, dependency_name, out_decl, EVAL_FETCHCONTENT_TRANSPORT_GIT)) {
+                return false;
+            }
+            for (size_t j = i + 1; j < arena_arr_len(args); j++) {
+                if (fetchcontent_is_known_option_key(args[j])) break;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->git_config, args[j])) return false;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->args, args[j])) return false;
+                i = j;
+            }
+            continue;
+        }
+
+        if (eval_sv_eq_ci_lit(token, "HTTP_HEADER")) {
+            for (size_t j = i + 1; j < arena_arr_len(args); j++) {
+                if (fetchcontent_is_known_option_key(args[j])) break;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->http_headers, args[j])) return false;
+                if (!eval_sv_arr_push_temp(ctx, &out_decl->args, args[j])) return false;
+                i = j;
+            }
+            continue;
+        }
+
+        if (eval_sv_eq_ci_lit(token, "DOWNLOAD_COMMAND") ||
+            eval_sv_eq_ci_lit(token, "UPDATE_COMMAND") ||
+            eval_sv_eq_ci_lit(token, "PATCH_COMMAND")) {
+            SV_List *target = NULL;
+            bool *has_command = NULL;
+            if (eval_sv_eq_ci_lit(token, "DOWNLOAD_COMMAND")) {
+                target = &out_decl->download_command;
+                has_command = &out_decl->has_download_command;
+                if (out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE) {
+                    out_decl->transport = EVAL_FETCHCONTENT_TRANSPORT_CUSTOM_DOWNLOAD;
+                }
+            } else if (eval_sv_eq_ci_lit(token, "UPDATE_COMMAND")) {
+                target = &out_decl->update_command;
+                has_command = &out_decl->has_update_command;
+            } else {
+                target = &out_decl->patch_command;
+                has_command = &out_decl->has_patch_command;
+            }
+
+            *has_command = true;
+            for (size_t j = i + 1; j < arena_arr_len(args); j++) {
+                if (fetchcontent_is_known_option_key(args[j])) break;
+                if (!eval_sv_arr_push_temp(ctx, target, args[j])) return false;
                 if (!eval_sv_arr_push_temp(ctx, &out_decl->args, args[j])) return false;
                 i = j;
             }
@@ -618,7 +944,7 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
     }
 
     if (out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_URL) {
-        if (out_decl->url.count == 0) {
+        if (arena_arr_len(out_decl->urls) == 0 && !out_decl->has_download_command) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                            node,
                                            eval_origin_from_node(ctx, node),
@@ -652,6 +978,61 @@ static bool fetchcontent_parse_declaration(EvalExecContext *ctx,
                                        dependency_name);
         return false;
     }
+    if (out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_SVN && out_decl->svn_repository.count == 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       eval_origin_from_node(ctx, node),
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_MISSING_REQUIRED,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("FetchContent SVN transport requires SVN_REPOSITORY"),
+                                       dependency_name);
+        return false;
+    }
+    if (out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_HG && out_decl->hg_repository.count == 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       eval_origin_from_node(ctx, node),
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_MISSING_REQUIRED,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("FetchContent HG transport requires HG_REPOSITORY"),
+                                       dependency_name);
+        return false;
+    }
+    if (out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_CVS &&
+        (out_decl->cvs_repository.count == 0 || out_decl->cvs_module.count == 0)) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                       node,
+                                       eval_origin_from_node(ctx, node),
+                                       EV_DIAG_ERROR,
+                                       EVAL_DIAG_MISSING_REQUIRED,
+                                       "dispatcher",
+                                       nob_sv_from_cstr("FetchContent CVS transport requires CVS_REPOSITORY and CVS_MODULE"),
+                                       dependency_name);
+        return false;
+    }
+    if (out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_GIT) {
+        if (out_decl->git_tag.count == 0) out_decl->git_tag = nob_sv_from_cstr("master");
+        if (out_decl->git_remote_name.count == 0) out_decl->git_remote_name = nob_sv_from_cstr("origin");
+        if (out_decl->git_remote_update_strategy.count == 0) {
+            out_decl->git_remote_update_strategy = nob_sv_from_cstr("CHECKOUT");
+        }
+        if (out_decl->git_shallow && fetchcontent_is_hex_commitish(out_decl->git_tag)) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                           node,
+                                           eval_origin_from_node(ctx, node),
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_INVALID_VALUE,
+                                           "dispatcher",
+                                           nob_sv_from_cstr("FetchContent GIT_SHALLOW may not be used with a commit hash GIT_TAG"),
+                                           out_decl->git_tag);
+            return false;
+        }
+    }
+    if (out_decl->has_download_command && out_decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE) {
+        out_decl->transport = EVAL_FETCHCONTENT_TRANSPORT_CUSTOM_DOWNLOAD;
+    }
     if (eval_should_stop(ctx)) return false;
     return true;
 }
@@ -664,10 +1045,17 @@ static bool fetchcontent_build_provider_args(EvalExecContext *ctx,
 
     bool saw_source_dir = false;
     bool saw_binary_dir = false;
+    bool skipping_find_package_args = false;
     if (!eval_sv_arr_push_temp(ctx, out_args, decl->name)) return false;
     for (size_t i = 0; i < arena_arr_len(decl->args); i++) {
         String_View token = decl->args[i];
+        if (skipping_find_package_args) continue;
         if (eval_sv_eq_ci_lit(token, "OVERRIDE_FIND_PACKAGE")) continue;
+        if (decl->try_find_mode == EVAL_FETCHCONTENT_TRY_FIND_NEVER &&
+            eval_sv_eq_ci_lit(token, "FIND_PACKAGE_ARGS")) {
+            skipping_find_package_args = true;
+            continue;
+        }
         if (eval_sv_eq_ci_lit(token, "SOURCE_DIR")) saw_source_dir = true;
         if (eval_sv_eq_ci_lit(token, "BINARY_DIR")) saw_binary_dir = true;
         if (!eval_sv_arr_push_temp(ctx, out_args, token)) return false;
@@ -711,24 +1099,108 @@ static bool fetchcontent_run_add_subdirectory(EvalExecContext *ctx,
 }
 
 static bool fetchcontent_run_file_download(EvalExecContext *ctx,
+                                           String_View dependency_name,
+                                           const Eval_FetchContent_Declaration *decl,
                                            String_View input,
                                            String_View output,
-                                           String_View expected_hash,
-                                           String_View expected_md5) {
+                                           String_View *out_log) {
     if (!ctx || input.count == 0 || output.count == 0) return false;
     SV_List args = NULL;
+    String_View status_var = nob_sv_from_cstr("__nobify_fetchcontent_download_status");
+    String_View log_var = nob_sv_from_cstr("__nobify_fetchcontent_download_log");
+
     if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("DOWNLOAD"))) return false;
     if (!eval_sv_arr_push_temp(ctx, &args, input)) return false;
     if (!eval_sv_arr_push_temp(ctx, &args, output)) return false;
-    if (expected_hash.count > 0) {
+    if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("STATUS"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &args, status_var)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("LOG"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &args, log_var)) return false;
+
+    if (decl && decl->url_hash.count > 0) {
         if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("EXPECTED_HASH"))) return false;
-        if (!eval_sv_arr_push_temp(ctx, &args, expected_hash)) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, decl->url_hash)) return false;
     }
-    if (expected_md5.count > 0) {
+    if (decl && decl->url_md5.count > 0) {
         if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("EXPECTED_MD5"))) return false;
-        if (!eval_sv_arr_push_temp(ctx, &args, expected_md5)) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, decl->url_md5)) return false;
     }
-    return fetchcontent_run_inline_command(ctx, nob_sv_from_cstr("file"), &args);
+    if (decl && decl->has_timeout) {
+        char *buf = eval_sv_to_cstr_temp(ctx, nob_sv_from_cstr(nob_temp_sprintf("%zu", decl->timeout_sec)));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("TIMEOUT"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr(buf))) return false;
+    }
+    if (decl && decl->has_inactivity_timeout) {
+        char *buf = eval_sv_to_cstr_temp(ctx, nob_sv_from_cstr(nob_temp_sprintf("%zu", decl->inactivity_timeout_sec)));
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("INACTIVITY_TIMEOUT"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr(buf))) return false;
+    }
+    if (decl && decl->http_username.count > 0) {
+        String_View userpwd = decl->http_username;
+        if (decl->http_password.count > 0) {
+            String_View parts[3] = {
+                decl->http_username,
+                nob_sv_from_cstr(":"),
+                decl->http_password,
+            };
+            userpwd = svu_join_no_sep_temp(ctx, parts, 3);
+            if (eval_should_stop(ctx)) return false;
+        }
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("USERPWD"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, userpwd)) return false;
+    }
+
+    bool has_tls_verify = decl && decl->has_tls_verify;
+    String_View tls_verify_value = has_tls_verify
+                                       ? (decl->tls_verify ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))
+                                       : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TLS_VERIFY"));
+    if ((has_tls_verify || tls_verify_value.count > 0)) {
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("TLS_VERIFY"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, tls_verify_value)) return false;
+    }
+
+    String_View tls_cainfo = (decl && decl->tls_cainfo.count > 0)
+                                 ? decl->tls_cainfo
+                                 : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_TLS_CAINFO"));
+    if (tls_cainfo.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("TLS_CAINFO"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, tls_cainfo)) return false;
+    }
+
+    String_View netrc_mode = (decl && decl->has_netrc_mode)
+                                 ? decl->netrc_mode
+                                 : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_NETRC"));
+    if (netrc_mode.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("NETRC"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, netrc_mode)) return false;
+    }
+
+    String_View netrc_file = (decl && decl->netrc_file.count > 0)
+                                 ? decl->netrc_file
+                                 : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_NETRC_FILE"));
+    if (netrc_file.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("NETRC_FILE"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &args, netrc_file)) return false;
+    }
+
+    if (decl) {
+        for (size_t i = 0; i < arena_arr_len(decl->http_headers); i++) {
+            if (!eval_sv_arr_push_temp(ctx, &args, nob_sv_from_cstr("HTTPHEADER"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &args, decl->http_headers[i])) return false;
+        }
+    }
+
+    if (!fetchcontent_run_inline_command(ctx, nob_sv_from_cstr("file"), &args)) return false;
+
+    String_View status = eval_var_get_visible(ctx, status_var);
+    if (out_log) *out_log = eval_var_get_visible(ctx, log_var);
+    (void)eval_var_unset_current(ctx, status_var);
+    (void)eval_var_unset_current(ctx, log_var);
+
+    (void)dependency_name;
+    return status.count >= 2 && status.data[0] == '0' && status.data[1] == ';';
 }
 
 static bool fetchcontent_run_file_archive_extract(EvalExecContext *ctx,
@@ -790,6 +1262,16 @@ static String_View fetchcontent_path_basename_temp(EvalExecContext *ctx, String_
     return nob_sv_from_parts(path.data + start, path.count - start);
 }
 
+static String_View fetchcontent_path_parent_temp(EvalExecContext *ctx, String_View path) {
+    if (!ctx || path.count == 0) return nob_sv_from_cstr("");
+    size_t end = path.count;
+    while (end > 0 && (path.data[end - 1] == '/' || path.data[end - 1] == '\\')) end--;
+    while (end > 0 && path.data[end - 1] != '/' && path.data[end - 1] != '\\') end--;
+    if (end == 0) return nob_sv_from_cstr(".");
+    while (end > 0 && (path.data[end - 1] == '/' || path.data[end - 1] == '\\')) end--;
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_parts(path.data, end));
+}
+
 static bool fetchcontent_git_run(EvalExecContext *ctx,
                                  String_View working_directory,
                                  const SV_List argv,
@@ -806,6 +1288,33 @@ static bool fetchcontent_git_run(EvalExecContext *ctx,
     if (out_stderr) *out_stderr = proc.stderr_text;
     if (out_exit_code) *out_exit_code = proc.exit_code;
     return true;
+}
+
+static bool fetchcontent_run_command_capture(EvalExecContext *ctx,
+                                             String_View working_directory,
+                                             const SV_List argv,
+                                             String_View *out_stderr,
+                                             int *out_exit_code) {
+    return fetchcontent_git_run(ctx, working_directory, argv, out_stderr, out_exit_code);
+}
+
+static bool fetchcontent_run_decl_command(EvalExecContext *ctx,
+                                          const Node *node,
+                                          String_View working_directory,
+                                          const SV_List argv,
+                                          String_View cause) {
+    if (!ctx || !node) return false;
+    if (arena_arr_len(argv) == 0) return true;
+    if (argv[0].count == 0) return true;
+
+    String_View stderr_text = nob_sv_from_cstr("");
+    int exit_code = 0;
+    if (!fetchcontent_run_command_capture(ctx, working_directory, argv, &stderr_text, &exit_code)) return false;
+    if (exit_code == 0) return true;
+    return fetchcontent_git_emit_failure(ctx,
+                                         node,
+                                         cause,
+                                         stderr_text.count > 0 ? stderr_text : argv[0]);
 }
 
 static bool fetchcontent_git_emit_failure(EvalExecContext *ctx,
@@ -881,19 +1390,62 @@ static bool fetchcontent_git_checkout(EvalExecContext *ctx,
     return true;
 }
 
+static bool fetchcontent_git_ref_exists_locally(EvalExecContext *ctx,
+                                                String_View source_dir,
+                                                String_View git_tag,
+                                                bool *out_exists) {
+    if (!ctx || !out_exists) return false;
+    *out_exists = false;
+    if (git_tag.count == 0) return true;
+
+    SV_List argv = NULL;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("git"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("rev-parse"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--verify"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--quiet"))) return false;
+
+    String_View ref = svu_concat_suffix_temp(ctx, git_tag, "^{commit}");
+    if (eval_should_stop(ctx)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, ref)) return false;
+
+    String_View stderr_text = nob_sv_from_cstr("");
+    int exit_code = 0;
+    if (!fetchcontent_run_command_capture(ctx, source_dir, argv, &stderr_text, &exit_code)) return false;
+    *out_exists = exit_code == 0;
+    return true;
+}
+
 static bool fetchcontent_git_fetch_and_update(EvalExecContext *ctx,
                                               const Node *node,
                                               const Eval_FetchContent_Declaration *decl,
                                               String_View source_dir,
                                               bool disconnected) {
     if (!ctx || !node || !decl) return false;
-    if (disconnected) return true;
+    if (decl->has_update_command) {
+        return fetchcontent_run_decl_command(ctx,
+                                             node,
+                                             source_dir,
+                                             decl->update_command,
+                                             nob_sv_from_cstr("FetchContent custom update command failed"));
+    }
+    if (disconnected) {
+        if (decl->git_tag.count == 0) return true;
+        bool ref_exists = false;
+        if (!fetchcontent_git_ref_exists_locally(ctx, source_dir, decl->git_tag, &ref_exists)) return false;
+        if (!ref_exists) {
+            return fetchcontent_git_emit_failure(ctx,
+                                                 node,
+                                                 nob_sv_from_cstr("FetchContent Git update disconnected and requested ref is not available locally"),
+                                                 decl->git_tag);
+        }
+        return fetchcontent_git_checkout(ctx, node, source_dir, decl->git_tag);
+    }
 
     SV_List argv = NULL;
     if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("git"))) return false;
     if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("fetch"))) return false;
     if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--tags"))) return false;
-    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("origin"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, decl->git_remote_name)) return false;
 
     String_View stderr_text = nob_sv_from_cstr("");
     int exit_code = 0;
@@ -906,7 +1458,28 @@ static bool fetchcontent_git_fetch_and_update(EvalExecContext *ctx,
     }
 
     if (decl->git_tag.count > 0) {
-        if (!fetchcontent_git_checkout(ctx, node, source_dir, decl->git_tag)) return false;
+        if (eval_sv_eq_ci_lit(decl->git_remote_update_strategy, "REBASE") ||
+            eval_sv_eq_ci_lit(decl->git_remote_update_strategy, "REBASE_CHECKOUT")) {
+            SV_List rebase_argv = NULL;
+            if (!eval_sv_arr_push_temp(ctx, &rebase_argv, nob_sv_from_cstr("git"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &rebase_argv, nob_sv_from_cstr("rebase"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &rebase_argv, decl->git_tag)) return false;
+            stderr_text = nob_sv_from_cstr("");
+            exit_code = 0;
+            if (!fetchcontent_git_run(ctx, source_dir, rebase_argv, &stderr_text, &exit_code)) return false;
+            if (exit_code != 0) {
+                if (eval_sv_eq_ci_lit(decl->git_remote_update_strategy, "REBASE_CHECKOUT")) {
+                    if (!fetchcontent_git_checkout(ctx, node, source_dir, decl->git_tag)) return false;
+                } else {
+                    return fetchcontent_git_emit_failure(ctx,
+                                                         node,
+                                                         nob_sv_from_cstr("FetchContent Git rebase update failed"),
+                                                         stderr_text.count > 0 ? stderr_text : decl->git_tag);
+                }
+            }
+        } else if (!fetchcontent_git_checkout(ctx, node, source_dir, decl->git_tag)) {
+            return false;
+        }
     } else {
         SV_List pull_argv = NULL;
         if (!eval_sv_arr_push_temp(ctx, &pull_argv, nob_sv_from_cstr("git"))) return false;
@@ -926,8 +1499,18 @@ static bool fetchcontent_git_fetch_and_update(EvalExecContext *ctx,
     return fetchcontent_git_update_submodules(ctx, node, decl, source_dir);
 }
 
-static bool fetchcontent_is_updates_disconnected(EvalExecContext *ctx, String_View dependency_name) {
+static bool fetchcontent_is_fully_disconnected(EvalExecContext *ctx) {
+    return ctx &&
+           eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("FETCHCONTENT_FULLY_DISCONNECTED")));
+}
+
+static bool fetchcontent_is_updates_disconnected(EvalExecContext *ctx,
+                                                 String_View dependency_name,
+                                                 const Eval_FetchContent_Declaration *decl,
+                                                 bool respect_saved_variables) {
     if (!ctx) return false;
+    if (decl && decl->has_update_disconnected) return decl->update_disconnected;
+    if (!respect_saved_variables) return false;
     String_View upper = fetchcontent_upper_temp(ctx, dependency_name);
     String_View key_parts[2] = {
         nob_sv_from_cstr("FETCHCONTENT_UPDATES_DISCONNECTED_"),
@@ -942,6 +1525,7 @@ static bool fetchcontent_is_updates_disconnected(EvalExecContext *ctx, String_Vi
 
 static bool fetchcontent_populate_url(EvalExecContext *ctx,
                                       const Node *node,
+                                      String_View dependency_name,
                                       const Eval_FetchContent_Declaration *decl,
                                       String_View source_dir) {
     if (!ctx || !node || !decl) return false;
@@ -952,11 +1536,39 @@ static bool fetchcontent_populate_url(EvalExecContext *ctx,
                                              source_dir);
     }
 
-    String_View archive_name = fetchcontent_path_basename_temp(ctx, decl->url);
+    String_View archive_name = decl->download_name.count > 0
+                                   ? decl->download_name
+                                   : (arena_arr_len(decl->urls) > 0
+                                          ? fetchcontent_path_basename_temp(ctx, decl->urls[0])
+                                          : nob_sv_from_cstr("content"));
     String_View archive_path = eval_sv_path_join(eval_temp_arena(ctx), source_dir, archive_name);
     if (eval_should_stop(ctx)) return false;
 
-    if (!fetchcontent_run_file_download(ctx, decl->url, archive_path, decl->url_hash, decl->url_md5)) return false;
+    if (decl->has_download_command) {
+        if (!fetchcontent_run_decl_command(ctx,
+                                           node,
+                                           fetchcontent_current_binary_dir(ctx),
+                                           decl->download_command,
+                                           nob_sv_from_cstr("FetchContent custom download command failed"))) {
+            return false;
+        }
+        return true;
+    }
+
+    bool downloaded = false;
+    String_View last_log = nob_sv_from_cstr("");
+    for (size_t i = 0; i < arena_arr_len(decl->urls); i++) {
+        if (fetchcontent_run_file_download(ctx, dependency_name, decl, decl->urls[i], archive_path, &last_log)) {
+            downloaded = true;
+            break;
+        }
+    }
+    if (!downloaded) {
+        return fetchcontent_git_emit_failure(ctx,
+                                             node,
+                                             nob_sv_from_cstr("FetchContent URL download failed"),
+                                             last_log.count > 0 ? last_log : source_dir);
+    }
     if (decl->download_no_extract) return true;
     return fetchcontent_run_file_archive_extract(ctx,
                                                  archive_path,
@@ -968,9 +1580,10 @@ static bool fetchcontent_populate_git(EvalExecContext *ctx,
                                       const Node *node,
                                       String_View dependency_name,
                                       const Eval_FetchContent_Declaration *decl,
-                                      String_View source_dir) {
+                                      String_View source_dir,
+                                      bool respect_saved_variables) {
     if (!ctx || !node || !decl) return false;
-    bool disconnected = fetchcontent_is_updates_disconnected(ctx, dependency_name);
+    bool disconnected = fetchcontent_is_updates_disconnected(ctx, dependency_name, decl, respect_saved_variables);
     String_View git_dir = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr(".git"));
     if (eval_should_stop(ctx)) return false;
 
@@ -990,6 +1603,14 @@ static bool fetchcontent_populate_git(EvalExecContext *ctx,
     SV_List argv = NULL;
     if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("git"))) return false;
     if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("clone"))) return false;
+    if (decl->git_remote_name.count > 0 && !eval_sv_eq_ci_lit(decl->git_remote_name, "origin")) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--origin"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->git_remote_name)) return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(decl->git_config); i++) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--config"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->git_config[i])) return false;
+    }
     if (decl->git_shallow) {
         if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--depth"))) return false;
         if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("1"))) return false;
@@ -1018,6 +1639,191 @@ static bool fetchcontent_populate_git(EvalExecContext *ctx,
     return fetchcontent_git_update_submodules(ctx, node, decl, source_dir);
 }
 
+static bool fetchcontent_populate_svn(EvalExecContext *ctx,
+                                      const Node *node,
+                                      const Eval_FetchContent_Declaration *decl,
+                                      String_View source_dir) {
+    if (!ctx || !node || !decl) return false;
+    String_View svn_dir = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr(".svn"));
+    if (eval_should_stop(ctx)) return false;
+
+    if (fetchcontent_file_exists(ctx, svn_dir)) {
+        if (decl->has_update_command) {
+            return fetchcontent_run_decl_command(ctx,
+                                                 node,
+                                                 source_dir,
+                                                 decl->update_command,
+                                                 nob_sv_from_cstr("FetchContent custom update command failed"));
+        }
+        SV_List argv = NULL;
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("svn"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("update"))) return false;
+        if (decl->svn_revision.count > 0) {
+            if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-r"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_revision)) return false;
+        }
+        if (decl->svn_username.count > 0) {
+            if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--username"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_username)) return false;
+        }
+        if (decl->svn_password.count > 0) {
+            if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--password"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_password)) return false;
+        }
+        if (decl->svn_trust_cert) {
+            if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--trust-server-cert"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--non-interactive"))) return false;
+        }
+        return fetchcontent_run_decl_command(ctx, node, source_dir, argv, nob_sv_from_cstr("FetchContent SVN update failed"));
+    }
+
+    if (!eval_mkdirs_for_parent(ctx, eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr(".checkout")))) {
+        return fetchcontent_git_emit_failure(ctx,
+                                             node,
+                                             nob_sv_from_cstr("FetchContent failed to prepare SVN destination"),
+                                             source_dir);
+    }
+
+    SV_List argv = NULL;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("svn"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("checkout"))) return false;
+    if (decl->svn_revision.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-r"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_revision)) return false;
+    }
+    if (decl->svn_username.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--username"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_username)) return false;
+    }
+    if (decl->svn_password.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--password"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_password)) return false;
+    }
+    if (decl->svn_trust_cert) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--trust-server-cert"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("--non-interactive"))) return false;
+    }
+    if (!eval_sv_arr_push_temp(ctx, &argv, decl->svn_repository)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, source_dir)) return false;
+    return fetchcontent_run_decl_command(ctx, node, nob_sv_from_cstr(""), argv, nob_sv_from_cstr("FetchContent SVN checkout failed"));
+}
+
+static bool fetchcontent_populate_hg(EvalExecContext *ctx,
+                                     const Node *node,
+                                     const Eval_FetchContent_Declaration *decl,
+                                     String_View source_dir) {
+    if (!ctx || !node || !decl) return false;
+    String_View hg_dir = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr(".hg"));
+    if (eval_should_stop(ctx)) return false;
+
+    if (fetchcontent_file_exists(ctx, hg_dir)) {
+        if (decl->has_update_command) {
+            return fetchcontent_run_decl_command(ctx,
+                                                 node,
+                                                 source_dir,
+                                                 decl->update_command,
+                                                 nob_sv_from_cstr("FetchContent custom update command failed"));
+        }
+        SV_List pull_argv = NULL;
+        if (!eval_sv_arr_push_temp(ctx, &pull_argv, nob_sv_from_cstr("hg"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &pull_argv, nob_sv_from_cstr("pull"))) return false;
+        if (!fetchcontent_run_decl_command(ctx, node, source_dir, pull_argv, nob_sv_from_cstr("FetchContent HG pull failed"))) {
+            return false;
+        }
+
+        SV_List update_argv = NULL;
+        if (!eval_sv_arr_push_temp(ctx, &update_argv, nob_sv_from_cstr("hg"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &update_argv, nob_sv_from_cstr("update"))) return false;
+        if (decl->hg_tag.count > 0) {
+            if (!eval_sv_arr_push_temp(ctx, &update_argv, nob_sv_from_cstr("-r"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &update_argv, decl->hg_tag)) return false;
+        }
+        return fetchcontent_run_decl_command(ctx, node, source_dir, update_argv, nob_sv_from_cstr("FetchContent HG update failed"));
+    }
+
+    if (!eval_mkdirs_for_parent(ctx, eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr(".clone")))) {
+        return fetchcontent_git_emit_failure(ctx,
+                                             node,
+                                             nob_sv_from_cstr("FetchContent failed to prepare HG destination"),
+                                             source_dir);
+    }
+
+    SV_List argv = NULL;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("hg"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("clone"))) return false;
+    if (decl->hg_tag.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-u"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->hg_tag)) return false;
+    }
+    if (!eval_sv_arr_push_temp(ctx, &argv, decl->hg_repository)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, source_dir)) return false;
+    return fetchcontent_run_decl_command(ctx, node, nob_sv_from_cstr(""), argv, nob_sv_from_cstr("FetchContent HG clone failed"));
+}
+
+static bool fetchcontent_populate_cvs(EvalExecContext *ctx,
+                                      const Node *node,
+                                      const Eval_FetchContent_Declaration *decl,
+                                      String_View source_dir) {
+    if (!ctx || !node || !decl) return false;
+    String_View cvs_dir = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr("CVS"));
+    if (eval_should_stop(ctx)) return false;
+
+    if (fetchcontent_file_exists(ctx, cvs_dir)) {
+        if (decl->has_update_command) {
+            return fetchcontent_run_decl_command(ctx,
+                                                 node,
+                                                 source_dir,
+                                                 decl->update_command,
+                                                 nob_sv_from_cstr("FetchContent custom update command failed"));
+        }
+        SV_List argv = NULL;
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("cvs"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("update"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-dP"))) return false;
+        if (decl->cvs_tag.count > 0) {
+            if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-r"))) return false;
+            if (!eval_sv_arr_push_temp(ctx, &argv, decl->cvs_tag)) return false;
+        }
+        return fetchcontent_run_decl_command(ctx, node, source_dir, argv, nob_sv_from_cstr("FetchContent CVS update failed"));
+    }
+
+    if (!eval_mkdirs_for_parent(ctx, eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr(".checkout")))) {
+        return fetchcontent_git_emit_failure(ctx,
+                                             node,
+                                             nob_sv_from_cstr("FetchContent failed to prepare CVS destination"),
+                                             source_dir);
+    }
+
+    String_View checkout_root = fetchcontent_path_parent_temp(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+
+    SV_List argv = NULL;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("cvs"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-d"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, decl->cvs_repository)) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("checkout"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-d"))) return false;
+    if (!eval_sv_arr_push_temp(ctx, &argv, fetchcontent_path_basename_temp(ctx, source_dir))) return false;
+    if (decl->cvs_tag.count > 0) {
+        if (!eval_sv_arr_push_temp(ctx, &argv, nob_sv_from_cstr("-r"))) return false;
+        if (!eval_sv_arr_push_temp(ctx, &argv, decl->cvs_tag)) return false;
+    }
+    if (!eval_sv_arr_push_temp(ctx, &argv, decl->cvs_module)) return false;
+    return fetchcontent_run_decl_command(ctx, node, checkout_root, argv, nob_sv_from_cstr("FetchContent CVS checkout failed"));
+}
+
+static bool fetchcontent_run_patch_command(EvalExecContext *ctx,
+                                           const Node *node,
+                                           const Eval_FetchContent_Declaration *decl,
+                                           String_View source_dir) {
+    if (!ctx || !node || !decl || !decl->has_patch_command) return true;
+    return fetchcontent_run_decl_command(ctx,
+                                         node,
+                                         source_dir,
+                                         decl->patch_command,
+                                         nob_sv_from_cstr("FetchContent patch command failed"));
+}
+
 static bool fetchcontent_write_redirect_stub(EvalExecContext *ctx,
                                              String_View dependency_name,
                                              String_View redirect_path,
@@ -1025,10 +1831,14 @@ static bool fetchcontent_write_redirect_stub(EvalExecContext *ctx,
     if (!ctx || dependency_name.count == 0 || redirect_path.count == 0) return false;
     Nob_String_Builder sb = {0};
     if (version_file) {
-        nob_sb_append_cstr(&sb, "set(PACKAGE_VERSION \"0\")\n");
         nob_sb_append_cstr(&sb, "set(PACKAGE_VERSION_COMPATIBLE 1)\n");
-        nob_sb_append_cstr(&sb, "set(PACKAGE_VERSION_EXACT 0)\n");
+        nob_sb_append_cstr(&sb, "set(PACKAGE_VERSION_EXACT 1)\n");
     } else {
+        String_View lower = fetchcontent_lower_temp(ctx, dependency_name);
+        if (eval_should_stop(ctx)) {
+            nob_sb_free(sb);
+            return false;
+        }
         nob_sb_appendf(&sb, "FetchContent_MakeAvailable(%.*s)\n", (int)dependency_name.count, dependency_name.data);
         nob_sb_appendf(&sb,
                        "FetchContent_GetProperties(%.*s SOURCE_DIR %.*s_SOURCE_DIR BINARY_DIR %.*s_BINARY_DIR POPULATED %.*s_POPULATED)\n",
@@ -1044,6 +1854,14 @@ static bool fetchcontent_write_redirect_stub(EvalExecContext *ctx,
         nob_sb_appendf(&sb, "set(%.*s_DIR \"${%.*s_SOURCE_DIR}\")\n",
                        (int)dependency_name.count,
                        dependency_name.data,
+                       (int)dependency_name.count,
+                       dependency_name.data);
+        nob_sb_appendf(&sb,
+                       "include(\"${CMAKE_CURRENT_LIST_DIR}/%.*s-extra.cmake\" OPTIONAL)\n",
+                       (int)lower.count,
+                       lower.data);
+        nob_sb_appendf(&sb,
+                       "include(\"${CMAKE_CURRENT_LIST_DIR}/%.*sExtra.cmake\" OPTIONAL)\n",
                        (int)dependency_name.count,
                        dependency_name.data);
     }
@@ -1083,21 +1901,79 @@ static bool fetchcontent_stage_override_redirects(EvalExecContext *ctx,
 
 static bool fetchcontent_finalize_population(EvalExecContext *ctx,
                                              const Eval_FetchContent_Declaration *decl,
+                                             bool record_state,
+                                             bool publish_populated_var,
+                                             bool population_processed,
                                              bool populated,
+                                             bool source_dir_known,
                                              String_View source_dir,
-                                             String_View binary_dir) {
+                                             bool binary_dir_known,
+                                             String_View binary_dir,
+                                             bool resolved_by_provider,
+                                             bool resolved_by_find_package) {
     if (!ctx || !decl) return false;
-    if (!fetchcontent_upsert_state(ctx, decl->name, decl->canonical_name, populated, source_dir, binary_dir)) return false;
-    if (!fetchcontent_publish_default_vars(ctx, decl->name, populated, source_dir, binary_dir)) return false;
-    if (populated && decl->override_find_package && !fetchcontent_stage_override_redirects(ctx, decl)) return false;
+    if (record_state &&
+        !fetchcontent_upsert_state(ctx,
+                                   decl->name,
+                                   decl->canonical_name,
+                                   population_processed,
+                                   populated,
+                                   source_dir_known,
+                                   source_dir,
+                                   binary_dir_known,
+                                   binary_dir,
+                                   resolved_by_provider,
+                                   resolved_by_find_package)) {
+        return false;
+    }
+    if (!fetchcontent_publish_default_vars(ctx,
+                                           decl->name,
+                                           publish_populated_var,
+                                           populated,
+                                           source_dir_known ? source_dir : nob_sv_from_cstr(""),
+                                           binary_dir_known ? binary_dir : nob_sv_from_cstr(""))) {
+        return false;
+    }
+    if (record_state && populated && decl->override_find_package && !fetchcontent_stage_override_redirects(ctx, decl)) return false;
     return true;
+}
+
+static bool fetchcontent_run_transport(EvalExecContext *ctx,
+                                       const Node *node,
+                                       String_View dependency_name,
+                                       const Eval_FetchContent_Declaration *decl,
+                                       String_View source_dir,
+                                       bool respect_saved_variables) {
+    if (!ctx || !node || !decl) return false;
+    if (decl->has_download_command) {
+        return fetchcontent_populate_url(ctx, node, dependency_name, decl, source_dir);
+    }
+    switch (decl->transport) {
+    case EVAL_FETCHCONTENT_TRANSPORT_URL:
+    case EVAL_FETCHCONTENT_TRANSPORT_CUSTOM_DOWNLOAD:
+        return fetchcontent_populate_url(ctx, node, dependency_name, decl, source_dir);
+    case EVAL_FETCHCONTENT_TRANSPORT_GIT:
+        return fetchcontent_populate_git(ctx, node, dependency_name, decl, source_dir, respect_saved_variables);
+    case EVAL_FETCHCONTENT_TRANSPORT_SVN:
+        return fetchcontent_populate_svn(ctx, node, decl, source_dir);
+    case EVAL_FETCHCONTENT_TRANSPORT_HG:
+        return fetchcontent_populate_hg(ctx, node, decl, source_dir);
+    case EVAL_FETCHCONTENT_TRANSPORT_CVS:
+        return fetchcontent_populate_cvs(ctx, node, decl, source_dir);
+    case EVAL_FETCHCONTENT_TRANSPORT_NONE:
+    default:
+        return true;
+    }
 }
 
 static bool fetchcontent_populate_content(EvalExecContext *ctx,
                                           const Node *node,
                                           String_View dependency_name,
                                           const Eval_FetchContent_Declaration *decl,
-                                          bool run_add_subdirectory) {
+                                          bool run_add_subdirectory,
+                                          bool record_state,
+                                          bool publish_populated_var,
+                                          bool respect_saved_variables) {
     if (!ctx || !node || !decl) return false;
 
     String_View source_dir = decl->source_dir;
@@ -1116,7 +1992,10 @@ static bool fetchcontent_populate_content(EvalExecContext *ctx,
         if (eval_should_stop(ctx)) return false;
     }
 
-    if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE && !decl->has_source_dir && override_source_dir.count == 0) {
+    if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE &&
+        !decl->has_download_command &&
+        !decl->has_source_dir &&
+        override_source_dir.count == 0) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        eval_origin_from_node(ctx, node),
@@ -1128,13 +2007,36 @@ static bool fetchcontent_populate_content(EvalExecContext *ctx,
         return false;
     }
 
-    if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_URL) {
-        if (!fetchcontent_populate_url(ctx, node, decl, source_dir)) return false;
-    } else if (decl->transport == EVAL_FETCHCONTENT_TRANSPORT_GIT) {
-        if (!fetchcontent_populate_git(ctx, node, dependency_name, decl, source_dir)) return false;
+    if (respect_saved_variables && fetchcontent_is_fully_disconnected(ctx)) {
+        if (!fetchcontent_file_exists(ctx, source_dir)) {
+            String_View cmakelists = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr("CMakeLists.txt"));
+            if (eval_should_stop(ctx)) return false;
+            if (!fetchcontent_file_exists(ctx, cmakelists)) {
+                return fetchcontent_git_emit_failure(ctx,
+                                                     node,
+                                                     nob_sv_from_cstr("FetchContent is fully disconnected and no pre-populated source tree exists"),
+                                                     source_dir);
+            }
+        }
+    } else {
+        if (!fetchcontent_run_transport(ctx, node, dependency_name, decl, source_dir, respect_saved_variables)) return false;
     }
 
-    if (!fetchcontent_finalize_population(ctx, decl, true, source_dir, binary_dir)) return false;
+    if (!fetchcontent_run_patch_command(ctx, node, decl, source_dir)) return false;
+    if (!fetchcontent_finalize_population(ctx,
+                                          decl,
+                                          record_state,
+                                          publish_populated_var,
+                                          record_state,
+                                          true,
+                                          true,
+                                          source_dir,
+                                          true,
+                                          binary_dir,
+                                          false,
+                                          false)) {
+        return false;
+    }
 
     if (!run_add_subdirectory) return true;
     String_View add_subdirectory_source = source_dir;
@@ -1225,6 +2127,7 @@ static bool fetchcontent_makeavailable_one(EvalExecContext *ctx,
         bool ok = fetchcontent_publish_default_vars(ctx,
                                                     state->name.count > 0 ? state->name : dependency_name,
                                                     true,
+                                                    true,
                                                     state->source_dir,
                                                     state->binary_dir);
         fetchcontent_pop_active(ctx, pushed_active);
@@ -1245,44 +2148,69 @@ static bool fetchcontent_makeavailable_one(EvalExecContext *ctx,
         return false;
     }
 
+    bool had_verify_header_sets = eval_var_defined_visible(ctx, nob_sv_from_cstr("CMAKE_VERIFY_INTERFACE_HEADER_SETS"));
+    String_View verify_header_sets_prev = had_verify_header_sets
+                                              ? eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_VERIFY_INTERFACE_HEADER_SETS"))
+                                              : nob_sv_from_cstr("");
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_VERIFY_INTERFACE_HEADER_SETS"), nob_sv_from_cstr("0"))) {
+        fetchcontent_pop_active(ctx, pushed_active);
+        return false;
+    }
+
+    bool ok = false;
     bool provider_populated = false;
     if (!already_active &&
         !has_source_override &&
         ctx->semantic_state.package.dependency_provider.command_name.count > 0 &&
         ctx->semantic_state.package.dependency_provider.supports_fetchcontent_makeavailable_serial) {
         if (!fetchcontent_invoke_dependency_provider(ctx, node, decl, &provider_populated)) {
-            fetchcontent_pop_active(ctx, pushed_active);
-            return false;
+            goto cleanup;
         }
     }
 
     if (provider_populated) {
         Eval_FetchContent_State *provider_state = fetchcontent_find_state(ctx, canonical_name);
-        bool ok = provider_state &&
-                  fetchcontent_publish_default_vars(ctx,
-                                                    dependency_name,
-                                                    true,
-                                                    provider_state->source_dir,
-                                                    provider_state->binary_dir);
-        fetchcontent_pop_active(ctx, pushed_active);
-        return ok;
+        ok = provider_state &&
+             fetchcontent_publish_default_vars(ctx,
+                                               dependency_name,
+                                               true,
+                                               true,
+                                               provider_state->source_dir,
+                                               provider_state->binary_dir);
+        goto cleanup;
     }
 
     bool found_package = false;
     if (!fetchcontent_run_find_package(ctx, dependency_name, decl, &found_package)) {
-        fetchcontent_pop_active(ctx, pushed_active);
-        return false;
+        goto cleanup;
     }
     if (found_package) {
         Eval_FetchContent_State *decl_state = fetchcontent_find_state(ctx, canonical_name);
-        String_View source_dir = decl_state ? decl_state->source_dir : decl->source_dir;
-        String_View binary_dir = decl_state ? decl_state->binary_dir : decl->binary_dir;
-        bool ok = fetchcontent_finalize_population(ctx, decl, false, source_dir, binary_dir);
-        fetchcontent_pop_active(ctx, pushed_active);
-        return ok;
+        String_View source_dir = decl_state && decl_state->source_dir_known ? decl_state->source_dir : decl->source_dir;
+        String_View binary_dir = decl_state && decl_state->binary_dir_known ? decl_state->binary_dir : decl->binary_dir;
+        ok = fetchcontent_finalize_population(ctx,
+                                              decl,
+                                              true,
+                                              true,
+                                              false,
+                                              false,
+                                              true,
+                                              source_dir,
+                                              true,
+                                              binary_dir,
+                                              false,
+                                              true);
+        goto cleanup;
     }
 
-    bool ok = fetchcontent_populate_content(ctx, node, dependency_name, decl, true);
+    ok = fetchcontent_populate_content(ctx, node, dependency_name, decl, true, true, true, true);
+
+cleanup:
+    if (had_verify_header_sets) {
+        (void)eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_VERIFY_INTERFACE_HEADER_SETS"), verify_header_sets_prev);
+    } else {
+        (void)eval_var_unset_current(ctx, nob_sv_from_cstr("CMAKE_VERIFY_INTERFACE_HEADER_SETS"));
+    }
     fetchcontent_pop_active(ctx, pushed_active);
     return ok;
 }
@@ -1336,8 +2264,13 @@ static bool fetchcontent_execute_declare_request(EvalExecContext *ctx,
                                      decl.name,
                                      decl.canonical_name,
                                      false,
+                                     false,
+                                     true,
                                      decl.source_dir,
-                                     decl.binary_dir);
+                                     true,
+                                     decl.binary_dir,
+                                     false,
+                                     false);
 }
 
 static bool fetchcontent_parse_makeavailable_request(EvalExecContext *ctx,
@@ -1446,16 +2379,17 @@ static bool fetchcontent_execute_getproperties_request(EvalExecContext *ctx,
     if (!ctx || !req) return false;
 
     Eval_FetchContent_State *state = fetchcontent_find_state(ctx, req->canonical_name);
-    String_View source_dir = state ? state->source_dir : nob_sv_from_cstr("");
-    String_View binary_dir = state ? state->binary_dir : nob_sv_from_cstr("");
+    String_View source_dir = (state && state->source_dir_known) ? state->source_dir : nob_sv_from_cstr("");
+    String_View binary_dir = (state && state->binary_dir_known) ? state->binary_dir : nob_sv_from_cstr("");
     bool populated = state ? state->populated : false;
 
     if (!fetchcontent_getproperties_has_explicit_outputs(req)) {
         return fetchcontent_publish_default_vars(ctx,
-                                                req->dependency_name,
-                                                populated,
-                                                source_dir,
-                                                binary_dir);
+                                                 req->dependency_name,
+                                                 true,
+                                                 populated,
+                                                 source_dir,
+                                                 binary_dir);
     }
 
     if (req->outputs.source_dir_var.count > 0 &&
@@ -1531,11 +2465,30 @@ static bool fetchcontent_execute_populate_request(EvalExecContext *ctx,
                                            req->dependency_name);
             return false;
         }
+        Eval_FetchContent_State *state = fetchcontent_find_state(ctx, req->canonical_name);
+        if (state && state->population_processed) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                           node,
+                                           origin,
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_INVALID_CONTEXT,
+                                           "dispatcher",
+                                           nob_sv_from_cstr("FetchContent_Populate() may only be called once per dependency when using saved details"),
+                                           req->dependency_name);
+            return false;
+        }
     } else {
         decl = &req->direct_decl;
     }
 
-    return fetchcontent_populate_content(ctx, node, req->dependency_name, decl, false);
+    return fetchcontent_populate_content(ctx,
+                                         node,
+                                         req->dependency_name,
+                                         decl,
+                                         false,
+                                         req->use_saved_declaration,
+                                         req->use_saved_declaration,
+                                         req->use_saved_declaration);
 }
 
 static bool fetchcontent_parse_setpopulated_request(EvalExecContext *ctx,
@@ -1623,32 +2576,25 @@ static bool fetchcontent_execute_setpopulated_request(EvalExecContext *ctx,
                                                       const FetchContent_SetPopulated_Request *req) {
     if (!ctx || !req) return false;
 
-    String_View source_dir = req->source_dir;
-    String_View binary_dir = req->binary_dir;
-
-    Eval_FetchContent_Declaration *decl = fetchcontent_find_declaration(ctx, req->canonical_name);
-    if (decl) {
-        if (source_dir.count == 0) source_dir = decl->source_dir;
-        if (binary_dir.count == 0) binary_dir = decl->binary_dir;
-    } else {
-        if (source_dir.count == 0) source_dir = fetchcontent_saved_default_source_dir(ctx, req->canonical_name);
-        if (binary_dir.count == 0) binary_dir = fetchcontent_saved_default_binary_dir(ctx, req->canonical_name);
-    }
-    if (eval_should_stop(ctx)) return false;
-
     if (!fetchcontent_upsert_state(ctx,
                                    req->dependency_name,
                                    req->canonical_name,
                                    true,
-                                   source_dir,
-                                   binary_dir)) {
+                                   true,
+                                   req->source_dir.count > 0,
+                                   req->source_dir,
+                                   req->binary_dir.count > 0,
+                                   req->binary_dir,
+                                   true,
+                                   false)) {
         return false;
     }
     return fetchcontent_publish_default_vars(ctx,
                                              req->dependency_name,
                                              true,
-                                             source_dir,
-                                             binary_dir);
+                                             true,
+                                             req->source_dir,
+                                             req->binary_dir);
 }
 
 Eval_Result eval_handle_fetchcontent_declare(EvalExecContext *ctx, const Node *node) {
