@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -63,13 +64,20 @@ typedef struct {
     Eval_Ctest_Step_Kind step_kind;
     String_View command_name;
     String_View submit_part;
-    String_View status;
     const Ctest_Parse_Spec *spec;
     bool needs_source;
     bool needs_build;
+} Ctest_Step_Runtime_Def;
+
+typedef struct {
+    Ctest_Step_Runtime_Def def;
     SV_List argv;
     Ctest_Parse_Result parsed;
-} Ctest_Modeled_Step_Request;
+    String_View resolved_source;
+    String_View resolved_build;
+    String_View model;
+    String_View track;
+} Ctest_Step_Runtime_Request;
 
 typedef struct {
     SV_List argv;
@@ -147,6 +155,65 @@ typedef struct {
 } Ctest_Configure_Request;
 
 typedef struct {
+    Ctest_Step_Runtime_Request core;
+    String_View configuration;
+    String_View parallel_level;
+    String_View flags;
+    String_View project_name;
+    String_View target;
+    String_View build_command;
+    String_View number_errors_var;
+    String_View number_warnings_var;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    bool append_mode;
+    bool quiet;
+} Ctest_Build_Request;
+
+typedef struct {
+    String_View name;
+    String_View command;
+    String_View working_dir;
+    String_View declared_source_dir;
+    String_View declared_build_dir;
+    bool command_expand_lists;
+} Ctest_Test_Plan_Entry;
+
+typedef Ctest_Test_Plan_Entry *Ctest_Test_Plan_Entry_List;
+
+typedef struct {
+    String_View name;
+    String_View command;
+    String_View backend_command;
+    String_View working_dir;
+    String_View stdout_text;
+    String_View stderr_text;
+    String_View result_text;
+    size_t defect_count;
+    int exit_code;
+    bool passed;
+    bool started;
+    bool timed_out;
+} Ctest_Test_Result_Entry;
+
+typedef Ctest_Test_Result_Entry *Ctest_Test_Result_Entry_List;
+
+typedef struct {
+    Ctest_Step_Runtime_Request core;
+    String_View parallel_level;
+    String_View stop_time;
+    String_View test_load;
+    String_View output_junit;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    int stop_time_seconds;
+    bool has_stop_time;
+    bool append_mode;
+    bool quiet;
+    bool schedule_random;
+} Ctest_Test_Request;
+
+typedef struct {
     SV_List argv;
     Ctest_Parse_Result parsed;
     String_View model;
@@ -161,18 +228,50 @@ typedef struct {
 } Ctest_Coverage_Request;
 
 typedef struct {
-    SV_List argv;
-    Ctest_Parse_Result parsed;
-    String_View build_dir;
+    Ctest_Step_Runtime_Request core;
+    String_View update_type;
+    String_View update_command;
+    String_View update_options;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    String_View version_override;
+    bool version_only;
+    bool quiet;
+    bool custom_command;
+} Ctest_Update_Request;
+
+typedef struct {
+    String_View path;
+    String_View labels;
+} Ctest_Coverage_Source_Entry;
+
+typedef Ctest_Coverage_Source_Entry *Ctest_Coverage_Source_Entry_List;
+
+typedef struct {
+    Ctest_Step_Runtime_Request core;
     String_View start;
     String_View end;
     String_View stride;
     String_View parallel_level;
+    String_View stop_time;
     String_View resource_spec_file;
     String_View test_load;
     String_View schedule_random;
     String_View repeat;
     String_View output_junit;
+    String_View backend_type;
+    String_View backend_command;
+    String_View backend_options;
+    String_View backend_sanitizer_options;
+    String_View suppression_file;
+    String_View return_var;
+    String_View capture_cmake_error_var;
+    String_View defect_count_var;
+    int stop_time_seconds;
+    bool has_stop_time;
+    bool append_mode;
+    bool stop_on_failure;
+    bool quiet;
 } Ctest_Memcheck_Request;
 
 typedef struct {
@@ -331,6 +430,8 @@ static const Ctest_Parse_Spec s_ctest_upload_parse_spec = {
 static String_View ctest_current_binary_dir(EvalExecContext *ctx);
 static String_View ctest_binary_root(EvalExecContext *ctx);
 static String_View ctest_get_session_field(EvalExecContext *ctx, const char *field_name);
+static bool ctest_append_command_tokens_temp(EvalExecContext *ctx, String_View raw, SV_List *out_argv);
+static bool ctest_path_exists(EvalExecContext *ctx, String_View path);
 static bool ctest_resolve_files(EvalExecContext *ctx,
                                 const Node *node,
                                 String_View command_name,
@@ -368,16 +469,22 @@ static bool ctest_set_field(EvalExecContext *ctx,
 }
 
 static bool ctest_step_kind_requires_submit_files(Eval_Ctest_Step_Kind kind) {
-    return kind == EVAL_CTEST_STEP_CONFIGURE ||
+    return kind == EVAL_CTEST_STEP_BUILD ||
+           kind == EVAL_CTEST_STEP_CONFIGURE ||
+           kind == EVAL_CTEST_STEP_TEST ||
            kind == EVAL_CTEST_STEP_COVERAGE ||
+           kind == EVAL_CTEST_STEP_UPDATE ||
            kind == EVAL_CTEST_STEP_MEMCHECK ||
            kind == EVAL_CTEST_STEP_UPLOAD;
 }
 
 static const char *ctest_step_primary_artifact_field(Eval_Ctest_Step_Kind kind) {
     switch (kind) {
+    case EVAL_CTEST_STEP_BUILD: return "BUILD_XML";
     case EVAL_CTEST_STEP_CONFIGURE: return "CONFIGURE_XML";
+    case EVAL_CTEST_STEP_TEST: return "TEST_XML";
     case EVAL_CTEST_STEP_COVERAGE: return "COVERAGE_XML";
+    case EVAL_CTEST_STEP_UPDATE: return "UPDATE_XML";
     case EVAL_CTEST_STEP_MEMCHECK: return "MEMCHECK_XML";
     case EVAL_CTEST_STEP_UPLOAD: return "UPLOAD_XML";
     default: return NULL;
@@ -416,6 +523,10 @@ static bool ctest_project_committed_step(EvalExecContext *ctx,
     }
     if (step->manifest.count > 0 &&
         !ctest_set_field(ctx, step->command_name, "MANIFEST", step->manifest)) {
+        return false;
+    }
+    if (step->output_junit.count > 0 &&
+        !ctest_set_field(ctx, step->command_name, "RESOLVED_OUTPUT_JUNIT", step->output_junit)) {
         return false;
     }
     if (step->submit_files.count > 0 &&
@@ -586,6 +697,252 @@ static String_View ctest_configure_resolve_command(EvalExecContext *ctx, String_
     String_View resolved = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
     nob_sb_free(sb);
     return resolved;
+}
+
+static bool ctest_sv_has_prefix_ci(String_View value, const char *prefix) {
+    size_t prefix_len = 0;
+    if (!prefix) return false;
+    prefix_len = strlen(prefix);
+    if (value.count < prefix_len) return false;
+    for (size_t i = 0; i < prefix_len; i++) {
+        if (tolower((unsigned char)value.data[i]) != tolower((unsigned char)prefix[i])) return false;
+    }
+    return true;
+}
+
+static String_View ctest_update_join_settings(EvalExecContext *ctx, String_View lhs, String_View rhs) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (lhs.count == 0) return rhs;
+    if (rhs.count == 0) return lhs;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_buf(&sb, lhs.data ? lhs.data : "", lhs.count);
+    nob_sb_append_cstr(&sb, ";");
+    nob_sb_append_buf(&sb, rhs.data ? rhs.data : "", rhs.count);
+    String_View joined = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    return joined;
+}
+
+static bool ctest_update_is_truthy(String_View raw) {
+    if (raw.count == 0) return false;
+    return !eval_sv_eq_ci_lit(raw, "0") &&
+           !eval_sv_eq_ci_lit(raw, "FALSE") &&
+           !eval_sv_eq_ci_lit(raw, "OFF") &&
+           !eval_sv_eq_ci_lit(raw, "NO") &&
+           !eval_sv_eq_ci_lit(raw, "N") &&
+           !eval_sv_eq_ci_lit(raw, "IGNORE") &&
+           !eval_sv_eq_ci_lit(raw, "NOTFOUND");
+}
+
+static String_View ctest_update_canonical_type(String_View raw) {
+    if (eval_sv_eq_ci_lit(raw, "bzr")) return nob_sv_from_cstr("bzr");
+    if (eval_sv_eq_ci_lit(raw, "cvs")) return nob_sv_from_cstr("cvs");
+    if (eval_sv_eq_ci_lit(raw, "git")) return nob_sv_from_cstr("git");
+    if (eval_sv_eq_ci_lit(raw, "hg")) return nob_sv_from_cstr("hg");
+    if (eval_sv_eq_ci_lit(raw, "p4")) return nob_sv_from_cstr("p4");
+    if (eval_sv_eq_ci_lit(raw, "svn")) return nob_sv_from_cstr("svn");
+    return nob_sv_from_cstr("");
+}
+
+static String_View ctest_update_detect_type(EvalExecContext *ctx, String_View source_dir) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View source_markers[][2] = {
+        {nob_sv_from_cstr(".git"), nob_sv_from_cstr("git")},
+        {nob_sv_from_cstr(".svn"), nob_sv_from_cstr("svn")},
+        {nob_sv_from_cstr("CVS"), nob_sv_from_cstr("cvs")},
+        {nob_sv_from_cstr(".hg"), nob_sv_from_cstr("hg")},
+        {nob_sv_from_cstr(".bzr"), nob_sv_from_cstr("bzr")},
+    };
+
+    if (source_dir.count > 0) {
+        for (size_t i = 0; i < sizeof(source_markers) / sizeof(source_markers[0]); i++) {
+            String_View marker_path =
+                eval_sv_path_join(eval_temp_arena(ctx), source_dir, source_markers[i][0]);
+            if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+            if (ctest_path_exists(ctx, marker_path)) return source_markers[i][1];
+        }
+    }
+
+    if (eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_P4_COMMAND")).count > 0 ||
+        eval_var_get_visible(ctx, nob_sv_from_cstr("P4COMMAND")).count > 0 ||
+        eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_P4_UPDATE_CUSTOM")).count > 0) {
+        return nob_sv_from_cstr("p4");
+    }
+
+    return nob_sv_from_cstr("");
+}
+
+static bool ctest_update_resolve_type(EvalExecContext *ctx,
+                                      const Node *node,
+                                      String_View source_dir,
+                                      String_View *out_type) {
+    if (!ctx || !node || !out_type) return false;
+    *out_type = nob_sv_from_cstr("");
+
+    String_View raw = ctest_submit_visible_var(ctx, "UPDATE_TYPE", "CTEST_UPDATE_TYPE");
+    if (raw.count > 0) {
+        String_View canonical = ctest_update_canonical_type(raw);
+        if (canonical.count == 0) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_update() UPDATE_TYPE must be one of bzr, cvs, git, hg, p4, or svn"),
+                                  raw);
+            return false;
+        }
+        *out_type = canonical;
+        return true;
+    }
+
+    *out_type = ctest_update_detect_type(ctx, source_dir);
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static String_View ctest_update_resolve_command(EvalExecContext *ctx,
+                                                String_View update_type,
+                                                bool *out_custom_command) {
+    if (out_custom_command) *out_custom_command = false;
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_UPDATE_COMMAND"));
+    if (command.count > 0) return command;
+
+    if (eval_sv_eq_ci_lit(update_type, "git")) {
+        command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_GIT_UPDATE_CUSTOM"));
+        if (command.count > 0) {
+            if (out_custom_command) *out_custom_command = true;
+            return command;
+        }
+        command = ctest_submit_visible_var(ctx, "CTEST_GIT_COMMAND", "GITCOMMAND");
+        return command.count > 0 ? command : nob_sv_from_cstr("git");
+    }
+    if (eval_sv_eq_ci_lit(update_type, "svn")) {
+        command = ctest_submit_visible_var(ctx, "CTEST_SVN_COMMAND", "SVNCOMMAND");
+        return command.count > 0 ? command : nob_sv_from_cstr("svn");
+    }
+    if (eval_sv_eq_ci_lit(update_type, "cvs")) {
+        command = ctest_submit_visible_var(ctx, "CTEST_CVS_COMMAND", "CVSCOMMAND");
+        return command.count > 0 ? command : nob_sv_from_cstr("cvs");
+    }
+    if (eval_sv_eq_ci_lit(update_type, "hg")) {
+        command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_HG_COMMAND"));
+        return command.count > 0 ? command : nob_sv_from_cstr("hg");
+    }
+    if (eval_sv_eq_ci_lit(update_type, "bzr")) {
+        command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BZR_COMMAND"));
+        return command.count > 0 ? command : nob_sv_from_cstr("bzr");
+    }
+    if (eval_sv_eq_ci_lit(update_type, "p4")) {
+        command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_P4_UPDATE_CUSTOM"));
+        if (command.count > 0) {
+            if (out_custom_command) *out_custom_command = true;
+            return command;
+        }
+        command = ctest_submit_visible_var(ctx, "CTEST_P4_COMMAND", "P4COMMAND");
+        return command.count > 0 ? command : nob_sv_from_cstr("p4");
+    }
+
+    return eval_var_get_visible(ctx, nob_sv_from_cstr("UPDATE_COMMAND"));
+}
+
+static String_View ctest_update_resolve_options(EvalExecContext *ctx, String_View update_type) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View options = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_UPDATE_OPTIONS"));
+    if (options.count > 0) return options;
+
+    if (eval_sv_eq_ci_lit(update_type, "git")) {
+        options = ctest_submit_visible_var(ctx, "CTEST_GIT_UPDATE_OPTIONS", "GIT_UPDATE_OPTIONS");
+    } else if (eval_sv_eq_ci_lit(update_type, "svn")) {
+        String_View base = ctest_submit_visible_var(ctx, "CTEST_SVN_OPTIONS", "CTEST_SVN_OPTIONS");
+        String_View update = ctest_submit_visible_var(ctx, "CTEST_SVN_UPDATE_OPTIONS", "SVN_UPDATE_OPTIONS");
+        options = ctest_update_join_settings(ctx, base, update);
+    } else if (eval_sv_eq_ci_lit(update_type, "cvs")) {
+        options = ctest_submit_visible_var(ctx, "CTEST_CVS_UPDATE_OPTIONS", "CVS_UPDATE_OPTIONS");
+    } else if (eval_sv_eq_ci_lit(update_type, "hg")) {
+        options = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_HG_UPDATE_OPTIONS"));
+    } else if (eval_sv_eq_ci_lit(update_type, "bzr")) {
+        options = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BZR_UPDATE_OPTIONS"));
+    } else if (eval_sv_eq_ci_lit(update_type, "p4")) {
+        String_View base = ctest_submit_visible_var(ctx, "CTEST_P4_OPTIONS", "CTEST_P4_OPTIONS");
+        String_View update =
+            ctest_submit_visible_var(ctx, "CTEST_P4_UPDATE_OPTIONS", "CTEST_P4_UPDATE_OPTIONS");
+        options = ctest_update_join_settings(ctx, base, update);
+    }
+
+    if (options.count > 0) return options;
+    return eval_var_get_visible(ctx, nob_sv_from_cstr("UPDATE_OPTIONS"));
+}
+
+static bool ctest_build_is_makefile_generator(String_View generator) {
+    return eval_sv_eq_ci_lit(generator, "Unix Makefiles") ||
+           eval_sv_eq_ci_lit(generator, "MinGW Makefiles") ||
+           eval_sv_eq_ci_lit(generator, "MSYS Makefiles") ||
+           eval_sv_eq_ci_lit(generator, "NMake Makefiles") ||
+           eval_sv_eq_ci_lit(generator, "Watcom WMake") ||
+           eval_sv_eq_ci_lit(generator, "Borland Makefiles");
+}
+
+static String_View ctest_build_resolve_parallel_level(EvalExecContext *ctx,
+                                                      const Ctest_Parse_Result *parsed) {
+    if (!ctx || !parsed) return nob_sv_from_cstr("");
+
+    String_View parallel_level = ctest_parsed_field_value(parsed, "PARALLEL_LEVEL");
+    if (parallel_level.count > 0) return parallel_level;
+
+    const char *env_parallel = eval_getenv_temp(ctx, "CMAKE_BUILD_PARALLEL_LEVEL");
+    if (!env_parallel || env_parallel[0] == '\0') return nob_sv_from_cstr("");
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(env_parallel));
+}
+
+static String_View ctest_build_resolve_command(EvalExecContext *ctx,
+                                               String_View configuration,
+                                               String_View parallel_level,
+                                               String_View flags,
+                                               String_View target) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    String_View explicit_command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BUILD_COMMAND"));
+    if (explicit_command.count > 0) return explicit_command;
+
+    String_View command_name = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    if (command_name.count == 0) command_name = nob_sv_from_cstr("cmake");
+
+    SV_List argv = {0};
+    if (!svu_list_push_temp(ctx, &argv, command_name)) return nob_sv_from_cstr("");
+    if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--build"))) return nob_sv_from_cstr("");
+    if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("."))) return nob_sv_from_cstr("");
+
+    if (target.count > 0) {
+        if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--target"))) return nob_sv_from_cstr("");
+        if (!svu_list_push_temp(ctx, &argv, target)) return nob_sv_from_cstr("");
+    }
+    if (configuration.count > 0) {
+        if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--config"))) return nob_sv_from_cstr("");
+        if (!svu_list_push_temp(ctx, &argv, configuration)) return nob_sv_from_cstr("");
+    }
+    if (parallel_level.count > 0) {
+        if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--parallel"))) return nob_sv_from_cstr("");
+        if (!svu_list_push_temp(ctx, &argv, parallel_level)) return nob_sv_from_cstr("");
+    }
+
+    bool append_make_i = !eval_policy_is_new(ctx, EVAL_POLICY_CMP0061) &&
+                         ctest_build_is_makefile_generator(eval_var_get_visible(ctx,
+                                                                                nob_sv_from_cstr("CMAKE_GENERATOR")));
+    if (flags.count > 0 || append_make_i) {
+        if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--"))) return nob_sv_from_cstr("");
+        if (flags.count > 0 && !ctest_append_command_tokens_temp(ctx, flags, &argv)) {
+            return nob_sv_from_cstr("");
+        }
+        if (append_make_i && !svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("-i"))) {
+            return nob_sv_from_cstr("");
+        }
+    }
+
+    return eval_sv_join_semi_temp(ctx, argv, arena_arr_len(argv));
 }
 
 static bool ctest_submit_resolve_numeric_setting(EvalExecContext *ctx,
@@ -980,6 +1337,958 @@ static bool ctest_xml_append_labels_block(EvalExecContext *ctx,
     return true;
 }
 
+static bool ctest_sv_has_prefix(String_View value, const char *prefix) {
+    size_t prefix_len = 0;
+    if (!prefix) return false;
+    prefix_len = strlen(prefix);
+    return value.count >= prefix_len && memcmp(value.data, prefix, prefix_len) == 0;
+}
+
+static bool ctest_append_label_items_unique(EvalExecContext *ctx,
+                                            String_View labels,
+                                            SV_List *out_items) {
+    if (!ctx || !out_items) return false;
+    if (labels.count == 0) return true;
+
+    SV_List items = {0};
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), labels, &items)) return false;
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        if (items[i].count == 0) continue;
+        if (!ctest_list_push_unique_temp(ctx, out_items, items[i])) return false;
+    }
+    return true;
+}
+
+static bool ctest_labels_intersect(EvalExecContext *ctx, String_View lhs, String_View rhs) {
+    if (!ctx || lhs.count == 0 || rhs.count == 0) return false;
+
+    SV_List lhs_items = {0};
+    SV_List rhs_items = {0};
+    if (!ctest_append_label_items_unique(ctx, lhs, &lhs_items)) return false;
+    if (!ctest_append_label_items_unique(ctx, rhs, &rhs_items)) return false;
+
+    for (size_t i = 0; i < arena_arr_len(lhs_items); i++) {
+        for (size_t j = 0; j < arena_arr_len(rhs_items); j++) {
+            if (nob_sv_eq(lhs_items[i], rhs_items[j])) return true;
+        }
+    }
+
+    return false;
+}
+
+static String_View ctest_merge_labels_temp(EvalExecContext *ctx, String_View lhs, String_View rhs) {
+    if (!ctx) return nob_sv_from_cstr("");
+
+    SV_List merged = {0};
+    if (!ctest_append_label_items_unique(ctx, lhs, &merged)) return nob_sv_from_cstr("");
+    if (!ctest_append_label_items_unique(ctx, rhs, &merged)) return nob_sv_from_cstr("");
+    if (arena_arr_len(merged) == 0) return nob_sv_from_cstr("");
+    return eval_sv_join_semi_temp(ctx, merged, arena_arr_len(merged));
+}
+
+static String_View ctest_coverage_source_path_from_record(EvalExecContext *ctx,
+                                                          const Eval_Property_Record *record) {
+    static const char scoped_prefix[] = "DIRECTORY::";
+    if (!ctx || !record || record->object_id.count == 0) return nob_sv_from_cstr("");
+
+    if (ctest_sv_has_prefix(record->object_id, scoped_prefix)) {
+        size_t prefix_len = sizeof(scoped_prefix) - 1;
+        size_t split_index = (size_t)-1;
+        for (size_t i = prefix_len; i + 1 < record->object_id.count; i++) {
+            if (record->object_id.data[i] == ':' && record->object_id.data[i + 1] == ':') {
+                split_index = i;
+                break;
+            }
+        }
+        if (split_index != (size_t)-1) {
+            String_View scope_dir =
+                nob_sv_from_parts(record->object_id.data + prefix_len, split_index - prefix_len);
+            String_View item_object = nob_sv_from_parts(record->object_id.data + split_index + 2,
+                                                        record->object_id.count - (split_index + 2));
+            String_View path = item_object;
+            if (!eval_sv_is_abs_path(item_object) && scope_dir.count > 0) {
+                path = eval_sv_path_join(eval_temp_arena(ctx), scope_dir, item_object);
+                if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+            }
+            return eval_sv_path_normalize_temp(ctx, path);
+        }
+    }
+
+    return eval_sv_path_normalize_temp(ctx, record->object_id);
+}
+
+static bool ctest_coverage_collect_filtered_sources(EvalExecContext *ctx,
+                                                    String_View requested_labels,
+                                                    Ctest_Coverage_Source_Entry_List *out_entries) {
+    if (!ctx || !out_entries) return false;
+    *out_entries = NULL;
+    if (requested_labels.count == 0) return true;
+
+    for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.properties.records); i++) {
+        const Eval_Property_Record *record = &ctx->semantic_state.properties.records[i];
+        if (!eval_sv_eq_ci_lit(record->scope_upper, "SOURCE")) continue;
+        if (!eval_sv_eq_ci_lit(record->property_upper, "LABELS")) continue;
+        if (record->value.count == 0) continue;
+        bool matches_filter = ctest_labels_intersect(ctx, requested_labels, record->value);
+        if (eval_should_stop(ctx)) return false;
+        if (!matches_filter) continue;
+
+        String_View source_path = ctest_coverage_source_path_from_record(ctx, record);
+        if (eval_should_stop(ctx)) return false;
+        if (source_path.count == 0) continue;
+
+        bool merged = false;
+        for (size_t j = 0; j < arena_arr_len(*out_entries); j++) {
+            if (!eval_sv_key_eq((*out_entries)[j].path, source_path)) continue;
+            (*out_entries)[j].labels =
+                ctest_merge_labels_temp(ctx, (*out_entries)[j].labels, record->value);
+            if (eval_should_stop(ctx)) return false;
+            merged = true;
+            break;
+        }
+        if (merged) continue;
+
+        Ctest_Coverage_Source_Entry entry = {
+            .path = source_path,
+            .labels = record->value,
+        };
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), *out_entries, entry)) return false;
+    }
+
+    return true;
+}
+
+static bool ctest_xml_append_filtered_sources_block(EvalExecContext *ctx,
+                                                    Nob_String_Builder *sb,
+                                                    String_View requested_labels) {
+    if (!ctx || !sb || requested_labels.count == 0) return true;
+
+    Ctest_Coverage_Source_Entry_List entries = {0};
+    if (!ctest_coverage_collect_filtered_sources(ctx, requested_labels, &entries)) return false;
+
+    nob_sb_append_cstr(sb, "  <FilteredSourceCount>");
+    nob_sb_append_cstr(sb, nob_temp_sprintf("%zu", arena_arr_len(entries)));
+    nob_sb_append_cstr(sb, "</FilteredSourceCount>\n");
+
+    nob_sb_append_cstr(sb, "  <FilteredSources>\n");
+    for (size_t i = 0; i < arena_arr_len(entries); i++) {
+        SV_List label_items = {0};
+        if (!ctest_append_label_items_unique(ctx, entries[i].labels, &label_items)) return false;
+
+        nob_sb_append_cstr(sb, "    <Source>\n");
+        nob_sb_append_cstr(sb, "      <Path>");
+        ctest_xml_append_escaped(sb, entries[i].path);
+        nob_sb_append_cstr(sb, "</Path>\n");
+        nob_sb_append_cstr(sb, "      <Labels>\n");
+        for (size_t j = 0; j < arena_arr_len(label_items); j++) {
+            nob_sb_append_cstr(sb, "        <Label>");
+            ctest_xml_append_escaped(sb, label_items[j]);
+            nob_sb_append_cstr(sb, "</Label>\n");
+        }
+        nob_sb_append_cstr(sb, "      </Labels>\n");
+        nob_sb_append_cstr(sb, "    </Source>\n");
+    }
+    nob_sb_append_cstr(sb, "  </FilteredSources>\n");
+    return true;
+}
+
+static String_View ctest_first_nonempty_line_temp(EvalExecContext *ctx, String_View text) {
+    if (!ctx || text.count == 0) return nob_sv_from_cstr("");
+
+    size_t i = 0;
+    while (i < text.count) {
+        while (i < text.count && (text.data[i] == '\n' || text.data[i] == '\r')) i++;
+        size_t line_start = i;
+        while (i < text.count && text.data[i] != '\n' && text.data[i] != '\r') i++;
+        if (i > line_start) {
+            return sv_copy_to_temp_arena(ctx, nob_sv_from_parts(text.data + line_start, i - line_start));
+        }
+    }
+
+    return nob_sv_from_cstr("");
+}
+
+static void ctest_coverage_report_local_output(EvalExecContext *ctx,
+                                               const Ctest_Coverage_Request *req,
+                                               String_View stdout_text) {
+    if (!ctx || !req) return;
+
+    String_View summary = ctest_first_nonempty_line_temp(ctx, stdout_text);
+    if (summary.count == 0) return;
+
+    nob_log(NOB_INFO,
+            "ctest_coverage summary: %.*s",
+            (int)summary.count,
+            summary.data ? summary.data : "");
+}
+
+static bool ctest_sv_contains_ci(String_View haystack, const char *needle) {
+    size_t needle_len = 0;
+    if (!needle) return false;
+    needle_len = strlen(needle);
+    if (needle_len == 0 || haystack.count < needle_len) return false;
+
+    for (size_t i = 0; i + needle_len <= haystack.count; i++) {
+        bool matches = true;
+        for (size_t j = 0; j < needle_len; j++) {
+            if (tolower((unsigned char)haystack.data[i + j]) != tolower((unsigned char)needle[j])) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) return true;
+    }
+    return false;
+}
+
+static bool ctest_build_count_issues(EvalExecContext *ctx,
+                                     String_View stdout_text,
+                                     String_View stderr_text,
+                                     size_t *out_errors,
+                                     size_t *out_warnings) {
+    if (!ctx || !out_errors || !out_warnings) return false;
+    *out_errors = 0;
+    *out_warnings = 0;
+
+    String_View streams[2] = {stdout_text, stderr_text};
+    for (size_t stream_i = 0; stream_i < 2; stream_i++) {
+        String_View text = streams[stream_i];
+        size_t i = 0;
+        while (i < text.count) {
+            size_t line_start = i;
+            while (i < text.count && text.data[i] != '\n' && text.data[i] != '\r') i++;
+            String_View line = nob_sv_trim(nob_sv_from_parts(text.data + line_start, i - line_start));
+            while (i < text.count && (text.data[i] == '\n' || text.data[i] == '\r')) i++;
+
+            if (line.count == 0) continue;
+            if (ctest_sv_contains_ci(line, "error")) (*out_errors)++;
+            if (ctest_sv_contains_ci(line, "warning")) (*out_warnings)++;
+        }
+    }
+
+    return true;
+}
+
+static bool ctest_write_build_xml(EvalExecContext *ctx,
+                                  String_View build_xml_path,
+                                  const Ctest_Build_Request *req,
+                                  size_t error_count,
+                                  size_t warning_count,
+                                  String_View stdout_text,
+                                  String_View stderr_text,
+                                  int exit_code) {
+    if (!ctx || build_xml_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Build>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildDirectory>");
+    ctest_xml_append_escaped(&sb, req->core.resolved_build);
+    nob_sb_append_cstr(&sb, "</BuildDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildCommand>");
+    ctest_xml_append_escaped(&sb, req->build_command);
+    nob_sb_append_cstr(&sb, "</BuildCommand>\n");
+
+    nob_sb_append_cstr(&sb, "  <Configuration>");
+    ctest_xml_append_escaped(&sb, req->configuration);
+    nob_sb_append_cstr(&sb, "</Configuration>\n");
+
+    nob_sb_append_cstr(&sb, "  <ParallelLevel>");
+    ctest_xml_append_escaped(&sb, req->parallel_level);
+    nob_sb_append_cstr(&sb, "</ParallelLevel>\n");
+
+    nob_sb_append_cstr(&sb, "  <Flags>");
+    ctest_xml_append_escaped(&sb, req->flags);
+    nob_sb_append_cstr(&sb, "</Flags>\n");
+
+    nob_sb_append_cstr(&sb, "  <Target>");
+    ctest_xml_append_escaped(&sb, req->target);
+    nob_sb_append_cstr(&sb, "</Target>\n");
+
+    nob_sb_append_cstr(&sb, "  <Append>");
+    nob_sb_append_cstr(&sb, req->append_mode ? "true" : "false");
+    nob_sb_append_cstr(&sb, "</Append>\n");
+
+    nob_sb_append_cstr(&sb, "  <ErrorCount>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", error_count));
+    nob_sb_append_cstr(&sb, "</ErrorCount>\n");
+
+    nob_sb_append_cstr(&sb, "  <WarningCount>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", warning_count));
+    nob_sb_append_cstr(&sb, "</WarningCount>\n");
+
+    nob_sb_append_cstr(&sb, "  <ExitCode>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", exit_code));
+    nob_sb_append_cstr(&sb, "</ExitCode>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdOut>");
+    ctest_xml_append_escaped(&sb, stdout_text);
+    nob_sb_append_cstr(&sb, "</StdOut>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdErr>");
+    ctest_xml_append_escaped(&sb, stderr_text);
+    nob_sb_append_cstr(&sb, "</StdErr>\n");
+
+    nob_sb_append_cstr(&sb, "</Build>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, build_xml_path, contents, false);
+}
+
+typedef struct {
+    String_View source_dir;
+    String_View binary_dir;
+} Ctest_Test_Stream_Dir;
+
+typedef Ctest_Test_Stream_Dir *Ctest_Test_Stream_Dir_List;
+
+static uint64_t ctest_test_hash_sv(String_View value) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (size_t i = 0; i < value.count; i++) {
+        hash ^= (unsigned char)value.data[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static bool ctest_test_plan_push_unique_temp(EvalExecContext *ctx,
+                                             Ctest_Test_Plan_Entry_List *out_plan,
+                                             Ctest_Test_Plan_Entry entry) {
+    if (!ctx || !out_plan || entry.name.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(*out_plan); i++) {
+        if (!nob_sv_eq((*out_plan)[i].name, entry.name)) continue;
+        if (!nob_sv_eq((*out_plan)[i].declared_source_dir, entry.declared_source_dir)) continue;
+        return true;
+    }
+    return arena_arr_push(eval_temp_arena(ctx), *out_plan, entry);
+}
+
+static bool ctest_collect_test_plan_from_stream(EvalExecContext *ctx, Ctest_Test_Plan_Entry_List *out_plan) {
+    if (!ctx || !out_plan) return false;
+    *out_plan = NULL;
+    if (!ctx->stream) return true;
+
+    bool testing_enabled = false;
+    Ctest_Test_Stream_Dir_List dir_stack = NULL;
+    Event_Stream_Iterator it = event_stream_iter(ctx->stream);
+    while (event_stream_next(&it)) {
+        const Event *ev = it.current;
+        if (!ev) continue;
+
+        switch (ev->h.kind) {
+        case EVENT_DIRECTORY_ENTER: {
+            Ctest_Test_Stream_Dir dir = {
+                .source_dir = ev->as.directory_enter.source_dir,
+                .binary_dir = ev->as.directory_enter.binary_dir,
+            };
+            if (!arena_arr_push(eval_temp_arena(ctx), dir_stack, dir)) return false;
+            break;
+        }
+        case EVENT_DIRECTORY_LEAVE:
+            if (arena_arr_len(dir_stack) > 0) {
+                arena_arr_set_len(dir_stack, arena_arr_len(dir_stack) - 1);
+            }
+            break;
+        case EVENT_TEST_ENABLE:
+            testing_enabled = ev->as.test_enable.enabled;
+            break;
+        case EVENT_TEST_ADD: {
+            String_View declared_source_dir =
+                arena_arr_len(dir_stack) > 0 ? arena_arr_last(dir_stack).source_dir : ctx->source_dir;
+            String_View declared_build_dir =
+                arena_arr_len(dir_stack) > 0 ? arena_arr_last(dir_stack).binary_dir : ctx->binary_dir;
+            Ctest_Test_Plan_Entry entry = {
+                .name = ev->as.test_add.name,
+                .command = ev->as.test_add.command,
+                .working_dir = ev->as.test_add.working_dir,
+                .declared_source_dir = declared_source_dir,
+                .declared_build_dir = declared_build_dir,
+                .command_expand_lists = ev->as.test_add.command_expand_lists,
+            };
+            if (!ctest_test_plan_push_unique_temp(ctx, out_plan, entry)) return false;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    if (!testing_enabled) *out_plan = NULL;
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static void ctest_test_sort_plan_randomized(Ctest_Test_Plan_Entry_List plan) {
+    if (!plan) return;
+
+    for (size_t i = 0; i < arena_arr_len(plan); i++) {
+        size_t best = i;
+        uint64_t best_hash = ctest_test_hash_sv(plan[i].name) ^ ctest_test_hash_sv(plan[i].declared_source_dir);
+        for (size_t j = i + 1; j < arena_arr_len(plan); j++) {
+            uint64_t candidate_hash =
+                ctest_test_hash_sv(plan[j].name) ^ ctest_test_hash_sv(plan[j].declared_source_dir);
+            if (candidate_hash < best_hash) {
+                best = j;
+                best_hash = candidate_hash;
+            }
+        }
+        if (best != i) {
+            Ctest_Test_Plan_Entry tmp = plan[i];
+            plan[i] = plan[best];
+            plan[best] = tmp;
+        }
+    }
+}
+
+static bool ctest_test_parse_stop_time(EvalExecContext *ctx,
+                                       const Node *node,
+                                       String_View raw,
+                                       int *out_seconds) {
+    if (!ctx || !node || !out_seconds) return false;
+    *out_seconds = -1;
+    if (raw.count == 0) return true;
+
+    int values[3] = {0, 0, 0};
+    size_t value_count = 0;
+    size_t cursor = 0;
+    while (cursor < raw.count) {
+        if (value_count >= 3) break;
+        size_t start = cursor;
+        while (cursor < raw.count && isdigit((unsigned char)raw.data[cursor])) cursor++;
+        if (start == cursor) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_test() STOP_TIME requires HH:MM or HH:MM:SS"),
+                                  raw);
+            return false;
+        }
+        String_View piece = nob_sv_from_parts(raw.data + start, cursor - start);
+        size_t parsed_piece = 0;
+        if (!ctest_parse_size_value_sv(piece, &parsed_piece) || parsed_piece > 59) {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_test() STOP_TIME has an invalid time component"),
+                                  raw);
+            return false;
+        }
+        values[value_count++] = (int)parsed_piece;
+        if (cursor == raw.count) break;
+        if (raw.data[cursor] != ':') {
+            (void)ctest_emit_diag(ctx,
+                                  node,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("ctest_test() STOP_TIME requires HH:MM or HH:MM:SS"),
+                                  raw);
+            return false;
+        }
+        cursor++;
+    }
+
+    if ((value_count != 2 && value_count != 3) || values[0] > 23) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_test() STOP_TIME requires HH:MM or HH:MM:SS"),
+                              raw);
+        return false;
+    }
+
+    *out_seconds = values[0] * 3600 + values[1] * 60 + values[2];
+    return true;
+}
+
+static int ctest_test_current_local_seconds_of_day(void) {
+    time_t now = time(NULL);
+    struct tm local_tm = {0};
+#if defined(_WIN32)
+    if (localtime_s(&local_tm, &now) != 0) return -1;
+#else
+    if (!localtime_r(&now, &local_tm)) return -1;
+#endif
+    return local_tm.tm_hour * 3600 + local_tm.tm_min * 60 + local_tm.tm_sec;
+}
+
+static bool ctest_write_test_xml(EvalExecContext *ctx,
+                                 String_View test_xml_path,
+                                 const Ctest_Test_Request *req,
+                                 Ctest_Test_Result_Entry_List results,
+                                 size_t passed_count,
+                                 size_t failed_count) {
+    if (!ctx || test_xml_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Testing>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildDirectory>");
+    ctest_xml_append_escaped(&sb, req->core.resolved_build);
+    nob_sb_append_cstr(&sb, "</BuildDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <ParallelLevel>");
+    ctest_xml_append_escaped(&sb, req->parallel_level);
+    nob_sb_append_cstr(&sb, "</ParallelLevel>\n");
+
+    nob_sb_append_cstr(&sb, "  <StopTime>");
+    ctest_xml_append_escaped(&sb, req->stop_time);
+    nob_sb_append_cstr(&sb, "</StopTime>\n");
+
+    nob_sb_append_cstr(&sb, "  <TestLoad>");
+    ctest_xml_append_escaped(&sb, req->test_load);
+    nob_sb_append_cstr(&sb, "</TestLoad>\n");
+
+    nob_sb_append_cstr(&sb, "  <ScheduleRandom>");
+    nob_sb_append_cstr(&sb, req->schedule_random ? "true" : "false");
+    nob_sb_append_cstr(&sb, "</ScheduleRandom>\n");
+
+    nob_sb_append_cstr(&sb, "  <Append>");
+    nob_sb_append_cstr(&sb, req->append_mode ? "true" : "false");
+    nob_sb_append_cstr(&sb, "</Append>\n");
+
+    nob_sb_append_cstr(&sb, "  <OutputJunit>");
+    ctest_xml_append_escaped(&sb, req->output_junit);
+    nob_sb_append_cstr(&sb, "</OutputJunit>\n");
+
+    nob_sb_append_cstr(&sb, "  <TotalTests>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", arena_arr_len(results)));
+    nob_sb_append_cstr(&sb, "</TotalTests>\n");
+
+    nob_sb_append_cstr(&sb, "  <PassedTests>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", passed_count));
+    nob_sb_append_cstr(&sb, "</PassedTests>\n");
+
+    nob_sb_append_cstr(&sb, "  <FailedTests>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", failed_count));
+    nob_sb_append_cstr(&sb, "</FailedTests>\n");
+
+    nob_sb_append_cstr(&sb, "  <TestList>\n");
+    for (size_t i = 0; i < arena_arr_len(results); i++) {
+        nob_sb_append_cstr(&sb, "    <Test>");
+        ctest_xml_append_escaped(&sb, results[i].name);
+        nob_sb_append_cstr(&sb, "</Test>\n");
+    }
+    nob_sb_append_cstr(&sb, "  </TestList>\n");
+
+    nob_sb_append_cstr(&sb, "  <Tests>\n");
+    for (size_t i = 0; i < arena_arr_len(results); i++) {
+        nob_sb_append_cstr(&sb, "    <Test Name=\"");
+        ctest_xml_append_escaped(&sb, results[i].name);
+        nob_sb_append_cstr(&sb, "\" Status=\"");
+        nob_sb_append_cstr(&sb, results[i].passed ? "passed" : "failed");
+        nob_sb_append_cstr(&sb, "\">\n");
+
+        nob_sb_append_cstr(&sb, "      <Command>");
+        ctest_xml_append_escaped(&sb, results[i].command);
+        nob_sb_append_cstr(&sb, "</Command>\n");
+
+        nob_sb_append_cstr(&sb, "      <WorkingDirectory>");
+        ctest_xml_append_escaped(&sb, results[i].working_dir);
+        nob_sb_append_cstr(&sb, "</WorkingDirectory>\n");
+
+        nob_sb_append_cstr(&sb, "      <ExitCode>");
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", results[i].exit_code));
+        nob_sb_append_cstr(&sb, "</ExitCode>\n");
+
+        nob_sb_append_cstr(&sb, "      <Started>");
+        nob_sb_append_cstr(&sb, results[i].started ? "true" : "false");
+        nob_sb_append_cstr(&sb, "</Started>\n");
+
+        nob_sb_append_cstr(&sb, "      <TimedOut>");
+        nob_sb_append_cstr(&sb, results[i].timed_out ? "true" : "false");
+        nob_sb_append_cstr(&sb, "</TimedOut>\n");
+
+        nob_sb_append_cstr(&sb, "      <StdOut>");
+        ctest_xml_append_escaped(&sb, results[i].stdout_text);
+        nob_sb_append_cstr(&sb, "</StdOut>\n");
+
+        nob_sb_append_cstr(&sb, "      <StdErr>");
+        ctest_xml_append_escaped(&sb, results[i].stderr_text);
+        nob_sb_append_cstr(&sb, "</StdErr>\n");
+
+        nob_sb_append_cstr(&sb, "      <Result>");
+        ctest_xml_append_escaped(&sb, results[i].result_text);
+        nob_sb_append_cstr(&sb, "</Result>\n");
+
+        nob_sb_append_cstr(&sb, "    </Test>\n");
+    }
+    nob_sb_append_cstr(&sb, "  </Tests>\n");
+    nob_sb_append_cstr(&sb, "</Testing>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, test_xml_path, contents, false);
+}
+
+static bool ctest_write_test_junit(EvalExecContext *ctx,
+                                   String_View junit_path,
+                                   Ctest_Test_Result_Entry_List results,
+                                   size_t failed_count) {
+    if (!ctx) return false;
+    if (junit_path.count == 0) return true;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"ctest_test\" tests=\"");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", arena_arr_len(results)));
+    nob_sb_append_cstr(&sb, "\" failures=\"");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", failed_count));
+    nob_sb_append_cstr(&sb, "\" errors=\"0\">\n");
+
+    for (size_t i = 0; i < arena_arr_len(results); i++) {
+        nob_sb_append_cstr(&sb, "  <testcase name=\"");
+        ctest_xml_append_escaped(&sb, results[i].name);
+        nob_sb_append_cstr(&sb, "\" classname=\"ctest_test\">\n");
+        if (!results[i].passed) {
+            nob_sb_append_cstr(&sb, "    <failure message=\"");
+            if (results[i].timed_out) {
+                ctest_xml_append_escaped(&sb, nob_sv_from_cstr("timed out"));
+            } else if (!results[i].started) {
+                ctest_xml_append_escaped(&sb, nob_sv_from_cstr("failed to start"));
+            } else {
+                ctest_xml_append_escaped(&sb,
+                                         nob_sv_from_cstr(nob_temp_sprintf("exit code %d", results[i].exit_code)));
+            }
+            nob_sb_append_cstr(&sb, "\">");
+            if (results[i].stderr_text.count > 0) ctest_xml_append_escaped(&sb, results[i].stderr_text);
+            else ctest_xml_append_escaped(&sb, results[i].result_text);
+            nob_sb_append_cstr(&sb, "</failure>\n");
+        }
+        nob_sb_append_cstr(&sb, "    <system-out>");
+        ctest_xml_append_escaped(&sb, results[i].stdout_text);
+        nob_sb_append_cstr(&sb, "</system-out>\n");
+        nob_sb_append_cstr(&sb, "    <system-err>");
+        ctest_xml_append_escaped(&sb, results[i].stderr_text);
+        nob_sb_append_cstr(&sb, "</system-err>\n");
+        nob_sb_append_cstr(&sb, "  </testcase>\n");
+    }
+
+    nob_sb_append_cstr(&sb, "</testsuite>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, junit_path, contents, false);
+}
+
+typedef enum {
+    CTEST_REPEAT_NONE = 0,
+    CTEST_REPEAT_UNTIL_FAIL,
+    CTEST_REPEAT_UNTIL_PASS,
+    CTEST_REPEAT_AFTER_TIMEOUT,
+} Ctest_Repeat_Mode;
+
+static bool ctest_parse_repeat_mode_and_count(String_View repeat,
+                                              Ctest_Repeat_Mode *out_mode,
+                                              size_t *out_count) {
+    if (!out_mode || !out_count) return false;
+    *out_mode = CTEST_REPEAT_NONE;
+    *out_count = 1;
+    if (repeat.count == 0) return true;
+
+    size_t colon_index = repeat.count;
+    for (size_t i = 0; i < repeat.count; i++) {
+        if (repeat.data[i] == ':') {
+            colon_index = i;
+            break;
+        }
+    }
+    if (colon_index == 0 || colon_index + 1 >= repeat.count) return false;
+
+    String_View mode_sv = nob_sv_from_parts(repeat.data, colon_index);
+    String_View count_sv = nob_sv_from_parts(repeat.data + colon_index + 1, repeat.count - colon_index - 1);
+    size_t count = 0;
+    if (!ctest_parse_size_value_sv(count_sv, &count) || count == 0) return false;
+
+    if (eval_sv_eq_ci_lit(mode_sv, "UNTIL_FAIL")) *out_mode = CTEST_REPEAT_UNTIL_FAIL;
+    else if (eval_sv_eq_ci_lit(mode_sv, "UNTIL_PASS")) *out_mode = CTEST_REPEAT_UNTIL_PASS;
+    else if (eval_sv_eq_ci_lit(mode_sv, "AFTER_TIMEOUT")) *out_mode = CTEST_REPEAT_AFTER_TIMEOUT;
+    else return false;
+
+    *out_count = count;
+    return true;
+}
+
+static size_t ctest_extract_defect_count_from_text(String_View text) {
+    size_t total = 0;
+    bool saw_explicit_summary = false;
+    size_t i = 0;
+    while (i < text.count) {
+        size_t line_start = i;
+        while (i < text.count && text.data[i] != '\n' && text.data[i] != '\r') i++;
+        String_View line = nob_sv_trim(nob_sv_from_parts(text.data + line_start, i - line_start));
+        while (i < text.count && (text.data[i] == '\n' || text.data[i] == '\r')) i++;
+        if (line.count == 0) continue;
+
+        const char *explicit_markers[] = {"ERROR SUMMARY:", "defect count:", "defects="};
+        for (size_t marker_i = 0; marker_i < sizeof(explicit_markers) / sizeof(explicit_markers[0]); marker_i++) {
+            const char *marker = explicit_markers[marker_i];
+            size_t marker_len = strlen(marker);
+            for (size_t pos = 0; pos + marker_len <= line.count; pos++) {
+                bool match = true;
+                for (size_t j = 0; j < marker_len; j++) {
+                    if (tolower((unsigned char)line.data[pos + j]) !=
+                        tolower((unsigned char)marker[j])) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (!match) continue;
+
+                size_t digit_pos = pos + marker_len;
+                while (digit_pos < line.count && !isdigit((unsigned char)line.data[digit_pos])) digit_pos++;
+                if (digit_pos >= line.count) break;
+                size_t digit_end = digit_pos;
+                while (digit_end < line.count && isdigit((unsigned char)line.data[digit_end])) digit_end++;
+                size_t parsed = 0;
+                if (ctest_parse_size_value_sv(nob_sv_from_parts(line.data + digit_pos, digit_end - digit_pos),
+                                              &parsed)) {
+                    total += parsed;
+                    saw_explicit_summary = true;
+                }
+                break;
+            }
+        }
+
+        if (saw_explicit_summary) continue;
+        if (ctest_sv_contains_ci(line, "addresssanitizer") ||
+            ctest_sv_contains_ci(line, "leaksanitizer") ||
+            ctest_sv_contains_ci(line, "undefinedbehaviorsanitizer") ||
+            ctest_sv_contains_ci(line, "runtime error:") ||
+            ctest_sv_contains_ci(line, "invalid read") ||
+            ctest_sv_contains_ci(line, "invalid write") ||
+            ctest_sv_contains_ci(line, "use-after-free") ||
+            ctest_sv_contains_ci(line, "definitely lost")) {
+            total++;
+        }
+    }
+    return total;
+}
+
+static size_t ctest_memcheck_extract_defect_count(String_View stdout_text, String_View stderr_text) {
+    return ctest_extract_defect_count_from_text(stdout_text) + ctest_extract_defect_count_from_text(stderr_text);
+}
+
+static bool ctest_write_memcheck_xml(EvalExecContext *ctx,
+                                     String_View memcheck_xml_path,
+                                     const Ctest_Memcheck_Request *req,
+                                     Ctest_Test_Result_Entry_List results,
+                                     size_t total_defects,
+                                     size_t failed_count) {
+    if (!ctx || memcheck_xml_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MemCheck>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildDirectory>");
+    ctest_xml_append_escaped(&sb, req->core.resolved_build);
+    nob_sb_append_cstr(&sb, "</BuildDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <BackendType>");
+    ctest_xml_append_escaped(&sb, req->backend_type);
+    nob_sb_append_cstr(&sb, "</BackendType>\n");
+
+    nob_sb_append_cstr(&sb, "  <BackendCommand>");
+    ctest_xml_append_escaped(&sb, req->backend_command);
+    nob_sb_append_cstr(&sb, "</BackendCommand>\n");
+
+    nob_sb_append_cstr(&sb, "  <BackendOptions>");
+    ctest_xml_append_escaped(&sb, req->backend_options);
+    nob_sb_append_cstr(&sb, "</BackendOptions>\n");
+
+    nob_sb_append_cstr(&sb, "  <SuppressionsFile>");
+    ctest_xml_append_escaped(&sb, req->suppression_file);
+    nob_sb_append_cstr(&sb, "</SuppressionsFile>\n");
+
+    nob_sb_append_cstr(&sb, "  <OutputJunit>");
+    ctest_xml_append_escaped(&sb, req->output_junit);
+    nob_sb_append_cstr(&sb, "</OutputJunit>\n");
+
+    nob_sb_append_cstr(&sb, "  <DefectCount>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", total_defects));
+    nob_sb_append_cstr(&sb, "</DefectCount>\n");
+
+    nob_sb_append_cstr(&sb, "  <FailedTests>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", failed_count));
+    nob_sb_append_cstr(&sb, "</FailedTests>\n");
+
+    nob_sb_append_cstr(&sb, "  <Tests>\n");
+    for (size_t i = 0; i < arena_arr_len(results); i++) {
+        nob_sb_append_cstr(&sb, "    <Test Name=\"");
+        ctest_xml_append_escaped(&sb, results[i].name);
+        nob_sb_append_cstr(&sb, "\" Status=\"");
+        nob_sb_append_cstr(&sb, results[i].passed ? "passed" : "failed");
+        nob_sb_append_cstr(&sb, "\">\n");
+
+        nob_sb_append_cstr(&sb, "      <Command>");
+        ctest_xml_append_escaped(&sb, results[i].command);
+        nob_sb_append_cstr(&sb, "</Command>\n");
+
+        nob_sb_append_cstr(&sb, "      <BackendCommand>");
+        ctest_xml_append_escaped(&sb, results[i].backend_command);
+        nob_sb_append_cstr(&sb, "</BackendCommand>\n");
+
+        nob_sb_append_cstr(&sb, "      <WorkingDirectory>");
+        ctest_xml_append_escaped(&sb, results[i].working_dir);
+        nob_sb_append_cstr(&sb, "</WorkingDirectory>\n");
+
+        nob_sb_append_cstr(&sb, "      <Defects>");
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", results[i].defect_count));
+        nob_sb_append_cstr(&sb, "</Defects>\n");
+
+        nob_sb_append_cstr(&sb, "      <ExitCode>");
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", results[i].exit_code));
+        nob_sb_append_cstr(&sb, "</ExitCode>\n");
+
+        nob_sb_append_cstr(&sb, "      <StdOut>");
+        ctest_xml_append_escaped(&sb, results[i].stdout_text);
+        nob_sb_append_cstr(&sb, "</StdOut>\n");
+
+        nob_sb_append_cstr(&sb, "      <StdErr>");
+        ctest_xml_append_escaped(&sb, results[i].stderr_text);
+        nob_sb_append_cstr(&sb, "</StdErr>\n");
+
+        nob_sb_append_cstr(&sb, "    </Test>\n");
+    }
+    nob_sb_append_cstr(&sb, "  </Tests>\n");
+    nob_sb_append_cstr(&sb, "</MemCheck>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, memcheck_xml_path, contents, false);
+}
+
+static bool ctest_update_collect_output_files(EvalExecContext *ctx,
+                                              String_View stdout_text,
+                                              String_View *out_files,
+                                              size_t *out_count) {
+    if (!ctx || !out_files || !out_count) return false;
+    *out_files = nob_sv_from_cstr("");
+    *out_count = 0;
+
+    static const char *const explicit_prefixes[] = {"Updated:", "Modified:", "File:"};
+    SV_List explicit_files = {0};
+    SV_List fallback_files = {0};
+    size_t i = 0;
+    while (i < stdout_text.count) {
+        size_t line_start = i;
+        while (i < stdout_text.count && stdout_text.data[i] != '\n' && stdout_text.data[i] != '\r') i++;
+        String_View line = nob_sv_trim(nob_sv_from_parts(stdout_text.data + line_start, i - line_start));
+        while (i < stdout_text.count && (stdout_text.data[i] == '\n' || stdout_text.data[i] == '\r')) i++;
+
+        if (line.count == 0) continue;
+
+        bool used_explicit_prefix = false;
+        for (size_t prefix_i = 0; prefix_i < sizeof(explicit_prefixes) / sizeof(explicit_prefixes[0]); prefix_i++) {
+            size_t prefix_len = strlen(explicit_prefixes[prefix_i]);
+            if (!ctest_sv_has_prefix_ci(line, explicit_prefixes[prefix_i])) continue;
+            String_View candidate =
+                nob_sv_trim(nob_sv_from_parts(line.data + prefix_len, line.count - prefix_len));
+            if (candidate.count > 0 &&
+                !ctest_list_push_unique_temp(ctx, &explicit_files, candidate)) {
+                return false;
+            }
+            used_explicit_prefix = true;
+            break;
+        }
+        if (used_explicit_prefix) continue;
+
+        if (!ctest_list_push_unique_temp(ctx, &fallback_files, line)) return false;
+    }
+
+    SV_List *selected = arena_arr_len(explicit_files) > 0 ? &explicit_files : &fallback_files;
+    if (arena_arr_len(*selected) == 0) return true;
+
+    *out_count = arena_arr_len(*selected);
+    *out_files = eval_sv_join_semi_temp(ctx, *selected, arena_arr_len(*selected));
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_write_update_xml(EvalExecContext *ctx,
+                                   String_View update_xml_path,
+                                   const Ctest_Update_Request *req,
+                                   String_View updated_files,
+                                   size_t updated_count,
+                                   String_View stdout_text,
+                                   String_View stderr_text,
+                                   int exit_code) {
+    if (!ctx || update_xml_path.count == 0 || !req) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_cstr(&sb, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Update>\n");
+
+    nob_sb_append_cstr(&sb, "  <SourceDirectory>");
+    ctest_xml_append_escaped(&sb, req->core.resolved_source);
+    nob_sb_append_cstr(&sb, "</SourceDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <BuildDirectory>");
+    ctest_xml_append_escaped(&sb, req->core.resolved_build);
+    nob_sb_append_cstr(&sb, "</BuildDirectory>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdateType>");
+    ctest_xml_append_escaped(&sb, req->update_type);
+    nob_sb_append_cstr(&sb, "</UpdateType>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdateCommand>");
+    ctest_xml_append_escaped(&sb, req->update_command);
+    nob_sb_append_cstr(&sb, "</UpdateCommand>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdateOptions>");
+    ctest_xml_append_escaped(&sb, req->update_options);
+    nob_sb_append_cstr(&sb, "</UpdateOptions>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdateVersionOnly>");
+    nob_sb_append_cstr(&sb, req->version_only ? "true" : "false");
+    nob_sb_append_cstr(&sb, "</UpdateVersionOnly>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdateVersionOverride>");
+    ctest_xml_append_escaped(&sb, req->version_override);
+    nob_sb_append_cstr(&sb, "</UpdateVersionOverride>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdatedCount>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu", updated_count));
+    nob_sb_append_cstr(&sb, "</UpdatedCount>\n");
+
+    nob_sb_append_cstr(&sb, "  <UpdatedFiles>\n");
+    if (updated_files.count > 0) {
+        SV_List file_items = {0};
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), updated_files, &file_items)) {
+            nob_sb_free(sb);
+            return false;
+        }
+        for (size_t i = 0; i < arena_arr_len(file_items); i++) {
+            if (file_items[i].count == 0) continue;
+            nob_sb_append_cstr(&sb, "    <File>");
+            ctest_xml_append_escaped(&sb, file_items[i]);
+            nob_sb_append_cstr(&sb, "</File>\n");
+        }
+    }
+    nob_sb_append_cstr(&sb, "  </UpdatedFiles>\n");
+
+    nob_sb_append_cstr(&sb, "  <ExitCode>");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", exit_code));
+    nob_sb_append_cstr(&sb, "</ExitCode>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdOut>");
+    ctest_xml_append_escaped(&sb, stdout_text);
+    nob_sb_append_cstr(&sb, "</StdOut>\n");
+
+    nob_sb_append_cstr(&sb, "  <StdErr>");
+    ctest_xml_append_escaped(&sb, stderr_text);
+    nob_sb_append_cstr(&sb, "</StdErr>\n");
+
+    nob_sb_append_cstr(&sb, "</Update>\n");
+
+    String_View contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    nob_sb_free(sb);
+    if (eval_should_stop(ctx)) return false;
+    return eval_write_text_file(ctx, update_xml_path, contents, false);
+}
+
 static bool ctest_write_upload_xml(EvalExecContext *ctx, String_View upload_xml_path, String_View files) {
     if (!ctx || upload_xml_path.count == 0) return false;
 
@@ -1035,6 +2344,10 @@ static bool ctest_write_coverage_xml(EvalExecContext *ctx,
     nob_sb_append_cstr(&sb, "</Append>\n");
 
     if (!ctest_xml_append_labels_block(ctx, &sb, req->labels)) {
+        nob_sb_free(sb);
+        return false;
+    }
+    if (!ctest_xml_append_filtered_sources_block(ctx, &sb, req->labels)) {
         nob_sb_free(sb);
         return false;
     }
@@ -1286,6 +2599,18 @@ static bool ctest_resolve_scripts(EvalExecContext *ctx,
         resolved = eval_sv_path_normalize_temp(ctx, resolved);
         if (eval_should_stop(ctx)) return false;
         if (!eval_sv_arr_push_temp(ctx, out_resolved_scripts, resolved)) return false;
+    }
+    return true;
+}
+
+static bool ctest_copy_sv_list_to_event(EvalExecContext *ctx,
+                                        const SV_List src,
+                                        SV_List *out_dst) {
+    if (!ctx || !out_dst) return false;
+    *out_dst = NULL;
+
+    for (size_t i = 0; i < arena_arr_len(src); i++) {
+        if (!eval_sv_arr_push_event(ctx, out_dst, src[i])) return false;
     }
     return true;
 }
@@ -2211,83 +3536,57 @@ static bool ctest_remove_tree(const char *path) {
     return state.ok;
 }
 
-static bool ctest_parse_modeled_step(EvalExecContext *ctx,
-                                     const Node *node,
-                                     Eval_Ctest_Step_Kind step_kind,
-                                     String_View command_name,
-                                     String_View submit_part,
-                                     const Ctest_Parse_Spec *spec,
-                                     bool needs_source,
-                                     bool needs_build,
-                                     String_View status,
-                                     Ctest_Modeled_Step_Request *out_req) {
-    if (!ctx || !node || !spec || !out_req) return false;
+/* Shared internal runtime for operational ctest_* steps that already resolve
+ * canonical session context but are not all fully process-backed yet. */
+static Ctest_Step_Runtime_Def ctest_step_runtime_def(Eval_Ctest_Step_Kind step_kind,
+                                                     const char *command_name,
+                                                     const char *submit_part,
+                                                     const Ctest_Parse_Spec *spec,
+                                                     bool needs_source,
+                                                     bool needs_build) {
+    Ctest_Step_Runtime_Def def = {
+        .step_kind = step_kind,
+        .command_name = nob_sv_from_cstr(command_name),
+        .submit_part = nob_sv_from_cstr(submit_part),
+        .spec = spec,
+        .needs_source = needs_source,
+        .needs_build = needs_build,
+    };
+    return def;
+}
+
+static bool ctest_step_runtime_parse_base(EvalExecContext *ctx,
+                                          const Node *node,
+                                          const Ctest_Step_Runtime_Def *def,
+                                          Ctest_Step_Runtime_Request *out_req) {
+    if (!ctx || !node || !def || !def->spec || !out_req) return false;
     memset(out_req, 0, sizeof(*out_req));
 
-    out_req->step_kind = step_kind;
-    out_req->command_name = command_name;
-    out_req->submit_part = submit_part;
-    out_req->status = status;
-    out_req->spec = spec;
-    out_req->needs_source = needs_source;
-    out_req->needs_build = needs_build;
+    out_req->def = *def;
     out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return false;
-    return ctest_parse_generic(ctx, node, command_name, &out_req->argv, spec, &out_req->parsed);
+    return ctest_parse_generic(ctx,
+                               node,
+                               out_req->def.command_name,
+                               &out_req->argv,
+                               out_req->def.spec,
+                               &out_req->parsed);
 }
 
-static bool ctest_execute_modeled_step(EvalExecContext *ctx, const Ctest_Modeled_Step_Request *req) {
+static bool ctest_step_runtime_resolve_context(EvalExecContext *ctx, Ctest_Step_Runtime_Request *req) {
     if (!ctx || !req) return false;
-    String_View resolved_source = nob_sv_from_cstr("");
-    String_View resolved_build = nob_sv_from_cstr("");
     if (!ctest_apply_resolved_context(ctx,
-                                      req->command_name,
+                                      req->def.command_name,
                                       &req->parsed,
-                                      req->needs_source,
-                                      req->needs_build,
-                                      &resolved_source,
-                                      &resolved_build)) {
+                                      req->def.needs_source,
+                                      req->def.needs_build,
+                                      &req->resolved_source,
+                                      &req->resolved_build)) {
         return false;
     }
-
-    Eval_Ctest_Step_Record step = {
-        .kind = req->step_kind,
-        .command_name = req->command_name,
-        .submit_part = req->submit_part,
-        .status = req->status,
-        .model = ctest_get_session_field(ctx, "MODEL"),
-        .track = ctest_get_session_field(ctx, "TRACK"),
-        .source_dir = resolved_source,
-        .build_dir = resolved_build,
-    };
-    return ctest_commit_step_record(ctx, &req->argv, step, NULL);
-}
-
-static Eval_Result ctest_handle_modeled_step(EvalExecContext *ctx,
-                                             const Node *node,
-                                             Eval_Ctest_Step_Kind step_kind,
-                                             String_View command_name,
-                                             String_View submit_part,
-                                             const Ctest_Parse_Spec *spec,
-                                             bool needs_source,
-                                             bool needs_build,
-                                             String_View status) {
-    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
-    Ctest_Modeled_Step_Request req = {0};
-    if (!ctest_parse_modeled_step(ctx,
-                                  node,
-                                  step_kind,
-                                  command_name,
-                                  submit_part,
-                                  spec,
-                                  needs_source,
-                                  needs_build,
-                                  status,
-                                  &req)) {
-        return eval_result_from_ctx(ctx);
-    }
-    if (!ctest_execute_modeled_step(ctx, &req)) return eval_result_from_ctx(ctx);
-    return eval_result_from_ctx(ctx);
+    req->model = ctest_get_session_field(ctx, "MODEL");
+    req->track = ctest_get_session_field(ctx, "TRACK");
+    return true;
 }
 
 static bool ctest_resolve_path_from_base(EvalExecContext *ctx,
@@ -2428,36 +3727,33 @@ static bool ctest_parse_memcheck_request(EvalExecContext *ctx,
     if (!ctx || !node || !out_req) return false;
     memset(out_req, 0, sizeof(*out_req));
 
-    out_req->argv = eval_resolve_args(ctx, &node->as.cmd.args);
-    if (eval_should_stop(ctx)) return false;
-    if (!ctest_parse_generic(ctx,
-                             node,
-                             nob_sv_from_cstr("ctest_memcheck"),
-                             &out_req->argv,
-                             &s_ctest_memcheck_parse_spec,
-                             &out_req->parsed)) {
+    Ctest_Step_Runtime_Def def = ctest_step_runtime_def(EVAL_CTEST_STEP_MEMCHECK,
+                                                        "ctest_memcheck",
+                                                        "MemCheck",
+                                                        &s_ctest_memcheck_parse_spec,
+                                                        false,
+                                                        true);
+    if (!ctest_step_runtime_parse_base(ctx, node, &def, &out_req->core)) {
         return false;
     }
-
-    String_View build = ctest_parsed_field_value(&out_req->parsed, "BUILD");
-    out_req->build_dir = build.count > 0 ? ctest_resolve_binary_dir(ctx, build) : ctest_session_resolved_build_dir(ctx);
+    if (!ctest_step_runtime_resolve_context(ctx, &out_req->core)) return false;
     if (eval_should_stop(ctx)) return false;
 
-    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->parsed, "START", false, &out_req->start)) return false;
-    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->parsed, "END", false, &out_req->end)) return false;
-    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->parsed, "STRIDE", true, &out_req->stride)) return false;
+    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->core.parsed, "START", false, &out_req->start)) return false;
+    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->core.parsed, "END", false, &out_req->end)) return false;
+    if (!ctest_memcheck_parse_integer_field(ctx, node, &out_req->core.parsed, "STRIDE", true, &out_req->stride)) return false;
     if (!ctest_memcheck_parse_integer_field(ctx,
                                             node,
-                                            &out_req->parsed,
+                                            &out_req->core.parsed,
                                             "PARALLEL_LEVEL",
                                             true,
                                             &out_req->parallel_level)) {
         return false;
     }
-    if (!ctest_memcheck_parse_schedule_random(ctx, node, &out_req->parsed, &out_req->schedule_random)) return false;
-    if (!ctest_memcheck_parse_repeat(ctx, node, &out_req->parsed, &out_req->repeat)) return false;
+    if (!ctest_memcheck_parse_schedule_random(ctx, node, &out_req->core.parsed, &out_req->schedule_random)) return false;
+    if (!ctest_memcheck_parse_repeat(ctx, node, &out_req->core.parsed, &out_req->repeat)) return false;
 
-    String_View resource_spec_file = ctest_parsed_field_value(&out_req->parsed, "RESOURCE_SPEC_FILE");
+    String_View resource_spec_file = ctest_parsed_field_value(&out_req->core.parsed, "RESOURCE_SPEC_FILE");
     if (resource_spec_file.count == 0) {
         resource_spec_file = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_RESOURCE_SPEC_FILE"));
     }
@@ -2468,35 +3764,99 @@ static bool ctest_parse_memcheck_request(EvalExecContext *ctx,
         return false;
     }
 
-    out_req->test_load = ctest_parsed_field_value(&out_req->parsed, "TEST_LOAD");
+    out_req->test_load = ctest_parsed_field_value(&out_req->core.parsed, "TEST_LOAD");
     if (out_req->test_load.count == 0) {
         out_req->test_load = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_TEST_LOAD"));
     }
 
+    out_req->stop_time = ctest_parsed_field_value(&out_req->core.parsed, "STOP_TIME");
+    if (!ctest_test_parse_stop_time(ctx, node, out_req->stop_time, &out_req->stop_time_seconds)) return false;
+    out_req->has_stop_time = out_req->stop_time.count > 0;
+
     if (!ctest_resolve_path_from_base(ctx,
-                                      ctest_parsed_field_value(&out_req->parsed, "OUTPUT_JUNIT"),
-                                      out_req->build_dir,
+                                      ctest_parsed_field_value(&out_req->core.parsed, "OUTPUT_JUNIT"),
+                                      out_req->core.resolved_build,
                                       &out_req->output_junit)) {
         return false;
     }
+
+    out_req->backend_type = ctest_submit_visible_var(ctx, "CTEST_MEMORYCHECK_TYPE", "MEMORYCHECK_TYPE");
+    out_req->backend_command =
+        ctest_submit_visible_var(ctx, "CTEST_MEMORYCHECK_COMMAND", "MEMORYCHECK_COMMAND");
+    out_req->backend_options = ctest_submit_visible_var(ctx,
+                                                        "CTEST_MEMORYCHECK_COMMAND_OPTIONS",
+                                                        "MEMORYCHECK_COMMAND_OPTIONS");
+    out_req->backend_sanitizer_options =
+        ctest_submit_visible_var(ctx,
+                                 "CTEST_MEMORYCHECK_SANITIZER_OPTIONS",
+                                 "MEMORYCHECK_SANITIZER_OPTIONS");
+    if (!ctest_resolve_path_from_base(ctx,
+                                      ctest_submit_visible_var(ctx,
+                                                               "CTEST_MEMORYCHECK_SUPPRESSIONS_FILE",
+                                                               "MEMORYCHECK_SUPPRESSIONS_FILE"),
+                                      out_req->core.resolved_build,
+                                      &out_req->suppression_file)) {
+        return false;
+    }
+    if (out_req->backend_type.count == 0 && out_req->backend_command.count > 0) {
+        out_req->backend_type = ctest_sv_contains_ci(out_req->backend_command, "valgrind")
+                                    ? nob_sv_from_cstr("Valgrind")
+                                    : nob_sv_from_cstr("Generic");
+    }
+
+    out_req->return_var = ctest_parsed_field_value(&out_req->core.parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var =
+        ctest_parsed_field_value(&out_req->core.parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->defect_count_var = ctest_parsed_field_value(&out_req->core.parsed, "DEFECT_COUNT");
+    out_req->append_mode = ctest_parsed_field_value(&out_req->core.parsed, "APPEND").count > 0;
+    out_req->stop_on_failure =
+        ctest_parsed_field_value(&out_req->core.parsed, "STOP_ON_FAILURE").count > 0;
+    out_req->quiet = ctest_parsed_field_value(&out_req->core.parsed, "QUIET").count > 0;
 
     if (eval_should_stop(ctx)) return false;
     return true;
 }
 
-static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
-                                           const Ctest_Memcheck_Request *req) {
+static bool ctest_memcheck_commit_failed(EvalExecContext *ctx, const Ctest_Memcheck_Request *req) {
     if (!ctx || !req) return false;
+    return ctest_commit_failed_step_record(ctx,
+                                           &req->core.argv,
+                                           EVAL_CTEST_STEP_MEMCHECK,
+                                           nob_sv_from_cstr("ctest_memcheck"),
+                                           nob_sv_from_cstr("MemCheck"),
+                                           req->core.model,
+                                           nob_sv_from_cstr(""),
+                                           req->core.resolved_build);
+}
 
-    if (!ctest_apply_resolved_context(ctx,
-                                      nob_sv_from_cstr("ctest_memcheck"),
-                                      &req->parsed,
-                                      false,
-                                      true,
-                                      NULL,
-                                      NULL)) {
+static bool ctest_memcheck_fail(EvalExecContext *ctx,
+                                const Node *node,
+                                const Ctest_Memcheck_Request *req,
+                                String_View cause,
+                                String_View detail) {
+    if (!ctx || !node || !req) return false;
+
+    if (req->defect_count_var.count > 0 &&
+        !eval_var_set_current(ctx, req->defect_count_var, nob_sv_from_cstr("0"))) {
         return false;
     }
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("-1"))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0) {
+        if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+        return ctest_memcheck_commit_failed(ctx, req);
+    }
+    if (!ctest_memcheck_commit_failed(ctx, req)) return false;
+    (void)ctest_emit_diag(ctx, node, EV_DIAG_ERROR, cause, detail);
+    return false;
+}
+
+static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
+                                           const Node *node,
+                                           const Ctest_Memcheck_Request *req) {
+    if (!ctx || !node || !req) return false;
 
     if (req->start.count > 0 &&
         !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "START", req->start)) {
@@ -2512,6 +3872,10 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
     }
     if (req->parallel_level.count > 0 &&
         !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "PARALLEL_LEVEL", req->parallel_level)) {
+        return false;
+    }
+    if (req->stop_time.count > 0 &&
+        !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "STOP_TIME_RESOLVED", req->stop_time)) {
         return false;
     }
     if (req->schedule_random.count > 0 &&
@@ -2536,6 +3900,36 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
         !ctest_set_field(ctx, nob_sv_from_cstr("ctest_memcheck"), "RESOLVED_TEST_LOAD", req->test_load)) {
         return false;
     }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "BACKEND_TYPE",
+                         req->backend_type)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "BACKEND_COMMAND",
+                         req->backend_command)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "BACKEND_OPTIONS",
+                         req->backend_options)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "BACKEND_SANITIZER_OPTIONS",
+                         req->backend_sanitizer_options)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "RESOLVED_SUPPRESSIONS_FILE",
+                         req->suppression_file)) {
+        return false;
+    }
     if (req->output_junit.count > 0 &&
         !ctest_set_field(ctx,
                          nob_sv_from_cstr("ctest_memcheck"),
@@ -2543,16 +3937,254 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
                          req->output_junit)) {
         return false;
     }
+    if (!ctest_publish_common_dirs(ctx, ctest_get_session_field(ctx, "SOURCE"), req->core.resolved_build)) {
+        return false;
+    }
+
+    Ctest_Test_Plan_Entry_List plan = NULL;
+    if (!ctest_collect_test_plan_from_stream(ctx, &plan)) return false;
+    if (eval_sv_eq_ci_lit(req->schedule_random, "ON")) ctest_test_sort_plan_randomized(plan);
+
+    size_t start_index = 1;
+    size_t end_index = arena_arr_len(plan);
+    size_t stride_value = 1;
+    if (req->start.count > 0 && !ctest_parse_size_value_sv(req->start, &start_index)) return false;
+    if (req->end.count > 0 && !ctest_parse_size_value_sv(req->end, &end_index)) return false;
+    if (req->stride.count > 0 && !ctest_parse_size_value_sv(req->stride, &stride_value)) return false;
+    if (start_index == 0) start_index = 1;
+    if (stride_value == 0) stride_value = 1;
+    if (end_index > arena_arr_len(plan)) end_index = arena_arr_len(plan);
+
+    Ctest_Repeat_Mode repeat_mode = CTEST_REPEAT_NONE;
+    size_t repeat_count = 1;
+    if (!ctest_parse_repeat_mode_and_count(req->repeat, &repeat_mode, &repeat_count)) {
+        return ctest_memcheck_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_memcheck() failed to interpret REPEAT"),
+                                   req->repeat);
+    }
+
+    bool has_selected_tests = false;
+    for (size_t i = 0; i < arena_arr_len(plan); i++) {
+        size_t test_number = i + 1;
+        if (test_number < start_index || test_number > end_index) continue;
+        if (((test_number - start_index) % stride_value) != 0) continue;
+        has_selected_tests = true;
+        break;
+    }
+    if (has_selected_tests && req->backend_command.count == 0) {
+        return ctest_memcheck_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_memcheck() requires a configured memory check command"),
+                                   nob_sv_from_cstr("Set CTEST_MEMORYCHECK_COMMAND or MEMORYCHECK_COMMAND"));
+    }
+
+    Ctest_Test_Result_Entry_List results = NULL;
+    size_t total_defects = 0;
+    size_t failed_count = 0;
+
+    for (size_t i = 0; i < arena_arr_len(plan); i++) {
+        size_t test_number = i + 1;
+        if (test_number < start_index || test_number > end_index) continue;
+        if (((test_number - start_index) % stride_value) != 0) continue;
+
+        if (req->has_stop_time) {
+            int now_seconds = ctest_test_current_local_seconds_of_day();
+            if (now_seconds >= 0 && now_seconds >= req->stop_time_seconds) break;
+        }
+
+        Ctest_Test_Result_Entry result = {
+            .name = plan[i].name,
+            .command = plan[i].command,
+            .working_dir = req->core.resolved_build,
+            .stdout_text = nob_sv_from_cstr(""),
+            .stderr_text = nob_sv_from_cstr(""),
+            .result_text = nob_sv_from_cstr(""),
+            .exit_code = 127,
+        };
+        if (plan[i].working_dir.count > 0) {
+            result.working_dir =
+                eval_path_resolve_for_cmake_arg(ctx, plan[i].working_dir, req->core.resolved_build, false);
+            if (eval_should_stop(ctx)) return false;
+            result.working_dir = eval_sv_path_normalize_temp(ctx, result.working_dir);
+            if (eval_should_stop(ctx)) return false;
+        }
+
+        Ctest_Test_Result_Entry last_attempt = result;
+        for (size_t attempt = 0; attempt < repeat_count; attempt++) {
+            SV_List argv = {0};
+            if (!ctest_append_command_tokens_temp(ctx, req->backend_command, &argv)) return false;
+            if (!ctest_append_command_tokens_temp(ctx, req->backend_options, &argv)) return false;
+            if (!ctest_append_command_tokens_temp(ctx, req->backend_sanitizer_options, &argv)) return false;
+            if (req->suppression_file.count > 0 && eval_sv_eq_ci_lit(req->backend_type, "Valgrind")) {
+                if (!svu_list_push_temp(ctx,
+                                        &argv,
+                                        ctest_submit_make_assignment_temp(ctx,
+                                                                          "--suppressions",
+                                                                          req->suppression_file))) {
+                    return false;
+                }
+            }
+            if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--"))) return false;
+            if (!ctest_append_command_tokens_temp(ctx, plan[i].command, &argv)) return false;
+            if (arena_arr_len(argv) == 0) {
+                return ctest_memcheck_fail(ctx,
+                                           node,
+                                           req,
+                                           nob_sv_from_cstr("ctest_memcheck() backend did not produce an executable"),
+                                           req->backend_command);
+            }
+
+            last_attempt.backend_command = svu_join_space_temp(ctx, argv, arena_arr_len(argv));
+            if (eval_should_stop(ctx)) return false;
+
+            Eval_Process_Run_Request process_req = {
+                .argv = argv,
+                .argc = arena_arr_len(argv),
+                .working_directory = result.working_dir,
+            };
+            Eval_Process_Run_Result proc = {0};
+            if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
+
+            last_attempt.started = proc.started;
+            last_attempt.timed_out = proc.timed_out;
+            last_attempt.exit_code = proc.started ? proc.exit_code : 127;
+            last_attempt.stdout_text = proc.stdout_text;
+            last_attempt.stderr_text = proc.stderr_text;
+            last_attempt.result_text = proc.result_text;
+            if (last_attempt.result_text.count == 0) {
+                if (!last_attempt.started) last_attempt.result_text = nob_sv_from_cstr("failed to start");
+                else if (last_attempt.timed_out) last_attempt.result_text = nob_sv_from_cstr("timed out");
+            }
+            last_attempt.defect_count =
+                ctest_memcheck_extract_defect_count(last_attempt.stdout_text, last_attempt.stderr_text);
+            last_attempt.passed = last_attempt.started && !last_attempt.timed_out &&
+                                  last_attempt.exit_code == 0 && last_attempt.defect_count == 0;
+
+            if (repeat_mode == CTEST_REPEAT_NONE) break;
+            if (repeat_mode == CTEST_REPEAT_UNTIL_PASS && last_attempt.passed) break;
+            if (repeat_mode == CTEST_REPEAT_UNTIL_FAIL && !last_attempt.passed) break;
+            if (repeat_mode == CTEST_REPEAT_AFTER_TIMEOUT && !last_attempt.timed_out) break;
+        }
+
+        total_defects += last_attempt.defect_count;
+        if (!last_attempt.passed) failed_count++;
+        if (!arena_arr_push(eval_temp_arena(ctx), results, last_attempt)) return false;
+        if (req->stop_on_failure && !last_attempt.passed) break;
+    }
+
+    if (req->defect_count_var.count > 0 &&
+        !eval_var_set_current(ctx,
+                              req->defect_count_var,
+                              ctest_submit_format_size_temp(ctx, total_defects))) {
+        return false;
+    }
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx,
+                              req->return_var,
+                              nob_sv_from_cstr((failed_count > 0 || total_defects > 0) ? "1" : "0"))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0 &&
+        !eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("0"))) {
+        return false;
+    }
+
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "DEFECT_COUNT_RESOLVED",
+                         ctest_submit_format_size_temp(ctx, total_defects))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_memcheck"),
+                         "FAILED_COUNT",
+                         ctest_submit_format_size_temp(ctx, failed_count))) {
+        return false;
+    }
+
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->core.resolved_build,
+                                  req->core.model,
+                                  track,
+                                  req->append_mode,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
+        return ctest_memcheck_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_memcheck() failed to prepare Testing/<tag> staging"),
+                                   req->core.resolved_build);
+    }
+
+    String_View memcheck_xml =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("MemCheck.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_memcheck_xml(ctx, memcheck_xml, req, results, total_defects, failed_count)) {
+        return ctest_memcheck_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_memcheck() failed to write MemCheck.xml"),
+                                   memcheck_xml);
+    }
+    if (!ctest_write_test_junit(ctx, req->output_junit, results, failed_count)) {
+        return ctest_memcheck_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_memcheck() failed to write OUTPUT_JUNIT"),
+                                   req->output_junit);
+    }
+
+    String_View manifest =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("MemCheckManifest.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_manifest(ctx,
+                              nob_sv_from_cstr("ctest_memcheck"),
+                              manifest,
+                              tag,
+                              track,
+                              nob_sv_from_cstr("MemCheck"),
+                              memcheck_xml)) {
+        return ctest_memcheck_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_memcheck() failed to write the staged memcheck manifest"),
+                                   manifest);
+    }
+
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_memcheck"),
+        .kind = nob_sv_from_cstr("MEMCHECK_XML"),
+        .status = nob_sv_from_cstr("MEMCHECKED"),
+        .base_dir = tag_dir_path,
+        .primary_path = memcheck_xml,
+        .aux_paths = manifest,
+    };
     Eval_Ctest_Step_Record step = {
         .kind = EVAL_CTEST_STEP_MEMCHECK,
         .command_name = nob_sv_from_cstr("ctest_memcheck"),
         .submit_part = nob_sv_from_cstr("MemCheck"),
-        .status = nob_sv_from_cstr("MODELED"),
-        .model = ctest_get_session_field(ctx, "MODEL"),
-        .track = ctest_get_session_field(ctx, "TRACK"),
-        .build_dir = req->build_dir,
+        .status = nob_sv_from_cstr("MEMCHECKED"),
+        .model = req->core.model,
+        .track = track,
+        .build_dir = req->core.resolved_build,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+        .output_junit = req->output_junit,
     };
-    return ctest_commit_step_record(ctx, &req->argv, step, NULL);
+    return ctest_commit_step_record(ctx, &req->core.argv, step, &artifact);
 }
 
 static bool ctest_parse_empty_binary_directory_request(EvalExecContext *ctx,
@@ -2689,16 +4321,592 @@ static bool ctest_execute_read_custom_files_request(EvalExecContext *ctx,
                                        nob_sv_from_cstr("MODELED"));
 }
 
+static bool ctest_parse_build_request(EvalExecContext *ctx,
+                                      const Node *node,
+                                      Ctest_Build_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    Ctest_Step_Runtime_Def def = ctest_step_runtime_def(EVAL_CTEST_STEP_BUILD,
+                                                        "ctest_build",
+                                                        "Build",
+                                                        &s_ctest_build_parse_spec,
+                                                        false,
+                                                        true);
+    if (!ctest_step_runtime_parse_base(ctx, node, &def, &out_req->core)) return false;
+    if (!ctest_step_runtime_resolve_context(ctx, &out_req->core)) return false;
+
+    if (out_req->core.model.count == 0) out_req->core.model = nob_sv_from_cstr("Experimental");
+    out_req->configuration = ctest_parsed_field_value(&out_req->core.parsed, "CONFIGURATION");
+    if (out_req->configuration.count == 0) {
+        out_req->configuration = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BUILD_CONFIGURATION"));
+    }
+    out_req->parallel_level = ctest_build_resolve_parallel_level(ctx, &out_req->core.parsed);
+    if (eval_should_stop(ctx)) return false;
+    out_req->flags = ctest_parsed_field_value(&out_req->core.parsed, "FLAGS");
+    if (out_req->flags.count == 0) {
+        out_req->flags = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BUILD_FLAGS"));
+    }
+    out_req->project_name = ctest_parsed_field_value(&out_req->core.parsed, "PROJECT_NAME");
+    out_req->target = ctest_parsed_field_value(&out_req->core.parsed, "TARGET");
+    if (out_req->target.count == 0) {
+        out_req->target = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_BUILD_TARGET"));
+    }
+    out_req->build_command = ctest_build_resolve_command(ctx,
+                                                         out_req->configuration,
+                                                         out_req->parallel_level,
+                                                         out_req->flags,
+                                                         out_req->target);
+    if (eval_should_stop(ctx)) return false;
+    out_req->number_errors_var = ctest_parsed_field_value(&out_req->core.parsed, "NUMBER_ERRORS");
+    out_req->number_warnings_var = ctest_parsed_field_value(&out_req->core.parsed, "NUMBER_WARNINGS");
+    out_req->return_var = ctest_parsed_field_value(&out_req->core.parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var =
+        ctest_parsed_field_value(&out_req->core.parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->append_mode = ctest_parsed_field_value(&out_req->core.parsed, "APPEND").count > 0;
+    out_req->quiet = ctest_parsed_field_value(&out_req->core.parsed, "QUIET").count > 0;
+    return true;
+}
+
+static bool ctest_build_commit_failed(EvalExecContext *ctx, const Ctest_Build_Request *req) {
+    if (!ctx || !req) return false;
+    return ctest_commit_failed_step_record(ctx,
+                                           &req->core.argv,
+                                           EVAL_CTEST_STEP_BUILD,
+                                           nob_sv_from_cstr("ctest_build"),
+                                           nob_sv_from_cstr("Build"),
+                                           req->core.model,
+                                           nob_sv_from_cstr(""),
+                                           req->core.resolved_build);
+}
+
+static bool ctest_build_fail(EvalExecContext *ctx,
+                             const Node *node,
+                             const Ctest_Build_Request *req,
+                             String_View cause,
+                             String_View detail) {
+    if (!ctx || !node || !req) return false;
+
+    if (req->number_errors_var.count > 0 &&
+        !eval_var_set_current(ctx, req->number_errors_var, nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    if (req->number_warnings_var.count > 0 &&
+        !eval_var_set_current(ctx, req->number_warnings_var, nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("-1"))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0) {
+        if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+        return ctest_build_commit_failed(ctx, req);
+    }
+    if (!ctest_build_commit_failed(ctx, req)) return false;
+    (void)ctest_emit_diag(ctx, node, EV_DIAG_ERROR, cause, detail);
+    return false;
+}
+
+static bool ctest_execute_build_request(EvalExecContext *ctx,
+                                        const Node *node,
+                                        const Ctest_Build_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_build"), "BUILD_COMMAND", req->build_command)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "CONFIGURATION_RESOLVED",
+                         req->configuration)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "PARALLEL_LEVEL_RESOLVED",
+                         req->parallel_level)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "FLAGS_RESOLVED",
+                         req->flags)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "TARGET_RESOLVED",
+                         req->target)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "PROJECT_NAME_RESOLVED",
+                         req->project_name)) {
+        return false;
+    }
+    if (!ctest_publish_common_dirs(ctx, ctest_get_session_field(ctx, "SOURCE"), req->core.resolved_build)) {
+        return false;
+    }
+
+    SV_List argv = {0};
+    if (!ctest_append_command_tokens_temp(ctx, req->build_command, &argv)) return false;
+    if (arena_arr_len(argv) == 0) {
+        return ctest_build_fail(ctx,
+                                node,
+                                req,
+                                nob_sv_from_cstr("ctest_build() build command did not produce an executable"),
+                                req->build_command);
+    }
+
+    Eval_Process_Run_Request process_req = {
+        .argv = argv,
+        .argc = arena_arr_len(argv),
+        .working_directory = req->core.resolved_build,
+    };
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_build"), "OUTPUT", proc.stdout_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_build"), "ERROR_OUTPUT", proc.stderr_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_build"), "PROCESS_RESULT", proc.result_text)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "EXIT_CODE",
+                         ctest_submit_format_long_temp(ctx, (long)proc.exit_code))) {
+        return false;
+    }
+
+    bool execution_error = !proc.started || proc.timed_out;
+    if (execution_error) {
+        String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
+                            : proc.result_text.count > 0 ? proc.result_text
+                            : req->build_command;
+        return ctest_build_fail(ctx,
+                                node,
+                                req,
+                                nob_sv_from_cstr("ctest_build() failed to run the build command"),
+                                detail);
+    }
+
+    size_t error_count = 0;
+    size_t warning_count = 0;
+    if (!ctest_build_count_issues(ctx, proc.stdout_text, proc.stderr_text, &error_count, &warning_count)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "ERROR_COUNT",
+                         ctest_submit_format_size_temp(ctx, error_count))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_build"),
+                         "WARNING_COUNT",
+                         ctest_submit_format_size_temp(ctx, warning_count))) {
+        return false;
+    }
+
+    if (req->number_errors_var.count > 0 &&
+        !eval_var_set_current(ctx, req->number_errors_var, ctest_submit_format_size_temp(ctx, error_count))) {
+        return false;
+    }
+    if (req->number_warnings_var.count > 0 &&
+        !eval_var_set_current(ctx, req->number_warnings_var, ctest_submit_format_size_temp(ctx, warning_count))) {
+        return false;
+    }
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx,
+                              req->return_var,
+                              ctest_submit_format_long_temp(ctx, (long)proc.exit_code))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0 &&
+        !eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("0"))) {
+        return false;
+    }
+
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->core.resolved_build,
+                                  req->core.model,
+                                  track,
+                                  req->append_mode,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
+        return false;
+    }
+
+    String_View build_xml =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("Build.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_build_xml(ctx,
+                               build_xml,
+                               req,
+                               error_count,
+                               warning_count,
+                               proc.stdout_text,
+                               proc.stderr_text,
+                               proc.exit_code)) {
+        return false;
+    }
+
+    String_View manifest =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("BuildManifest.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_manifest(ctx,
+                              nob_sv_from_cstr("ctest_build"),
+                              manifest,
+                              tag,
+                              track,
+                              nob_sv_from_cstr("Build"),
+                              build_xml)) {
+        return false;
+    }
+
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_build"),
+        .kind = nob_sv_from_cstr("BUILD_XML"),
+        .status = nob_sv_from_cstr("BUILT"),
+        .base_dir = tag_dir_path,
+        .primary_path = build_xml,
+        .aux_paths = manifest,
+    };
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_BUILD,
+        .command_name = nob_sv_from_cstr("ctest_build"),
+        .submit_part = nob_sv_from_cstr("Build"),
+        .status = nob_sv_from_cstr("BUILT"),
+        .model = req->core.model,
+        .track = track,
+        .build_dir = req->core.resolved_build,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+    };
+    return ctest_commit_step_record(ctx, &req->core.argv, step, &artifact);
+}
+
 Eval_Result eval_handle_ctest_build(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_modeled_step(ctx,
-                                     node,
-                                     EVAL_CTEST_STEP_BUILD,
-                                     nob_sv_from_cstr("ctest_build"),
-                                     nob_sv_from_cstr("Build"),
-                                     &s_ctest_build_parse_spec,
-                                     false,
-                                     true,
-                                     nob_sv_from_cstr("MODELED"));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Build_Request req = {0};
+    if (!ctest_parse_build_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_build_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
+}
+
+static bool ctest_parse_test_request(EvalExecContext *ctx,
+                                     const Node *node,
+                                     Ctest_Test_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    Ctest_Step_Runtime_Def def = ctest_step_runtime_def(EVAL_CTEST_STEP_TEST,
+                                                        "ctest_test",
+                                                        "Test",
+                                                        &s_ctest_test_parse_spec,
+                                                        false,
+                                                        true);
+    if (!ctest_step_runtime_parse_base(ctx, node, &def, &out_req->core)) return false;
+    if (!ctest_step_runtime_resolve_context(ctx, &out_req->core)) return false;
+
+    if (!ctest_memcheck_parse_integer_field(ctx,
+                                            node,
+                                            &out_req->core.parsed,
+                                            "PARALLEL_LEVEL",
+                                            true,
+                                            &out_req->parallel_level)) {
+        return false;
+    }
+
+    out_req->stop_time = ctest_parsed_field_value(&out_req->core.parsed, "STOP_TIME");
+    if (!ctest_test_parse_stop_time(ctx, node, out_req->stop_time, &out_req->stop_time_seconds)) return false;
+    out_req->has_stop_time = out_req->stop_time.count > 0;
+
+    out_req->test_load = ctest_parsed_field_value(&out_req->core.parsed, "TEST_LOAD");
+    if (out_req->test_load.count == 0) {
+        out_req->test_load = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_TEST_LOAD"));
+    }
+
+    if (!ctest_resolve_path_from_base(ctx,
+                                      ctest_parsed_field_value(&out_req->core.parsed, "OUTPUT_JUNIT"),
+                                      out_req->core.resolved_build,
+                                      &out_req->output_junit)) {
+        return false;
+    }
+
+    out_req->return_var = ctest_parsed_field_value(&out_req->core.parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var =
+        ctest_parsed_field_value(&out_req->core.parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->append_mode = ctest_parsed_field_value(&out_req->core.parsed, "APPEND").count > 0;
+    out_req->quiet = ctest_parsed_field_value(&out_req->core.parsed, "QUIET").count > 0;
+    out_req->schedule_random =
+        ctest_parsed_field_value(&out_req->core.parsed, "SCHEDULE_RANDOM").count > 0;
+    return true;
+}
+
+static bool ctest_test_commit_failed(EvalExecContext *ctx, const Ctest_Test_Request *req) {
+    if (!ctx || !req) return false;
+    return ctest_commit_failed_step_record(ctx,
+                                           &req->core.argv,
+                                           EVAL_CTEST_STEP_TEST,
+                                           nob_sv_from_cstr("ctest_test"),
+                                           nob_sv_from_cstr("Test"),
+                                           req->core.model,
+                                           nob_sv_from_cstr(""),
+                                           req->core.resolved_build);
+}
+
+static bool ctest_test_fail(EvalExecContext *ctx,
+                            const Node *node,
+                            const Ctest_Test_Request *req,
+                            String_View cause,
+                            String_View detail) {
+    if (!ctx || !node || !req) return false;
+
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("-1"))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0) {
+        if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+        return ctest_test_commit_failed(ctx, req);
+    }
+    if (!ctest_test_commit_failed(ctx, req)) return false;
+    (void)ctest_emit_diag(ctx, node, EV_DIAG_ERROR, cause, detail);
+    return false;
+}
+
+static bool ctest_execute_test_request(EvalExecContext *ctx,
+                                       const Node *node,
+                                       const Ctest_Test_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "PARALLEL_LEVEL_RESOLVED",
+                         req->parallel_level)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_test"), "STOP_TIME_RESOLVED", req->stop_time)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_test"), "RESOLVED_TEST_LOAD", req->test_load)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "SCHEDULE_RANDOM",
+                         req->schedule_random ? nob_sv_from_cstr("ON") : nob_sv_from_cstr("OFF"))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "RESOLVED_OUTPUT_JUNIT",
+                         req->output_junit)) {
+        return false;
+    }
+    if (!ctest_publish_common_dirs(ctx, ctest_get_session_field(ctx, "SOURCE"), req->core.resolved_build)) {
+        return false;
+    }
+
+    Ctest_Test_Plan_Entry_List plan = NULL;
+    if (!ctest_collect_test_plan_from_stream(ctx, &plan)) return false;
+    if (req->schedule_random) ctest_test_sort_plan_randomized(plan);
+
+    SV_List planned_names = {0};
+    for (size_t i = 0; i < arena_arr_len(plan); i++) {
+        if (!svu_list_push_temp(ctx, &planned_names, plan[i].name)) return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "TEST_PLAN",
+                         eval_sv_join_semi_temp(ctx, planned_names, arena_arr_len(planned_names)))) {
+        return false;
+    }
+
+    Ctest_Test_Result_Entry_List results = NULL;
+    size_t passed_count = 0;
+    size_t failed_count = 0;
+    for (size_t i = 0; i < arena_arr_len(plan); i++) {
+        if (req->has_stop_time) {
+            int now_seconds = ctest_test_current_local_seconds_of_day();
+            if (now_seconds >= 0 && now_seconds >= req->stop_time_seconds) break;
+        }
+
+        Ctest_Test_Result_Entry result = {
+            .name = plan[i].name,
+            .command = plan[i].command,
+            .working_dir = req->core.resolved_build,
+            .exit_code = 127,
+            .stdout_text = nob_sv_from_cstr(""),
+            .stderr_text = nob_sv_from_cstr(""),
+            .result_text = nob_sv_from_cstr(""),
+        };
+
+        if (plan[i].working_dir.count > 0) {
+            result.working_dir =
+                eval_path_resolve_for_cmake_arg(ctx, plan[i].working_dir, req->core.resolved_build, false);
+            if (eval_should_stop(ctx)) return false;
+            result.working_dir = eval_sv_path_normalize_temp(ctx, result.working_dir);
+            if (eval_should_stop(ctx)) return false;
+        }
+
+        SV_List argv = {0};
+        if (!ctest_append_command_tokens_temp(ctx, plan[i].command, &argv)) return false;
+        if (arena_arr_len(argv) == 0) {
+            result.stderr_text = nob_sv_from_cstr("empty test command");
+            result.result_text = nob_sv_from_cstr("empty test command");
+            if (!arena_arr_push(eval_temp_arena(ctx), results, result)) return false;
+            failed_count++;
+            continue;
+        }
+
+        Eval_Process_Run_Request process_req = {
+            .argv = argv,
+            .argc = arena_arr_len(argv),
+            .working_directory = result.working_dir,
+        };
+        Eval_Process_Run_Result proc = {0};
+        if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
+
+        result.started = proc.started;
+        result.timed_out = proc.timed_out;
+        result.exit_code = proc.started ? proc.exit_code : 127;
+        result.stdout_text = proc.stdout_text;
+        result.stderr_text = proc.stderr_text;
+        result.result_text = proc.result_text;
+        if (result.result_text.count == 0) {
+            if (!result.started) result.result_text = nob_sv_from_cstr("failed to start");
+            else if (result.timed_out) result.result_text = nob_sv_from_cstr("timed out");
+        }
+        result.passed = result.started && !result.timed_out && result.exit_code == 0;
+
+        if (!arena_arr_push(eval_temp_arena(ctx), results, result)) return false;
+        if (result.passed) passed_count++;
+        else failed_count++;
+    }
+
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "TEST_COUNT",
+                         ctest_submit_format_size_temp(ctx, arena_arr_len(results)))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "PASSED_COUNT",
+                         ctest_submit_format_size_temp(ctx, passed_count))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_test"),
+                         "FAILED_COUNT",
+                         ctest_submit_format_size_temp(ctx, failed_count))) {
+        return false;
+    }
+
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx, req->return_var, ctest_submit_format_size_temp(ctx, failed_count))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0 &&
+        !eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("0"))) {
+        return false;
+    }
+
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->core.resolved_build,
+                                  req->core.model,
+                                  track,
+                                  req->append_mode,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
+        return ctest_test_fail(ctx,
+                               node,
+                               req,
+                               nob_sv_from_cstr("ctest_test() failed to prepare Testing/<tag> staging"),
+                               req->core.resolved_build);
+    }
+
+    String_View test_xml =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("Test.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_test_xml(ctx, test_xml, req, results, passed_count, failed_count)) {
+        return ctest_test_fail(ctx,
+                               node,
+                               req,
+                               nob_sv_from_cstr("ctest_test() failed to write Test.xml"),
+                               test_xml);
+    }
+
+    if (!ctest_write_test_junit(ctx, req->output_junit, results, failed_count)) {
+        return ctest_test_fail(ctx,
+                               node,
+                               req,
+                               nob_sv_from_cstr("ctest_test() failed to write OUTPUT_JUNIT"),
+                               req->output_junit);
+    }
+
+    String_View manifest =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("TestManifest.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_manifest(ctx,
+                              nob_sv_from_cstr("ctest_test"),
+                              manifest,
+                              tag,
+                              track,
+                              nob_sv_from_cstr("Test"),
+                              test_xml)) {
+        return ctest_test_fail(ctx,
+                               node,
+                               req,
+                               nob_sv_from_cstr("ctest_test() failed to write the staged test manifest"),
+                               manifest);
+    }
+
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_test"),
+        .kind = nob_sv_from_cstr("TEST_XML"),
+        .status = nob_sv_from_cstr("TESTED"),
+        .base_dir = tag_dir_path,
+        .primary_path = test_xml,
+        .aux_paths = manifest,
+    };
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_TEST,
+        .command_name = nob_sv_from_cstr("ctest_test"),
+        .submit_part = nob_sv_from_cstr("Test"),
+        .status = nob_sv_from_cstr("TESTED"),
+        .model = req->core.model,
+        .track = track,
+        .build_dir = req->core.resolved_build,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+        .output_junit = req->output_junit,
+    };
+    return ctest_commit_step_record(ctx, &req->core.argv, step, &artifact);
 }
 
 static bool ctest_parse_configure_request(EvalExecContext *ctx,
@@ -3145,6 +5353,12 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
         .argc = arena_arr_len(argv),
         .working_directory = req->build_dir,
     };
+    if (ctest_parsed_field_value(&req->parsed, "QUIET").count == 0) {
+        nob_log(NOB_INFO,
+                "ctest_coverage: collecting coverage in %.*s",
+                (int)req->build_dir.count,
+                req->build_dir.data ? req->build_dir.data : "");
+    }
     Eval_Process_Run_Result proc = {0};
     if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
 
@@ -3219,6 +5433,8 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
         return false;
     }
 
+    ctest_coverage_report_local_output(ctx, req, proc.stdout_text);
+
     String_View coverage_xml = eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("Coverage.xml"));
     if (eval_should_stop(ctx)) return false;
     if (!ctest_write_coverage_xml(ctx, coverage_xml, req, proc.stdout_text, proc.stderr_text, proc.exit_code)) {
@@ -3272,6 +5488,271 @@ Eval_Result eval_handle_ctest_coverage(EvalExecContext *ctx, const Node *node) {
     return eval_result_from_ctx(ctx);
 }
 
+static bool ctest_parse_update_request(EvalExecContext *ctx,
+                                       const Node *node,
+                                       Ctest_Update_Request *out_req) {
+    if (!ctx || !node || !out_req) return false;
+    memset(out_req, 0, sizeof(*out_req));
+
+    Ctest_Step_Runtime_Def def = ctest_step_runtime_def(EVAL_CTEST_STEP_UPDATE,
+                                                        "ctest_update",
+                                                        "Update",
+                                                        &s_ctest_update_parse_spec,
+                                                        true,
+                                                        true);
+    if (!ctest_step_runtime_parse_base(ctx, node, &def, &out_req->core)) return false;
+    if (!ctest_step_runtime_resolve_context(ctx, &out_req->core)) return false;
+
+    if (out_req->core.model.count == 0) out_req->core.model = nob_sv_from_cstr("Experimental");
+    if (!ctest_update_resolve_type(ctx, node, out_req->core.resolved_source, &out_req->update_type)) {
+        return false;
+    }
+    out_req->update_command =
+        ctest_update_resolve_command(ctx, out_req->update_type, &out_req->custom_command);
+    out_req->update_options = out_req->custom_command
+        ? nob_sv_from_cstr("")
+        : ctest_update_resolve_options(ctx, out_req->update_type);
+    out_req->return_var = ctest_parsed_field_value(&out_req->core.parsed, "RETURN_VALUE");
+    out_req->capture_cmake_error_var =
+        ctest_parsed_field_value(&out_req->core.parsed, "CAPTURE_CMAKE_ERROR");
+    out_req->version_override = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_UPDATE_VERSION_OVERRIDE"));
+    out_req->version_only = out_req->version_override.count == 0 &&
+        ctest_update_is_truthy(eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_UPDATE_VERSION_ONLY")));
+    out_req->quiet = ctest_parsed_field_value(&out_req->core.parsed, "QUIET").count > 0;
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_update_commit_failed(EvalExecContext *ctx, const Ctest_Update_Request *req) {
+    if (!ctx || !req) return false;
+    return ctest_commit_failed_step_record(ctx,
+                                           &req->core.argv,
+                                           EVAL_CTEST_STEP_UPDATE,
+                                           nob_sv_from_cstr("ctest_update"),
+                                           nob_sv_from_cstr("Update"),
+                                           req->core.model,
+                                           req->core.resolved_source,
+                                           req->core.resolved_build);
+}
+
+static bool ctest_update_fail(EvalExecContext *ctx,
+                              const Node *node,
+                              const Ctest_Update_Request *req,
+                              String_View cause,
+                              String_View detail) {
+    if (!ctx || !node || !req) return false;
+
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx, req->return_var, nob_sv_from_cstr("-1"))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0) {
+        if (!eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("-1"))) return false;
+        return ctest_update_commit_failed(ctx, req);
+    }
+    if (!ctest_update_commit_failed(ctx, req)) return false;
+    (void)ctest_emit_diag(ctx, node, EV_DIAG_ERROR, cause, detail);
+    return false;
+}
+
+static bool ctest_execute_update_request(EvalExecContext *ctx,
+                                         const Node *node,
+                                         const Ctest_Update_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_update"), "UPDATE_TYPE", req->update_type)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_update"), "UPDATE_COMMAND", req->update_command)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_update"),
+                         "UPDATE_OPTIONS_RESOLVED",
+                         req->update_options)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_update"),
+                         "VERSION_ONLY",
+                         req->version_only ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_update"),
+                         "VERSION_OVERRIDE",
+                         req->version_override)) {
+        return false;
+    }
+    if (!ctest_publish_common_dirs(ctx, req->core.resolved_source, req->core.resolved_build)) return false;
+
+    Eval_Process_Run_Result proc = {0};
+    String_View stdout_text = nob_sv_from_cstr("");
+    String_View stderr_text = nob_sv_from_cstr("");
+    String_View process_result = nob_sv_from_cstr("0");
+    String_View updated_files = nob_sv_from_cstr("");
+    size_t updated_count = 0;
+    int exit_code = 0;
+    bool success = true;
+
+    if (req->version_override.count == 0 && !req->version_only) {
+        if (req->update_command.count == 0) {
+            return ctest_update_fail(ctx,
+                                     node,
+                                     req,
+                                     nob_sv_from_cstr("ctest_update() requires CTEST_UPDATE_COMMAND, UPDATE_COMMAND, or a detected VCS command"),
+                                     nob_sv_from_cstr("Set the documented update command or VCS-specific variables before running the update step"));
+        }
+
+        SV_List argv = {0};
+        if (!ctest_append_command_tokens_temp(ctx, req->update_command, &argv)) return false;
+        if (arena_arr_len(argv) == 0) {
+            return ctest_update_fail(ctx,
+                                     node,
+                                     req,
+                                     nob_sv_from_cstr("ctest_update() update command did not produce an executable"),
+                                     req->update_command);
+        }
+        if (!req->custom_command && !ctest_append_command_tokens_temp(ctx, req->update_options, &argv)) {
+            return false;
+        }
+
+        Eval_Process_Run_Request process_req = {
+            .argv = argv,
+            .argc = arena_arr_len(argv),
+            .working_directory = req->core.resolved_source,
+        };
+        if (!req->quiet) {
+            nob_log(NOB_INFO,
+                    "ctest_update: updating %.*s",
+                    (int)req->core.resolved_source.count,
+                    req->core.resolved_source.data ? req->core.resolved_source.data : "");
+        }
+        if (!eval_process_run_capture(ctx, &process_req, &proc)) return false;
+
+        stdout_text = proc.stdout_text;
+        stderr_text = proc.stderr_text;
+        process_result = proc.result_text;
+        exit_code = proc.exit_code;
+        success = proc.started && !proc.timed_out && proc.exit_code == 0;
+        if (success && !ctest_update_collect_output_files(ctx, stdout_text, &updated_files, &updated_count)) {
+            return false;
+        }
+    } else if (req->version_override.count > 0) {
+        stdout_text = req->version_override;
+    }
+
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_update"), "OUTPUT", stdout_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_update"), "ERROR_OUTPUT", stderr_text)) return false;
+    if (!ctest_set_field(ctx, nob_sv_from_cstr("ctest_update"), "PROCESS_RESULT", process_result)) return false;
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_update"),
+                         "EXIT_CODE",
+                         ctest_submit_format_long_temp(ctx, (long)exit_code))) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_update"),
+                         "UPDATED_FILES",
+                         updated_files)) {
+        return false;
+    }
+    if (!ctest_set_field(ctx,
+                         nob_sv_from_cstr("ctest_update"),
+                         "UPDATED_COUNT",
+                         ctest_submit_format_size_temp(ctx, updated_count))) {
+        return false;
+    }
+
+    if (!success) {
+        String_View detail = stderr_text.count > 0 ? stderr_text
+                            : process_result.count > 0 ? process_result
+                            : req->update_command;
+        return ctest_update_fail(ctx,
+                                 node,
+                                 req,
+                                 nob_sv_from_cstr("ctest_update() update command failed"),
+                                 detail);
+    }
+
+    if (req->return_var.count > 0 &&
+        !eval_var_set_current(ctx, req->return_var, ctest_submit_format_size_temp(ctx, updated_count))) {
+        return false;
+    }
+    if (req->capture_cmake_error_var.count > 0 &&
+        !eval_var_set_current(ctx, req->capture_cmake_error_var, nob_sv_from_cstr("0"))) {
+        return false;
+    }
+
+    String_View track = ctest_get_session_field(ctx, "TRACK");
+    String_View tag = nob_sv_from_cstr("");
+    String_View testing_dir = nob_sv_from_cstr("");
+    String_View tag_file = nob_sv_from_cstr("");
+    String_View tag_dir_path = nob_sv_from_cstr("");
+    if (!ctest_ensure_session_tag(ctx,
+                                  req->core.resolved_build,
+                                  req->core.model,
+                                  track,
+                                  false,
+                                  &tag,
+                                  &testing_dir,
+                                  &tag_file,
+                                  &tag_dir_path)) {
+        return false;
+    }
+
+    String_View update_xml =
+        eval_sv_path_join(eval_temp_arena(ctx), tag_dir_path, nob_sv_from_cstr("Update.xml"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_update_xml(ctx,
+                                update_xml,
+                                req,
+                                updated_files,
+                                updated_count,
+                                stdout_text,
+                                stderr_text,
+                                exit_code)) {
+        return false;
+    }
+
+    String_View manifest = eval_sv_path_join(eval_temp_arena(ctx),
+                                             tag_dir_path,
+                                             nob_sv_from_cstr("UpdateManifest.txt"));
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_write_manifest(ctx,
+                              nob_sv_from_cstr("ctest_update"),
+                              manifest,
+                              tag,
+                              track,
+                              nob_sv_from_cstr("Update"),
+                              update_xml)) {
+        return false;
+    }
+
+    Eval_Canonical_Artifact artifact = {
+        .producer = nob_sv_from_cstr("ctest_update"),
+        .kind = nob_sv_from_cstr("UPDATE_XML"),
+        .status = nob_sv_from_cstr("UPDATED"),
+        .base_dir = tag_dir_path,
+        .primary_path = update_xml,
+        .aux_paths = manifest,
+    };
+    Eval_Ctest_Step_Record step = {
+        .kind = EVAL_CTEST_STEP_UPDATE,
+        .command_name = nob_sv_from_cstr("ctest_update"),
+        .submit_part = nob_sv_from_cstr("Update"),
+        .status = nob_sv_from_cstr("UPDATED"),
+        .model = req->core.model,
+        .track = track,
+        .source_dir = req->core.resolved_source,
+        .build_dir = req->core.resolved_build,
+        .testing_dir = testing_dir,
+        .tag = tag,
+        .tag_file = tag_file,
+        .tag_dir = tag_dir_path,
+        .manifest = manifest,
+    };
+    return ctest_commit_step_record(ctx, &req->core.argv, step, &artifact);
+}
+
 Eval_Result eval_handle_ctest_empty_binary_directory(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Ctest_Empty_Binary_Directory_Request req = {0};
@@ -3284,7 +5765,7 @@ Eval_Result eval_handle_ctest_memcheck(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
     Ctest_Memcheck_Request req = {0};
     if (!ctest_parse_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (!ctest_execute_memcheck_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
 
@@ -3367,14 +5848,29 @@ static bool ctest_parse_run_script_request(EvalExecContext *ctx,
     }
 
     String_View base_dir = eval_current_source_dir_for_paths(ctx);
-    return ctest_resolve_scripts(ctx, out_req->scripts, base_dir, &out_req->resolved_scripts);
+    if (!ctest_resolve_scripts(ctx, out_req->scripts, base_dir, &out_req->resolved_scripts)) return false;
+
+    SV_List stable_argv = NULL;
+    SV_List stable_scripts = NULL;
+    SV_List stable_resolved_scripts = NULL;
+    if (!ctest_copy_sv_list_to_event(ctx, out_req->argv, &stable_argv)) return false;
+    if (!ctest_copy_sv_list_to_event(ctx, out_req->scripts, &stable_scripts)) return false;
+    if (!ctest_copy_sv_list_to_event(ctx, out_req->resolved_scripts, &stable_resolved_scripts)) return false;
+    out_req->argv = stable_argv;
+    out_req->scripts = stable_scripts;
+    out_req->resolved_scripts = stable_resolved_scripts;
+    out_req->return_var = sv_copy_to_event_arena(ctx, out_req->return_var);
+    if (eval_should_stop(ctx)) return false;
+    return true;
 }
 
 static bool ctest_execute_run_script_request(EvalExecContext *ctx, const Ctest_Run_Script_Request *req) {
     if (!ctx || !req) return false;
 
+    eval_command_tx_preserve_scope_vars_on_failure(ctx);
     const char *rv_text = "0";
     for (size_t i = 0; i < arena_arr_len(req->resolved_scripts); i++) {
+        if (eval_should_stop(ctx)) eval_reset_stop_request(ctx);
         size_t error_count_before = ctx->runtime_state.run_report.error_count;
         Eval_Result exec_res;
         if (req->new_process) {
@@ -3386,7 +5882,18 @@ static bool ctest_execute_run_script_request(EvalExecContext *ctx, const Ctest_R
         } else {
             exec_res = eval_execute_file(ctx, req->resolved_scripts[i], false, nob_sv_from_cstr(""));
         }
-        if (eval_result_is_fatal(exec_res)) return false;
+        if (eval_result_is_fatal(exec_res)) {
+            if (ctx->oom) return false;
+            if (eval_should_stop(ctx) &&
+                ctx->runtime_state.run_report.error_count > error_count_before) {
+                eval_reset_stop_request(ctx);
+            } else {
+                return false;
+            }
+        }
+        /* Per-script SEND_ERROR diagnostics should not suppress later scripts or
+         * the final RETURN_VALUE assignment for ctest_run_script(). */
+        if (eval_should_stop(ctx)) eval_reset_stop_request(ctx);
         rv_text = ctx->runtime_state.run_report.error_count > error_count_before ? "1" : "0";
     }
 
@@ -4029,27 +6536,19 @@ Eval_Result eval_handle_ctest_submit(EvalExecContext *ctx, const Node *node) {
 }
 
 Eval_Result eval_handle_ctest_test(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_modeled_step(ctx,
-                                     node,
-                                     EVAL_CTEST_STEP_TEST,
-                                     nob_sv_from_cstr("ctest_test"),
-                                     nob_sv_from_cstr("Test"),
-                                     &s_ctest_test_parse_spec,
-                                     false,
-                                     true,
-                                     nob_sv_from_cstr("MODELED"));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Test_Request req = {0};
+    if (!ctest_parse_test_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_test_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_ctest_update(EvalExecContext *ctx, const Node *node) {
-    return ctest_handle_modeled_step(ctx,
-                                     node,
-                                     EVAL_CTEST_STEP_UPDATE,
-                                     nob_sv_from_cstr("ctest_update"),
-                                     nob_sv_from_cstr("Update"),
-                                     &s_ctest_update_parse_spec,
-                                     true,
-                                     false,
-                                     nob_sv_from_cstr("MODELED"));
+    if (!ctx || eval_should_stop(ctx) || !node) return eval_result_fatal();
+    Ctest_Update_Request req = {0};
+    if (!ctest_parse_update_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_execute_update_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    return eval_result_from_ctx(ctx);
 }
 
 Eval_Result eval_handle_ctest_upload(EvalExecContext *ctx, const Node *node) {

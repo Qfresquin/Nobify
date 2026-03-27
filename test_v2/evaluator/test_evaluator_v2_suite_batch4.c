@@ -11,6 +11,9 @@ typedef struct {
     Ctest_Submit_Mock_Mode mode;
     size_t timeout_failures_remaining;
     size_t call_count;
+    size_t submit_call_count;
+    size_t update_call_count;
+    size_t build_call_count;
     size_t file_form_count;
     bool saw_auth_header;
     bool saw_extra_header;
@@ -24,7 +27,12 @@ typedef struct {
     bool saw_submit_url;
     bool saw_upload_xml_form;
     bool saw_upload_payload_form;
+    bool saw_update_tool;
+    bool saw_update_mode_flag;
+    bool saw_update_mode_value;
+    bool saw_build_tool;
     char last_url[512];
+    char update_working_directory[512];
 } Ctest_Submit_Mock_Process_Data;
 
 typedef struct {
@@ -37,7 +45,9 @@ typedef struct {
 
 typedef struct {
     size_t call_count;
+    size_t build_call_count;
     bool saw_configure_tool;
+    bool saw_build_tool;
     bool saw_source_arg;
     bool saw_preset_flag;
     bool saw_preset_value;
@@ -55,6 +65,46 @@ typedef struct {
     bool args_in_expected_order;
     char working_directory[512];
 } Ctest_Coverage_Mock_Process_Data;
+
+typedef struct {
+    size_t call_count;
+    bool saw_build_tool;
+    bool saw_build_flag;
+    bool saw_target_flag;
+    bool saw_target_value;
+    bool saw_config_flag;
+    bool saw_config_value;
+    bool saw_parallel_flag;
+    bool saw_parallel_value;
+    char working_directory[512];
+} Ctest_Build_Mock_Process_Data;
+
+typedef struct {
+    size_t call_count;
+    bool saw_test_pass_tool;
+    bool saw_test_fail_tool;
+    bool saw_pass_arg;
+    bool saw_fail_arg;
+    char default_working_directory[512];
+    char custom_working_directory[512];
+} Ctest_Test_Mock_Process_Data;
+
+typedef struct {
+    Ctest_Submit_Mock_Process_Data submit;
+    size_t memcheck_call_count;
+    bool saw_memcheck_tool;
+    bool saw_backend_xml_flag;
+    bool saw_backend_trace_children_flag;
+    bool saw_backend_sanitizer_flag;
+    bool saw_suppressions_flag;
+    bool saw_separator;
+    bool saw_test_pass_tool;
+    bool saw_test_fail_tool;
+    bool saw_pass_arg;
+    bool saw_fail_arg;
+    char default_working_directory[512];
+    char custom_working_directory[512];
+} Ctest_Memcheck_Mock_Process_Data;
 
 static bool ctest_submit_mock_has_prefix(String_View value, const char *prefix) {
     size_t prefix_len = strlen(prefix);
@@ -83,12 +133,46 @@ static bool ctest_submit_mock_process_run(void *user_data,
     out_result->result_text = nob_sv_from_cstr("0");
     data->call_count++;
 
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("update-tool"))) {
+        data->update_call_count++;
+        data->saw_update_tool = true;
+        for (size_t i = 1; i < request->argc; i++) {
+            if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--mode")) && i + 1 < request->argc) {
+                data->saw_update_mode_flag = true;
+                if (nob_sv_eq(request->argv[i + 1], nob_sv_from_cstr("sync"))) {
+                    data->saw_update_mode_value = true;
+                }
+                i++;
+            }
+        }
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->update_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->update_working_directory) - 1;
+            memcpy(data->update_working_directory, request->working_directory.data, n);
+            data->update_working_directory[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("Updated: src/main.c\nUpdated: src/lib.c\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("build-tool"))) {
+        data->build_call_count++;
+        data->saw_build_tool = true;
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("Built target all\n");
+        return true;
+    }
+
     if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("curl"))) {
         out_result->exit_code = 127;
         out_result->stderr_text = nob_sv_from_cstr("unexpected process");
         out_result->result_text = nob_sv_from_cstr("127");
         return true;
     }
+
+    data->submit_call_count++;
 
     if (request->argc > 0) {
         String_View url = request->argv[request->argc - 1];
@@ -215,6 +299,21 @@ static bool ctest_configure_mock_process_run(void *user_data,
     out_result->result_text = nob_sv_from_cstr("0");
     data->call_count++;
 
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("build-tool"))) {
+        data->build_call_count++;
+        data->saw_build_tool = true;
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->working_directory) - 1;
+            memcpy(data->working_directory, request->working_directory.data, n);
+            data->working_directory[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("Built target all\n");
+        return true;
+    }
+
     if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("configure-tool"))) {
         out_result->exit_code = 127;
         out_result->stderr_text = nob_sv_from_cstr("unexpected process");
@@ -293,6 +392,224 @@ static bool ctest_coverage_mock_process_run(void *user_data,
 
     out_result->exit_code = 0;
     out_result->stdout_text = nob_sv_from_cstr("Covered: 42\n");
+    return true;
+}
+
+static bool ctest_build_mock_process_run(void *user_data,
+                                         Arena *scratch_arena,
+                                         const Eval_Process_Run_Request *request,
+                                         Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Build_Mock_Process_Data *data = (Ctest_Build_Mock_Process_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("1");
+    data->call_count++;
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("build-tool"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    data->saw_build_tool = true;
+    for (size_t i = 1; i < request->argc; i++) {
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--")) ) data->saw_build_flag = true;
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--target")) && i + 1 < request->argc) {
+            data->saw_target_flag = true;
+            if (nob_sv_eq(request->argv[i + 1], nob_sv_from_cstr("demo"))) data->saw_target_value = true;
+            i++;
+            continue;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--config")) && i + 1 < request->argc) {
+            data->saw_config_flag = true;
+            if (nob_sv_eq(request->argv[i + 1], nob_sv_from_cstr("Debug"))) data->saw_config_value = true;
+            i++;
+            continue;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--parallel")) && i + 1 < request->argc) {
+            data->saw_parallel_flag = true;
+            if (nob_sv_eq(request->argv[i + 1], nob_sv_from_cstr("5"))) data->saw_parallel_value = true;
+            i++;
+            continue;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--keep-going"))) data->saw_build_flag = true;
+    }
+
+    if (request->working_directory.count > 0) {
+        size_t n = request->working_directory.count < sizeof(data->working_directory) - 1
+            ? request->working_directory.count
+            : sizeof(data->working_directory) - 1;
+        memcpy(data->working_directory, request->working_directory.data, n);
+        data->working_directory[n] = '\0';
+    }
+
+    out_result->exit_code = 1;
+    out_result->stdout_text = nob_sv_from_cstr("warning: deprecated API used\n");
+    out_result->stderr_text = nob_sv_from_cstr("error: failed to compile demo.c\n");
+    return true;
+}
+
+static bool ctest_test_mock_process_run(void *user_data,
+                                        Arena *scratch_arena,
+                                        const Eval_Process_Run_Request *request,
+                                        Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Test_Mock_Process_Data *data = (Ctest_Test_Mock_Process_Data*)user_data;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    data->call_count++;
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("test-pass"))) {
+        data->saw_test_pass_tool = true;
+        if (request->argc > 1 && nob_sv_eq(request->argv[1], nob_sv_from_cstr("--alpha"))) {
+            data->saw_pass_arg = true;
+        }
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->default_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->default_working_directory) - 1;
+            memcpy(data->default_working_directory, request->working_directory.data, n);
+            data->default_working_directory[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->result_text = nob_sv_from_cstr("0");
+        out_result->stdout_text = nob_sv_from_cstr("pass output\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("test-fail"))) {
+        data->saw_test_fail_tool = true;
+        if (request->argc > 1 && nob_sv_eq(request->argv[1], nob_sv_from_cstr("--beta"))) {
+            data->saw_fail_arg = true;
+        }
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->custom_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->custom_working_directory) - 1;
+            memcpy(data->custom_working_directory, request->working_directory.data, n);
+            data->custom_working_directory[n] = '\0';
+        }
+        out_result->exit_code = 1;
+        out_result->result_text = nob_sv_from_cstr("1");
+        out_result->stderr_text = nob_sv_from_cstr("fail output\n");
+        return true;
+    }
+
+    out_result->exit_code = 127;
+    out_result->result_text = nob_sv_from_cstr("127");
+    out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+    return true;
+}
+
+static bool ctest_memcheck_mock_process_run(void *user_data,
+                                            Arena *scratch_arena,
+                                            const Eval_Process_Run_Request *request,
+                                            Eval_Process_Run_Result *out_result) {
+    if (!user_data || !request || !out_result || request->argc == 0) return false;
+
+    Ctest_Memcheck_Mock_Process_Data *data = (Ctest_Memcheck_Mock_Process_Data*)user_data;
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("curl"))) {
+        return ctest_submit_mock_process_run(&data->submit, scratch_arena, request, out_result);
+    }
+
+    (void)scratch_arena;
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    out_result->result_text = nob_sv_from_cstr("0");
+
+    if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("memcheck-tool"))) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("unexpected process");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    data->memcheck_call_count++;
+    data->saw_memcheck_tool = true;
+
+    size_t separator_index = request->argc;
+    for (size_t i = 1; i < request->argc; i++) {
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--xml=yes"))) {
+            data->saw_backend_xml_flag = true;
+            continue;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--trace-children=yes"))) {
+            data->saw_backend_trace_children_flag = true;
+            continue;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--keep-debuginfo=yes"))) {
+            data->saw_backend_sanitizer_flag = true;
+            continue;
+        }
+        if (ctest_submit_mock_has_prefix(request->argv[i], "--suppressions=")) {
+            data->saw_suppressions_flag = true;
+            continue;
+        }
+        if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--"))) {
+            data->saw_separator = true;
+            separator_index = i;
+            break;
+        }
+    }
+
+    if (separator_index + 1 >= request->argc) {
+        out_result->exit_code = 127;
+        out_result->stderr_text = nob_sv_from_cstr("missing test tool");
+        out_result->result_text = nob_sv_from_cstr("127");
+        return true;
+    }
+
+    if (request->working_directory.count > 0) {
+        char *dest = NULL;
+        size_t dest_size = 0;
+        if (nob_sv_eq(request->argv[separator_index + 1], nob_sv_from_cstr("memcheck-pass"))) {
+            dest = data->default_working_directory;
+            dest_size = sizeof(data->default_working_directory);
+        } else if (nob_sv_eq(request->argv[separator_index + 1], nob_sv_from_cstr("memcheck-fail"))) {
+            dest = data->custom_working_directory;
+            dest_size = sizeof(data->custom_working_directory);
+        }
+        if (dest) {
+            size_t n = request->working_directory.count < dest_size - 1
+                ? request->working_directory.count
+                : dest_size - 1;
+            memcpy(dest, request->working_directory.data, n);
+            dest[n] = '\0';
+        }
+    }
+
+    if (nob_sv_eq(request->argv[separator_index + 1], nob_sv_from_cstr("memcheck-pass"))) {
+        data->saw_test_pass_tool = true;
+        if (separator_index + 2 < request->argc &&
+            nob_sv_eq(request->argv[separator_index + 2], nob_sv_from_cstr("--alpha"))) {
+            data->saw_pass_arg = true;
+        }
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("memcheck clean\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[separator_index + 1], nob_sv_from_cstr("memcheck-fail"))) {
+        data->saw_test_fail_tool = true;
+        if (separator_index + 2 < request->argc &&
+            nob_sv_eq(request->argv[separator_index + 2], nob_sv_from_cstr("--beta"))) {
+            data->saw_fail_arg = true;
+        }
+        out_result->exit_code = 0;
+        out_result->stderr_text =
+            nob_sv_from_cstr("ERROR SUMMARY: 2 errors from 2 contexts (suppressed: 0 from 0)\n");
+        return true;
+    }
+
+    out_result->exit_code = 127;
+    out_result->stderr_text = nob_sv_from_cstr("unexpected test tool");
+    out_result->result_text = nob_sv_from_cstr("127");
     return true;
 }
 
@@ -668,6 +985,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
         "set(CMAKE_BINARY_DIR ctest_bin)\n"
         "set(CMAKE_CURRENT_BINARY_DIR ctest_bin)\n"
         "set(CMAKE_COMMAND configure-tool)\n"
+        "set(CTEST_BUILD_COMMAND build-tool)\n"
         "ctest_start(Experimental ctest_src . GROUP Nightly QUIET APPEND)\n"
         "ctest_configure(RETURN_VALUE CFG_RV CAPTURE_CMAKE_ERROR CFG_CE QUIET)\n"
         "ctest_build(TARGET all NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND)\n"
@@ -698,8 +1016,10 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
-    ASSERT(configure_mock.call_count == 1);
+    ASSERT(configure_mock.call_count == 2);
     ASSERT(configure_mock.saw_configure_tool);
+    ASSERT(configure_mock.build_call_count == 1);
+    ASSERT(configure_mock.saw_build_tool);
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_LAST_COMMAND")),
                      nob_sv_from_cstr("ctest_sleep")));
@@ -725,9 +1045,17 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_CE")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_ERRS")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_WARNS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_CE")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPD_RV")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPD_CE")), nob_sv_from_cstr("-1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::SCHEDULE_RANDOM")),
                      nob_sv_from_cstr("ON")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STATUS")),
+                     nob_sv_from_cstr("MEMCHECKED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
     ASSERT(eval_test_ctest_step_count(ctx) >= 8);
     String_View step_status = {0};
     String_View submit_part = {0};
@@ -735,7 +1063,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("STAGED")));
     ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Start")));
     ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_build"), &step_status, &submit_part));
-    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("MODELED")));
+    ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("BUILT")));
     ASSERT(nob_sv_eq(submit_part, nob_sv_from_cstr("Build")));
     ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_upload"), &step_status, &submit_part));
     ASSERT(nob_sv_eq(step_status, nob_sv_from_cstr("STAGED")));
@@ -1271,6 +1599,240 @@ TEST(evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_
     TEST_PASS();
 }
 
+TEST(evaluator_ctest_build_executes_documented_command_and_stages_submit_part) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_build_exec_bin"));
+
+    Ctest_Build_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_build_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_build_exec_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_build_exec_bin)\n"
+        "set(CMAKE_COMMAND build-tool)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_build(CONFIGURATION Debug PARALLEL_LEVEL 5 FLAGS --keep-going TARGET demo NUMBER_ERRORS BUILD_ERRS NUMBER_WARNINGS BUILD_WARNS RETURN_VALUE BUILD_RV CAPTURE_CMAKE_ERROR BUILD_CE APPEND QUIET)\n"
+        "ctest_submit(PARTS Build RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_build_tool);
+    ASSERT(mock.saw_target_flag);
+    ASSERT(mock.saw_target_value);
+    ASSERT(mock.saw_config_flag);
+    ASSERT(mock.saw_config_value);
+    ASSERT(mock.saw_parallel_flag);
+    ASSERT(mock.saw_parallel_value);
+    ASSERT(mock.saw_build_flag);
+    ASSERT(strstr(mock.working_directory, "ctest_build_exec_bin") != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_ERRS")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_WARNS")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BUILD_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::STATUS")),
+                     nob_sv_from_cstr("BUILT")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("FAILED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::CONFIGURATION_RESOLVED")),
+                     nob_sv_from_cstr("Debug")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::PARALLEL_LEVEL_RESOLVED")),
+                     nob_sv_from_cstr("5")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::FLAGS_RESOLVED")),
+                     nob_sv_from_cstr("--keep-going")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::TARGET_RESOLVED")),
+                     nob_sv_from_cstr("demo")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::ERROR_COUNT")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::WARNING_COUNT")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                          nob_sv_from_cstr("Build")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("Build.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("BuildManifest.txt")));
+
+    String_View build_xml = {0};
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("ctest_build"),
+                                             nob_sv_from_cstr("BUILD_XML"),
+                                             &build_xml));
+    char *build_xml_c = arena_strndup(temp_arena, build_xml.data, build_xml.count);
+    ASSERT(build_xml_c != NULL);
+    ASSERT(nob_file_exists(build_xml_c));
+
+    Nob_String_Builder build_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(build_xml_c, &build_sb));
+    ASSERT(strstr(build_sb.items, "<Build>") != NULL);
+    ASSERT(strstr(build_sb.items, "build-tool") != NULL);
+    ASSERT(strstr(build_sb.items, "Debug") != NULL);
+    ASSERT(strstr(build_sb.items, "--keep-going") != NULL);
+    ASSERT(strstr(build_sb.items, "<ErrorCount>1</ErrorCount>") != NULL);
+    ASSERT(strstr(build_sb.items, "<WarningCount>1</WarningCount>") != NULL);
+    nob_sb_free(build_sb);
+
+    String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_build::MANIFEST"));
+    char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
+    ASSERT(manifest_c != NULL);
+    ASSERT(nob_file_exists(manifest_c));
+
+    Nob_String_Builder manifest_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(manifest_c, &manifest_sb));
+    ASSERT(strstr(manifest_sb.items, "COMMAND=ctest_build") != NULL);
+    ASSERT(strstr(manifest_sb.items, "PARTS=Build") != NULL);
+    ASSERT(strstr(manifest_sb.items, "Build.xml") != NULL);
+    nob_sb_free(manifest_sb);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_test_executes_plan_and_stages_test_xml_without_submitting_junit) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_test_exec_bin"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_test_exec_bin/work"));
+
+    Ctest_Test_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_test_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_test_exec_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_test_exec_bin)\n"
+        "enable_testing()\n"
+        "add_test(NAME pass COMMAND test-pass --alpha)\n"
+        "add_test(NAME fail COMMAND test-fail --beta WORKING_DIRECTORY work)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_test(PARALLEL_LEVEL 3 TEST_LOAD 4 OUTPUT_JUNIT junit.xml RETURN_VALUE TEST_RV CAPTURE_CMAKE_ERROR TEST_CE APPEND QUIET SCHEDULE_RANDOM)\n"
+        "ctest_submit(PARTS Test RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(mock.call_count == 2);
+    ASSERT(mock.saw_test_pass_tool);
+    ASSERT(mock.saw_test_fail_tool);
+    ASSERT(mock.saw_pass_arg);
+    ASSERT(mock.saw_fail_arg);
+    ASSERT(strstr(mock.default_working_directory, "ctest_test_exec_bin") != NULL);
+    ASSERT(strstr(mock.custom_working_directory, "ctest_test_exec_bin/work") != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_RV")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("-1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::STATUS")),
+                     nob_sv_from_cstr("TESTED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::PARALLEL_LEVEL_RESOLVED")),
+                     nob_sv_from_cstr("3")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::RESOLVED_TEST_LOAD")),
+                     nob_sv_from_cstr("4")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::SCHEDULE_RANDOM")),
+                     nob_sv_from_cstr("ON")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::RESOLVED_OUTPUT_JUNIT")),
+                          nob_sv_from_cstr("ctest_test_exec_bin/junit.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                          nob_sv_from_cstr("Test")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("Test.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("TestManifest.txt")));
+    ASSERT(!sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                           nob_sv_from_cstr("junit.xml")));
+
+    String_View test_xml = {0};
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("ctest_test"),
+                                             nob_sv_from_cstr("TEST_XML"),
+                                             &test_xml));
+    char *test_xml_c = arena_strndup(temp_arena, test_xml.data, test_xml.count);
+    ASSERT(test_xml_c != NULL);
+    ASSERT(nob_file_exists(test_xml_c));
+
+    Nob_String_Builder test_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(test_xml_c, &test_sb));
+    ASSERT(strstr(test_sb.items, "<Testing>") != NULL);
+    ASSERT(strstr(test_sb.items, "test-pass --alpha") != NULL);
+    ASSERT(strstr(test_sb.items, "test-fail --beta") != NULL);
+    ASSERT(strstr(test_sb.items, "<FailedTests>1</FailedTests>") != NULL);
+    ASSERT(strstr(test_sb.items, "ctest_test_exec_bin/junit.xml") != NULL);
+    nob_sb_free(test_sb);
+
+    String_View junit = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_test::RESOLVED_OUTPUT_JUNIT"));
+    char *junit_c = arena_strndup(temp_arena, junit.data, junit.count);
+    ASSERT(junit_c != NULL);
+    ASSERT(nob_file_exists(junit_c));
+
+    Nob_String_Builder junit_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(junit_c, &junit_sb));
+    ASSERT(strstr(junit_sb.items, "<testsuite") != NULL);
+    ASSERT(strstr(junit_sb.items, "name=\"pass\"") != NULL);
+    ASSERT(strstr(junit_sb.items, "name=\"fail\"") != NULL);
+    ASSERT(strstr(junit_sb.items, "<failure") != NULL);
+    nob_sb_free(junit_sb);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part) {
     Arena *temp_arena = arena_create(3 * 1024 * 1024);
     Arena *event_arena = arena_create(3 * 1024 * 1024);
@@ -1280,7 +1842,14 @@ TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submi
     ASSERT(stream != NULL);
 
     ASSERT(nob_mkdir_if_not_exists("ctest_coverage_exec_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_coverage_exec_src/src"));
     ASSERT(nob_mkdir_if_not_exists("ctest_coverage_exec_bin"));
+    ASSERT(nob_write_entire_file("ctest_coverage_exec_src/src/main.c",
+                                 "int main(void) { return 0; }\n",
+                                 strlen("int main(void) { return 0; }\n")));
+    ASSERT(nob_write_entire_file("ctest_coverage_exec_src/src/net.c",
+                                 "int net(void) { return 0; }\n",
+                                 strlen("int net(void) { return 0; }\n")));
 
     Ctest_Coverage_Mock_Process_Data mock = {0};
     EvalServices services = {
@@ -1306,6 +1875,8 @@ TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submi
         "set(CMAKE_CURRENT_BINARY_DIR ctest_coverage_exec_bin)\n"
         "set(COVERAGE_COMMAND \"coverage-tool --mode scan\")\n"
         "set(COVERAGE_EXTRA_FLAGS \"--fast;--xml\")\n"
+        "set_source_files_properties(ctest_coverage_exec_src/src/main.c PROPERTIES LABELS \"core;ui\")\n"
+        "set_source_files_properties(ctest_coverage_exec_src/src/net.c PROPERTIES LABELS infra)\n"
         "ctest_start(Experimental ctest_coverage_exec_src .)\n"
         "ctest_coverage(LABELS core ui RETURN_VALUE COV_RV CAPTURE_CMAKE_ERROR COV_CE APPEND QUIET)\n"
         "ctest_submit(PARTS Coverage RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
@@ -1355,6 +1926,9 @@ TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submi
     ASSERT(strstr(coverage_sb.items, "<Append>true</Append>") != NULL);
     ASSERT(strstr(coverage_sb.items, "<Label>core</Label>") != NULL);
     ASSERT(strstr(coverage_sb.items, "<Label>ui</Label>") != NULL);
+    ASSERT(strstr(coverage_sb.items, "<FilteredSourceCount>1</FilteredSourceCount>") != NULL);
+    ASSERT(strstr(coverage_sb.items, "ctest_coverage_exec_src/src/main.c") != NULL);
+    ASSERT(strstr(coverage_sb.items, "ctest_coverage_exec_src/src/net.c") == NULL);
     nob_sb_free(coverage_sb);
 
     String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::MANIFEST"));
@@ -1367,6 +1941,129 @@ TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submi
     ASSERT(strstr(manifest_sb.items, "COMMAND=ctest_coverage") != NULL);
     ASSERT(strstr(manifest_sb.items, "PARTS=Coverage") != NULL);
     ASSERT(strstr(manifest_sb.items, "Coverage.xml") != NULL);
+    nob_sb_free(manifest_sb);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_update_executes_documented_command_and_stages_submit_part) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("ctest_update_exec_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_update_exec_src/.git"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_update_exec_bin"));
+
+    Ctest_Submit_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_submit_mock_process_run,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_BINARY_DIR ctest_update_exec_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_update_exec_bin)\n"
+        "set(CTEST_SUBMIT_URL https://submit.example.test/submit.php?project=Nobify)\n"
+        "set(CTEST_GIT_COMMAND update-tool)\n"
+        "set(CTEST_GIT_UPDATE_OPTIONS \"--mode;sync\")\n"
+        "ctest_start(Experimental ctest_update_exec_src .)\n"
+        "ctest_update(RETURN_VALUE UPD_RV CAPTURE_CMAKE_ERROR UPD_CE QUIET)\n"
+        "ctest_submit(PARTS Update RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    ASSERT(mock.call_count == 2);
+    ASSERT(mock.submit_call_count == 1);
+    ASSERT(mock.update_call_count == 1);
+    ASSERT(mock.saw_update_tool);
+    ASSERT(mock.saw_update_mode_flag);
+    ASSERT(mock.saw_update_mode_value);
+    ASSERT(strstr(mock.update_working_directory, "ctest_update_exec_src") != NULL);
+    ASSERT(mock.saw_manifest_form);
+    ASSERT(mock.saw_parts_form);
+    ASSERT(mock.file_form_count == 2);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPD_RV")), nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPD_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::STATUS")),
+                     nob_sv_from_cstr("UPDATED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::UPDATE_TYPE")),
+                     nob_sv_from_cstr("git")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::UPDATE_COMMAND")),
+                     nob_sv_from_cstr("update-tool")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::UPDATE_OPTIONS_RESOLVED")),
+                     nob_sv_from_cstr("--mode;sync")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::UPDATED_COUNT")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::UPDATED_FILES")),
+                          nob_sv_from_cstr("src/main.c")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::UPDATED_FILES")),
+                          nob_sv_from_cstr("src/lib.c")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
+                     nob_sv_from_cstr("SUBMITTED")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                     nob_sv_from_cstr("Update")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/Update.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("UpdateManifest.txt")));
+
+    String_View update_xml = {0};
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("ctest_update"),
+                                             nob_sv_from_cstr("UPDATE_XML"),
+                                             &update_xml));
+    char *update_xml_c = arena_strndup(temp_arena, update_xml.data, update_xml.count);
+    ASSERT(update_xml_c != NULL);
+    ASSERT(nob_file_exists(update_xml_c));
+
+    Nob_String_Builder update_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(update_xml_c, &update_sb));
+    ASSERT(strstr(update_sb.items, "<Update>") != NULL);
+    ASSERT(strstr(update_sb.items, "<UpdateType>git</UpdateType>") != NULL);
+    ASSERT(strstr(update_sb.items, "update-tool") != NULL);
+    ASSERT(strstr(update_sb.items, "--mode;sync") != NULL);
+    ASSERT(strstr(update_sb.items, "<UpdatedCount>2</UpdatedCount>") != NULL);
+    ASSERT(strstr(update_sb.items, "<File>src/main.c</File>") != NULL);
+    ASSERT(strstr(update_sb.items, "<File>src/lib.c</File>") != NULL);
+    nob_sb_free(update_sb);
+
+    String_View manifest = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::MANIFEST"));
+    char *manifest_c = arena_strndup(temp_arena, manifest.data, manifest.count);
+    ASSERT(manifest_c != NULL);
+    ASSERT(nob_file_exists(manifest_c));
+
+    Nob_String_Builder manifest_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(manifest_c, &manifest_sb));
+    ASSERT(strstr(manifest_sb.items, "COMMAND=ctest_update") != NULL);
+    ASSERT(strstr(manifest_sb.items, "PARTS=Update") != NULL);
+    ASSERT(strstr(manifest_sb.items, "Update.xml") != NULL);
     nob_sb_free(manifest_sb);
 
     eval_test_destroy(ctx);
@@ -1469,15 +2166,28 @@ TEST(evaluator_ctest_run_script_returns_last_script_status) {
     TEST_PASS();
 }
 
-TEST(evaluator_ctest_memcheck_models_documented_request_surface) {
-    Arena *temp_arena = arena_create(2 * 1024 * 1024);
-    Arena *event_arena = arena_create(2 * 1024 * 1024);
+TEST(evaluator_ctest_memcheck_executes_backend_and_stages_submit_part) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
 
     Cmake_Event_Stream *stream = event_stream_create(event_arena);
     ASSERT(stream != NULL);
 
-    ASSERT(nob_mkdir_if_not_exists("ctest_memcheck_modeled_bin"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_memcheck_exec_bin"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_memcheck_exec_bin/work"));
+    ASSERT(nob_write_entire_file("ctest_memcheck_exec_bin/ctest-resource.json",
+                                 "{ }\n",
+                                 strlen("{ }\n")));
+    ASSERT(nob_write_entire_file("ctest_memcheck_exec_bin/suppressions.supp",
+                                 "leak:ignore\n",
+                                 strlen("leak:ignore\n")));
+
+    Ctest_Memcheck_Mock_Process_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .process_run_capture = ctest_memcheck_mock_process_run,
+    };
 
     Eval_Test_Init init = {0};
     init.arena = temp_arena;
@@ -1486,18 +2196,29 @@ TEST(evaluator_ctest_memcheck_models_documented_request_surface) {
     init.source_dir = nob_sv_from_cstr(".");
     init.binary_dir = nob_sv_from_cstr(".");
     init.current_file = "CMakeLists.txt";
+    init.services = &services;
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
     Ast_Root root = parse_cmake(
         temp_arena,
-        "set(CMAKE_BINARY_DIR ctest_memcheck_modeled_bin)\n"
-        "set(CMAKE_CURRENT_BINARY_DIR ctest_memcheck_modeled_bin)\n"
-        "set(CTEST_BINARY_DIRECTORY ctest_memcheck_modeled_bin)\n"
+        "set(CMAKE_BINARY_DIR ctest_memcheck_exec_bin)\n"
+        "set(CMAKE_CURRENT_BINARY_DIR ctest_memcheck_exec_bin)\n"
+        "set(CTEST_SUBMIT_URL https://submit.example.test/submit.php?project=Nobify)\n"
         "set(CTEST_TEST_LOAD 7)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND memcheck-tool)\n"
+        "set(CTEST_MEMORYCHECK_TYPE Valgrind)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"--xml=yes;--trace-children=yes\")\n"
+        "set(CTEST_MEMORYCHECK_SANITIZER_OPTIONS \"--keep-debuginfo=yes\")\n"
+        "set(CTEST_MEMORYCHECK_SUPPRESSIONS_FILE suppressions.supp)\n"
         "set(CTEST_RESOURCE_SPEC_FILE ctest-resource.json)\n"
-        "ctest_memcheck(START 2 END 10 STRIDE 2 EXCLUDE bad INCLUDE good EXCLUDE_LABEL slow INCLUDE_LABEL smoke EXCLUDE_FIXTURE fx EXCLUDE_FIXTURE_SETUP fxsetup EXCLUDE_FIXTURE_CLEANUP fxcleanup PARALLEL_LEVEL 3 SCHEDULE_RANDOM off STOP_ON_FAILURE STOP_TIME 23:59 RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE REPEAT until_pass:4 OUTPUT_JUNIT reports/memcheck.xml DEFECT_COUNT MEM_DEFECTS APPEND QUIET)\n");
+        "enable_testing()\n"
+        "add_test(NAME pass COMMAND memcheck-pass --alpha)\n"
+        "add_test(NAME defect COMMAND memcheck-fail --beta WORKING_DIRECTORY work)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_memcheck(START 1 END 2 STRIDE 1 PARALLEL_LEVEL 3 SCHEDULE_RANDOM OFF RETURN_VALUE MEM_RV CAPTURE_CMAKE_ERROR MEM_CE DEFECT_COUNT MEM_DEFECTS OUTPUT_JUNIT reports/memcheck.xml QUIET)\n"
+        "ctest_submit(PARTS MemCheck RETURN_VALUE SUB_RV CAPTURE_CMAKE_ERROR SUB_CE)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
@@ -1505,38 +2226,109 @@ TEST(evaluator_ctest_memcheck_models_documented_request_surface) {
     ASSERT(report->error_count == 0);
     ASSERT(report->warning_count == 0);
 
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_RV")), nob_sv_from_cstr("0")));
+    ASSERT(mock.memcheck_call_count == 2);
+    ASSERT(mock.submit.submit_call_count == 1);
+    ASSERT(mock.submit.file_form_count == 2);
+    ASSERT(mock.submit.saw_manifest_form);
+    ASSERT(mock.submit.saw_parts_form);
+    ASSERT(mock.saw_memcheck_tool);
+    ASSERT(mock.saw_backend_xml_flag);
+    ASSERT(mock.saw_backend_trace_children_flag);
+    ASSERT(mock.saw_backend_sanitizer_flag);
+    ASSERT(mock.saw_suppressions_flag);
+    ASSERT(mock.saw_separator);
+    ASSERT(mock.saw_test_pass_tool);
+    ASSERT(mock.saw_test_fail_tool);
+    ASSERT(mock.saw_pass_arg);
+    ASSERT(mock.saw_fail_arg);
+    ASSERT(strstr(mock.default_working_directory, "ctest_memcheck_exec_bin") != NULL);
+    ASSERT(strstr(mock.custom_working_directory, "ctest_memcheck_exec_bin/work") != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_RV")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_CE")), nob_sv_from_cstr("0")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MEM_DEFECTS")), nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_RV")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_CE")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STATUS")),
-                     nob_sv_from_cstr("MODELED")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::APPEND")),
-                     nob_sv_from_cstr("1")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STOP_ON_FAILURE")),
-                     nob_sv_from_cstr("1")));
+                     nob_sv_from_cstr("MEMCHECKED")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::START")),
-                     nob_sv_from_cstr("2")));
+                     nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::END")),
-                     nob_sv_from_cstr("10")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STRIDE")),
                      nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STRIDE")),
+                     nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::PARALLEL_LEVEL")),
                      nob_sv_from_cstr("3")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::SCHEDULE_RANDOM")),
                      nob_sv_from_cstr("OFF")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::REPEAT")),
-                     nob_sv_from_cstr("UNTIL_PASS:4")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_BUILD")),
-                          nob_sv_from_cstr("ctest_memcheck_modeled_bin")));
+                          nob_sv_from_cstr("ctest_memcheck_exec_bin")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_TEST_LOAD")),
                      nob_sv_from_cstr("7")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx,
                                             nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_RESOURCE_SPEC_FILE")),
-                          nob_sv_from_cstr("ctest_memcheck_modeled_bin/ctest-resource.json")));
+                          nob_sv_from_cstr("ctest_memcheck_exec_bin/ctest-resource.json")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx,
                                             nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_OUTPUT_JUNIT")),
-                          nob_sv_from_cstr("ctest_memcheck_modeled_bin/reports/memcheck.xml")));
-    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::MEMCHECK_XML")).count == 0);
+                          nob_sv_from_cstr("ctest_memcheck_exec_bin/reports/memcheck.xml")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::BACKEND_TYPE")),
+                     nob_sv_from_cstr("Valgrind")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::BACKEND_COMMAND")),
+                     nob_sv_from_cstr("memcheck-tool")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::BACKEND_OPTIONS")),
+                     nob_sv_from_cstr("--xml=yes;--trace-children=yes")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx,
+                                       nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::BACKEND_SANITIZER_OPTIONS")),
+                     nob_sv_from_cstr("--keep-debuginfo=yes")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx,
+                                            nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_SUPPRESSIONS_FILE")),
+                          nob_sv_from_cstr("ctest_memcheck_exec_bin/suppressions.supp")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::DEFECT_COUNT_RESOLVED")),
+                     nob_sv_from_cstr("2")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::FAILED_COUNT")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
+                          nob_sv_from_cstr("MemCheck")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("MemCheck.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("MemCheckManifest.txt")));
+    ASSERT(!sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                           nob_sv_from_cstr("reports/memcheck.xml")));
+
+    String_View memcheck_xml = {0};
+    ASSERT(eval_test_canonical_artifact_find(ctx,
+                                             nob_sv_from_cstr("ctest_memcheck"),
+                                             nob_sv_from_cstr("MEMCHECK_XML"),
+                                             &memcheck_xml));
+    char *memcheck_xml_c = arena_strndup(temp_arena, memcheck_xml.data, memcheck_xml.count);
+    ASSERT(memcheck_xml_c != NULL);
+    ASSERT(nob_file_exists(memcheck_xml_c));
+
+    Nob_String_Builder memcheck_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(memcheck_xml_c, &memcheck_sb));
+    ASSERT(strstr(memcheck_sb.items, "<MemCheck>") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "<BackendType>Valgrind</BackendType>") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "<BackendCommand>memcheck-tool</BackendCommand>") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "<DefectCount>2</DefectCount>") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "<FailedTests>1</FailedTests>") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "memcheck-pass --alpha") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "memcheck-fail --beta") != NULL);
+    ASSERT(strstr(memcheck_sb.items, "--suppressions=") != NULL);
+    nob_sb_free(memcheck_sb);
+
+    String_View junit = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::RESOLVED_OUTPUT_JUNIT"));
+    char *junit_c = arena_strndup(temp_arena, junit.data, junit.count);
+    ASSERT(junit_c != NULL);
+    ASSERT(nob_file_exists(junit_c));
+
+    Nob_String_Builder junit_sb = {0};
+    ASSERT(evaluator_read_entire_file_cstr(junit_c, &junit_sb));
+    ASSERT(strstr(junit_sb.items, "<testsuite") != NULL);
+    ASSERT(strstr(junit_sb.items, "name=\"pass\"") != NULL);
+    ASSERT(strstr(junit_sb.items, "name=\"defect\"") != NULL);
+    ASSERT(strstr(junit_sb.items, "<failure") != NULL);
+    nob_sb_free(junit_sb);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1617,11 +2409,19 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
         "set(CTEST_SUBMIT_INACTIVITY_TIMEOUT 9)\n"
         "set(CTEST_NOTES_FILES notes.md)\n"
         "set(CTEST_EXTRA_SUBMIT_FILES extra.log)\n"
+        "set(CTEST_UPDATE_COMMAND update-tool)\n"
+        "set(CTEST_BUILD_COMMAND build-tool)\n"
         "ctest_start(Experimental . . TRACK Nightly)\n"
+        "ctest_update()\n"
         "ctest_build()\n"
+        "ctest_test()\n"
+        "ctest_memcheck()\n"
         "ctest_upload(FILES upload.bin)\n"
         "unset(NOBIFY_CTEST::ctest_start::STATUS)\n"
+        "unset(NOBIFY_CTEST::ctest_update::STATUS)\n"
         "unset(NOBIFY_CTEST::ctest_build::STATUS)\n"
+        "unset(NOBIFY_CTEST::ctest_test::STATUS)\n"
+        "unset(NOBIFY_CTEST::ctest_memcheck::STATUS)\n"
         "unset(NOBIFY_CTEST::ctest_upload::UPLOAD_XML)\n"
         "unset(NOBIFY_CTEST::ctest_upload::RESOLVED_FILES)\n"
         "ctest_submit(HTTPHEADER \"Authorization: Bearer one\" HTTPHEADER \"X-Nobify: yes\" RETRY_COUNT 1 RETRY_DELAY 0 RETURN_VALUE SUBMIT_RV BUILD_ID SUBMIT_BUILD_ID)\n");
@@ -1640,7 +2440,7 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::HTTPHEADER")),
                      nob_sv_from_cstr("Authorization: Bearer one;X-Nobify: yes")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
-                     nob_sv_from_cstr("Start;Build;Notes;ExtraFiles;Upload")));
+                     nob_sv_from_cstr("Start;Update;Build;Test;MemCheck;Notes;ExtraFiles;Upload")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
                      nob_sv_from_cstr("SUBMITTED")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::ATTEMPTS")),
@@ -1660,6 +2460,22 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("ctest_submit_defaults_bin/extra.log")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/Update.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("UpdateManifest.txt")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/Build.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("BuildManifest.txt")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/Test.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("TestManifest.txt")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("/MemCheck.xml")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
+                          nob_sv_from_cstr("MemCheckManifest.txt")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("ctest_submit_defaults_bin/upload.bin")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("/Upload.xml")));
@@ -1676,19 +2492,24 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(strstr(submit_sb.items, "HTTPHEADERS=Authorization: Bearer one;X-Nobify: yes") != NULL);
     ASSERT(strstr(submit_sb.items, "RETRY_COUNT=1") != NULL);
     ASSERT(strstr(submit_sb.items, "INACTIVITY_TIMEOUT=9") != NULL);
-    ASSERT(strstr(submit_sb.items, "PARTS=Start;Build;Notes;ExtraFiles;Upload") != NULL);
+    ASSERT(strstr(submit_sb.items, "PARTS=Start;Update;Build;Test;MemCheck;Notes;ExtraFiles;Upload") != NULL);
     ASSERT(strstr(submit_sb.items, "notes.md") != NULL);
     ASSERT(strstr(submit_sb.items, "extra.log") != NULL);
     ASSERT(strstr(submit_sb.items, "upload.bin") != NULL);
     nob_sb_free(submit_sb);
 
-    ASSERT(mock.call_count == 2);
+    ASSERT(mock.call_count == 4);
+    ASSERT(mock.submit_call_count == 2);
+    ASSERT(mock.update_call_count == 1);
+    ASSERT(mock.build_call_count == 1);
     ASSERT(mock.saw_auth_header);
     ASSERT(mock.saw_extra_header);
     ASSERT(mock.saw_manifest_form);
     ASSERT(mock.saw_parts_form);
-    ASSERT(mock.file_form_count == 8);
+    ASSERT(mock.file_form_count == 24);
     ASSERT(mock.saw_legacy_url);
+    ASSERT(mock.saw_update_tool);
+    ASSERT(mock.saw_build_tool);
     ASSERT(mock.saw_upload_xml_form);
     ASSERT(mock.saw_upload_payload_form);
 
@@ -3657,10 +4478,13 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_ctest_configure_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_configure_captures_missing_command_without_fatal_error(passed, failed, skipped);
     test_evaluator_ctest_configure_uses_documented_ctest_directory_defaults_without_start(passed, failed, skipped);
+    test_evaluator_ctest_build_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
+    test_evaluator_ctest_test_executes_plan_and_stages_test_xml_without_submitting_junit(passed, failed, skipped);
     test_evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part(passed, failed, skipped);
+    test_evaluator_ctest_update_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_coverage_captures_missing_command_without_fatal_error(passed, failed, skipped);
     test_evaluator_ctest_run_script_returns_last_script_status(passed, failed, skipped);
-    test_evaluator_ctest_memcheck_models_documented_request_surface(passed, failed, skipped);
+    test_evaluator_ctest_memcheck_executes_backend_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_test_workspace_golden_updates_target_repo_root(passed, failed, skipped);
     test_evaluator_ctest_submit_models_documented_local_surface(passed, failed, skipped);
     test_evaluator_ctest_submit_models_cdash_upload_signature(passed, failed, skipped);

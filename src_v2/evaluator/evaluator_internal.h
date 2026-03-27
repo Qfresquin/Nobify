@@ -495,6 +495,7 @@ typedef struct {
     String_View tag_file;
     String_View tag_dir;
     String_View manifest;
+    String_View output_junit;
     String_View submit_files;
     bool has_primary_artifact;
     size_t primary_artifact_index;

@@ -83,6 +83,7 @@ static Eval_Ctest_Step_Record eval_ctest_step_record_copy_to_event(EvalExecConte
     out.tag_file = sv_copy_to_event_arena(ctx, src->tag_file);
     out.tag_dir = sv_copy_to_event_arena(ctx, src->tag_dir);
     out.manifest = sv_copy_to_event_arena(ctx, src->manifest);
+    out.output_junit = sv_copy_to_event_arena(ctx, src->output_junit);
     out.submit_files = sv_copy_to_event_arena(ctx, src->submit_files);
     out.has_primary_artifact = src->has_primary_artifact;
     out.primary_artifact_index = src->primary_artifact_index;

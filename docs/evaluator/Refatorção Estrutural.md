@@ -195,9 +195,9 @@ Guardrails for all waves below:
 Point-in-time `ctest_*` status for this follow-up plan:
 - already `FULL`: `ctest_configure`, `ctest_empty_binary_directory`,
   `ctest_read_custom_files`, `ctest_run_script`, `ctest_sleep`,
-  `ctest_start`, `ctest_submit`, `ctest_upload`
-- still `PARTIAL`: `ctest_build`, `ctest_coverage`, `ctest_memcheck`,
-  `ctest_test`, `ctest_update`
+  `ctest_start`, `ctest_submit`, `ctest_upload`, `ctest_build`,
+  `ctest_coverage`, `ctest_memcheck`, `ctest_test`, `ctest_update`
+- still `PARTIAL`: none
 
 ### Wave C0: Landed Foundation
 
@@ -216,6 +216,17 @@ Implication for later waves:
   migration
 
 ### Wave C1: Finish `ctest_coverage`
+
+Status:
+- completed (March 26, 2026)
+
+Delivered semantics:
+- `LABELS` now changes the staged `Coverage.xml` payload by filtering the
+  committed coverage-source view against canonical source-property label state
+- the evaluator-local coverage reporting path now preserves the coverage
+  summary line for both normal and `QUIET` execution modes without changing
+  staged artifacts or later submit resolution
+- `evaluator_coverage_matrix.md` now upgrades `ctest_coverage` to `FULL`
 
 Target:
 - raise only `ctest_coverage` from `PARTIAL` to `FULL`
@@ -247,6 +258,19 @@ Exit criteria:
 
 ### Wave C2: Shared Internal CTest Step Runtime
 
+Status:
+- completed (March 26, 2026)
+
+Delivered semantics:
+- `ctest_build`, `ctest_test`, and `ctest_update` now use a shared internal
+  CTest step runtime request/commit path instead of the old
+  `ctest_handle_modeled_step(...)` shortcut
+- `ctest_memcheck` now reuses the same internal runtime core for shared
+  parse/context/commit behavior while keeping its command-local option
+  validation
+- default `ctest_submit()` part resolution continues to come from committed
+  canonical step records rather than projected `NOBIFY_CTEST::*` metadata
+
 Target:
 - extract the shared internal runtime needed by the remaining operational
   `ctest_*` steps without upgrading any command to `FULL` by itself
@@ -271,6 +295,19 @@ Exit criteria:
 
 ### Wave C3: Full `ctest_update`
 
+Status:
+- completed (March 26, 2026)
+
+Delivered semantics:
+- `ctest_update` now resolves source/build session context against the landed
+  canonical CTest state instead of stopping at a modeled-only step record
+- the update step now resolves documented VCS/update command settings,
+  executes through evaluator process services, and materializes the documented
+  `RETURN_VALUE` / `CAPTURE_CMAKE_ERROR` outcomes
+- `Update.xml` plus `UpdateManifest.txt` are now staged as canonical artifacts,
+  so `ctest_submit(PARTS Update)` reuses committed update payloads rather than
+  projected metadata alone
+
 Target:
 - raise `ctest_update` from `PARTIAL` to `FULL`
 
@@ -294,6 +331,17 @@ Exit criteria:
 
 ### Wave C4: Full `ctest_build`
 
+Delivered semantics:
+- `ctest_build` now resolves the canonical session build context plus the
+  documented effective build command instead of stopping at modeled-only
+  metadata
+- the build step now executes through evaluator process services and
+  materializes canonical `NUMBER_ERRORS`, `NUMBER_WARNINGS`, `RETURN_VALUE`,
+  and `CAPTURE_CMAKE_ERROR` from the executed result
+- `Build.xml` plus `BuildManifest.txt` are now committed canonical artifacts,
+  so `ctest_submit(PARTS Build)` reuses staged build payloads rather than
+  projected metadata alone
+
 Target:
 - raise `ctest_build` from `PARTIAL` to `FULL`
 
@@ -315,6 +363,20 @@ Exit criteria:
 
 ### Wave C5: Full `ctest_test`
 
+Delivered semantics:
+- `ctest_test()` now resolves its runnable test plan from the canonical
+  evaluator/session test model instead of committing a modeled-only step
+- the step executes planned tests through evaluator process services and
+  materializes canonical pass/fail counts plus `RETURN_VALUE` /
+  `CAPTURE_CMAKE_ERROR`
+- `Test.xml` and `TestManifest.txt` are staged under `Testing/<tag>` and
+  committed for later submit reuse
+- `OUTPUT_JUNIT` is preserved as a side output of the committed step without
+  replacing the canonical `Test.xml` artifact
+- `ctest_submit(PARTS Test)` now reuses the committed `Test.xml` artifact set
+  instead of projected metadata
+- focused evaluator SAN coverage now validates execution, JUnit side output,
+  and submit reuse
 Target:
 - raise `ctest_test` from `PARTIAL` to `FULL`
 
@@ -337,6 +399,22 @@ Exit criteria:
 - `evaluator_coverage_matrix.md` upgrades `ctest_test` to `FULL`
 
 ### Wave C6: Full `ctest_memcheck`
+
+Status:
+- completed (March 27, 2026)
+
+Delivered semantics:
+- `ctest_memcheck()` now resolves backend type, command, options, sanitizer
+  options, suppressions, and the canonical session/build test-plan context
+  instead of stopping at modeled step metadata
+- the step executes selected tests through the configured memcheck backend on
+  top of the shared `ctest_test()` runtime path and extracts real defect counts
+  from executed output
+- `DEFECT_COUNT`, `RETURN_VALUE`, and `CAPTURE_CMAKE_ERROR` now come from the
+  executed memcheck results rather than placeholders
+- `MemCheck.xml` plus `MemCheckManifest.txt` are committed canonical artifacts,
+  so `ctest_submit(PARTS MemCheck)` reuses staged memcheck payloads and
+  `OUTPUT_JUNIT` remains only a side output
 
 Target:
 - raise `ctest_memcheck` from `PARTIAL` to `FULL`
