@@ -238,6 +238,22 @@ Closure checks:
 
 ### Wave T1: Shared Snapshot And Case-Pack Support
 
+Status:
+- completed (March 27, 2026)
+
+Delivered artifacts:
+- `test_v2/test_snapshot_support.h` and `test_v2/test_snapshot_support.c`
+  now define the shared snapshot/case-pack helper surface for text IO,
+  newline normalization, case-pack parse, escaped snapshot rendering, and
+  golden compare/update flow
+- `arena`, `lexer`, `parser`, `pipeline`, and `evaluator` now consume the
+  shared helper layer instead of carrying their own generic plumbing copies
+- hardcoded generic case-count checks have been removed from the shared golden
+  suites so parsed case-pack content and golden snapshots remain the canonical
+  baseline
+- `src_v2/build/nob_test.c` now compiles the shared support module into the
+  suites that depend on it
+
 Deliverables:
 - extract one canonical shared support surface for:
   - text file load

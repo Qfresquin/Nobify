@@ -1,5 +1,6 @@
 #include "test_v2_assert.h"
 #include "test_case_pack.h"
+#include "test_snapshot_support.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
@@ -18,11 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-    String_View name;
-    String_View script;
-} Pipeline_Case;
-
+typedef Test_Case_Pack_Entry Pipeline_Case;
 typedef Pipeline_Case *Pipeline_Case_List;
 
 static void pipeline_init_event(Event *ev, Event_Kind kind, size_t line);
@@ -41,63 +38,6 @@ static Ast_Root parse_cmake(Arena *arena, const char *script) {
         if (!token_list_append(arena, &toks, t)) return NULL;
     }
     return parse_tokens(arena, toks);
-}
-
-static bool pipeline_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
-    if (!arena || !path || !out) return false;
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path, &sb)) return false;
-
-    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
-    size_t len = sb.count;
-    nob_sb_free(sb);
-    if (!text) return false;
-
-    *out = nob_sv_from_parts(text, len);
-    return true;
-}
-
-static String_View pipeline_normalize_newlines_to_arena(Arena *arena, String_View in) {
-    if (!arena) return nob_sv_from_cstr("");
-
-    char *buf = (char*)arena_alloc(arena, in.count + 1);
-    if (!buf) return nob_sv_from_cstr("");
-
-    size_t out_count = 0;
-    for (size_t i = 0; i < in.count; i++) {
-        char c = in.data[i];
-        if (c == '\r') continue;
-        buf[out_count++] = c;
-    }
-
-    buf[out_count] = '\0';
-    return nob_sv_from_parts(buf, out_count);
-}
-
-static bool parse_case_pack_to_arena(Arena *arena, String_View content, Pipeline_Case_List *out) {
-    return test_case_pack_parse(arena, content, (Test_Case_Pack_Entry**)out);
-}
-
-static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
-    nob_sb_append_cstr(sb, "'");
-    for (size_t i = 0; i < sv.count; i++) {
-        char c = sv.data[i];
-        if (c == '\\') {
-            nob_sb_append_cstr(sb, "\\\\");
-        } else if (c == '\n') {
-            nob_sb_append_cstr(sb, "\\n");
-        } else if (c == '\r') {
-            nob_sb_append_cstr(sb, "\\r");
-        } else if (c == '\t') {
-            nob_sb_append_cstr(sb, "\\t");
-        } else if (c == '\'') {
-            nob_sb_append_cstr(sb, "\\'");
-        } else {
-            nob_sb_append(sb, c);
-        }
-    }
-    nob_sb_append_cstr(sb, "'");
 }
 
 static const char *pipeline_target_type_name(BM_Target_Kind type) {
@@ -153,7 +93,7 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
     BM_String_Span global_link_libs = bm_query_global_raw_property_items(model, nob_sv_from_cstr("LINK_LIBRARIES"));
 
     nob_sb_append_cstr(sb, "MODEL project=");
-    snapshot_append_escaped_sv(sb, bm_query_project_name(model));
+    test_snapshot_append_escaped_sv(sb, bm_query_project_name(model));
     nob_sb_append_cstr(sb, nob_temp_sprintf(
         " targets=%zu packages=%zu tests=%zu install_enabled=%d testing_enabled=%d cpack_groups=%zu cpack_types=%zu cpack_components=%zu\n",
         target_count,
@@ -187,7 +127,7 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         BM_String_Item_Span link_dirs = bm_query_target_link_directories_raw(model, target_id);
 
         nob_sb_append_cstr(sb, "TARGET0 name=");
-        snapshot_append_escaped_sv(sb, bm_query_target_name(model, target_id));
+        test_snapshot_append_escaped_sv(sb, bm_query_target_name(model, target_id));
         nob_sb_append_cstr(sb, nob_temp_sprintf(
             " type=%s sources=%zu deps=%zu link_libs=%zu interface_libs=%zu link_opts=%zu link_dirs=%zu\n",
             pipeline_target_type_name(bm_query_target_kind(model, target_id)),
@@ -378,24 +318,18 @@ static bool assert_pipeline_golden_casepack(const char *input_path, const char *
     if (!arena) return false;
 
     String_View input = {0};
-    String_View expected = {0};
     String_View actual = {0};
     bool ok = true;
 
-    if (!pipeline_load_text_file_to_arena(arena, input_path, &input)) {
+    if (!test_snapshot_load_text_file_to_arena(arena, input_path, &input)) {
         nob_log(NOB_ERROR, "golden: failed to read input: %s", input_path);
         ok = false;
         goto done;
     }
 
     Pipeline_Case_List cases = NULL;
-    if (!parse_case_pack_to_arena(arena, input, &cases)) {
+    if (!test_snapshot_parse_case_pack_to_arena(arena, input, &cases)) {
         nob_log(NOB_ERROR, "golden: invalid case-pack: %s", input_path);
-        ok = false;
-        goto done;
-    }
-    if (arena_arr_len(cases) != 7) {
-        nob_log(NOB_ERROR, "golden: unexpected pipeline case count: got=%zu expected=7", arena_arr_len(cases));
         ok = false;
         goto done;
     }
@@ -406,27 +340,7 @@ static bool assert_pipeline_golden_casepack(const char *input_path, const char *
         goto done;
     }
 
-    String_View actual_norm = pipeline_normalize_newlines_to_arena(arena, actual);
-
-    if (test_ws_should_update_golden()) {
-        if (!test_ws_update_golden_file(expected_path, actual_norm.data, actual_norm.count)) {
-            nob_log(NOB_ERROR, "golden: failed to update expected: %s", expected_path);
-            ok = false;
-        }
-        goto done;
-    }
-
-    if (!pipeline_load_text_file_to_arena(arena, expected_path, &expected)) {
-        nob_log(NOB_ERROR, "golden: failed to read expected: %s", expected_path);
-        ok = false;
-        goto done;
-    }
-
-    String_View expected_norm = pipeline_normalize_newlines_to_arena(arena, expected);
-    if (!nob_sv_eq(actual_norm, expected_norm)) {
-        nob_log(NOB_ERROR, "golden mismatch for %s", input_path);
-        nob_log(NOB_ERROR, "--- expected (%s) ---\n%.*s", expected_path, (int)expected_norm.count, expected_norm.data);
-        nob_log(NOB_ERROR, "--- actual ---\n%.*s", (int)actual_norm.count, actual_norm.data);
+    if (!test_snapshot_assert_golden_output(arena, input_path, expected_path, actual, NULL, NULL)) {
         ok = false;
     }
 

@@ -625,6 +625,7 @@ static void append_v2_arena_runtime_sources(Nob_Cmd *cmd) {
 static void append_v2_arena_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
         "test_v2/arena/test_arena_v2_main.c",
         "test_v2/arena/test_arena_v2_suite.c");
@@ -633,6 +634,7 @@ static void append_v2_arena_test_sources(Nob_Cmd *cmd) {
 static void append_v2_lexer_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
         "test_v2/lexer/test_lexer_v2_main.c",
         "test_v2/lexer/test_lexer_v2_suite.c");
@@ -641,6 +643,7 @@ static void append_v2_lexer_test_sources(Nob_Cmd *cmd) {
 static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
         "test_v2/parser/test_parser_v2_main.c",
         "test_v2/parser/test_parser_v2_suite.c");
@@ -649,6 +652,7 @@ static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
         "test_v2/evaluator/test_evaluator_v2_support.c",
         "test_v2/evaluator/test_evaluator_v2_main.c",
@@ -663,6 +667,7 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
 static void append_v2_evaluator_integration_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
         "test_v2/evaluator/test_evaluator_v2_support.c",
         "test_v2/evaluator/test_evaluator_v2_integration_main.c",
@@ -677,6 +682,7 @@ static void append_v2_evaluator_integration_test_sources(Nob_Cmd *cmd) {
 static void append_v2_pipeline_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
         "test_v2/test_workspace.c",
         "test_v2/pipeline/test_pipeline_v2_main.c",
         "test_v2/pipeline/test_pipeline_v2_suite.c");

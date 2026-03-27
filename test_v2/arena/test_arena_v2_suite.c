@@ -1,5 +1,6 @@
 #include "test_v2_assert.h"
 #include "test_case_pack.h"
+#include "test_snapshot_support.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
@@ -12,10 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-    String_View name;
-    String_View script;
-} Arena_Case;
+typedef Test_Case_Pack_Entry Arena_Case;
 
 typedef struct {
     Arena_Case *items;
@@ -58,43 +56,11 @@ static void cleanup_record_order(void *userdata) {
     }
 }
 
-static bool load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
-    if (!arena || !path || !out) return false;
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path, &sb)) return false;
-
-    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
-    size_t len = sb.count;
-    nob_sb_free(sb);
-    if (!text) return false;
-
-    *out = nob_sv_from_parts(text, len);
-    return true;
-}
-
-static String_View normalize_newlines_to_arena(Arena *arena, String_View in) {
-    if (!arena) return nob_sv_from_cstr("");
-
-    char *buf = (char*)arena_alloc(arena, in.count + 1);
-    if (!buf) return nob_sv_from_cstr("");
-
-    size_t out_count = 0;
-    for (size_t i = 0; i < in.count; i++) {
-        char c = in.data[i];
-        if (c == '\r') continue;
-        buf[out_count++] = c;
-    }
-
-    buf[out_count] = '\0';
-    return nob_sv_from_parts(buf, out_count);
-}
-
-static bool parse_case_pack_to_arena(Arena *arena, String_View content, Arena_Case_List *out) {
+static bool arena_parse_case_pack_list(Arena *arena, String_View content, Arena_Case_List *out) {
     Test_Case_Pack_Entry *items = NULL;
     if (!out) return false;
     *out = (Arena_Case_List){0};
-    if (!test_case_pack_parse(arena, content, &items)) return false;
+    if (!test_snapshot_parse_case_pack_to_arena(arena, content, &items)) return false;
     out->items = (Arena_Case*)items;
     out->count = arena_arr_len(items);
     out->capacity = arena_arr_cap(items);
@@ -653,24 +619,18 @@ static bool assert_arena_golden_casepack(const char *input_path, const char *exp
     if (!arena) return false;
 
     String_View input = {0};
-    String_View expected = {0};
     String_View actual = {0};
     bool ok = true;
 
-    if (!load_text_file_to_arena(arena, input_path, &input)) {
+    if (!test_snapshot_load_text_file_to_arena(arena, input_path, &input)) {
         nob_log(NOB_ERROR, "golden: failed to read input: %s", input_path);
         ok = false;
         goto done;
     }
 
     Arena_Case_List cases = {0};
-    if (!parse_case_pack_to_arena(arena, input, &cases)) {
+    if (!arena_parse_case_pack_list(arena, input, &cases)) {
         nob_log(NOB_ERROR, "golden: invalid case-pack: %s", input_path);
-        ok = false;
-        goto done;
-    }
-    if (cases.count != 24) {
-        nob_log(NOB_ERROR, "golden: unexpected arena case count: got=%zu expected=24", cases.count);
         ok = false;
         goto done;
     }
@@ -681,27 +641,7 @@ static bool assert_arena_golden_casepack(const char *input_path, const char *exp
         goto done;
     }
 
-    String_View actual_norm = normalize_newlines_to_arena(arena, actual);
-
-    if (test_ws_should_update_golden()) {
-        if (!test_ws_update_golden_file(expected_path, actual_norm.data, actual_norm.count)) {
-            nob_log(NOB_ERROR, "golden: failed to update expected: %s", expected_path);
-            ok = false;
-        }
-        goto done;
-    }
-
-    if (!load_text_file_to_arena(arena, expected_path, &expected)) {
-        nob_log(NOB_ERROR, "golden: failed to read expected: %s", expected_path);
-        ok = false;
-        goto done;
-    }
-
-    String_View expected_norm = normalize_newlines_to_arena(arena, expected);
-    if (!nob_sv_eq(expected_norm, actual_norm)) {
-        nob_log(NOB_ERROR, "golden mismatch for %s", input_path);
-        nob_log(NOB_ERROR, "--- expected (%s) ---\n%.*s", expected_path, (int)expected_norm.count, expected_norm.data);
-        nob_log(NOB_ERROR, "--- actual ---\n%.*s", (int)actual_norm.count, actual_norm.data);
+    if (!test_snapshot_assert_golden_output(arena, input_path, expected_path, actual, NULL, NULL)) {
         ok = false;
     }
 

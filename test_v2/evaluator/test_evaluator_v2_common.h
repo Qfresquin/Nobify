@@ -3,6 +3,7 @@
 
 #include "test_v2_assert.h"
 #include "test_case_pack.h"
+#include "test_snapshot_support.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
@@ -28,10 +29,7 @@
 #include <unistd.h>
 #endif
 
-typedef struct {
-    String_View name;
-    String_View script;
-} Evaluator_Case;
+typedef Test_Case_Pack_Entry Evaluator_Case;
 
 typedef struct {
     Evaluator_Case *items;
@@ -579,24 +577,7 @@ static Eval_Result native_test_handler_tx_rollback_target(EvalExecContext *ctx, 
 }
 
 static bool evaluator_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
-    if (!arena || !path || !out) return false;
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path, &sb)) return false;
-
-    if (sb.count == 0) {
-        nob_sb_free(sb);
-        *out = nob_sv_from_cstr("");
-        return true;
-    }
-
-    char *text = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
-    size_t len = sb.count;
-    nob_sb_free(sb);
-    if (!text) return false;
-
-    *out = nob_sv_from_parts(text, len);
-    return true;
+    return test_snapshot_load_text_file_to_arena(arena, path, out);
 }
 
 static bool evaluator_read_entire_file_cstr(const char *path, Nob_String_Builder *out) {
@@ -618,20 +599,7 @@ static bool eval_test_append_file_to_log_if_nonempty(Arena *arena,
 }
 
 static String_View evaluator_normalize_newlines_to_arena(Arena *arena, String_View in) {
-    if (!arena) return nob_sv_from_cstr("");
-
-    char *buf = (char*)arena_alloc(arena, in.count + 1);
-    if (!buf) return nob_sv_from_cstr("");
-
-    size_t out_count = 0;
-    for (size_t i = 0; i < in.count; i++) {
-        char c = in.data[i];
-        if (c == '\r') continue;
-        buf[out_count++] = c;
-    }
-
-    buf[out_count] = '\0';
-    return nob_sv_from_parts(buf, out_count);
+    return test_snapshot_normalize_newlines_to_arena(arena, in);
 }
 
 static bool sv_contains_sv(String_View haystack, String_View needle) {
@@ -669,11 +637,11 @@ static String_View semicolon_list_item_at(String_View list, size_t index) {
     return nob_sv_from_cstr("");
 }
 
-static bool parse_case_pack_to_arena(Arena *arena, String_View content, Evaluator_Case_List *out) {
+static bool evaluator_parse_case_pack_list(Arena *arena, String_View content, Evaluator_Case_List *out) {
     Test_Case_Pack_Entry *items = NULL;
     if (!out) return false;
     *out = (Evaluator_Case_List){0};
-    if (!test_case_pack_parse(arena, content, &items)) return false;
+    if (!test_snapshot_parse_case_pack_to_arena(arena, content, &items)) return false;
     out->items = (Evaluator_Case*)items;
     out->count = arena_arr_len(items);
     out->capacity = arena_arr_cap(items);
@@ -681,24 +649,7 @@ static bool parse_case_pack_to_arena(Arena *arena, String_View content, Evaluato
 }
 
 static void snapshot_append_escaped_sv(Nob_String_Builder *sb, String_View sv) {
-    nob_sb_append_cstr(sb, "'");
-    for (size_t i = 0; i < sv.count; i++) {
-        char c = sv.data[i];
-        if (c == '\\') {
-            nob_sb_append_cstr(sb, "\\\\");
-        } else if (c == '\n') {
-            nob_sb_append_cstr(sb, "\\n");
-        } else if (c == '\r') {
-            nob_sb_append_cstr(sb, "\\r");
-        } else if (c == '\t') {
-            nob_sb_append_cstr(sb, "\\t");
-        } else if (c == '\'') {
-            nob_sb_append_cstr(sb, "\\'");
-        } else {
-            nob_sb_append(sb, c);
-        }
-    }
-    nob_sb_append_cstr(sb, "'");
+    test_snapshot_append_escaped_sv(sb, sv);
 }
 
 static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
@@ -1206,12 +1157,46 @@ static bool render_evaluator_casepack_snapshot_to_arena(Arena *arena,
     return true;
 }
 
+static void evaluator_log_golden_mismatch(const char *subject_path,
+                                          const char *expected_path,
+                                          String_View expected_norm,
+                                          String_View actual_norm,
+                                          void *userdata) {
+    size_t mismatch = 0;
+    size_t shared = actual_norm.count < expected_norm.count ? actual_norm.count : expected_norm.count;
+
+    (void)userdata;
+
+    while (mismatch < shared && actual_norm.data[mismatch] == expected_norm.data[mismatch]) mismatch++;
+
+    nob_log(NOB_ERROR, "golden mismatch for %s", subject_path);
+    nob_log(NOB_ERROR,
+            "golden lengths: expected=%zu actual=%zu first_mismatch=%zu",
+            expected_norm.count,
+            actual_norm.count,
+            mismatch);
+    if (mismatch < shared) {
+        nob_log(NOB_ERROR,
+                "golden bytes: expected=0x%02X actual=0x%02X",
+                (unsigned char)expected_norm.data[mismatch],
+                (unsigned char)actual_norm.data[mismatch]);
+    }
+    nob_log(NOB_ERROR,
+            "--- expected (%s) ---\n%.*s",
+            expected_path,
+            (int)expected_norm.count,
+            expected_norm.data);
+    nob_log(NOB_ERROR,
+            "--- actual ---\n%.*s",
+            (int)actual_norm.count,
+            actual_norm.data);
+}
+
 static bool assert_evaluator_golden_casepack(const char *input_path, const char *expected_path) {
     Arena *arena = arena_create(4 * 1024 * 1024);
     if (!arena) return false;
 
     String_View input = {0};
-    String_View expected = {0};
     String_View actual = {0};
     bool ok = true;
     const char *prev_sde = getenv("SOURCE_DATE_EPOCH");
@@ -1239,7 +1224,7 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
     }
 
     Evaluator_Case_List cases = {0};
-    if (!parse_case_pack_to_arena(arena, input, &cases)) {
+    if (!evaluator_parse_case_pack_list(arena, input, &cases)) {
         nob_log(NOB_ERROR, "golden: invalid case-pack: %s", input_path);
         ok = false;
         goto done;
@@ -1252,42 +1237,13 @@ static bool assert_evaluator_golden_casepack(const char *input_path, const char 
         goto done;
     }
 
-    String_View actual_norm = evaluator_normalize_newlines_to_arena(arena, actual);
-
-    if (test_ws_should_update_golden()) {
-        if (!test_ws_update_golden_file(expected_path, actual_norm.data, actual_norm.count)) {
-            nob_log(NOB_ERROR, "golden: failed to update expected: %s", expected_path);
-            ok = false;
-        }
-        goto done;
-    }
-
-    if (!evaluator_load_text_file_to_arena(arena, expected_path, &expected)) {
-        nob_log(NOB_ERROR, "golden: failed to read expected: %s", expected_path);
-        ok = false;
-        goto done;
-    }
-
-    String_View expected_norm = evaluator_normalize_newlines_to_arena(arena, expected);
-    if (!nob_sv_eq(actual_norm, expected_norm)) {
-        size_t mismatch = 0;
-        size_t shared = actual_norm.count < expected_norm.count ? actual_norm.count : expected_norm.count;
-        while (mismatch < shared && actual_norm.data[mismatch] == expected_norm.data[mismatch]) mismatch++;
-
-        nob_log(NOB_ERROR, "golden mismatch for %s", input_path);
-        nob_log(NOB_ERROR,
-                "golden lengths: expected=%zu actual=%zu first_mismatch=%zu",
-                expected_norm.count,
-                actual_norm.count,
-                mismatch);
-        if (mismatch < shared) {
-            nob_log(NOB_ERROR,
-                    "golden bytes: expected=0x%02X actual=0x%02X",
-                    (unsigned char)expected_norm.data[mismatch],
-                    (unsigned char)actual_norm.data[mismatch]);
-        }
-        nob_log(NOB_ERROR, "--- expected (%s) ---\n%.*s", expected_path, (int)expected_norm.count, expected_norm.data);
-        nob_log(NOB_ERROR, "--- actual ---\n%.*s", (int)actual_norm.count, actual_norm.data);
+    if (!test_snapshot_assert_golden_output(
+            arena,
+            input_path,
+            expected_path,
+            actual,
+            evaluator_log_golden_mismatch,
+            NULL)) {
         ok = false;
     }
 
