@@ -72,6 +72,7 @@ static Coverage_Context g_coverage_ctx = {0};
 static void append_test_arena_all_sources(Nob_Cmd *cmd);
 static void append_test_lexer_all_sources(Nob_Cmd *cmd);
 static void append_test_parser_all_sources(Nob_Cmd *cmd);
+static void append_test_build_model_all_sources(Nob_Cmd *cmd);
 static void append_test_evaluator_all_sources(Nob_Cmd *cmd);
 static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd);
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
@@ -156,6 +157,7 @@ static Test_Module TEST_MODULES[] = {
     {"arena", append_test_arena_all_sources, true},
     {"lexer", append_test_lexer_all_sources, true},
     {"parser", append_test_parser_all_sources, true},
+    {"build-model", append_test_build_model_all_sources, true},
     {"evaluator", append_test_evaluator_all_sources, true},
     {"evaluator-integration", append_test_evaluator_integration_all_sources, false},
     {"pipeline", append_test_pipeline_all_sources, true},
@@ -649,6 +651,15 @@ static void append_v2_parser_test_sources(Nob_Cmd *cmd) {
         "test_v2/parser/test_parser_v2_suite.c");
 }
 
+static void append_v2_build_model_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/test_semantic_pipeline.c",
+        "test_v2/test_v2_assert.c",
+        "test_v2/test_workspace.c",
+        "test_v2/build_model/test_build_model_v2_main.c",
+        "test_v2/build_model/test_build_model_v2_suite.c");
+}
+
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_v2_assert.c",
@@ -1094,6 +1105,13 @@ static void append_test_lexer_all_sources(Nob_Cmd *cmd) {
 static void append_test_parser_all_sources(Nob_Cmd *cmd) {
     append_v2_parser_test_sources(cmd);
     append_v2_parser_runtime_sources(cmd);
+}
+
+static void append_test_build_model_all_sources(Nob_Cmd *cmd) {
+    append_v2_build_model_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
 }
 
 static void append_test_evaluator_all_sources(Nob_Cmd *cmd) {
@@ -1980,7 +1998,7 @@ int main(int argc, char **argv) {
     }
 
     nob_log(NOB_INFO,
-            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
+            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-build-model|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
             argv[0]);
     return 1;
 }

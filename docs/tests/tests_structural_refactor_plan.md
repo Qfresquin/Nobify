@@ -323,6 +323,19 @@ Closure checks:
 
 ### Wave T3: First-Class `build-model` Module
 
+Status:
+- completed (March 27, 2026)
+
+Delivered artifacts:
+- `test_v2/build_model/` now exists as a standalone first-class suite with its
+  own runner entrypoint and suite ownership
+- the runner now exposes `test-build-model` and includes `build-model` in the
+  default aggregate module set
+- standalone `Event_Stream -> Build_Model` semantics moved out of `pipeline`
+  and into the dedicated `build-model` suite
+- `pipeline` now remains focused on script-driven cross-layer integration
+  snapshots
+
 Deliverables:
 - add a standalone `build-model` test module to the target architecture and
   planned runner surface

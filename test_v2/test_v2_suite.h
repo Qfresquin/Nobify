@@ -11,6 +11,7 @@ typedef void (*Test_Suite_Fn)(int *passed, int *failed, int *skipped);
 void run_arena_v2_tests(int *passed, int *failed, int *skipped);
 void run_lexer_v2_tests(int *passed, int *failed, int *skipped);
 void run_parser_v2_tests(int *passed, int *failed, int *skipped);
+void run_build_model_v2_tests(int *passed, int *failed, int *skipped);
 void run_evaluator_v2_tests(int *passed, int *failed, int *skipped);
 void run_evaluator_v2_integration_tests(int *passed, int *failed, int *skipped);
 void run_pipeline_v2_tests(int *passed, int *failed, int *skipped);

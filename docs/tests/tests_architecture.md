@@ -10,10 +10,9 @@ As of March 27, 2026:
 - the runner owns module selection, build profiles, incremental compilation,
   workspace roots, captured logs, and aggregate execution
 - the generic framework under `test_v2/` owns per-suite and per-case lifecycle
-- generic support is only partially consolidated; some support is still
-  duplicated or trapped inside suite-local helpers
-- `build-model` is not yet a first-class runner module and remains the main gap
-  in the target module set
+- generic snapshot/case-pack and semantic pipeline support are now centralized
+  under shared helpers in `test_v2/`
+- `build-model` is now a first-class runner module and aggregate participant
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -65,6 +64,11 @@ code.
   Current aggregate status: included.
 
 ### Semantic Integration Suites
+
+- `build-model`
+  Focus: Event IR to draft/validate/freeze semantics and frozen-model query
+  behavior.
+  Current aggregate status: included.
 
 - `evaluator`
   Focus: evaluator public execution/report/event behavior across command
@@ -134,15 +138,16 @@ Non-responsibilities:
 Current owners:
 - `test_v2/test_case_pack.h`
 - `test_v2/test_fs.h`
+- `test_v2/test_snapshot_support.*`
+- `test_v2/test_semantic_pipeline.*`
 - suite-local support files such as:
   - `test_v2/evaluator/test_evaluator_v2_support.*`
   - `test_v2/codegen/test_codegen_v2_support.*`
 
 Current state:
-- the shared-support boundary is incomplete
-- some generic helpers are already centralized
-- text IO, newline normalization, golden flow, snapshot formatting, host
-  fixtures, and semantic pipeline setup are still spread across several suites
+- the shared-support boundary is still incomplete overall
+- snapshot/golden plumbing and semantic pipeline bootstrap are now centralized
+- host fixtures and some evaluator-specific support remain suite-local
 
 Target direction:
 - generic support belongs here, not inside suite-local copies
@@ -155,6 +160,7 @@ Owners:
 - `test_v2/arena/`
 - `test_v2/lexer/`
 - `test_v2/parser/`
+- `test_v2/build_model/`
 - `test_v2/evaluator/`
 - `test_v2/pipeline/`
 - `test_v2/codegen/`
@@ -182,12 +188,11 @@ The target first-class test module set is:
 - `codegen`
 
 Current gap:
-- `build-model` does not yet exist as a standalone runner module
+- none in the planned first-class module set
 
 Target direction:
-- `build-model` becomes a first-class module with its own suite ownership and
-  planned aggregate participation
+- `build-model` owns standalone frozen-model semantics directly
 - `pipeline` stays focused on cross-layer integration instead of serving as the
-  only direct home for standalone build-model coverage
+  direct home for standalone build-model coverage
 - aggregate policy beyond the current baseline is intentionally deferred to the
   refactor plan's later aggregate-policy wave
