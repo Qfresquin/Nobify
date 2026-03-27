@@ -1,5 +1,6 @@
 #include "test_v2_assert.h"
 #include "test_case_pack.h"
+#include "test_semantic_pipeline.h"
 #include "test_snapshot_support.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
@@ -23,22 +24,6 @@ typedef Test_Case_Pack_Entry Pipeline_Case;
 typedef Pipeline_Case *Pipeline_Case_List;
 
 static void pipeline_init_event(Event *ev, Event_Kind kind, size_t line);
-
-static bool token_list_append(Arena *arena, Token_List *list, Token token) {
-    if (!arena || !list) return false;
-    return arena_arr_push(arena, *list, token);
-}
-
-static Ast_Root parse_cmake(Arena *arena, const char *script) {
-    Lexer lx = lexer_init(nob_sv_from_cstr(script ? script : ""));
-    Token_List toks = NULL;
-    for (;;) {
-        Token t = lexer_next(&lx);
-        if (t.kind == TOKEN_END) break;
-        if (!token_list_append(arena, &toks, t)) return NULL;
-    }
-    return parse_tokens(arena, toks);
-}
 
 static const char *pipeline_target_type_name(BM_Target_Kind type) {
     switch (type) {
@@ -140,126 +125,31 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
     }
 }
 
-static Event_Stream *pipeline_wrap_stream_with_root(Arena *arena,
-                                                    const Event_Stream *stream,
-                                                    const char *current_file,
-                                                    String_View source_dir,
-                                                    String_View binary_dir) {
-    Event_Stream *wrapped = NULL;
-    Event ev = {0};
-    if (!arena || !stream) return NULL;
+static bool pipeline_snapshot_from_script(const char *script,
+                                          const char *current_file,
+                                          Nob_String_Builder *out_sb) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    bool ok = false;
 
-    wrapped = event_stream_create(arena);
-    if (!wrapped) return NULL;
-
-    pipeline_init_event(&ev, EVENT_DIRECTORY_ENTER, 0);
-    ev.h.origin.file_path = nob_sv_from_cstr(current_file ? current_file : "CMakeLists.txt");
-    ev.as.directory_enter.source_dir = source_dir;
-    ev.as.directory_enter.binary_dir = binary_dir;
-    if (!event_stream_push(wrapped, &ev)) return NULL;
-
-    for (size_t i = 0; i < stream->count; ++i) {
-        if (!event_stream_push(wrapped, &stream->items[i])) return NULL;
-    }
-
-    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 0);
-    ev.h.origin.file_path = nob_sv_from_cstr(current_file ? current_file : "CMakeLists.txt");
-    ev.as.directory_leave.source_dir = source_dir;
-    ev.as.directory_leave.binary_dir = binary_dir;
-    if (!event_stream_push(wrapped, &ev)) return NULL;
-
-    return wrapped;
-}
-
-static bool pipeline_snapshot_from_ast(Ast_Root root, const char *current_file, Nob_String_Builder *out_sb) {
     if (!out_sb) return false;
 
-    Arena *temp_arena = arena_create(2 * 1024 * 1024);
-    Arena *event_arena = arena_create(8 * 1024 * 1024);
-    Arena *validate_arena = arena_create(2 * 1024 * 1024);
-    Arena *model_arena = arena_create(8 * 1024 * 1024);
-    if (!temp_arena || !event_arena || !validate_arena || !model_arena) {
-        arena_destroy(temp_arena);
-        arena_destroy(event_arena);
-        arena_destroy(validate_arena);
-        arena_destroy(model_arena);
-        return false;
-    }
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = current_file ? current_file : "CMakeLists.txt";
 
-    Event_Stream *stream = event_stream_create(event_arena);
-    Diag_Sink *sink = bm_diag_sink_create_default(temp_arena);
-    Event_Stream *build_stream = NULL;
-    if (!stream) {
-        arena_destroy(temp_arena);
-        arena_destroy(event_arena);
-        arena_destroy(validate_arena);
-        arena_destroy(model_arena);
-        return false;
-    }
+    ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &config);
+    if (!ok) return false;
 
-    EvalSession_Config cfg = {0};
-    EvalExec_Request request = {0};
-    cfg.persistent_arena = event_arena;
-    cfg.source_root = nob_sv_from_cstr(".");
-    cfg.binary_root = nob_sv_from_cstr(".");
-
-    request.scratch_arena = temp_arena;
-    request.source_dir = nob_sv_from_cstr(".");
-    request.binary_dir = nob_sv_from_cstr(".");
-    request.list_file = current_file;
-    request.stream = stream;
-
-    EvalSession *session = eval_session_create(&cfg);
-    if (!session) {
-        arena_destroy(temp_arena);
-        arena_destroy(event_arena);
-        arena_destroy(validate_arena);
-        arena_destroy(model_arena);
-        return false;
-    }
-
-    EvalRunResult eval_run = eval_session_run(session, &request, root);
-    Eval_Result eval_result = eval_run.result;
-    bool eval_ok = !eval_result_is_fatal(eval_result);
-    bool builder_ok = false;
-    bool freeze_ok = false;
-    const Build_Model *model = NULL;
-
-    if (eval_ok) {
-        build_stream = pipeline_wrap_stream_with_root(event_arena,
-                                                      stream,
-                                                      current_file,
-                                                      request.source_dir,
-                                                      request.binary_dir);
-        Build_Model_Builder *builder = builder_create(temp_arena, sink);
-        const Build_Model_Draft *draft = NULL;
-        if (builder && build_stream) {
-            builder_ok = builder_apply_stream(builder, build_stream);
-            if (builder_ok) {
-                draft = builder_finalize(builder);
-                builder_ok = (draft != NULL);
-            }
-            if (builder_ok && bm_validate_draft(draft, validate_arena, sink)) {
-                model = bm_freeze_draft(draft, model_arena, sink);
-                freeze_ok = (model != NULL);
-            }
-        }
-    }
-
-    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVAL_OK %d\n", eval_ok ? 1 : 0));
-    nob_sb_append_cstr(out_sb, nob_temp_sprintf("BUILDER_OK %d\n", builder_ok ? 1 : 0));
-    nob_sb_append_cstr(out_sb, nob_temp_sprintf("FREEZE_OK %d\n", freeze_ok ? 1 : 0));
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVAL_OK %d\n", fixture.eval_ok ? 1 : 0));
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("BUILDER_OK %d\n", fixture.build.builder_ok ? 1 : 0));
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("FREEZE_OK %d\n", fixture.build.freeze_ok ? 1 : 0));
     nob_sb_append_cstr(out_sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
-    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVENTS count=%zu\n", stream->count));
-    if (freeze_ok && model) {
-        append_model_snapshot(out_sb, model);
+    nob_sb_append_cstr(out_sb, nob_temp_sprintf("EVENTS count=%zu\n", fixture.stream ? fixture.stream->count : 0));
+    if (fixture.build.freeze_ok && fixture.build.model) {
+        append_model_snapshot(out_sb, fixture.build.model);
     }
 
-    eval_session_destroy(session);
-    arena_destroy(temp_arena);
-    arena_destroy(event_arena);
-    arena_destroy(validate_arena);
-    arena_destroy(model_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
     return true;
 }
 
@@ -267,10 +157,10 @@ static bool render_pipeline_case_snapshot_to_sb(Arena *arena,
                                                 Pipeline_Case pipeline_case,
                                                 Nob_String_Builder *out_sb) {
     diag_reset();
-    Ast_Root root = parse_cmake(arena, pipeline_case.script.data);
+    (void)arena;
 
     Nob_String_Builder case_sb = {0};
-    bool ok = pipeline_snapshot_from_ast(root, "CMakeLists.txt", &case_sb);
+    bool ok = pipeline_snapshot_from_script(pipeline_case.script.data, "CMakeLists.txt", &case_sb);
     if (!ok || case_sb.count == 0) {
         nob_sb_free(case_sb);
         return false;
@@ -357,21 +247,6 @@ static void pipeline_init_event(Event *ev, Event_Kind kind, size_t line) {
     ev->h.origin.col = 1;
 }
 
-static const Build_Model *pipeline_freeze_stream(Arena *arena,
-                                                 Event_Stream *stream,
-                                                 Diag_Sink *sink,
-                                                 Arena *validate_arena,
-                                                 Arena *model_arena) {
-    Build_Model_Builder *builder = builder_create(arena, sink);
-    const Build_Model_Draft *draft = NULL;
-    if (!builder) return NULL;
-    if (!builder_apply_stream(builder, stream)) return NULL;
-    draft = builder_finalize(builder);
-    if (!draft) return NULL;
-    if (!bm_validate_draft(draft, validate_arena, sink)) return NULL;
-    return bm_freeze_draft(draft, model_arena, sink);
-}
-
 static const char *PIPELINE_GOLDEN_DIR = "test_v2/pipeline/golden";
 
 TEST(pipeline_golden_all_cases) {
@@ -385,12 +260,12 @@ TEST(pipeline_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
     Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
     ASSERT(arena != NULL);
     ASSERT(validate_arena != NULL);
     ASSERT(model_arena != NULL);
 
     Event_Stream *stream = event_stream_create(arena);
-    Diag_Sink *sink = bm_diag_sink_create_default(arena);
     ASSERT(stream != NULL);
 
     Event ev = {0};
@@ -428,8 +303,9 @@ TEST(pipeline_builder_directory_scope_events) {
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
     ASSERT(event_stream_push(stream, &ev));
 
-    const Build_Model *model = pipeline_freeze_stream(arena, stream, sink, validate_arena, model_arena);
-    ASSERT(model != NULL);
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.model != NULL);
+    const Build_Model *model = build.model;
     ASSERT(bm_query_directory_count(model) == 2);
 
     BM_Directory_Id sub_dir = pipeline_find_directory_id(model,
@@ -456,12 +332,12 @@ TEST(pipeline_validate_does_not_infer_link_library_targets) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
     Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
     ASSERT(arena != NULL);
     ASSERT(validate_arena != NULL);
     ASSERT(model_arena != NULL);
 
     Event_Stream *stream = event_stream_create(arena);
-    Diag_Sink *sink = bm_diag_sink_create_default(arena);
     ASSERT(stream != NULL);
 
     Event ev = {0};
@@ -486,8 +362,9 @@ TEST(pipeline_validate_does_not_infer_link_library_targets) {
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
     ASSERT(event_stream_push(stream, &ev));
 
-    const Build_Model *model = pipeline_freeze_stream(arena, stream, sink, validate_arena, model_arena);
-    ASSERT(model != NULL);
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.model != NULL);
+    const Build_Model *model = build.model;
 
     BM_Target_Id app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
     ASSERT(app_id != BM_TARGET_ID_INVALID);

@@ -1,22 +1,16 @@
 #ifndef TEST_CODEGEN_V2_SUPPORT_H_
 #define TEST_CODEGEN_V2_SUPPORT_H_
 
+#include "test_semantic_pipeline.h"
 #include "test_v2_assert.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
 #include "arena.h"
 #include "arena_dyn.h"
-#include "build_model_builder.h"
-#include "build_model_freeze.h"
 #include "build_model_query.h"
-#include "build_model_validate.h"
 #include "diagnostics.h"
-#include "evaluator.h"
-#include "event_ir.h"
-#include "lexer.h"
 #include "nob_codegen.h"
-#include "parser.h"
 
 #include <stdio.h>
 #include <stdlib.h>

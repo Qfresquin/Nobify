@@ -284,6 +284,20 @@ Closure checks:
 
 ### Wave T2: Shared Semantic Pipeline Fixture
 
+Status:
+- completed (March 27, 2026)
+
+Delivered artifacts:
+- `test_v2/test_semantic_pipeline.h` and `test_v2/test_semantic_pipeline.c`
+  now own the canonical semantic fixture for `script -> AST -> EvalSession ->
+  Event_Stream -> Build_Model draft/validate/freeze`
+- `pipeline` golden snapshots and stream-to-model integration assertions now
+  consume the shared semantic fixture instead of local bootstrap helpers
+- `codegen` now builds its semantic test model through the same shared fixture
+  path used by `pipeline`
+- arena ownership, root stream wrapping, and build-model freeze behavior are
+  now defined once in shared support instead of drifting between suites
+
 Deliverables:
 - introduce one canonical shared fixture for:
   `script -> AST -> EvalSession -> Event_Stream -> Build_Model draft/validate/freeze`
