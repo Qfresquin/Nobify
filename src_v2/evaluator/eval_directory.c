@@ -248,6 +248,84 @@ static bool split_valid_definition_flag(String_View item, String_View *out_defin
     return true;
 }
 
+static String_View directory_legacy_definition_canonical_temp(EvalExecContext *ctx, String_View value) {
+    if (!ctx || value.count == 0) return value;
+    if (!eval_policy_is_new(ctx, EVAL_POLICY_CMP0005)) return value;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), value.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < value.count; i++) {
+        char c = value.data[i];
+        if (c == '\\' && (i + 1) < value.count) {
+            char next = value.data[i + 1];
+            if (next == '\\' || next == '"' || next == ';') {
+                buf[off++] = next;
+                i++;
+                continue;
+            }
+        }
+        buf[off++] = c;
+    }
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
+static bool directory_definition_equals_for_policy(EvalExecContext *ctx, String_View lhs, String_View rhs) {
+    if (!ctx) return false;
+    if (!eval_policy_is_new(ctx, EVAL_POLICY_CMP0005)) return sv_eq_exact(lhs, rhs);
+    String_View lhs_canon = directory_legacy_definition_canonical_temp(ctx, lhs);
+    if (eval_should_stop(ctx)) return false;
+    String_View rhs_canon = directory_legacy_definition_canonical_temp(ctx, rhs);
+    if (eval_should_stop(ctx)) return false;
+    return sv_eq_exact(lhs_canon, rhs_canon);
+}
+
+static bool remove_definition_list_var(EvalExecContext *ctx,
+                                       String_View var,
+                                       String_View item,
+                                       bool *out_removed) {
+    if (out_removed) *out_removed = false;
+    if (!ctx || item.count == 0) return false;
+
+    SV_List current_items = NULL;
+    if (!current_list_var_items_temp(ctx, var, &current_items)) return false;
+    if (arena_arr_len(current_items) == 0) return true;
+
+    SV_List kept = NULL;
+    bool removed = false;
+    for (size_t i = 0; i < arena_arr_len(current_items); i++) {
+        if (directory_definition_equals_for_policy(ctx, current_items[i], item)) {
+            removed = true;
+            continue;
+        }
+        if (!svu_list_push_temp(ctx, &kept, current_items[i])) return false;
+    }
+    if (!removed) return true;
+
+    if (out_removed) *out_removed = true;
+    return eval_var_set_current(ctx,
+                                var,
+                                arena_arr_len(kept) > 0
+                                    ? eval_sv_join_semi_temp(ctx, kept, arena_arr_len(kept))
+                                    : nob_sv_from_cstr(""));
+}
+
+static bool directory_canonicalize_definition_list_temp(EvalExecContext *ctx,
+                                                        const SV_List *raw_items,
+                                                        SV_List *out_items) {
+    if (!ctx || !raw_items || !out_items) return false;
+    *out_items = NULL;
+
+    for (size_t i = 0; i < arena_arr_len(*raw_items); i++) {
+        String_View item = directory_legacy_definition_canonical_temp(ctx, (*raw_items)[i]);
+        if (eval_should_stop(ctx)) return false;
+        if (!svu_list_push_temp(ctx, out_items, item)) return false;
+    }
+    return true;
+}
+
 static bool remove_definitions_parse_request(EvalExecContext *ctx,
                                              SV_List args,
                                              Remove_Definitions_Request *out_req) {
@@ -276,7 +354,7 @@ static bool remove_definitions_execute_request(EvalExecContext *ctx,
     bool removed_any_definition = false;
     for (size_t i = 0; i < arena_arr_len(req->definitions); i++) {
         bool removed = false;
-        if (!remove_list_var_exact(ctx, nob_sv_from_cstr(k_global_defs_var), req->definitions[i], &removed)) {
+        if (!remove_definition_list_var(ctx, nob_sv_from_cstr(k_global_defs_var), req->definitions[i], &removed)) {
             return false;
         }
         removed_any_definition = removed_any_definition || removed;
@@ -293,7 +371,11 @@ static bool remove_definitions_execute_request(EvalExecContext *ctx,
 
     if (removed_any_definition) {
         SV_List remaining_definitions = NULL;
+        SV_List remaining_canonical = NULL;
         if (!current_list_var_items_temp(ctx, nob_sv_from_cstr(k_global_defs_var), &remaining_definitions)) {
+            return false;
+        }
+        if (!directory_canonicalize_definition_list_temp(ctx, &remaining_definitions, &remaining_canonical)) {
             return false;
         }
         if (!sync_directory_property_mutation(ctx,
@@ -301,7 +383,7 @@ static bool remove_definitions_execute_request(EvalExecContext *ctx,
                                               "COMPILE_DEFINITIONS",
                                               EVENT_PROPERTY_MUTATE_SET,
                                               EVENT_PROPERTY_MODIFIER_NONE,
-                                              &remaining_definitions)) {
+                                              &remaining_canonical)) {
             return false;
         }
     }
@@ -1067,11 +1149,13 @@ static bool directory_execute_add_definitions_request(EvalExecContext *ctx,
     if (!ctx || !req) return false;
 
     SV_List emitted_defs = {0};
+    SV_List emitted_defs_canonical = {0};
     if (!collect_new_list_var_items(ctx, nob_sv_from_cstr(k_global_defs_var), &req->definitions, &emitted_defs)) {
         return false;
     }
+    if (!directory_canonicalize_definition_list_temp(ctx, &emitted_defs, &emitted_defs_canonical)) return false;
     for (size_t i = 0; i < arena_arr_len(emitted_defs); i++) {
-        if (!emit_compile_definition_to_current_file_targets(ctx, origin, emitted_defs[i])) return false;
+        if (!emit_compile_definition_to_current_file_targets(ctx, origin, emitted_defs_canonical[i])) return false;
     }
 
     SV_List emitted_opts = {0};
@@ -1087,7 +1171,7 @@ static bool directory_execute_add_definitions_request(EvalExecContext *ctx,
                                           "COMPILE_DEFINITIONS",
                                           EVENT_PROPERTY_MUTATE_APPEND_LIST,
                                           EVENT_PROPERTY_MODIFIER_NONE,
-                                          &emitted_defs)) {
+                                          &emitted_defs_canonical)) {
         return false;
     }
     if (!sync_directory_property_mutation(ctx,

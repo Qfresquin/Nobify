@@ -19,8 +19,8 @@
     X("break", eval_handle_break, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("build_command", eval_handle_build_command, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("build_name", eval_handle_build_name, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("cmake_host_system_information", eval_handle_cmake_host_system_information, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("cmake_file_api", eval_handle_cmake_file_api, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("cmake_host_system_information", eval_handle_cmake_host_system_information, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("cmake_file_api", eval_handle_cmake_file_api, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_parse_arguments", eval_handle_cmake_parse_arguments, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_minimum_required", eval_handle_cmake_minimum_required, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cmake_language", eval_handle_cmake_language, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE) \
@@ -53,7 +53,7 @@
     X("execute_process", eval_handle_execute_process, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("export_library_dependencies", eval_handle_export_library_dependencies, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("file", eval_handle_file, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_ERROR_CONTINUE) \
-    X("export", eval_handle_export, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("export", eval_handle_export, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_Declare", eval_handle_fetchcontent_declare, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_GetProperties", eval_handle_fetchcontent_getproperties, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("FetchContent_MakeAvailable", eval_handle_fetchcontent_makeavailable, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
@@ -72,7 +72,7 @@
     X("get_target_property", eval_handle_get_target_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("get_test_property", eval_handle_get_test_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include", eval_handle_include, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("include_external_msproject", eval_handle_include_external_msproject, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("include_external_msproject", eval_handle_include_external_msproject, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include_regular_expression", eval_handle_include_regular_expression, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include_directories", eval_handle_include_directories, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("include_guard", eval_handle_include_guard, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \

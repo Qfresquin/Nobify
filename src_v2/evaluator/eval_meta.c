@@ -2,8 +2,10 @@
 
 #include "eval_file_internal.h"
 #include "eval_hash.h"
+#include "eval_package_internal.h"
 #include "evaluator_internal.h"
 #include "sv_utils.h"
+#include "stb_ds.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -108,6 +110,26 @@ static String_View meta_target_property_temp(EvalExecContext *ctx,
     }
     if (out_set) *out_set = have;
     return have ? value : nob_sv_from_cstr("");
+}
+
+static bool meta_store_target_property(EvalExecContext *ctx,
+                                       Cmake_Event_Origin origin,
+                                       String_View target_name,
+                                       String_View property_name,
+                                       String_View value,
+                                       Cmake_Target_Property_Op op) {
+    if (!ctx) return false;
+    if (!eval_property_write(ctx,
+                             origin,
+                             nob_sv_from_cstr("TARGET"),
+                             target_name,
+                             property_name,
+                             value,
+                             op,
+                             false)) {
+        return false;
+    }
+    return eval_emit_target_prop_set(ctx, origin, target_name, property_name, value, op);
 }
 
 static String_View meta_target_export_name_temp(EvalExecContext *ctx,
@@ -271,6 +293,7 @@ typedef enum {
     META_EXPORT_SIG_NONE = 0,
     META_EXPORT_SIG_TARGETS,
     META_EXPORT_SIG_EXPORT,
+    META_EXPORT_SIG_PACKAGE,
 } Meta_Export_Signature;
 
 typedef struct {
@@ -574,7 +597,24 @@ static bool meta_export_is_targets_option(String_View token) {
 static String_View meta_export_mode_sv(Meta_Export_Signature signature) {
     if (signature == META_EXPORT_SIG_EXPORT) return nob_sv_from_cstr("EXPORT");
     if (signature == META_EXPORT_SIG_TARGETS) return nob_sv_from_cstr("TARGETS");
+    if (signature == META_EXPORT_SIG_PACKAGE) return nob_sv_from_cstr("PACKAGE");
     return nob_sv_from_cstr("");
+}
+
+static bool meta_export_parse_package_signature(EvalExecContext *ctx,
+                                                const Node *node,
+                                                SV_List a,
+                                                Meta_Export_Request *out) {
+    if (arena_arr_len(a) != 2) {
+        (void)meta_emit_diag(ctx,
+                             node,
+                             EV_DIAG_ERROR,
+                             nob_sv_from_cstr("export(PACKAGE ...) requires exactly one package name"),
+                             nob_sv_from_cstr("Usage: export(PACKAGE <PackageName>)"));
+        return false;
+    }
+    out->export_name = a[1];
+    return true;
 }
 
 static bool meta_export_parse_common_option(EvalExecContext *ctx,
@@ -717,7 +757,12 @@ static bool meta_export_parse_request(EvalExecContext *ctx,
         return false;
     }
 
-    if (eval_sv_eq_ci_lit(a[0], "PACKAGE") || eval_sv_eq_ci_lit(a[0], "SETUP")) {
+    if (eval_sv_eq_ci_lit(a[0], "PACKAGE")) {
+        out->signature = META_EXPORT_SIG_PACKAGE;
+        return meta_export_parse_package_signature(ctx, node, a, out);
+    }
+
+    if (eval_sv_eq_ci_lit(a[0], "SETUP")) {
         (void)meta_emit_diag(ctx,
                              node,
                              EV_DIAG_ERROR,
@@ -840,6 +885,38 @@ static bool meta_export_execute_request(EvalExecContext *ctx,
                                         const Node *node,
                                         const Meta_Export_Request *req) {
     if (!ctx || !node || !req) return false;
+
+    if (req->signature == META_EXPORT_SIG_PACKAGE) {
+        if (eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_EXPORT_NO_PACKAGE_REGISTRY")))) {
+            return meta_export_assign_last(ctx,
+                                           meta_export_mode_sv(req->signature),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""));
+        }
+
+        if (eval_policy_is_new(ctx, EVAL_POLICY_CMP0090) &&
+            !eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_EXPORT_PACKAGE_REGISTRY")))) {
+            return meta_export_assign_last(ctx,
+                                           meta_export_mode_sv(req->signature),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""),
+                                           nob_sv_from_cstr(""));
+        }
+
+        if (!eval_package_registry_add(ctx, req->export_name, meta_current_bin_dir(ctx))) return false;
+        return meta_export_assign_last(ctx,
+                                       meta_export_mode_sv(req->signature),
+                                       nob_sv_from_cstr(""),
+                                       nob_sv_from_cstr(""),
+                                       nob_sv_from_cstr(""),
+                                       nob_sv_from_cstr(""),
+                                       nob_sv_from_cstr(""));
+    }
 
     SV_List targets = NULL;
     if (!meta_export_resolve_targets(ctx, node, req, &targets)) return false;
@@ -977,9 +1054,16 @@ static bool meta_msproject_execute_request(EvalExecContext *ctx,
                                            const Node *node,
                                            const Meta_Include_External_MSProject_Request *req) {
     if (!ctx || !node || !req) return false;
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     if (!eval_target_register(ctx, req->name)) return false;
+    if (!eval_target_set_imported(ctx, req->name, true)) return false;
 
     String_View deps_joined = eval_sv_join_semi_temp(ctx, req->deps, arena_arr_len(req->deps));
+    if (eval_should_stop(ctx)) return false;
+    String_View location = eval_path_resolve_for_cmake_arg(ctx,
+                                                           req->location,
+                                                           eval_current_source_dir_for_paths(ctx),
+                                                           true);
     if (eval_should_stop(ctx)) return false;
     if (!eval_var_set_current(ctx,
                               meta_concat3_temp(ctx, "NOBIFY_MSPROJECT::", req->name, "::LOCATION"),
@@ -1006,8 +1090,61 @@ static bool meta_msproject_execute_request(EvalExecContext *ctx,
                               deps_joined)) {
         return false;
     }
+    if (!meta_store_target_property(ctx,
+                                    origin,
+                                    req->name,
+                                    nob_sv_from_cstr("LOCATION"),
+                                    location,
+                                    EV_PROP_SET)) {
+        return false;
+    }
+    if (!meta_store_target_property(ctx,
+                                    origin,
+                                    req->name,
+                                    nob_sv_from_cstr("NOBIFY_EXTERNAL_MSPROJECT_TYPE"),
+                                    req->type_guid,
+                                    EV_PROP_SET)) {
+        return false;
+    }
+    if (!meta_store_target_property(ctx,
+                                    origin,
+                                    req->name,
+                                    nob_sv_from_cstr("NOBIFY_EXTERNAL_MSPROJECT_GUID"),
+                                    req->project_guid,
+                                    EV_PROP_SET)) {
+        return false;
+    }
+    if (!meta_store_target_property(ctx,
+                                    origin,
+                                    req->name,
+                                    nob_sv_from_cstr("NOBIFY_EXTERNAL_MSPROJECT_PLATFORM"),
+                                    req->platform,
+                                    EV_PROP_SET)) {
+        return false;
+    }
+    if (!meta_store_target_property(ctx,
+                                    origin,
+                                    req->name,
+                                    nob_sv_from_cstr("NOBIFY_EXTERNAL_MSPROJECT_DEPENDENCIES"),
+                                    deps_joined,
+                                    EV_PROP_SET)) {
+        return false;
+    }
+    if (!meta_store_target_property(ctx,
+                                    origin,
+                                    req->name,
+                                    nob_sv_from_cstr("IMPORTED"),
+                                    nob_sv_from_cstr("1"),
+                                    EV_PROP_SET)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(req->deps); i++) {
+        if (!eval_emit_target_dependency(ctx, origin, req->name, req->deps[i])) return false;
+    }
+
     return eval_emit_target_declare(ctx,
-                                    eval_origin_from_node(ctx, node),
+                                    origin,
                                     req->name,
                                     EV_TARGET_LIBRARY_UNKNOWN,
                                     true,
@@ -1062,7 +1199,7 @@ static String_View meta_file_api_root_dir(EvalExecContext *ctx) {
 static String_View meta_file_api_query_dir(EvalExecContext *ctx) {
     String_View root = meta_file_api_root_dir(ctx);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("query/client-nobify"));
+    return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("query"));
 }
 
 static String_View meta_file_api_reply_dir(EvalExecContext *ctx) {
@@ -1140,179 +1277,639 @@ static String_View meta_file_api_reply_filename_temp(EvalExecContext *ctx,
     return nob_sv_from_parts(buf, off);
 }
 
-static bool meta_file_api_write_query_file(EvalExecContext *ctx,
-                                           String_View query_file,
-                                           const Meta_File_Api_Request_List *requests) {
-    if (!ctx || !requests) return false;
+static bool meta_file_api_parse_int_sv(String_View value, int *out_value) {
+    if (out_value) *out_value = 0;
+    if (!out_value || value.count == 0) return false;
 
-    Nob_String_Builder sb = {0};
-    nob_sb_append_cstr(&sb, "{\n  \"client\": \"nobify\",\n  \"requests\": [\n");
-    for (size_t i = 0; i < arena_arr_len(*requests); i++) {
-        Meta_File_Api_Request req = (*requests)[i];
-        SV_List versions = {0};
-        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req.versions, &versions)) {
-            nob_sb_free(sb);
-            return false;
-        }
+    char buf[32];
+    if (value.count >= sizeof(buf)) return false;
+    memcpy(buf, value.data, value.count);
+    buf[value.count] = '\0';
 
-        if (i > 0) nob_sb_append_cstr(&sb, ",\n");
-        nob_sb_append_cstr(&sb, "    {\"kind\": \"");
-        nob_sb_append_buf(&sb, req.kind_json.data, req.kind_json.count);
-        nob_sb_append_cstr(&sb, "\", \"version\": [");
-        for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
-            if (vi > 0) nob_sb_append_cstr(&sb, ", ");
-            nob_sb_append_cstr(&sb, "{");
-            if (!meta_file_api_append_version_fields(&sb, versions[vi])) {
-                nob_sb_free(sb);
-                return false;
-            }
-            nob_sb_append_cstr(&sb, "}");
-        }
-        nob_sb_append_cstr(&sb, "]}");
-    }
-    nob_sb_append_cstr(&sb, "\n  ]\n}\n");
-
-    bool ok = eval_write_text_file(ctx, query_file, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), false);
-    nob_sb_free(sb);
-    return ok;
+    char *end = NULL;
+    long parsed = strtol(buf, &end, 10);
+    if (!end || *end != '\0') return false;
+    *out_value = (int)parsed;
+    return true;
 }
 
-static bool meta_file_api_write_reply_file(EvalExecContext *ctx,
-                                           String_View reply_dir,
-                                           String_View build_dir,
-                                           Meta_File_Api_Request req,
-                                           String_View version,
-                                           String_View *out_reply_file_name) {
-    if (!ctx || !out_reply_file_name) return false;
-    *out_reply_file_name = nob_sv_from_cstr("");
+static String_View meta_file_api_kind_upper_from_json_name(String_View kind_json) {
+    if (eval_sv_eq_ci_lit(kind_json, "codemodel")) return nob_sv_from_cstr("CODEMODEL");
+    if (eval_sv_eq_ci_lit(kind_json, "cache")) return nob_sv_from_cstr("CACHE");
+    if (eval_sv_eq_ci_lit(kind_json, "cmakeFiles")) return nob_sv_from_cstr("CMAKEFILES");
+    if (eval_sv_eq_ci_lit(kind_json, "toolchains")) return nob_sv_from_cstr("TOOLCHAINS");
+    return nob_sv_from_cstr("");
+}
 
-    String_View reply_name = meta_file_api_reply_filename_temp(ctx, req.kind_json, version);
+typedef struct {
+    String_View kind_upper;
+    String_View kind_json;
+    String_View version;
+    String_View json_file;
+} Meta_File_Api_Object;
+
+typedef Meta_File_Api_Object *Meta_File_Api_Object_List;
+
+static bool meta_file_api_append_object_unique(EvalExecContext *ctx,
+                                               Meta_File_Api_Object_List *out_objects,
+                                               String_View kind_upper,
+                                               String_View kind_json,
+                                               String_View version,
+                                               String_View *out_json_file) {
+    if (out_json_file) *out_json_file = nob_sv_from_cstr("");
+    if (!ctx || !out_objects) return false;
+
+    for (size_t i = 0; i < arena_arr_len(*out_objects); i++) {
+        if (!eval_sv_key_eq((*out_objects)[i].kind_json, kind_json)) continue;
+        if (!eval_sv_key_eq((*out_objects)[i].version, version)) continue;
+        if (out_json_file) *out_json_file = (*out_objects)[i].json_file;
+        return true;
+    }
+
+    String_View json_file = meta_file_api_reply_filename_temp(ctx, kind_json, version);
     if (eval_should_stop(ctx)) return false;
-    String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, reply_name);
+
+    Meta_File_Api_Object object = {
+        .kind_upper = kind_upper,
+        .kind_json = kind_json,
+        .version = version,
+        .json_file = json_file,
+    };
+    if (!EVAL_ARR_PUSH(ctx, ctx->arena, *out_objects, object)) return false;
+    if (out_json_file) *out_json_file = json_file;
+    return true;
+}
+
+static bool meta_file_api_append_query_record(EvalExecContext *ctx,
+                                              Eval_File_Api_Query_Record_List *out_records,
+                                              String_View client_name,
+                                              String_View client_query_file,
+                                              String_View kind_upper,
+                                              String_View kind_json,
+                                              String_View versions,
+                                              bool shared_query) {
+    if (!ctx || !out_records || kind_upper.count == 0 || kind_json.count == 0 || versions.count == 0) {
+        return false;
+    }
+
+    Eval_File_Api_Query_Record record = {
+        .client_name = client_name,
+        .client_query_file = client_query_file,
+        .kind_upper = kind_upper,
+        .kind_json = kind_json,
+        .versions = versions,
+        .shared_query = shared_query,
+    };
+    return EVAL_ARR_PUSH(ctx, ctx->arena, *out_records, record);
+}
+
+static bool meta_file_api_upsert_project_query(EvalExecContext *ctx,
+                                               const Meta_File_Api_Request *request) {
+    if (!ctx || !request) return false;
+    Eval_File_Api_Model *model = &ctx->semantic_state.file_api;
+
+    for (size_t i = 0; i < arena_arr_len(model->queries); i++) {
+        Eval_File_Api_Query_Record *record = &model->queries[i];
+        if (!record->shared_query || record->client_query_file.count > 0) continue;
+        if (!eval_sv_key_eq(record->kind_upper, request->kind_upper)) continue;
+        record->kind_json = sv_copy_to_event_arena(ctx, request->kind_json);
+        record->versions = sv_copy_to_event_arena(ctx, request->versions);
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    Eval_File_Api_Query_Record record = {
+        .client_name = nob_sv_from_cstr(""),
+        .client_query_file = nob_sv_from_cstr(""),
+        .kind_upper = sv_copy_to_event_arena(ctx, request->kind_upper),
+        .kind_json = sv_copy_to_event_arena(ctx, request->kind_json),
+        .versions = sv_copy_to_event_arena(ctx, request->versions),
+        .shared_query = true,
+    };
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, model->queries, record);
+}
+
+static bool meta_file_api_find_literal(String_View text,
+                                       size_t start,
+                                       const char *needle,
+                                       size_t *out_pos) {
+    if (out_pos) *out_pos = SIZE_MAX;
+    if (!needle) return false;
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0 || start >= text.count || needle_len > text.count) return false;
+
+    for (size_t i = start; i + needle_len <= text.count; i++) {
+        if (memcmp(text.data + i, needle, needle_len) == 0) {
+            if (out_pos) *out_pos = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t meta_file_api_skip_ws(String_View text, size_t pos) {
+    while (pos < text.count && isspace((unsigned char)text.data[pos])) pos++;
+    return pos;
+}
+
+static bool meta_file_api_parse_json_string(String_View text,
+                                            size_t *io_pos,
+                                            String_View *out_value) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (!io_pos || !out_value) return false;
+    size_t pos = meta_file_api_skip_ws(text, *io_pos);
+    if (pos >= text.count || text.data[pos] != '"') return false;
+    pos++;
+    size_t start = pos;
+    while (pos < text.count) {
+        if (text.data[pos] == '\\') {
+            pos += 2;
+            continue;
+        }
+        if (text.data[pos] == '"') break;
+        pos++;
+    }
+    if (pos >= text.count) return false;
+    *out_value = nob_sv_from_parts(text.data + start, pos - start);
+    *io_pos = pos + 1;
+    return true;
+}
+
+static bool meta_file_api_parse_version_object_temp(EvalExecContext *ctx,
+                                                    String_View text,
+                                                    size_t *io_pos,
+                                                    String_View *out_version) {
+    if (out_version) *out_version = nob_sv_from_cstr("");
+    if (!ctx || !io_pos || !out_version) return false;
+    size_t pos = meta_file_api_skip_ws(text, *io_pos);
+    if (pos >= text.count || text.data[pos] != '{') return false;
+    pos++;
+
+    int values[4] = {-1, -1, -1, -1};
+    static const char *const keys[] = {"major", "minor", "patch", "tweak"};
+    while (pos < text.count) {
+        pos = meta_file_api_skip_ws(text, pos);
+        if (pos < text.count && text.data[pos] == '}') {
+            pos++;
+            break;
+        }
+
+        String_View key = nob_sv_from_cstr("");
+        if (!meta_file_api_parse_json_string(text, &pos, &key)) return false;
+        pos = meta_file_api_skip_ws(text, pos);
+        if (pos >= text.count || text.data[pos] != ':') return false;
+        pos++;
+        pos = meta_file_api_skip_ws(text, pos);
+        size_t num_start = pos;
+        while (pos < text.count && isdigit((unsigned char)text.data[pos])) pos++;
+        if (num_start == pos) return false;
+
+        int parsed = 0;
+        if (!meta_file_api_parse_int_sv(nob_sv_from_parts(text.data + num_start, pos - num_start), &parsed)) {
+            return false;
+        }
+        for (size_t ki = 0; ki < NOB_ARRAY_LEN(keys); ki++) {
+            if (eval_sv_eq_ci_lit(key, keys[ki])) {
+                values[ki] = parsed;
+                break;
+            }
+        }
+
+        pos = meta_file_api_skip_ws(text, pos);
+        if (pos < text.count && text.data[pos] == ',') pos++;
+    }
+
+    Nob_String_Builder sb = {0};
+    bool first = true;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(values); i++) {
+        if (values[i] < 0) continue;
+        if (!first) nob_sb_append_cstr(&sb, ".");
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("%d", values[i]));
+        first = false;
+    }
+    if (sb.count == 0) {
+        nob_sb_free(sb);
+        return false;
+    }
+
+    *out_version = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, sb.count));
+    nob_sb_free(sb);
+    *io_pos = pos;
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool meta_file_api_parse_client_query_file(EvalExecContext *ctx,
+                                                  String_View client_name,
+                                                  String_View query_file,
+                                                  String_View contents,
+                                                  Eval_File_Api_Query_Record_List *out_records) {
+    if (!ctx || !out_records) return false;
+
+    size_t search_from = 0;
+    while (true) {
+        size_t kind_pos = SIZE_MAX;
+        if (!meta_file_api_find_literal(contents, search_from, "\"kind\"", &kind_pos)) break;
+
+        size_t pos = kind_pos + strlen("\"kind\"");
+        pos = meta_file_api_skip_ws(contents, pos);
+        if (pos >= contents.count || contents.data[pos] != ':') {
+            search_from = kind_pos + 1;
+            continue;
+        }
+        pos++;
+
+        String_View kind_json = nob_sv_from_cstr("");
+        if (!meta_file_api_parse_json_string(contents, &pos, &kind_json)) {
+            search_from = kind_pos + 1;
+            continue;
+        }
+        if (meta_file_api_kind_upper_from_json_name(kind_json).count == 0) {
+            search_from = pos;
+            continue;
+        }
+
+        size_t version_pos = SIZE_MAX;
+        if (!meta_file_api_find_literal(contents, pos, "\"version\"", &version_pos)) {
+            search_from = pos;
+            continue;
+        }
+        pos = version_pos + strlen("\"version\"");
+        pos = meta_file_api_skip_ws(contents, pos);
+        if (pos >= contents.count || contents.data[pos] != ':') {
+            search_from = version_pos + 1;
+            continue;
+        }
+        pos++;
+        pos = meta_file_api_skip_ws(contents, pos);
+
+        SV_List versions = NULL;
+        if (pos < contents.count && contents.data[pos] == '[') {
+            pos++;
+            while (pos < contents.count) {
+                pos = meta_file_api_skip_ws(contents, pos);
+                if (pos < contents.count && contents.data[pos] == ']') {
+                    pos++;
+                    break;
+                }
+                String_View version = nob_sv_from_cstr("");
+                if (!meta_file_api_parse_version_object_temp(ctx, contents, &pos, &version)) return false;
+                if (!svu_list_push_temp(ctx, &versions, version)) return false;
+                pos = meta_file_api_skip_ws(contents, pos);
+                if (pos < contents.count && contents.data[pos] == ',') pos++;
+            }
+        } else if (pos < contents.count && contents.data[pos] == '{') {
+            String_View version = nob_sv_from_cstr("");
+            if (!meta_file_api_parse_version_object_temp(ctx, contents, &pos, &version)) return false;
+            if (!svu_list_push_temp(ctx, &versions, version)) return false;
+        }
+        if (arena_arr_len(versions) == 0) {
+            search_from = pos;
+            continue;
+        }
+
+        String_View joined = eval_sv_join_semi_temp(ctx, versions, arena_arr_len(versions));
+        String_View kind_upper = meta_file_api_kind_upper_from_json_name(kind_json);
+        if (eval_should_stop(ctx)) return false;
+        if (!meta_file_api_append_query_record(ctx,
+                                               out_records,
+                                               client_name,
+                                               query_file,
+                                               kind_upper,
+                                               kind_json,
+                                               joined,
+                                               false)) {
+            return false;
+        }
+        search_from = pos;
+    }
+
+    return true;
+}
+
+static bool meta_file_api_collect_disk_queries(EvalExecContext *ctx,
+                                               Eval_File_Api_Query_Record_List *out_records) {
+    if (!ctx || !out_records) return false;
+
+    String_View query_dir = meta_file_api_query_dir(ctx);
+    if (eval_should_stop(ctx)) return false;
+    char *query_dir_c = eval_sv_to_cstr_temp(ctx, query_dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, query_dir_c, false);
+    if (!nob_file_exists(query_dir_c) || nob_get_file_type(query_dir_c) != NOB_FILE_DIRECTORY) return true;
+
+    Nob_File_Paths entries = {0};
+    if (!nob_read_entire_dir(query_dir_c, &entries)) return true;
+    for (size_t i = 0; i < entries.count; i++) {
+        const char *entry_name = entries.items[i];
+        if (!entry_name || strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0) continue;
+
+        String_View entry = nob_sv_from_cstr(entry_name);
+        String_View full_path = eval_sv_path_join(eval_temp_arena(ctx), query_dir, entry);
+        if (eval_should_stop(ctx)) {
+            nob_da_free(entries);
+            return false;
+        }
+        char *full_path_c = eval_sv_to_cstr_temp(ctx, full_path);
+        EVAL_OOM_RETURN_IF_NULL(ctx, full_path_c, false);
+        Nob_File_Type type = nob_get_file_type(full_path_c);
+
+        if (type == NOB_FILE_DIRECTORY && entry.count > 7 && memcmp(entry.data, "client-", 7) == 0) {
+            String_View query_file = eval_sv_path_join(eval_temp_arena(ctx), full_path, nob_sv_from_cstr("query.json"));
+            if (eval_should_stop(ctx)) {
+                nob_da_free(entries);
+                return false;
+            }
+            String_View contents = nob_sv_from_cstr("");
+            bool found = false;
+            if (!eval_service_read_file(ctx, query_file, &contents, &found)) {
+                nob_da_free(entries);
+                return false;
+            }
+            if (found &&
+                !meta_file_api_parse_client_query_file(ctx, entry, query_file, contents, out_records)) {
+                nob_da_free(entries);
+                return false;
+            }
+            continue;
+        }
+
+        if (type != NOB_FILE_REGULAR) continue;
+        String_View kind_json = nob_sv_from_cstr("");
+        String_View kind_upper = nob_sv_from_cstr("");
+        if (entry.count >= 12 && memcmp(entry.data, "codemodel-v", 11) == 0) {
+            kind_json = nob_sv_from_cstr("codemodel");
+            kind_upper = nob_sv_from_cstr("CODEMODEL");
+        } else if (entry.count >= 8 && memcmp(entry.data, "cache-v", 7) == 0) {
+            kind_json = nob_sv_from_cstr("cache");
+            kind_upper = nob_sv_from_cstr("CACHE");
+        } else if (entry.count >= 13 && memcmp(entry.data, "cmakeFiles-v", 12) == 0) {
+            kind_json = nob_sv_from_cstr("cmakeFiles");
+            kind_upper = nob_sv_from_cstr("CMAKEFILES");
+        } else if (entry.count >= 13 && memcmp(entry.data, "toolchains-v", 12) == 0) {
+            kind_json = nob_sv_from_cstr("toolchains");
+            kind_upper = nob_sv_from_cstr("TOOLCHAINS");
+        } else {
+            continue;
+        }
+
+        size_t dash = SIZE_MAX;
+        for (size_t di = 0; di < entry.count; di++) {
+            if (entry.data[di] == 'v' && di > 0 && entry.data[di - 1] == '-') {
+                dash = di;
+                break;
+            }
+        }
+        if (dash == SIZE_MAX || dash + 1 >= entry.count) continue;
+        String_View version = nob_sv_from_parts(entry.data + dash + 1, entry.count - dash - 1);
+        if (meta_sv_ends_with_ci_lit(version, ".json")) version.count -= 5;
+        if (!meta_file_api_is_version(version)) continue;
+        if (!meta_file_api_append_query_record(ctx,
+                                               out_records,
+                                               nob_sv_from_cstr(""),
+                                               full_path,
+                                               kind_upper,
+                                               kind_json,
+                                               version,
+                                               true)) {
+            nob_da_free(entries);
+            return false;
+        }
+    }
+    nob_da_free(entries);
+    return true;
+}
+
+static bool meta_file_api_collect_all_queries(EvalExecContext *ctx,
+                                              Eval_File_Api_Query_Record_List *out_records) {
+    if (!ctx || !out_records) return false;
+    *out_records = NULL;
+
+    for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.file_api.queries); i++) {
+        if (!EVAL_ARR_PUSH(ctx, ctx->arena, *out_records, ctx->semantic_state.file_api.queries[i])) return false;
+    }
+    return meta_file_api_collect_disk_queries(ctx, out_records);
+}
+
+static bool meta_file_api_write_object_file(EvalExecContext *ctx,
+                                            String_View reply_dir,
+                                            const Meta_File_Api_Object *object) {
+    if (!ctx || !object) return false;
+
+    String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, object->json_file);
     if (eval_should_stop(ctx)) return false;
 
     Nob_String_Builder sb = {0};
     nob_sb_append_cstr(&sb, "{\n  \"kind\": \"");
-    nob_sb_append_buf(&sb, req.kind_json.data, req.kind_json.count);
+    nob_sb_append_buf(&sb, object->kind_json.data, object->kind_json.count);
     nob_sb_append_cstr(&sb, "\",\n  \"version\": {");
-    if (!meta_file_api_append_version_fields(&sb, version)) {
+    if (!meta_file_api_append_version_fields(&sb, object->version)) {
         nob_sb_free(sb);
         return false;
     }
-    nob_sb_append_cstr(&sb, "},\n  \"generator\": \"Nobify Evaluator\",\n  \"paths\": {\n    \"build\": \"");
-    nob_sb_append_buf(&sb, build_dir.data ? build_dir.data : "", build_dir.count);
-    nob_sb_append_cstr(&sb, "\"\n  }\n}\n");
+    nob_sb_append_cstr(&sb, "},\n");
 
+    if (eval_sv_eq_ci_lit(object->kind_json, "codemodel")) {
+        nob_sb_append_cstr(&sb, "  \"paths\": {\n    \"source\": \"");
+        nob_sb_append_buf(&sb, ctx->source_dir.data, ctx->source_dir.count);
+        nob_sb_append_cstr(&sb, "\",\n    \"build\": \"");
+        nob_sb_append_buf(&sb, ctx->binary_dir.data, ctx->binary_dir.count);
+        nob_sb_append_cstr(&sb, "\"\n  },\n  \"configurations\": [\n    {\n      \"name\": \"\",\n      \"targets\": [");
+        for (size_t i = 0; i < arena_arr_len(ctx->semantic_state.targets.records); i++) {
+            Eval_Target_Record *target = &ctx->semantic_state.targets.records[i];
+            if (i > 0) nob_sb_append_cstr(&sb, ", ");
+            nob_sb_append_cstr(&sb, "{\"name\": \"");
+            nob_sb_append_buf(&sb, target->name.data, target->name.count);
+            nob_sb_append_cstr(&sb, "\", \"id\": \"");
+            nob_sb_append_buf(&sb, target->name.data, target->name.count);
+            nob_sb_append_cstr(&sb, "::@nobify\"}");
+        }
+        nob_sb_append_cstr(&sb, "]\n    }\n  ]\n");
+    } else if (eval_sv_eq_ci_lit(object->kind_json, "cache")) {
+        nob_sb_append_cstr(&sb, "  \"entries\": [");
+        bool first = true;
+        ptrdiff_t n = stbds_shlen(ctx->scope_state.cache_entries);
+        for (ptrdiff_t i = 0; i < n; i++) {
+            Eval_Cache_Entry *entry = &ctx->scope_state.cache_entries[i];
+            if (!entry->key) continue;
+            if (!first) nob_sb_append_cstr(&sb, ", ");
+            first = false;
+            nob_sb_append_cstr(&sb, "{\"name\": \"");
+            nob_sb_append_cstr(&sb, entry->key);
+            nob_sb_append_cstr(&sb, "\", \"type\": \"");
+            nob_sb_append_buf(&sb, entry->value.type.data, entry->value.type.count);
+            nob_sb_append_cstr(&sb, "\", \"value\": \"");
+            meta_sb_append_cmake_escaped(&sb, entry->value.data);
+            nob_sb_append_cstr(&sb, "\"}");
+        }
+        nob_sb_append_cstr(&sb, "]\n");
+    } else if (eval_sv_eq_ci_lit(object->kind_json, "cmakeFiles")) {
+        nob_sb_append_cstr(&sb, "  \"inputs\": [\n    {\"path\": \"");
+        nob_sb_append_cstr(&sb, ctx->current_file ? ctx->current_file : "");
+        nob_sb_append_cstr(&sb, "\"}\n  ]\n");
+    } else if (eval_sv_eq_ci_lit(object->kind_json, "toolchains")) {
+        nob_sb_append_cstr(&sb, "  \"toolchains\": [");
+        String_View c_compiler = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"));
+        String_View cxx_compiler = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"));
+        nob_sb_append_cstr(&sb, "{\"language\": \"C\", \"compiler\": {\"path\": \"");
+        nob_sb_append_buf(&sb, c_compiler.data, c_compiler.count);
+        nob_sb_append_cstr(&sb, "\"}}, {\"language\": \"CXX\", \"compiler\": {\"path\": \"");
+        nob_sb_append_buf(&sb, cxx_compiler.data, cxx_compiler.count);
+        nob_sb_append_cstr(&sb, "\"}}]\n");
+    } else {
+        nob_sb_append_cstr(&sb, "  \"reply\": true\n");
+    }
+
+    nob_sb_append_cstr(&sb, "}\n");
     bool ok = eval_write_text_file(ctx, reply_path, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), false);
     nob_sb_free(sb);
-    if (!ok) return false;
-
-    *out_reply_file_name = reply_name;
-    return true;
+    return ok;
 }
 
-static bool meta_file_api_write_index_file(EvalExecContext *ctx,
-                                           String_View index_file,
-                                           String_View build_dir,
-                                           String_View query_file,
-                                           const Meta_File_Api_Request_List *requests) {
-    if (!ctx || !requests) return false;
+static bool meta_file_api_write_index_from_queries(EvalExecContext *ctx,
+                                                   String_View index_file,
+                                                   const Eval_File_Api_Query_Record_List *queries,
+                                                   Meta_File_Api_Object_List objects) {
+    if (!ctx || !queries) return false;
 
     Nob_String_Builder sb = {0};
-    nob_sb_append_cstr(&sb, "{\n  \"cmake\": {\n    \"generator\": {\"name\": \"Nobify Evaluator\"},\n    \"paths\": {\n      \"build\": \"");
-    nob_sb_append_buf(&sb, build_dir.data ? build_dir.data : "", build_dir.count);
-    nob_sb_append_cstr(&sb, "\"\n    }\n  },\n  \"query\": {\n    \"path\": \"");
-    nob_sb_append_buf(&sb, query_file.data ? query_file.data : "", query_file.count);
-    nob_sb_append_cstr(&sb, "\"\n  },\n  \"objects\": [\n");
+    nob_sb_append_cstr(&sb, "{\n  \"cmake\": {\n    \"generator\": {\"name\": \"Nobify Evaluator\"},\n    \"paths\": {\n      \"source\": \"");
+    nob_sb_append_buf(&sb, ctx->source_dir.data, ctx->source_dir.count);
+    nob_sb_append_cstr(&sb, "\",\n      \"build\": \"");
+    nob_sb_append_buf(&sb, ctx->binary_dir.data, ctx->binary_dir.count);
+    nob_sb_append_cstr(&sb, "\"\n    }\n  },\n  \"objects\": [\n");
 
-    bool first_object = true;
-    String_View reply_dir = meta_file_api_reply_dir(ctx);
-    if (eval_should_stop(ctx)) {
-        nob_sb_free(sb);
-        return false;
-    }
-
-    for (size_t i = 0; i < arena_arr_len(*requests); i++) {
-        Meta_File_Api_Request req = (*requests)[i];
-        SV_List versions = {0};
-        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req.versions, &versions)) {
+    for (size_t i = 0; i < arena_arr_len(objects); i++) {
+        if (i > 0) nob_sb_append_cstr(&sb, ",\n");
+        nob_sb_append_cstr(&sb, "    {\"kind\": \"");
+        nob_sb_append_buf(&sb, objects[i].kind_json.data, objects[i].kind_json.count);
+        nob_sb_append_cstr(&sb, "\", \"version\": {");
+        if (!meta_file_api_append_version_fields(&sb, objects[i].version)) {
             nob_sb_free(sb);
             return false;
         }
+        nob_sb_append_cstr(&sb, "}, \"jsonFile\": \"");
+        nob_sb_append_buf(&sb, objects[i].json_file.data, objects[i].json_file.count);
+        nob_sb_append_cstr(&sb, "\"}");
+    }
+    nob_sb_append_cstr(&sb, "\n  ]");
 
+    bool opened_reply = false;
+    for (size_t qi = 0; qi < arena_arr_len(*queries); qi++) {
+        const Eval_File_Api_Query_Record *query = &(*queries)[qi];
+        if (query->shared_query || query->client_name.count == 0 || query->client_query_file.count == 0) continue;
+
+        if (!opened_reply) {
+            nob_sb_append_cstr(&sb, ",\n  \"reply\": {\n");
+            opened_reply = true;
+        } else {
+            nob_sb_append_cstr(&sb, ",\n");
+        }
+
+        nob_sb_append_cstr(&sb, "    \"");
+        nob_sb_append_buf(&sb, query->client_name.data, query->client_name.count);
+        nob_sb_append_cstr(&sb, "\": {\n      \"");
+        nob_sb_append_cstr(&sb, "query.json");
+        nob_sb_append_cstr(&sb, "\": {\n        \"responses\": [");
+
+        SV_List versions = NULL;
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), query->versions, &versions)) {
+            nob_sb_free(sb);
+            return false;
+        }
         for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
-            String_View reply_name = nob_sv_from_cstr("");
-            if (!meta_file_api_write_reply_file(ctx, reply_dir, build_dir, req, versions[vi], &reply_name)) {
+            String_View json_file = nob_sv_from_cstr("");
+            if (!meta_file_api_append_object_unique(ctx,
+                                                    &objects,
+                                                    query->kind_upper,
+                                                    query->kind_json,
+                                                    versions[vi],
+                                                    &json_file)) {
                 nob_sb_free(sb);
                 return false;
             }
-
-            if (!first_object) nob_sb_append_cstr(&sb, ",\n");
-            first_object = false;
-            nob_sb_append_cstr(&sb, "    {\"kind\": \"");
-            nob_sb_append_buf(&sb, req.kind_json.data, req.kind_json.count);
+            if (vi > 0) nob_sb_append_cstr(&sb, ", ");
+            nob_sb_append_cstr(&sb, "{\"kind\": \"");
+            nob_sb_append_buf(&sb, query->kind_json.data, query->kind_json.count);
             nob_sb_append_cstr(&sb, "\", \"version\": {");
             if (!meta_file_api_append_version_fields(&sb, versions[vi])) {
                 nob_sb_free(sb);
                 return false;
             }
             nob_sb_append_cstr(&sb, "}, \"jsonFile\": \"");
-            nob_sb_append_buf(&sb, reply_name.data, reply_name.count);
+            nob_sb_append_buf(&sb, json_file.data, json_file.count);
             nob_sb_append_cstr(&sb, "\"}");
-
-            String_View reply_var_key = meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_REPLY::", req.kind_upper, "::FILE");
-            String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, reply_name);
-            if (eval_should_stop(ctx)) {
-                nob_sb_free(sb);
-                return false;
-            }
-            if (!eval_var_set_current(ctx, reply_var_key, reply_path)) {
-                nob_sb_free(sb);
-                return false;
-            }
         }
+        nob_sb_append_cstr(&sb, "]\n      }\n    }");
     }
+    if (opened_reply) nob_sb_append_cstr(&sb, "\n  }");
 
-    nob_sb_append_cstr(&sb, "\n  ]\n}\n");
+    nob_sb_append_cstr(&sb, "\n}\n");
     bool ok = eval_write_text_file(ctx, index_file, nob_sv_from_parts(sb.items ? sb.items : "", sb.count), false);
     nob_sb_free(sb);
     return ok;
 }
 
-static bool meta_file_api_stage_query(EvalExecContext *ctx, const Meta_File_Api_Request_List *requests) {
-    if (!ctx || !requests) return false;
+static bool meta_file_api_stage_replies(EvalExecContext *ctx, const Meta_File_Api_Query_Request *req) {
+    if (!ctx || !req) return false;
 
-    String_View build_dir = meta_current_bin_dir(ctx);
+    for (size_t i = 0; i < arena_arr_len(req->requests); i++) {
+        if (!meta_file_api_upsert_project_query(ctx, &req->requests[i])) return false;
+    }
+
     String_View root_dir = meta_file_api_root_dir(ctx);
     String_View query_dir = meta_file_api_query_dir(ctx);
     String_View reply_dir = meta_file_api_reply_dir(ctx);
     if (eval_should_stop(ctx)) return false;
+    if (!eval_file_mkdir_p(ctx, query_dir)) return false;
+    if (!eval_file_mkdir_p(ctx, reply_dir)) return false;
 
-    String_View query_file = eval_sv_path_join(eval_temp_arena(ctx), query_dir, nob_sv_from_cstr("query.json"));
-    String_View index_file = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, nob_sv_from_cstr("index-nobify-v1.json"));
+    Eval_File_Api_Query_Record_List all_queries = NULL;
+    if (!meta_file_api_collect_all_queries(ctx, &all_queries)) return false;
+
+    Meta_File_Api_Object_List objects = NULL;
+    for (size_t qi = 0; qi < arena_arr_len(all_queries); qi++) {
+        const Eval_File_Api_Query_Record *query = &all_queries[qi];
+        SV_List versions = NULL;
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), query->versions, &versions)) return false;
+
+        for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
+            String_View json_file = nob_sv_from_cstr("");
+            if (!meta_file_api_append_object_unique(ctx,
+                                                    &objects,
+                                                    query->kind_upper,
+                                                    query->kind_json,
+                                                    versions[vi],
+                                                    &json_file)) {
+                return false;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(objects); i++) {
+        if (!meta_file_api_write_object_file(ctx, reply_dir, &objects[i])) return false;
+        String_View reply_var_key = meta_concat3_temp(ctx, "NOBIFY_CMAKE_FILE_API_REPLY::", objects[i].kind_upper, "::FILE");
+        String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, objects[i].json_file);
+        if (eval_should_stop(ctx)) return false;
+        if (!eval_var_set_current(ctx, reply_var_key, reply_path)) return false;
+    }
+
+    ctx->semantic_state.file_api.next_reply_nonce += 1;
+    String_View index_name = nob_sv_from_cstr(nob_temp_sprintf("index-%zu.json",
+                                                               ctx->semantic_state.file_api.next_reply_nonce));
+    String_View index_file = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, index_name);
     if (eval_should_stop(ctx)) return false;
-
-    if (!meta_file_api_write_query_file(ctx, query_file, requests)) return false;
-    if (!meta_file_api_write_index_file(ctx, index_file, build_dir, query_file, requests)) return false;
+    if (!meta_file_api_write_index_from_queries(ctx, index_file, &all_queries, objects)) return false;
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_FILE_API"), nob_sv_from_cstr("1"))) return false;
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::ROOT", root_dir)) return false;
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::QUERY_DIR", query_dir)) return false;
-    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::QUERY_FILE", query_file)) return false;
+    if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::QUERY_FILE", nob_sv_from_cstr(""))) return false;
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::REPLY_DIR", reply_dir)) return false;
     if (!meta_file_api_set_path_var(ctx, "NOBIFY_CMAKE_FILE_API::INDEX_FILE", index_file)) return false;
 
     Eval_Canonical_Draft draft = {0};
     eval_canonical_draft_init(&draft);
-
-    Eval_Canonical_Artifact query_artifact = {
-        .producer = nob_sv_from_cstr("cmake_file_api"),
-        .kind = nob_sv_from_cstr("QUERY_FILE"),
-        .status = nob_sv_from_cstr("STAGED"),
-        .base_dir = query_dir,
-        .primary_path = query_file,
-    };
-    if (!eval_canonical_draft_add_artifact(ctx, &draft, &query_artifact, NULL)) return false;
 
     Eval_Canonical_Artifact index_artifact = {
         .producer = nob_sv_from_cstr("cmake_file_api"),
@@ -1323,26 +1920,17 @@ static bool meta_file_api_stage_query(EvalExecContext *ctx, const Meta_File_Api_
     };
     if (!eval_canonical_draft_add_artifact(ctx, &draft, &index_artifact, NULL)) return false;
 
-    for (size_t i = 0; i < arena_arr_len(*requests); i++) {
-        Meta_File_Api_Request req = (*requests)[i];
-        SV_List versions = {0};
-        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), req.versions, &versions)) return false;
-
-        for (size_t vi = 0; vi < arena_arr_len(versions); vi++) {
-            String_View reply_name = meta_file_api_reply_filename_temp(ctx, req.kind_json, versions[vi]);
-            if (eval_should_stop(ctx)) return false;
-            String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, reply_name);
-            if (eval_should_stop(ctx)) return false;
-
-            Eval_Canonical_Artifact reply_artifact = {
-                .producer = nob_sv_from_cstr("cmake_file_api"),
-                .kind = meta_concat3_temp(ctx, "REPLY_", req.kind_upper, ""),
-                .status = nob_sv_from_cstr("STAGED"),
-                .base_dir = reply_dir,
-                .primary_path = reply_path,
-            };
-            if (!eval_canonical_draft_add_artifact(ctx, &draft, &reply_artifact, NULL)) return false;
-        }
+    for (size_t i = 0; i < arena_arr_len(objects); i++) {
+        String_View reply_path = eval_sv_path_join(eval_temp_arena(ctx), reply_dir, objects[i].json_file);
+        if (eval_should_stop(ctx)) return false;
+        Eval_Canonical_Artifact reply_artifact = {
+            .producer = nob_sv_from_cstr("cmake_file_api"),
+            .kind = meta_concat3_temp(ctx, "REPLY_", objects[i].kind_upper, ""),
+            .status = nob_sv_from_cstr("STAGED"),
+            .base_dir = reply_dir,
+            .primary_path = reply_path,
+        };
+        if (!eval_canonical_draft_add_artifact(ctx, &draft, &reply_artifact, NULL)) return false;
     }
 
     return eval_canonical_draft_commit(ctx, &draft);
@@ -1467,7 +2055,7 @@ static bool meta_file_api_execute_request(EvalExecContext *ctx,
                                           const Meta_File_Api_Query_Request *req) {
     if (!ctx || !req) return false;
     if (!meta_file_api_publish_query_vars(ctx, req)) return false;
-    return meta_file_api_stage_query(ctx, &req->requests);
+    return meta_file_api_stage_replies(ctx, req);
 }
 
 Eval_Result eval_handle_cmake_file_api(EvalExecContext *ctx, const Node *node) {

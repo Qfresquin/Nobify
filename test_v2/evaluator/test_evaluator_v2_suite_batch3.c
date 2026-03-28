@@ -1946,6 +1946,86 @@ TEST(evaluator_remove_definitions_updates_directory_definition_and_option_state)
     TEST_PASS();
 }
 
+TEST(evaluator_remove_definitions_cmp0005_old_and_new_match_legacy_escaped_values) {
+    {
+        Arena *temp_arena = arena_create(2 * 1024 * 1024);
+        Arena *event_arena = arena_create(2 * 1024 * 1024);
+        ASSERT(temp_arena && event_arena);
+
+        Cmake_Event_Stream *stream = event_stream_create(event_arena);
+        ASSERT(stream != NULL);
+
+        Eval_Test_Init init = {0};
+        init.arena = temp_arena;
+        init.event_arena = event_arena;
+        init.stream = stream;
+        init.source_dir = nob_sv_from_cstr(".");
+        init.binary_dir = nob_sv_from_cstr(".");
+        init.current_file = "CMakeLists.txt";
+
+        Eval_Test_Runtime *ctx = eval_test_create(&init);
+        ASSERT(ctx != NULL);
+
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "cmake_policy(SET CMP0005 NEW)\n"
+            "add_definitions([=[-DKEEP_NEW=1]=] [=[-DREMOVE_NEW=semi\\;value]=] [=[-DREMOVE_PATH=C:\\\\temp]=])\n"
+            "remove_definitions([=[-DREMOVE_NEW=semi\\;value]=] [=[-DREMOVE_PATH=C:\\\\temp]=])\n"
+            "get_property(NEW_DEFS DIRECTORY PROPERTY COMPILE_DEFINITIONS)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        ASSERT(report != NULL);
+        ASSERT(report->error_count == 0);
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NEW_DEFS")),
+                         nob_sv_from_cstr("KEEP_NEW=1")));
+
+        eval_test_destroy(ctx);
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+    }
+
+    {
+        Arena *temp_arena = arena_create(2 * 1024 * 1024);
+        Arena *event_arena = arena_create(2 * 1024 * 1024);
+        ASSERT(temp_arena && event_arena);
+
+        Cmake_Event_Stream *stream = event_stream_create(event_arena);
+        ASSERT(stream != NULL);
+
+        Eval_Test_Init init = {0};
+        init.arena = temp_arena;
+        init.event_arena = event_arena;
+        init.stream = stream;
+        init.source_dir = nob_sv_from_cstr(".");
+        init.binary_dir = nob_sv_from_cstr(".");
+        init.current_file = "CMakeLists.txt";
+
+        Eval_Test_Runtime *ctx = eval_test_create(&init);
+        ASSERT(ctx != NULL);
+
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "cmake_policy(SET CMP0005 OLD)\n"
+            "add_definitions([=[-DKEEP_OLD=1]=] [=[-DREMOVE_OLD=semi\\;value]=] [=[-DREMOVE_PATH=C:\\\\temp]=])\n"
+            "remove_definitions([=[-DREMOVE_OLD=semi\\;value]=] [=[-DREMOVE_PATH=C:\\\\temp]=])\n"
+            "get_property(OLD_DEFS DIRECTORY PROPERTY COMPILE_DEFINITIONS)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        ASSERT(report != NULL);
+        ASSERT(report->error_count == 0);
+        ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("OLD_DEFS")),
+                         nob_sv_from_cstr("KEEP_OLD=1")));
+
+        eval_test_destroy(ctx);
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+    }
+
+    TEST_PASS();
+}
+
 TEST(evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3037,18 +3117,16 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
                      nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API_QUERY::TOOLCHAINS")),
                      nob_sv_from_cstr("1")));
-    ASSERT(eval_test_canonical_artifact_count(ctx) >= 6);
     String_View file_api_artifact = {0};
-    ASSERT(eval_test_canonical_artifact_find(ctx,
-                                             nob_sv_from_cstr("cmake_file_api"),
-                                             nob_sv_from_cstr("QUERY_FILE"),
-                                             &file_api_artifact));
-    ASSERT(sv_contains_sv(file_api_artifact, nob_sv_from_cstr(".cmake/api/v1/query/client-nobify/query.json")));
+    ASSERT(!eval_test_canonical_artifact_find(ctx,
+                                              nob_sv_from_cstr("cmake_file_api"),
+                                              nob_sv_from_cstr("QUERY_FILE"),
+                                              &file_api_artifact));
     ASSERT(eval_test_canonical_artifact_find(ctx,
                                              nob_sv_from_cstr("cmake_file_api"),
                                              nob_sv_from_cstr("INDEX_FILE"),
                                              &file_api_artifact));
-    ASSERT(sv_contains_sv(file_api_artifact, nob_sv_from_cstr(".cmake/api/v1/reply/index-nobify-v1.json")));
+    ASSERT(sv_contains_sv(file_api_artifact, nob_sv_from_cstr(".cmake/api/v1/reply/index-")));
     ASSERT(eval_test_canonical_artifact_find(ctx,
                                              nob_sv_from_cstr("cmake_file_api"),
                                              nob_sv_from_cstr("REPLY_CODEMODEL"),
@@ -3059,15 +3137,16 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, "meta-export.cmake", &export_text));
     ASSERT(sv_contains_sv(export_text, nob_sv_from_cstr("set(NOBIFY_EXPORT_TARGETS \"meta_lib\")")));
 
-    String_View file_api_query = {0};
-    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/query/client-nobify/query.json", &file_api_query));
-    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"codemodel\"")));
-    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"cache\"")));
-    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"cmakeFiles\"")));
-    ASSERT(sv_contains_sv(file_api_query, nob_sv_from_cstr("\"kind\": \"toolchains\"")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API::QUERY_FILE")),
+                     nob_sv_from_cstr("")));
+    ASSERT(!nob_file_exists(".cmake/api/v1/query/query.json"));
+    ASSERT(!nob_file_exists(".cmake/api/v1/query/client-nobify/query.json"));
 
+    String_View index_path = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API::INDEX_FILE"));
+    ASSERT(index_path.count > 0);
+    ASSERT(sv_contains_sv(index_path, nob_sv_from_cstr(".cmake/api/v1/reply/index-")));
     String_View file_api_index = {0};
-    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/reply/index-nobify-v1.json", &file_api_index));
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, nob_temp_sv_to_cstr(index_path), &file_api_index));
     ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("codemodel-v2.json")));
     ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("cache-v2.0.json")));
     ASSERT(sv_contains_sv(file_api_index, nob_sv_from_cstr("cmakeFiles-v1.json")));
@@ -3091,6 +3170,71 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
         }
     }
     ASSERT(saw_malformed_cache_warning);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_batch6_cmake_file_api_merges_disk_queries_without_materializing_command_query_file) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists(".cmake"));
+    ASSERT(nob_mkdir_if_not_exists(".cmake/api"));
+    ASSERT(nob_mkdir_if_not_exists(".cmake/api/v1"));
+    ASSERT(nob_mkdir_if_not_exists(".cmake/api/v1/query"));
+    ASSERT(nob_mkdir_if_not_exists(".cmake/api/v1/query/client-fixture"));
+    ASSERT(nob_write_entire_file(".cmake/api/v1/query/client-fixture/query.json",
+                                 "{\n"
+                                 "  \"requests\": [\n"
+                                 "    {\"kind\": \"cache\", \"version\": [{\"major\": 2, \"minor\": 0}]}\n"
+                                 "  ]\n"
+                                 "}\n",
+                                 strlen("{\n  \"requests\": [\n    {\"kind\": \"cache\", \"version\": [{\"major\": 2, \"minor\": 0}]}\n  ]\n}\n")));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API::QUERY_FILE")),
+                     nob_sv_from_cstr("")));
+    ASSERT(!nob_file_exists(".cmake/api/v1/query/query.json"));
+    ASSERT(nob_file_exists(".cmake/api/v1/query/client-fixture/query.json"));
+
+    String_View index_path = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API::INDEX_FILE"));
+    ASSERT(index_path.count > 0);
+    String_View index_text = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, nob_temp_sv_to_cstr(index_path), &index_text));
+    ASSERT(sv_contains_sv(index_text, nob_sv_from_cstr("\"client-fixture\"")));
+    ASSERT(sv_contains_sv(index_text, nob_sv_from_cstr("\"query.json\"")));
+    ASSERT(sv_contains_sv(index_text, nob_sv_from_cstr("codemodel-v2.json")));
+    ASSERT(sv_contains_sv(index_text, nob_sv_from_cstr("cache-v2.0.json")));
+    ASSERT(!eval_test_canonical_artifact_find(ctx,
+                                              nob_sv_from_cstr("cmake_file_api"),
+                                              nob_sv_from_cstr("QUERY_FILE"),
+                                              NULL));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3127,7 +3271,9 @@ TEST(evaluator_batch6_metadata_commands_reject_unsupported_forms) {
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 4);
+    ASSERT(report->error_count == 3);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE")),
+                     nob_sv_from_cstr("PACKAGE")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3228,6 +3374,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed, skipped);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed, skipped);
     test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed, skipped);
+    test_evaluator_remove_definitions_cmp0005_old_and_new_match_legacy_escaped_values(passed, failed, skipped);
     test_evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix(passed, failed, skipped);
     test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed, skipped);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed, skipped);
@@ -3240,6 +3387,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_try_run_rejects_incomplete_argument_shapes(passed, failed, skipped);
     test_evaluator_exec_program_respects_cmp0153_and_legacy_wrapper_surface(passed, failed, skipped);
     test_evaluator_batch6_metadata_commands_cover_documented_subset(passed, failed, skipped);
+    test_evaluator_batch6_cmake_file_api_merges_disk_queries_without_materializing_command_query_file(passed, failed, skipped);
     test_evaluator_batch6_metadata_commands_reject_unsupported_forms(passed, failed, skipped);
     test_evaluator_batch6_metadata_commands_reject_incomplete_option_values(passed, failed, skipped);
 }

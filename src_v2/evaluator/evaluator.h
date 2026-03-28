@@ -139,6 +139,26 @@ typedef struct {
     bool timed_out;
 } Eval_Process_Run_Result;
 
+typedef enum {
+    EVAL_WINDOWS_REGISTRY_QUERY_VALUE = 0,
+    EVAL_WINDOWS_REGISTRY_QUERY_VALUE_NAMES,
+    EVAL_WINDOWS_REGISTRY_QUERY_SUBKEYS,
+} Eval_Windows_Registry_Query_Kind;
+
+typedef struct {
+    String_View key;
+    Eval_Windows_Registry_Query_Kind kind;
+    String_View value_name;
+    String_View separator;
+    String_View view;
+} Eval_Windows_Registry_Query_Request;
+
+typedef struct {
+    bool found;
+    String_View value;
+    String_View error_message;
+} Eval_Windows_Registry_Query_Result;
+
 typedef bool (*Eval_Service_Read_File_Fn)(void *user_data,
                                           Arena *scratch_arena,
                                           String_View path,
@@ -170,6 +190,11 @@ typedef bool (*Eval_Service_Host_Read_File_Fn)(void *user_data,
                                                String_View path,
                                                String_View *out_contents,
                                                bool *out_found);
+typedef bool (*Eval_Service_Host_Query_Windows_Registry_Fn)(
+    void *user_data,
+    Arena *scratch_arena,
+    const Eval_Windows_Registry_Query_Request *request,
+    Eval_Windows_Registry_Query_Result *out_result);
 
 struct EvalServices {
     void *user_data;
@@ -182,6 +207,7 @@ struct EvalServices {
     Eval_Service_Get_Cwd_Fn process_get_cwd;
     Eval_Service_Process_Run_Fn process_run_capture;
     Eval_Service_Host_Read_File_Fn host_read_file;
+    Eval_Service_Host_Query_Windows_Registry_Fn host_query_windows_registry;
 };
 
 typedef struct {

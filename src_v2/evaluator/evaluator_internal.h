@@ -29,12 +29,14 @@ extern "C" {
 #define EVAL_VAR_NOBIFY_WHILE_MAX_ITERATIONS "CMAKE_NOBIFY_WHILE_MAX_ITERATIONS"
 #define EVAL_VAR_NOBIFY_EXPAND_MAX_RECURSION "CMAKE_NOBIFY_EXPAND_MAX_RECURSION"
 
+#define EVAL_POLICY_CMP0005 "CMP0005"
 #define EVAL_POLICY_CMP0017 "CMP0017"
 #define EVAL_POLICY_CMP0036 "CMP0036"
 #define EVAL_POLICY_CMP0048 "CMP0048"
 #define EVAL_POLICY_CMP0061 "CMP0061"
 #define EVAL_POLICY_CMP0074 "CMP0074"
 #define EVAL_POLICY_CMP0077 "CMP0077"
+#define EVAL_POLICY_CMP0090 "CMP0090"
 #define EVAL_POLICY_CMP0102 "CMP0102"
 #define EVAL_POLICY_CMP0124 "CMP0124"
 #define EVAL_POLICY_CMP0126 "CMP0126"
@@ -476,11 +478,35 @@ typedef struct {
 } Eval_Dependency_Provider_State;
 
 typedef struct {
+    String_View package_name;
+    String_View prefix;
+} Eval_Package_Registry_Entry;
+
+typedef Eval_Package_Registry_Entry *Eval_Package_Registry_Entry_List;
+
+typedef struct {
     Eval_Dependency_Provider_State dependency_provider;
     SV_List active_find_packages;
     SV_List found_packages;
     SV_List not_found_packages;
+    Eval_Package_Registry_Entry_List registry_entries;
 } Eval_Package_Model;
+
+typedef struct {
+    String_View client_name;
+    String_View client_query_file;
+    String_View kind_upper;
+    String_View kind_json;
+    String_View versions;
+    bool shared_query;
+} Eval_File_Api_Query_Record;
+
+typedef Eval_File_Api_Query_Record *Eval_File_Api_Query_Record_List;
+
+typedef struct {
+    Eval_File_Api_Query_Record_List queries;
+    size_t next_reply_nonce;
+} Eval_File_Api_Model;
 
 typedef struct {
     Eval_FetchContent_Declaration_List declarations;
@@ -496,6 +522,7 @@ typedef struct {
     Eval_Install_Model install;
     Eval_Export_Model export_state;
     Eval_Package_Model package;
+    Eval_File_Api_Model file_api;
     Eval_FetchContent_Model fetchcontent;
 } Eval_Semantic_State;
 
@@ -680,7 +707,12 @@ typedef struct Eval_Command_Transaction {
     size_t found_package_count;
     String_View *not_found_packages;
     size_t not_found_package_count;
+    Eval_Package_Registry_Entry *package_registry_entries;
+    size_t package_registry_entry_count;
     Eval_Dependency_Provider_State dependency_provider;
+    Eval_File_Api_Query_Record *file_api_queries;
+    size_t file_api_query_count;
+    size_t file_api_next_reply_nonce;
     Eval_FetchContent_Declaration *fetchcontent_declarations;
     size_t fetchcontent_declaration_count;
     Eval_FetchContent_State *fetchcontent_states;
@@ -2175,6 +2207,10 @@ bool eval_service_host_read_file(EvalExecContext *ctx,
                                  String_View path,
                                  String_View *out_contents,
                                  bool *out_found);
+bool eval_service_host_query_windows_registry(
+    EvalExecContext *ctx,
+    const Eval_Windows_Registry_Query_Request *request,
+    Eval_Windows_Registry_Query_Result *out_result);
 
 // ---- vars ----
 String_View eval_var_get_visible(EvalExecContext *ctx, String_View key);

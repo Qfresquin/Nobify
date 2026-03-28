@@ -37,6 +37,26 @@ static bool package_record_find_result(EvalExecContext *ctx, String_View package
     return package_list_append_unique(ctx, &model->not_found_packages, package_name);
 }
 
+bool eval_package_registry_add(EvalExecContext *ctx,
+                               String_View package_name,
+                               String_View prefix) {
+    if (!ctx || package_name.count == 0 || prefix.count == 0) return false;
+
+    Eval_Package_Model *model = &ctx->semantic_state.package;
+    for (size_t i = 0; i < arena_arr_len(model->registry_entries); i++) {
+        Eval_Package_Registry_Entry *entry = &model->registry_entries[i];
+        if (!eval_sv_key_eq(entry->package_name, package_name)) continue;
+        if (eval_sv_key_eq(entry->prefix, prefix)) return true;
+    }
+
+    Eval_Package_Registry_Entry entry = {
+        .package_name = sv_copy_to_event_arena(ctx, package_name),
+        .prefix = sv_copy_to_event_arena(ctx, prefix),
+    };
+    if (eval_should_stop(ctx)) return false;
+    return EVAL_ARR_PUSH(ctx, ctx->event_arena, model->registry_entries, entry);
+}
+
 bool file_exists_sv(EvalExecContext *ctx, String_View path) {
     bool exists = false;
     return eval_service_file_exists(ctx, path, &exists) && exists;
@@ -314,6 +334,47 @@ void find_package_push_package_root_prefixes(EvalExecContext *ctx,
     }
 }
 
+void find_package_push_registry_prefixes(EvalExecContext *ctx,
+                                         String_View pkg,
+                                         String_View names_csv,
+                                         bool no_default_path,
+                                         bool no_cmake_package_registry,
+                                         String_View *items,
+                                         size_t *io_count,
+                                         size_t cap) {
+    if (!ctx || !items || !io_count || pkg.count == 0) return;
+    if (no_default_path || no_cmake_package_registry) return;
+
+    if (eval_var_defined_visible(ctx, nob_sv_from_cstr("CMAKE_FIND_USE_PACKAGE_REGISTRY")) &&
+        !eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_FIND_USE_PACKAGE_REGISTRY")))) {
+        return;
+    }
+
+    String_View names[16] = {0};
+    size_t name_count = 0;
+    SV_List name_items = NULL;
+    if (!find_package_split_semicolon_temp(ctx, names_csv, &name_items)) return;
+    for (size_t i = 0; i < arena_arr_len(name_items) && name_count < NOB_ARRAY_LEN(names); i++) {
+        if (name_items[i].count == 0) continue;
+        names[name_count++] = name_items[i];
+    }
+    if (name_count == 0) names[name_count++] = pkg;
+
+    Eval_Package_Model *model = &ctx->semantic_state.package;
+    for (size_t i = 0; i < arena_arr_len(model->registry_entries); i++) {
+        Eval_Package_Registry_Entry *entry = &model->registry_entries[i];
+        bool matches = false;
+        for (size_t ni = 0; ni < name_count; ni++) {
+            if (eval_sv_key_eq(entry->package_name, names[ni])) {
+                matches = true;
+                break;
+            }
+        }
+        if (!matches) continue;
+        find_package_push_prefix_variants(ctx, items, io_count, cap, entry->prefix);
+    }
+}
+
 String_View sv_to_upper_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx || in.count == 0) return nob_sv_from_cstr("");
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
@@ -401,6 +462,7 @@ static bool find_package_try_config(EvalExecContext *ctx,
                                     String_View extra_prefixes,
                                     bool no_default_path,
                                     bool no_package_root_path,
+                                    bool no_cmake_package_registry,
                                     bool no_cmake_path,
                                     bool no_cmake_environment_path,
                                     bool no_system_environment_path,
@@ -473,6 +535,14 @@ static bool find_package_try_config(EvalExecContext *ctx,
                                                 merged_prefixes,
                                                 &merged_count,
                                                 NOB_ARRAY_LEN(merged_prefixes));
+        find_package_push_registry_prefixes(ctx,
+                                            pkg,
+                                            names_csv,
+                                            no_default_path,
+                                            no_cmake_package_registry,
+                                            merged_prefixes,
+                                            &merged_count,
+                                            NOB_ARRAY_LEN(merged_prefixes));
 
         if (!no_cmake_path) {
             String_View prefixes = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH"));
@@ -977,6 +1047,7 @@ static bool find_package_resolve(EvalExecContext *ctx,
                                        opt->extra_prefixes,
                                        opt->no_default_path,
                                        opt->no_package_root_path,
+                                       opt->no_cmake_package_registry,
                                        opt->no_cmake_path,
                                        opt->no_cmake_environment_path,
                                        opt->no_system_environment_path,
@@ -996,6 +1067,7 @@ static bool find_package_resolve(EvalExecContext *ctx,
                                         opt->extra_prefixes,
                                         opt->no_default_path,
                                         opt->no_package_root_path,
+                                        opt->no_cmake_package_registry,
                                         opt->no_cmake_path,
                                         opt->no_cmake_environment_path,
                                         opt->no_system_environment_path,
@@ -1030,6 +1102,7 @@ static bool find_package_resolve(EvalExecContext *ctx,
                                             opt->extra_prefixes,
                                             opt->no_default_path,
                                             opt->no_package_root_path,
+                                            opt->no_cmake_package_registry,
                                             opt->no_cmake_path,
                                             opt->no_cmake_environment_path,
                                             opt->no_system_environment_path,

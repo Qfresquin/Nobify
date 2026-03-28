@@ -791,6 +791,297 @@ bool eval_service_host_read_file(EvalExecContext *ctx,
     return true;
 }
 
+#if defined(_WIN32)
+static bool eval_windows_registry_parse_root(String_View key, HKEY *out_root, String_View *out_subkey) {
+    if (out_root) *out_root = NULL;
+    if (out_subkey) *out_subkey = nob_sv_from_cstr("");
+    if (!out_root || !out_subkey || key.count == 0) return false;
+
+    size_t sep = SIZE_MAX;
+    for (size_t i = 0; i < key.count; i++) {
+        if (key.data[i] == '\\' || key.data[i] == '/') {
+            sep = i;
+            break;
+        }
+    }
+
+    String_View root_sv = (sep == SIZE_MAX) ? key : nob_sv_from_parts(key.data, sep);
+    String_View subkey = (sep == SIZE_MAX || sep + 1 >= key.count)
+        ? nob_sv_from_cstr("")
+        : nob_sv_from_parts(key.data + sep + 1, key.count - sep - 1);
+
+    if (eval_sv_eq_ci_lit(root_sv, "HKLM") || eval_sv_eq_ci_lit(root_sv, "HKEY_LOCAL_MACHINE")) {
+        *out_root = HKEY_LOCAL_MACHINE;
+    } else if (eval_sv_eq_ci_lit(root_sv, "HKCU") || eval_sv_eq_ci_lit(root_sv, "HKEY_CURRENT_USER")) {
+        *out_root = HKEY_CURRENT_USER;
+    } else if (eval_sv_eq_ci_lit(root_sv, "HKCR") || eval_sv_eq_ci_lit(root_sv, "HKEY_CLASSES_ROOT")) {
+        *out_root = HKEY_CLASSES_ROOT;
+    } else if (eval_sv_eq_ci_lit(root_sv, "HKU") || eval_sv_eq_ci_lit(root_sv, "HKEY_USERS")) {
+        *out_root = HKEY_USERS;
+    } else if (eval_sv_eq_ci_lit(root_sv, "HKCC") || eval_sv_eq_ci_lit(root_sv, "HKEY_CURRENT_CONFIG")) {
+        *out_root = HKEY_CURRENT_CONFIG;
+    } else {
+        return false;
+    }
+
+    *out_subkey = subkey;
+    return true;
+}
+
+static size_t eval_windows_registry_collect_views(String_View view, REGSAM out_flags[2]) {
+    if (!out_flags) return 0;
+    if (view.count == 0 ||
+        eval_sv_eq_ci_lit(view, "TARGET") ||
+        eval_sv_eq_ci_lit(view, "HOST")) {
+        out_flags[0] = 0;
+        return 1;
+    }
+    if (eval_sv_eq_ci_lit(view, "64")) {
+        out_flags[0] = KEY_WOW64_64KEY;
+        return 1;
+    }
+    if (eval_sv_eq_ci_lit(view, "32")) {
+        out_flags[0] = KEY_WOW64_32KEY;
+        return 1;
+    }
+    if (eval_sv_eq_ci_lit(view, "64_32")) {
+        out_flags[0] = KEY_WOW64_64KEY;
+        out_flags[1] = KEY_WOW64_32KEY;
+        return 2;
+    }
+    if (eval_sv_eq_ci_lit(view, "32_64")) {
+        out_flags[0] = KEY_WOW64_32KEY;
+        out_flags[1] = KEY_WOW64_64KEY;
+        return 2;
+    }
+    if (eval_sv_eq_ci_lit(view, "BOTH")) {
+        out_flags[0] = KEY_WOW64_64KEY;
+        out_flags[1] = KEY_WOW64_32KEY;
+        return 2;
+    }
+
+    out_flags[0] = 0;
+    return 1;
+}
+
+static bool eval_windows_registry_append_unique_cstr(EvalExecContext *ctx,
+                                                     SV_List *out_items,
+                                                     const char *text) {
+    if (!ctx || !out_items || !text || text[0] == '\0') return false;
+    String_View value = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(text));
+    if (eval_should_stop(ctx)) return false;
+    for (size_t i = 0; i < arena_arr_len(*out_items); i++) {
+        if (eval_sv_key_eq((*out_items)[i], value)) return true;
+    }
+    return svu_list_push_temp(ctx, out_items, value);
+}
+
+static bool eval_windows_registry_query_value_temp(EvalExecContext *ctx,
+                                                   HKEY root,
+                                                   String_View subkey,
+                                                   REGSAM wow64_flag,
+                                                   String_View value_name,
+                                                   String_View separator,
+                                                   String_View *out_value,
+                                                   bool *out_found) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (out_found) *out_found = false;
+    if (!ctx) return false;
+
+    char *subkey_c = eval_sv_to_cstr_temp(ctx, subkey);
+    char *value_name_c = eval_sv_to_cstr_temp(ctx, value_name);
+    EVAL_OOM_RETURN_IF_NULL(ctx, subkey_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, value_name_c, false);
+
+    HKEY handle = NULL;
+    LONG open_res = RegOpenKeyExA(root, subkey.count > 0 ? subkey_c : NULL, 0, KEY_READ | wow64_flag, &handle);
+    if (open_res != ERROR_SUCCESS) return true;
+
+    DWORD type = 0;
+    DWORD size = 0;
+    LONG query_res = RegQueryValueExA(handle,
+                                      value_name.count > 0 ? value_name_c : NULL,
+                                      NULL,
+                                      &type,
+                                      NULL,
+                                      &size);
+    if (query_res != ERROR_SUCCESS) {
+        RegCloseKey(handle);
+        return true;
+    }
+
+    unsigned char *buf = arena_alloc(eval_temp_arena(ctx), (size_t)size + 2);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+    memset(buf, 0, (size_t)size + 2);
+    query_res = RegQueryValueExA(handle,
+                                 value_name.count > 0 ? value_name_c : NULL,
+                                 NULL,
+                                 &type,
+                                 buf,
+                                 &size);
+    RegCloseKey(handle);
+    if (query_res != ERROR_SUCCESS) return true;
+
+    if (out_found) *out_found = true;
+    if (type == REG_MULTI_SZ) {
+        const char *sep = separator.count > 0 ? separator.data : ";";
+        size_t sep_len = separator.count > 0 ? separator.count : 1;
+        Nob_String_Builder sb = {0};
+        const char *p = (const char*)buf;
+        bool first = true;
+        while (*p != '\0') {
+            size_t len = strlen(p);
+            if (!first) nob_sb_append_buf(&sb, sep, sep_len);
+            nob_sb_append_buf(&sb, p, len);
+            first = false;
+            p += len + 1;
+        }
+        if (out_value) *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+        nob_sb_free(sb);
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    if (type == REG_DWORD && size >= sizeof(DWORD)) {
+        char tmp[32];
+        DWORD value = *(DWORD*)buf;
+        int n = snprintf(tmp, sizeof(tmp), "%lu", (unsigned long)value);
+        if (n < 0) return false;
+        if (out_value) *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(tmp, (size_t)n));
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    if (type == REG_QWORD && size >= sizeof(unsigned long long)) {
+        char tmp[32];
+        unsigned long long value = *(unsigned long long*)buf;
+        int n = snprintf(tmp, sizeof(tmp), "%llu", value);
+        if (n < 0) return false;
+        if (out_value) *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(tmp, (size_t)n));
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    if (size > 0 && out_value) {
+        size_t text_len = strnlen((const char*)buf, (size_t)size);
+        *out_value = sv_copy_to_temp_arena(ctx, nob_sv_from_parts((const char*)buf, text_len));
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    return true;
+}
+
+static bool eval_windows_registry_enumerate_temp(EvalExecContext *ctx,
+                                                 HKEY root,
+                                                 String_View subkey,
+                                                 REGSAM wow64_flag,
+                                                 Eval_Windows_Registry_Query_Kind kind,
+                                                 SV_List *out_items) {
+    if (!ctx || !out_items) return false;
+    char *subkey_c = eval_sv_to_cstr_temp(ctx, subkey);
+    EVAL_OOM_RETURN_IF_NULL(ctx, subkey_c, false);
+
+    HKEY handle = NULL;
+    LONG open_res = RegOpenKeyExA(root, subkey.count > 0 ? subkey_c : NULL, 0, KEY_READ | wow64_flag, &handle);
+    if (open_res != ERROR_SUCCESS) return true;
+
+    DWORD index = 0;
+    for (;;) {
+        char name_buf[512] = {0};
+        DWORD name_len = (DWORD)(sizeof(name_buf) - 1);
+        LONG res = (kind == EVAL_WINDOWS_REGISTRY_QUERY_SUBKEYS)
+            ? RegEnumKeyExA(handle, index, name_buf, &name_len, NULL, NULL, NULL, NULL)
+            : RegEnumValueA(handle, index, name_buf, &name_len, NULL, NULL, NULL, NULL);
+        if (res == ERROR_NO_MORE_ITEMS) break;
+        if (res == ERROR_SUCCESS) {
+            if (!eval_windows_registry_append_unique_cstr(ctx, out_items, name_buf)) {
+                RegCloseKey(handle);
+                return false;
+            }
+        }
+        index++;
+    }
+
+    RegCloseKey(handle);
+    return true;
+}
+#endif
+
+bool eval_service_host_query_windows_registry(
+    EvalExecContext *ctx,
+    const Eval_Windows_Registry_Query_Request *request,
+    Eval_Windows_Registry_Query_Result *out_result) {
+    if (out_result) *out_result = (Eval_Windows_Registry_Query_Result){0};
+    if (!ctx || !request || !out_result || request->key.count == 0) return false;
+
+    if (ctx->services && ctx->services->host_query_windows_registry) {
+        return ctx->services->host_query_windows_registry(ctx->services->user_data,
+                                                          eval_temp_arena(ctx),
+                                                          request,
+                                                          out_result);
+    }
+
+#if !defined(_WIN32)
+    out_result->error_message = nob_sv_from_cstr("Windows registry queries are unavailable on this platform");
+    return true;
+#else
+    HKEY root = NULL;
+    String_View subkey = nob_sv_from_cstr("");
+    if (!eval_windows_registry_parse_root(request->key, &root, &subkey)) {
+        out_result->error_message = nob_sv_from_cstr("Invalid Windows registry root key");
+        return true;
+    }
+
+    REGSAM view_flags[2] = {0};
+    size_t view_count = eval_windows_registry_collect_views(request->view, view_flags);
+    if (view_count == 0) {
+        out_result->error_message = nob_sv_from_cstr("Invalid Windows registry view");
+        return true;
+    }
+
+    if (request->kind == EVAL_WINDOWS_REGISTRY_QUERY_VALUE) {
+        for (size_t i = 0; i < view_count; i++) {
+            String_View value = nob_sv_from_cstr("");
+            bool found = false;
+            if (!eval_windows_registry_query_value_temp(ctx,
+                                                        root,
+                                                        subkey,
+                                                        view_flags[i],
+                                                        request->value_name,
+                                                        request->separator,
+                                                        &value,
+                                                        &found)) {
+                return false;
+            }
+            if (found) {
+                out_result->found = true;
+                out_result->value = value;
+                return true;
+            }
+        }
+        return true;
+    }
+
+    SV_List items = NULL;
+    for (size_t i = 0; i < view_count; i++) {
+        if (!eval_windows_registry_enumerate_temp(ctx,
+                                                  root,
+                                                  subkey,
+                                                  view_flags[i],
+                                                  request->kind,
+                                                  &items)) {
+            return false;
+        }
+    }
+
+    out_result->found = arena_arr_len(items) > 0;
+    out_result->value = eval_sv_join_semi_temp(ctx, items, arena_arr_len(items));
+    if (eval_should_stop(ctx)) return false;
+    return true;
+#endif
+}
+
 bool eval_mkdirs_for_parent(EvalExecContext *ctx, String_View path) {
     if (!ctx) return false;
     String_View parent = eval_file_parent_dir_view(path);
@@ -1024,6 +1315,9 @@ bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_Lis
             continue;
         }
         if (input.data[i] == ';' && genex_depth == 0) {
+            size_t backslash_count = 0;
+            for (size_t j = i; j > 0 && input.data[j - 1] == '\\'; j--) backslash_count++;
+            if ((backslash_count % 2) == 1) continue;
             String_View item = nob_sv_from_parts(input.data + start, i - start);
             if (!arena_arr_push(arena, *out, item)) return false;
             start = i + 1;

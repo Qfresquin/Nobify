@@ -990,6 +990,23 @@ bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
                                    &tx->not_found_packages)) {
         return false;
     }
+    tx->package_registry_entry_count = arena_arr_len(ctx->semantic_state.package.registry_entries);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.package.registry_entries,
+                                sizeof(*ctx->semantic_state.package.registry_entries),
+                                tx->package_registry_entry_count,
+                                (void**)&tx->package_registry_entries)) {
+        return false;
+    }
+    tx->file_api_next_reply_nonce = ctx->semantic_state.file_api.next_reply_nonce;
+    tx->file_api_query_count = arena_arr_len(ctx->semantic_state.file_api.queries);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->semantic_state.file_api.queries,
+                                sizeof(*ctx->semantic_state.file_api.queries),
+                                tx->file_api_query_count,
+                                (void**)&tx->file_api_queries)) {
+        return false;
+    }
     tx->fetchcontent_declaration_count = arena_arr_len(ctx->semantic_state.fetchcontent.declarations);
     if (!eval_tx_snapshot_bytes(ctx,
                                 ctx->semantic_state.fetchcontent.declarations,
@@ -1176,7 +1193,16 @@ bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, 
                               ctx->semantic_state.package.not_found_packages,
                               tx->not_found_packages,
                               tx->not_found_package_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.package.registry_entries,
+                              tx->package_registry_entries,
+                              tx->package_registry_entry_count);
         ctx->semantic_state.package.dependency_provider = tx->dependency_provider;
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->semantic_state.file_api.queries,
+                              tx->file_api_queries,
+                              tx->file_api_query_count);
+        ctx->semantic_state.file_api.next_reply_nonce = tx->file_api_next_reply_nonce;
         EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
                               ctx->semantic_state.fetchcontent.declarations,
                               tx->fetchcontent_declarations,
@@ -2337,6 +2363,28 @@ static Eval_Result eval_context_run_prepared(EvalExecContext *ctx, Ast_Root ast)
     return result;
 }
 
+static bool eval_seed_compile_feature_vars(EvalExecContext *ctx) {
+    if (!ctx) return false;
+
+    static const char *const c_known =
+        "c_std_90;c_std_99;c_std_11;c_std_17;c_std_23;"
+        "c_function_prototypes;c_restrict;c_static_assert;c_variadic_macros";
+    static const char *const cxx_known =
+        "cxx_std_98;cxx_std_11;cxx_std_14;cxx_std_17;cxx_std_20;cxx_std_23;"
+        "cxx_alias_templates;cxx_constexpr;cxx_decltype;cxx_final;cxx_generic_lambdas;"
+        "cxx_lambdas;cxx_nullptr;cxx_range_for;cxx_rvalue_references;cxx_static_assert;"
+        "cxx_variadic_templates";
+    static const char *const cuda_known =
+        "cuda_std_03;cuda_std_11;cuda_std_14;cuda_std_17;cuda_std_20";
+
+    return eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_KNOWN_FEATURES"), nob_sv_from_cstr(c_known)) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILE_FEATURES"), nob_sv_from_cstr(c_known)) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_KNOWN_FEATURES"), nob_sv_from_cstr(cxx_known)) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILE_FEATURES"), nob_sv_from_cstr(cxx_known)) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CUDA_KNOWN_FEATURES"), nob_sv_from_cstr(cuda_known)) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CUDA_COMPILE_FEATURES"), nob_sv_from_cstr(cuda_known));
+}
+
 static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     if (!cfg || !cfg->persistent_arena) return NULL;
 
@@ -2519,6 +2567,7 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
     }
+    if (!eval_seed_compile_feature_vars(ctx)) return NULL;
 
     eval_session_commit_state_from_exec(session, ctx);
     return session;

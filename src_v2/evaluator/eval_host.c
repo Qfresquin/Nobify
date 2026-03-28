@@ -33,9 +33,12 @@ typedef struct {
 typedef Host_Distrib_Entry *Host_Distrib_Entry_List;
 
 typedef struct {
+    bool is_windows_registry_query;
     String_View result_var;
     String_View *query_keys;
     size_t query_key_count;
+    Eval_Windows_Registry_Query_Request registry_request;
+    String_View error_var;
 } Host_System_Information_Request;
 
 typedef struct {
@@ -566,7 +569,47 @@ static bool host_os_release_entries_temp(EvalExecContext *ctx,
         if (!host_read_optional_file_temp(ctx, path_c, &contents, &found)) return false;
         if (found) break;
     }
-    if (!found || contents.count == 0) return true;
+    if (!found || contents.count == 0) {
+        String_View scripts = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_GET_OS_RELEASE_FALLBACK_SCRIPTS"));
+        SV_List script_items = NULL;
+        if (scripts.count == 0) return true;
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), scripts, &script_items)) return false;
+
+        for (size_t i = 0; i < arena_arr_len(script_items); i++) {
+            if (script_items[i].count == 0) continue;
+            String_View script_path = eval_path_resolve_for_cmake_arg(ctx,
+                                                                      script_items[i],
+                                                                      eval_current_source_dir_for_paths(ctx),
+                                                                      true);
+            if (eval_should_stop(ctx)) return false;
+            bool exists = false;
+            if (!eval_service_file_exists(ctx, script_path, &exists)) return false;
+            if (!exists) continue;
+            Eval_Result exec_res = eval_execute_file(ctx, script_path, false, nob_sv_from_cstr(""));
+            if (eval_result_is_fatal(exec_res)) return false;
+
+            SV_List visible_names = NULL;
+            if (!eval_var_collect_visible_names(ctx, &visible_names)) return false;
+            for (size_t ni = 0; ni < arena_arr_len(visible_names); ni++) {
+                String_View name = visible_names[ni];
+                if (name.count <= 37 ||
+                    memcmp(name.data, "CMAKE_GET_OS_RELEASE_FALLBACK_RESULT_", 37) != 0) {
+                    continue;
+                }
+                Host_Distrib_Entry entry = {
+                    .key = nob_sv_from_parts(name.data + 37, name.count - 37),
+                    .value = eval_var_get_visible(ctx, name),
+                };
+                if (entry.key.count > 0 &&
+                    entry.value.count > 0 &&
+                    !arena_arr_push(eval_temp_arena(ctx), *out_entries, entry)) {
+                    return false;
+                }
+            }
+            if (arena_arr_len(*out_entries) > 0) break;
+        }
+        return true;
+    }
 
     size_t start = 0;
     while (start < contents.count) {
@@ -1001,8 +1044,110 @@ static bool host_parse_system_information_request(EvalExecContext *ctx,
     }
 
     req.result_var = args[1];
-    req.query_keys = args + 3;
-    req.query_key_count = arena_arr_len(args) - 3;
+
+    if (arena_arr_len(args) >= 5 && eval_sv_eq_ci_lit(args[3], "WINDOWS_REGISTRY")) {
+        req.is_windows_registry_query = true;
+        req.registry_request.kind = EVAL_WINDOWS_REGISTRY_QUERY_VALUE;
+        req.registry_request.separator = nob_sv_from_cstr("");
+        req.registry_request.view = nob_sv_from_cstr("");
+        if (arena_arr_len(args) < 5) {
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                 node,
+                                                 origin,
+                                                 EV_DIAG_ERROR,
+                                                 EVAL_DIAG_MISSING_REQUIRED,
+                                                 "host",
+                                                 nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY) requires a key"),
+                                                 nob_sv_from_cstr("Usage: cmake_host_system_information(RESULT <var> QUERY WINDOWS_REGISTRY <key> ...)"));
+            return false;
+        }
+
+        req.registry_request.key = args[4];
+        for (size_t i = 5; i < arena_arr_len(args); i++) {
+            if (eval_sv_eq_ci_lit(args[i], "VALUE_NAMES")) {
+                req.registry_request.kind = EVAL_WINDOWS_REGISTRY_QUERY_VALUE_NAMES;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(args[i], "SUBKEYS")) {
+                req.registry_request.kind = EVAL_WINDOWS_REGISTRY_QUERY_SUBKEYS;
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(args[i], "VALUE")) {
+                if (i + 1 >= arena_arr_len(args)) {
+                    (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                         node,
+                                                         origin,
+                                                         EV_DIAG_ERROR,
+                                                         EVAL_DIAG_MISSING_REQUIRED,
+                                                         "host",
+                                                         nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY VALUE) requires a value name"),
+                                                         nob_sv_from_cstr("Usage: ... WINDOWS_REGISTRY <key> VALUE <name>"));
+                    return false;
+                }
+                req.registry_request.kind = EVAL_WINDOWS_REGISTRY_QUERY_VALUE;
+                req.registry_request.value_name = args[++i];
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(args[i], "VIEW")) {
+                if (i + 1 >= arena_arr_len(args)) {
+                    (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                         node,
+                                                         origin,
+                                                         EV_DIAG_ERROR,
+                                                         EVAL_DIAG_MISSING_REQUIRED,
+                                                         "host",
+                                                         nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY VIEW) requires a value"),
+                                                         nob_sv_from_cstr("Usage: ... VIEW <64|32|64_32|32_64|HOST|TARGET|BOTH>"));
+                    return false;
+                }
+                req.registry_request.view = args[++i];
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(args[i], "SEPARATOR")) {
+                if (i + 1 >= arena_arr_len(args)) {
+                    (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                         node,
+                                                         origin,
+                                                         EV_DIAG_ERROR,
+                                                         EVAL_DIAG_MISSING_REQUIRED,
+                                                         "host",
+                                                         nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY SEPARATOR) requires a value"),
+                                                         nob_sv_from_cstr("Usage: ... SEPARATOR <sep>"));
+                    return false;
+                }
+                req.registry_request.separator = args[++i];
+                continue;
+            }
+            if (eval_sv_eq_ci_lit(args[i], "ERROR_VARIABLE")) {
+                if (i + 1 >= arena_arr_len(args)) {
+                    (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                         node,
+                                                         origin,
+                                                         EV_DIAG_ERROR,
+                                                         EVAL_DIAG_MISSING_REQUIRED,
+                                                         "host",
+                                                         nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY ERROR_VARIABLE) requires a variable name"),
+                                                         nob_sv_from_cstr("Usage: ... ERROR_VARIABLE <var>"));
+                    return false;
+                }
+                req.error_var = args[++i];
+                continue;
+            }
+
+            (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                                 node,
+                                                 origin,
+                                                 EV_DIAG_ERROR,
+                                                 EVAL_DIAG_UNEXPECTED_ARGUMENT,
+                                                 "host",
+                                                 nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY) received unexpected argument"),
+                                                 args[i]);
+            return false;
+        }
+    } else {
+        req.query_keys = args + 3;
+        req.query_key_count = arena_arr_len(args) - 3;
+    }
     *out_req = req;
     return true;
 }
@@ -1040,16 +1185,16 @@ static bool host_execute_system_information_request(EvalExecContext *ctx,
                                                     Cmake_Event_Origin origin,
                                                     const Host_System_Information_Request *req) {
     if (!ctx || !node || !req) return false;
-    if (req->query_key_count >= 2 && eval_sv_eq_ci_lit(req->query_keys[0], "WINDOWS_REGISTRY")) {
-        (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
-                                             node,
-                                             origin,
-                                             EV_DIAG_ERROR,
-                                             EVAL_DIAG_NOT_IMPLEMENTED,
-                                             "host",
-                                             nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY ...) is not implemented yet"),
-                                             req->query_keys[1]);
-        (void)eval_var_set_current(ctx, req->result_var, nob_sv_from_cstr(""));
+    if (req->is_windows_registry_query) {
+        Eval_Windows_Registry_Query_Result result = {0};
+        if (!eval_service_host_query_windows_registry(ctx, &req->registry_request, &result)) return false;
+        if (!eval_var_set_current(ctx, req->result_var, result.found ? result.value : nob_sv_from_cstr(""))) {
+            return false;
+        }
+        if (req->error_var.count > 0 &&
+            !eval_var_set_current(ctx, req->error_var, result.error_message)) {
+            return false;
+        }
         return true;
     }
 

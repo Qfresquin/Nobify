@@ -42,5 +42,16 @@ void find_package_push_package_root_prefixes(EvalExecContext *ctx,
                                              size_t *io_count,
                                              size_t cap);
 String_View sv_to_upper_temp(EvalExecContext *ctx, String_View in);
+bool eval_package_registry_add(EvalExecContext *ctx,
+                               String_View package_name,
+                               String_View prefix);
+void find_package_push_registry_prefixes(EvalExecContext *ctx,
+                                         String_View pkg,
+                                         String_View names_csv,
+                                         bool no_default_path,
+                                         bool no_cmake_package_registry,
+                                         String_View *items,
+                                         size_t *io_count,
+                                         size_t cap);
 
 #endif // EVAL_PACKAGE_INTERNAL_H_

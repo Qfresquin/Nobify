@@ -97,11 +97,62 @@ typedef struct {
     Target_Sources_Entry *entries;
 } Target_Sources_Request;
 
+typedef enum {
+    TARGET_COMPILE_FEATURE_LANG_UNKNOWN = 0,
+    TARGET_COMPILE_FEATURE_LANG_C,
+    TARGET_COMPILE_FEATURE_LANG_CXX,
+    TARGET_COMPILE_FEATURE_LANG_CUDA,
+} Target_Compile_Feature_Lang;
+
+typedef struct {
+    const char *name;
+    Target_Compile_Feature_Lang lang;
+    int standard;
+    bool meta;
+} Target_Compile_Feature_Info;
+
+static const Target_Compile_Feature_Info k_target_compile_feature_info[] = {
+    {"c_std_90", TARGET_COMPILE_FEATURE_LANG_C, 90, true},
+    {"c_std_99", TARGET_COMPILE_FEATURE_LANG_C, 99, true},
+    {"c_std_11", TARGET_COMPILE_FEATURE_LANG_C, 11, true},
+    {"c_std_17", TARGET_COMPILE_FEATURE_LANG_C, 17, true},
+    {"c_std_23", TARGET_COMPILE_FEATURE_LANG_C, 23, true},
+    {"c_function_prototypes", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
+    {"c_restrict", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
+    {"c_static_assert", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
+    {"c_variadic_macros", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
+    {"cxx_std_98", TARGET_COMPILE_FEATURE_LANG_CXX, 98, true},
+    {"cxx_std_11", TARGET_COMPILE_FEATURE_LANG_CXX, 11, true},
+    {"cxx_std_14", TARGET_COMPILE_FEATURE_LANG_CXX, 14, true},
+    {"cxx_std_17", TARGET_COMPILE_FEATURE_LANG_CXX, 17, true},
+    {"cxx_std_20", TARGET_COMPILE_FEATURE_LANG_CXX, 20, true},
+    {"cxx_std_23", TARGET_COMPILE_FEATURE_LANG_CXX, 23, true},
+    {"cxx_alias_templates", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_constexpr", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_decltype", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_final", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_generic_lambdas", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_lambdas", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_nullptr", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_range_for", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_rvalue_references", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_static_assert", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cxx_variadic_templates", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
+    {"cuda_std_03", TARGET_COMPILE_FEATURE_LANG_CUDA, 3, true},
+    {"cuda_std_11", TARGET_COMPILE_FEATURE_LANG_CUDA, 11, true},
+    {"cuda_std_14", TARGET_COMPILE_FEATURE_LANG_CUDA, 14, true},
+    {"cuda_std_17", TARGET_COMPILE_FEATURE_LANG_CUDA, 17, true},
+    {"cuda_std_20", TARGET_COMPILE_FEATURE_LANG_CUDA, 20, true},
+};
+
 typedef String_View (*Target_Usage_Normalize_Fn)(EvalExecContext *ctx, String_View item);
 typedef bool (*Target_Usage_Emit_Item_Fn)(EvalExecContext *ctx,
                                           Cmake_Event_Origin origin,
                                           String_View target_name,
                                           const Target_Usage_Item_Entry *entry);
+
+static bool target_usage_visibility_writes_direct(Cmake_Visibility visibility);
+static bool target_usage_visibility_writes_interface(Cmake_Visibility visibility);
 
 static String_View target_usage_identity_item(EvalExecContext *ctx, String_View item) {
     (void)ctx;
@@ -116,6 +167,309 @@ static String_View target_compile_definition_normalize_temp(EvalExecContext *ctx
 static String_View target_usage_resolve_path_item_temp(EvalExecContext *ctx, String_View item) {
     if (!ctx) return item;
     return eval_path_resolve_for_cmake_arg(ctx, item, eval_current_source_dir_for_paths(ctx), true);
+}
+
+static bool target_usage_target_property_temp(EvalExecContext *ctx,
+                                              String_View target_name,
+                                              String_View key,
+                                              String_View *out_value,
+                                              bool *out_set) {
+    if (out_value) *out_value = nob_sv_from_cstr("");
+    if (out_set) *out_set = false;
+    if (!ctx) return false;
+
+    String_View prop_upper = eval_property_upper_name_temp(ctx, key);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View value = nob_sv_from_cstr("");
+    bool have = false;
+    if (!eval_property_engine_get(ctx, nob_sv_from_cstr("TARGET"), target_name, prop_upper, &value, &have)) {
+        return false;
+    }
+
+    if (out_set) *out_set = have;
+    if (out_value) *out_value = have ? value : nob_sv_from_cstr("");
+    return true;
+}
+
+static bool target_usage_target_property_nonempty(EvalExecContext *ctx,
+                                                  String_View target_name,
+                                                  String_View key,
+                                                  bool *out_nonempty) {
+    if (out_nonempty) *out_nonempty = false;
+    String_View value = nob_sv_from_cstr("");
+    bool have = false;
+    if (!target_usage_target_property_temp(ctx, target_name, key, &value, &have)) return false;
+    if (out_nonempty) *out_nonempty = have && value.count > 0;
+    return true;
+}
+
+static bool target_usage_require_interface_only_on_imported_groups(EvalExecContext *ctx,
+                                                                   const Node *node,
+                                                                   String_View target_name,
+                                                                   const Target_Usage_Visibility_Group *groups,
+                                                                   String_View cause) {
+    if (!ctx || !node) return false;
+    if (!eval_target_is_imported(ctx, target_name)) return true;
+
+    for (size_t gi = 0; gi < arena_arr_len(groups); gi++) {
+        if (groups[gi].visibility == EV_VISIBILITY_INTERFACE) continue;
+        return target_diag_error(ctx, node, cause, target_name);
+    }
+    return true;
+}
+
+static bool target_usage_parse_int_sv(String_View value, int *out_value) {
+    if (out_value) *out_value = 0;
+    if (!out_value || value.count == 0) return false;
+
+    char buf[32];
+    if (value.count >= sizeof(buf)) return false;
+    memcpy(buf, value.data, value.count);
+    buf[value.count] = '\0';
+
+    char *end = NULL;
+    long parsed = strtol(buf, &end, 10);
+    if (!end || *end != '\0') return false;
+    *out_value = (int)parsed;
+    return true;
+}
+
+static const Target_Compile_Feature_Info *target_compile_feature_lookup(String_View feature) {
+    for (size_t i = 0; i < NOB_ARRAY_LEN(k_target_compile_feature_info); i++) {
+        if (eval_sv_eq_ci_lit(feature, k_target_compile_feature_info[i].name)) {
+            return &k_target_compile_feature_info[i];
+        }
+    }
+    return NULL;
+}
+
+static String_View target_compile_feature_lang_compile_var(Target_Compile_Feature_Lang lang) {
+    switch (lang) {
+        case TARGET_COMPILE_FEATURE_LANG_C: return nob_sv_from_cstr("CMAKE_C_COMPILE_FEATURES");
+        case TARGET_COMPILE_FEATURE_LANG_CXX: return nob_sv_from_cstr("CMAKE_CXX_COMPILE_FEATURES");
+        case TARGET_COMPILE_FEATURE_LANG_CUDA: return nob_sv_from_cstr("CMAKE_CUDA_COMPILE_FEATURES");
+        default: return nob_sv_from_cstr("");
+    }
+}
+
+static String_View target_compile_feature_lang_standard_prop(Target_Compile_Feature_Lang lang) {
+    switch (lang) {
+        case TARGET_COMPILE_FEATURE_LANG_C: return nob_sv_from_cstr("C_STANDARD");
+        case TARGET_COMPILE_FEATURE_LANG_CXX: return nob_sv_from_cstr("CXX_STANDARD");
+        case TARGET_COMPILE_FEATURE_LANG_CUDA: return nob_sv_from_cstr("CUDA_STANDARD");
+        default: return nob_sv_from_cstr("");
+    }
+}
+
+static String_View target_compile_feature_lang_standard_required_prop(Target_Compile_Feature_Lang lang) {
+    switch (lang) {
+        case TARGET_COMPILE_FEATURE_LANG_C: return nob_sv_from_cstr("C_STANDARD_REQUIRED");
+        case TARGET_COMPILE_FEATURE_LANG_CXX: return nob_sv_from_cstr("CXX_STANDARD_REQUIRED");
+        case TARGET_COMPILE_FEATURE_LANG_CUDA: return nob_sv_from_cstr("CUDA_STANDARD_REQUIRED");
+        default: return nob_sv_from_cstr("");
+    }
+}
+
+static bool target_compile_feature_supported(EvalExecContext *ctx,
+                                             const Target_Compile_Feature_Info *info) {
+    if (!ctx || !info) return false;
+    String_View features = eval_var_get_visible(ctx, target_compile_feature_lang_compile_var(info->lang));
+    if (features.count == 0) return false;
+
+    SV_List items = NULL;
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), features, &items)) return false;
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        if (eval_sv_eq_ci_lit(items[i], info->name)) return true;
+    }
+    return false;
+}
+
+static bool target_compile_feature_apply_meta(EvalExecContext *ctx,
+                                              Cmake_Event_Origin origin,
+                                              String_View target_name,
+                                              Cmake_Visibility visibility,
+                                              const Target_Compile_Feature_Info *info) {
+    if (!ctx || !info) return false;
+    if (!info->meta || info->standard <= 0) return true;
+    if (!target_usage_visibility_writes_direct(visibility)) return true;
+
+    String_View standard_prop = target_compile_feature_lang_standard_prop(info->lang);
+    String_View required_prop = target_compile_feature_lang_standard_required_prop(info->lang);
+    if (standard_prop.count == 0 || required_prop.count == 0) return true;
+
+    int current_standard = 0;
+    String_View current = nob_sv_from_cstr("");
+    bool have = false;
+    if (!target_usage_target_property_temp(ctx, target_name, standard_prop, &current, &have)) return false;
+    if (have) (void)target_usage_parse_int_sv(current, &current_standard);
+    if (current_standard >= info->standard) return true;
+
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%d", info->standard);
+    if (n < 0 || (size_t)n >= sizeof(buf)) return false;
+
+    if (!target_usage_store_and_emit_target_property(ctx,
+                                                     origin,
+                                                     target_name,
+                                                     standard_prop,
+                                                     nob_sv_from_parts(buf, (size_t)n),
+                                                     EV_PROP_SET)) {
+        return false;
+    }
+    return target_usage_store_and_emit_target_property(ctx,
+                                                       origin,
+                                                       target_name,
+                                                       required_prop,
+                                                       nob_sv_from_cstr("1"),
+                                                       EV_PROP_SET);
+}
+
+static bool target_compile_features_validate_request(EvalExecContext *ctx,
+                                                     const Node *node,
+                                                     Cmake_Event_Origin origin,
+                                                     const Target_Usage_Grouped_Request *req) {
+    if (!ctx || !node || !req) return false;
+    if (!target_usage_require_interface_only_on_imported_groups(
+            ctx,
+            node,
+            req->target_name,
+            req->groups,
+            nob_sv_from_cstr("target_compile_features() may only set INTERFACE items on IMPORTED targets"))) {
+        return false;
+    }
+
+    for (size_t gi = 0; gi < arena_arr_len(req->groups); gi++) {
+        const Target_Usage_Visibility_Group *group = &req->groups[gi];
+        for (size_t ii = 0; ii < arena_arr_len(group->items); ii++) {
+            const Target_Compile_Feature_Info *info = target_compile_feature_lookup(group->items[ii]);
+            if (!info) {
+                return target_diag_error(ctx,
+                                         node,
+                                         nob_sv_from_cstr("target_compile_features() unknown compile feature"),
+                                         group->items[ii]);
+            }
+            if (!target_compile_feature_supported(ctx, info)) {
+                return target_diag_error(ctx,
+                                         node,
+                                         nob_sv_from_cstr("target_compile_features() requested compile feature is not available"),
+                                         group->items[ii]);
+            }
+            if (!target_compile_feature_apply_meta(ctx,
+                                                   origin,
+                                                   req->target_name,
+                                                   group->visibility,
+                                                   info)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool target_pch_validate_genex_item(EvalExecContext *ctx,
+                                           const Node *node,
+                                           String_View item) {
+    if (!ctx || !node) return false;
+    if (!(item.count >= 2 && item.data[0] == '$' && item.data[1] == '<')) return true;
+
+    size_t depth = 0;
+    size_t outer_colon = SIZE_MAX;
+    for (size_t i = 0; i < item.count; i++) {
+        if (item.data[i] == '$' && (i + 1) < item.count && item.data[i + 1] == '<') {
+            depth++;
+            i++;
+            continue;
+        }
+        if (item.data[i] == '>' && depth > 0) {
+            depth--;
+            continue;
+        }
+        if (item.data[i] == ':' && depth == 1 && outer_colon == SIZE_MAX) outer_colon = i;
+    }
+
+    if (outer_colon == SIZE_MAX || outer_colon + 1 >= item.count) return true;
+    String_View payload = nob_sv_from_parts(item.data + outer_colon + 1,
+                                            item.count - (outer_colon + 2));
+    if (payload.count == 0) return true;
+    if ((payload.count >= 2 && payload.data[0] == '$' && payload.data[1] == '<') ||
+        memchr(payload.data, ',', payload.count) != NULL) {
+        return true;
+    }
+    if ((payload.data[0] == '<' && payload.data[payload.count - 1] == '>') ||
+        eval_sv_is_abs_path(payload)) {
+        return true;
+    }
+
+    return target_diag_error(ctx,
+                             node,
+                             nob_sv_from_cstr("target_precompile_headers() generator-expression headers must use absolute paths or angle brackets"),
+                             item);
+}
+
+static bool target_precompile_headers_validate_request(EvalExecContext *ctx,
+                                                       const Node *node,
+                                                       const Target_Precompile_Headers_Request *req) {
+    if (!ctx || !node || !req) return false;
+
+    if (req->kind == TARGET_PCH_REQUEST_REUSE_FROM) {
+        if (eval_target_is_imported(ctx, req->target_name)) {
+            return target_diag_error(ctx,
+                                     node,
+                                     nob_sv_from_cstr("target_precompile_headers() may only set INTERFACE headers on IMPORTED targets"),
+                                     req->target_name);
+        }
+
+        bool have_direct = false;
+        bool have_interface = false;
+        if (!target_usage_target_property_nonempty(ctx, req->target_name, nob_sv_from_cstr("PRECOMPILE_HEADERS"), &have_direct)) {
+            return false;
+        }
+        if (!target_usage_target_property_nonempty(ctx,
+                                                   req->target_name,
+                                                   nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"),
+                                                   &have_interface)) {
+            return false;
+        }
+        if (have_direct || have_interface) {
+            return target_diag_error(ctx,
+                                     node,
+                                     nob_sv_from_cstr("target_precompile_headers() may not combine direct headers with REUSE_FROM"),
+                                     req->target_name);
+        }
+        return true;
+    }
+
+    if (!target_usage_require_interface_only_on_imported_groups(
+            ctx,
+            node,
+            req->target_name,
+            req->groups,
+            nob_sv_from_cstr("target_precompile_headers() may only set INTERFACE headers on IMPORTED targets"))) {
+        return false;
+    }
+
+    bool has_reuse_from = false;
+    if (!target_usage_target_property_nonempty(ctx,
+                                               req->target_name,
+                                               nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"),
+                                               &has_reuse_from)) {
+        return false;
+    }
+    if (has_reuse_from) {
+        return target_diag_error(ctx,
+                                 node,
+                                 nob_sv_from_cstr("target_precompile_headers() may not combine direct headers with REUSE_FROM"),
+                                 req->target_name);
+    }
+
+    for (size_t gi = 0; gi < arena_arr_len(req->groups); gi++) {
+        for (size_t ii = 0; ii < arena_arr_len(req->groups[gi].items); ii++) {
+            if (!target_pch_validate_genex_item(ctx, node, req->groups[gi].items[ii])) return false;
+        }
+    }
+    return true;
 }
 
 static bool target_usage_visibility_writes_direct(Cmake_Visibility visibility) {
@@ -1121,6 +1475,9 @@ Eval_Result eval_handle_target_compile_features(EvalExecContext *ctx, const Node
     if (!target_compile_features_parse_request(ctx, node, o, a, &req)) {
         return eval_result_from_ctx(ctx);
     }
+    if (!target_compile_features_validate_request(ctx, node, o, &req)) {
+        return eval_result_from_ctx(ctx);
+    }
 
     if (!target_usage_apply_visibility_groups(ctx,
                                               o,
@@ -1141,6 +1498,9 @@ Eval_Result eval_handle_target_precompile_headers(EvalExecContext *ctx, const No
 
     Target_Precompile_Headers_Request req = {0};
     if (!target_precompile_headers_parse_request(ctx, node, o, a, &req)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_precompile_headers_validate_request(ctx, node, &req)) {
         return eval_result_from_ctx(ctx);
     }
 

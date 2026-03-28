@@ -1,5 +1,58 @@
 #include "test_evaluator_v2_support.h"
 
+typedef struct {
+    bool saw_value_names;
+    bool saw_subkeys;
+    bool saw_value;
+    bool saw_view_64_32;
+    bool saw_separator_pipe;
+} Evaluator_Host_Query_Mock_Data;
+
+static bool evaluator_host_query_windows_registry_mock(
+    void *user_data,
+    Arena *scratch_arena,
+    const Eval_Windows_Registry_Query_Request *request,
+    Eval_Windows_Registry_Query_Result *out_result) {
+    (void)scratch_arena;
+    Evaluator_Host_Query_Mock_Data *data = (Evaluator_Host_Query_Mock_Data*)user_data;
+    if (out_result) {
+        *out_result = (Eval_Windows_Registry_Query_Result){
+            .found = true,
+            .value = nob_sv_from_cstr(""),
+            .error_message = nob_sv_from_cstr(""),
+        };
+    }
+    if (!request || !out_result) return true;
+
+    if (request->kind == EVAL_WINDOWS_REGISTRY_QUERY_VALUE) {
+        if (data) data->saw_value = true;
+        if (nob_sv_eq(request->view, nob_sv_from_cstr("64_32")) && data) data->saw_view_64_32 = true;
+        out_result->value = nob_sv_from_cstr("C:/Registry/Install");
+    } else if (request->kind == EVAL_WINDOWS_REGISTRY_QUERY_VALUE_NAMES) {
+        if (data) data->saw_value_names = true;
+        out_result->value = nob_sv_from_cstr("InstallDir;SdkRoot");
+    } else if (request->kind == EVAL_WINDOWS_REGISTRY_QUERY_SUBKEYS) {
+        if (data) data->saw_subkeys = true;
+        if (nob_sv_eq(request->separator, nob_sv_from_cstr("|")) && data) data->saw_separator_pipe = true;
+        out_result->value = nob_sv_from_cstr("ChildA|ChildB");
+    }
+
+    return true;
+}
+
+static bool evaluator_host_read_file_force_missing_os_release(void *user_data,
+                                                              Arena *scratch_arena,
+                                                              String_View path,
+                                                              String_View *out_contents,
+                                                              bool *out_found) {
+    (void)user_data;
+    (void)scratch_arena;
+    (void)path;
+    if (out_contents) *out_contents = nob_sv_from_cstr("");
+    if (out_found) *out_found = false;
+    return true;
+}
+
 TEST(evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -718,6 +771,92 @@ TEST(evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root) {
     TEST_PASS();
 }
 
+TEST(evaluator_find_package_uses_export_package_registry_and_respects_cmp0090_gates) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE NobifyPkgRegOffConfig.cmake [=[set(NobifyPkgRegOff_FOUND 1)\n"
+        "set(NobifyPkgRegOff_FROM registry-off)\n"
+        "]=])\n"
+        "file(WRITE NobifyPkgRegOnConfig.cmake [=[set(NobifyPkgRegOn_FOUND 1)\n"
+        "set(NobifyPkgRegOn_FROM registry-on)\n"
+        "]=])\n"
+        "file(WRITE NobifyPkgRegBlockedConfig.cmake [=[set(NobifyPkgRegBlocked_FOUND 1)\n"
+        "set(NobifyPkgRegBlocked_FROM registry-blocked)\n"
+        "]=])\n"
+        "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
+        "set(CMAKE_PREFIX_PATH \"\")\n"
+        "cmake_policy(SET CMP0090 NEW)\n"
+        "export(PACKAGE NobifyPkgRegOff)\n"
+        "find_package(NobifyPkgRegOff CONFIG QUIET)\n"
+        "set(CMAKE_EXPORT_PACKAGE_REGISTRY TRUE)\n"
+        "export(PACKAGE NobifyPkgRegOn)\n"
+        "find_package(NobifyPkgRegOn CONFIG QUIET)\n"
+        "unset(CMAKE_EXPORT_PACKAGE_REGISTRY)\n"
+        "set(CMAKE_EXPORT_NO_PACKAGE_REGISTRY TRUE)\n"
+        "export(PACKAGE NobifyPkgRegBlocked)\n"
+        "find_package(NobifyPkgRegBlocked CONFIG QUIET)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NobifyPkgRegOff_FOUND")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NobifyPkgRegOn_FOUND")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NobifyPkgRegOn_FROM")),
+                     nob_sv_from_cstr("registry-on")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NobifyPkgRegBlocked_FOUND")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE")),
+                     nob_sv_from_cstr("PACKAGE")));
+
+    bool saw_on_registry_location = false;
+    bool saw_off_not_found = false;
+    bool saw_blocked_not_found = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_FIND_PACKAGE) continue;
+        if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegOff"))) {
+            saw_off_not_found = !ev->as.package_find_result.found;
+        } else if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegOn"))) {
+            saw_on_registry_location =
+                ev->as.package_find_result.found &&
+                sv_contains_sv(ev->as.package_find_result.location, nob_sv_from_cstr("NobifyPkgRegOnConfig.cmake"));
+        } else if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegBlocked"))) {
+            saw_blocked_not_found = !ev->as.package_find_result.found;
+        }
+    }
+
+    ASSERT(saw_off_not_found);
+    ASSERT(saw_on_registry_location);
+    ASSERT(saw_blocked_not_found);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_project_full_signature_and_variable_surface) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -1366,12 +1505,13 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->warning_count == 2);
-    ASSERT(report->error_count == 5);
+    ASSERT(report->error_count == 4);
     ASSERT(report->input_error_count == 3);
-    ASSERT(report->engine_limitation_count == 2);
+    ASSERT(report->engine_limitation_count == 1);
     ASSERT(report->io_env_error_count == 1);
     ASSERT(report->policy_conflict_count == 1);
-    ASSERT(report->unsupported_count == 2);
+    ASSERT(report->unsupported_count == 1);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HOST_INFO")), nob_sv_from_cstr("")));
 
     bool saw_unknown_command = false;
     bool saw_policy_conflict = false;
@@ -1379,7 +1519,6 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
     bool saw_math_missing_required = false;
     bool saw_message_warning = false;
     bool saw_message_error = false;
-    bool saw_host_not_implemented = false;
 
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -1415,12 +1554,6 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
             ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_SCRIPT_ERROR")));
             ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("INPUT_ERROR")));
             saw_message_error = true;
-        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("cmake_host_system_information(QUERY WINDOWS_REGISTRY ...) is not implemented yet"))) {
-            ASSERT(ev->as.diag.severity == EV_DIAG_ERROR);
-            ASSERT(nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_NOT_IMPLEMENTED")));
-            ASSERT(nob_sv_eq(ev->as.diag.error_class, nob_sv_from_cstr("ENGINE_LIMITATION")));
-            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("HKLM")));
-            saw_host_not_implemented = true;
         }
     }
 
@@ -1430,7 +1563,79 @@ TEST(evaluator_diag_codes_are_explicit_and_report_classes) {
     ASSERT(saw_math_missing_required);
     ASSERT(saw_message_warning);
     ASSERT(saw_message_error);
-    ASSERT(saw_host_not_implemented);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_host_system_information_windows_registry_and_fallback_scripts_are_modeled) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_write_entire_file("fallback-distrib.cmake",
+                                 "set(CMAKE_GET_OS_RELEASE_FALLBACK_RESULT_ID fallback-os)\n"
+                                 "set(CMAKE_GET_OS_RELEASE_FALLBACK_RESULT_VERSION_ID 42)\n",
+                                 strlen("set(CMAKE_GET_OS_RELEASE_FALLBACK_RESULT_ID fallback-os)\nset(CMAKE_GET_OS_RELEASE_FALLBACK_RESULT_VERSION_ID 42)\n")));
+
+    Evaluator_Host_Query_Mock_Data mock = {0};
+    EvalServices services = {
+        .user_data = &mock,
+        .host_query_windows_registry = evaluator_host_query_windows_registry_mock,
+        .host_read_file = evaluator_host_read_file_force_missing_os_release,
+    };
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_GET_OS_RELEASE_FALLBACK_SCRIPTS fallback-distrib.cmake)\n"
+        "cmake_host_system_information(RESULT HOST_VALUE QUERY WINDOWS_REGISTRY HKLM/Software/Demo VALUE InstallDir VIEW 64_32 ERROR_VARIABLE HOST_ERR)\n"
+        "cmake_host_system_information(RESULT HOST_NAMES QUERY WINDOWS_REGISTRY HKLM/Software/Demo VALUE_NAMES)\n"
+        "cmake_host_system_information(RESULT HOST_KEYS QUERY WINDOWS_REGISTRY HKLM/Software/Demo SUBKEYS SEPARATOR |)\n"
+        "cmake_host_system_information(RESULT DISTRO_ID QUERY DISTRIB_ID)\n"
+        "cmake_host_system_information(RESULT DISTRO_INFO QUERY DISTRIB_INFO)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HOST_VALUE")),
+                     nob_sv_from_cstr("C:/Registry/Install")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HOST_NAMES")),
+                     nob_sv_from_cstr("InstallDir;SdkRoot")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HOST_KEYS")),
+                     nob_sv_from_cstr("ChildA|ChildB")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("HOST_ERR")),
+                     nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DISTRO_ID")),
+                     nob_sv_from_cstr("fallback-os")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DISTRO_INFO_ID")),
+                     nob_sv_from_cstr("fallback-os")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DISTRO_INFO_VERSION_ID")),
+                     nob_sv_from_cstr("42")));
+
+    ASSERT(mock.saw_value);
+    ASSERT(mock.saw_value_names);
+    ASSERT(mock.saw_subkeys);
+    ASSERT(mock.saw_view_64_32);
+    ASSERT(mock.saw_separator_pipe);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2768,6 +2973,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_find_package_no_module_names_configs_path_suffixes_and_registry_view(passed, failed, skipped);
     test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed, skipped);
     test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed, skipped);
+    test_evaluator_find_package_uses_export_package_registry_and_respects_cmp0090_gates(passed, failed, skipped);
     test_evaluator_project_full_signature_and_variable_surface(passed, failed, skipped);
     test_evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg(passed, failed, skipped);
     test_evaluator_project_rejects_invalid_signature_forms(passed, failed, skipped);
@@ -2777,6 +2983,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed, skipped);
     test_evaluator_cpack_commands_reject_missing_names_and_warn_on_extra_args(passed, failed, skipped);
     test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed, skipped);
+    test_evaluator_host_system_information_windows_registry_and_fallback_scripts_are_modeled(passed, failed, skipped);
     test_evaluator_string_hash_repeat_and_json_full_surface(passed, failed, skipped);
     test_evaluator_string_text_regex_and_misc_dispatch_events(passed, failed, skipped);
     test_evaluator_string_regex_parse_error_keeps_diag_surface(passed, failed, skipped);
