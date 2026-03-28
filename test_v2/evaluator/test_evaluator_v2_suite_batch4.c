@@ -3950,17 +3950,17 @@ TEST(evaluator_get_target_property_synthetic_providers_cover_type_imported_alias
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_TYPE")),
                      nob_sv_from_cstr("STATIC_LIBRARY")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORTED")),
-                     nob_sv_from_cstr("0")));
+                     nob_sv_from_cstr("FALSE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORT_FLAG")),
-                     nob_sv_from_cstr("1")));
+                     nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORTED_GLOBAL")),
-                     nob_sv_from_cstr("1")));
+                     nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_IMPORT_TYPE")),
                      nob_sv_from_cstr("SHARED_LIBRARY")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_OF")),
                      nob_sv_from_cstr("root_real")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_GLOBAL")),
-                     nob_sv_from_cstr("1")));
+                     nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_TYPE")),
                      nob_sv_from_cstr("STATIC_LIBRARY")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_ALIAS_SRC")),
@@ -3975,13 +3975,13 @@ TEST(evaluator_get_target_property_synthetic_providers_cover_type_imported_alias
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_BIN")),
                           nob_sv_from_cstr("gtp_sub_build")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_FLAG")),
-                     nob_sv_from_cstr("1")));
+                     nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_GLOBAL")),
-                     nob_sv_from_cstr("0")));
+                     nob_sv_from_cstr("FALSE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_OF")),
                      nob_sv_from_cstr("child_local")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_GLOBAL")),
-                     nob_sv_from_cstr("0")));
+                     nob_sv_from_cstr("FALSE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_MISSING")),
                      nob_sv_from_cstr("CHILD_ALIAS_MISSING-NOTFOUND")));
 

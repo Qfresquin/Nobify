@@ -173,6 +173,7 @@ static bool emit_bool_target_prop_true(EvalExecContext *ctx,
                                        Cmake_Event_Origin o,
                                        String_View target_name,
                                        const char *key) {
+    String_View stored_true = nob_sv_from_cstr("TRUE");
     if (!eval_emit_target_prop_set(ctx,
                                    o,
                                    target_name,
@@ -186,7 +187,7 @@ static bool emit_bool_target_prop_true(EvalExecContext *ctx,
                                nob_sv_from_cstr("TARGET"),
                                target_name,
                                nob_sv_from_cstr(key),
-                               nob_sv_from_cstr("1"),
+                               stored_true,
                                EV_PROP_SET,
                                false);
 }

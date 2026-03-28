@@ -147,6 +147,10 @@ static String_View property_bool_value(bool value) {
     return value ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
 }
 
+static String_View property_bool_value_true_false(bool value) {
+    return value ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
+}
+
 static String_View property_target_type_value(Cmake_Target_Type target_type) {
     switch (target_type) {
         case EV_TARGET_EXECUTABLE:
@@ -539,13 +543,13 @@ static bool property_synthetic_value_temp(EvalExecContext *ctx,
         if (eval_sv_eq_ci_lit(prop_upper, "IMPORTED")) {
             if (out_known) *out_known = true;
             if (out_set) *out_set = true;
-            if (out_value) *out_value = property_bool_value(eval_target_is_imported(ctx, object_id));
+            if (out_value) *out_value = property_bool_value_true_false(eval_target_is_imported(ctx, object_id));
             return true;
         }
         if (eval_sv_eq_ci_lit(prop_upper, "IMPORTED_GLOBAL")) {
             if (out_known) *out_known = true;
             if (out_set) *out_set = true;
-            if (out_value) *out_value = property_bool_value(eval_target_is_imported_global(ctx, object_id));
+            if (out_value) *out_value = property_bool_value_true_false(eval_target_is_imported_global(ctx, object_id));
             return true;
         }
         if (eval_sv_eq_ci_lit(prop_upper, "ALIASED_TARGET")) {
@@ -559,7 +563,7 @@ static bool property_synthetic_value_temp(EvalExecContext *ctx,
             if (out_known) *out_known = true;
             if (!eval_target_alias_known(ctx, object_id)) return true;
             if (out_set) *out_set = true;
-            if (out_value) *out_value = property_bool_value(eval_target_alias_is_global(ctx, object_id));
+            if (out_value) *out_value = property_bool_value_true_false(eval_target_alias_is_global(ctx, object_id));
             return true;
         }
         if (eval_sv_eq_ci_lit(prop_upper, "SOURCE_DIR") || eval_sv_eq_ci_lit(prop_upper, "BINARY_DIR")) {
