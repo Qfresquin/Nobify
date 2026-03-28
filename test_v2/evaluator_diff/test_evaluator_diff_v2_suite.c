@@ -4,7 +4,16 @@
 #include <ctype.h>
 #include <stdio.h>
 
-#define EVALUATOR_DIFF_CASE_PACK_PATH "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake"
+typedef struct {
+    const char *family_label;
+    const char *case_pack_path;
+} Diff_Case_Pack;
+
+static const Diff_Case_Pack s_diff_case_packs[] = {
+    {"target_usage", "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake"},
+    {"list", "test_v2/evaluator_diff/cases/list_seed_cases.cmake"},
+    {"var_commands", "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake"},
+};
 
 typedef enum {
     DIFF_EXPECT_SUCCESS = 0,
@@ -58,6 +67,20 @@ typedef struct {
     String_View stdout_text;
     String_View stderr_text;
 } Diff_Cmake_Run;
+
+static bool diff_build_qualified_case_name(const char *family_label,
+                                           String_View case_name,
+                                           char out[_TINYDIR_PATH_MAX]) {
+    int n = 0;
+    if (!family_label || !out) return false;
+    n = snprintf(out,
+                 _TINYDIR_PATH_MAX,
+                 "%s::%.*s",
+                 family_label,
+                 (int)case_name.count,
+                 case_name.data ? case_name.data : "");
+    return n >= 0 && n < _TINYDIR_PATH_MAX;
+}
 
 static bool diff_sv_has_prefix(String_View value, const char *prefix) {
     size_t prefix_len = strlen(prefix);
@@ -673,15 +696,22 @@ static bool diff_preserve_failure_artifacts(String_View case_name) {
 }
 
 static bool diff_write_case_summary(const Diff_Cmake_Config *config,
+                                    const Diff_Case_Pack *case_pack,
                                     const Diff_Case *diff_case,
+                                    const char *qualified_case_name,
                                     const Diff_Evaluator_Run *eval_run,
                                     const Diff_Cmake_Run *cmake_run,
                                     const char *path) {
     Nob_String_Builder sb = {0};
     bool ok = false;
 
-    if (!config || !diff_case || !eval_run || !cmake_run || !path) return false;
+    if (!config || !case_pack || !diff_case || !qualified_case_name || !eval_run || !cmake_run || !path) {
+        return false;
+    }
 
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("family=%s\n", case_pack->family_label));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("case_pack=%s\n", case_pack->case_pack_path));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("qualified_case=%s\n", qualified_case_name));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("case=%.*s\n", (int)diff_case->name.count, diff_case->name.data));
     nob_sb_append_cstr(&sb,
                        nob_temp_sprintf("expected=%s\n",
@@ -809,6 +839,7 @@ static bool diff_resolve_cmake(Diff_Cmake_Config *out_config,
 }
 
 static void run_diff_case(const Diff_Cmake_Config *config,
+                          const Diff_Case_Pack *case_pack,
                           const Diff_Case *diff_case,
                           int *passed,
                           int *failed,
@@ -820,18 +851,18 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     char build_eval_dir[_TINYDIR_PATH_MAX] = {0};
     char build_cmake_dir[_TINYDIR_PATH_MAX] = {0};
     char cmakelists_path[_TINYDIR_PATH_MAX] = {0};
+    char qualified_case_name[_TINYDIR_PATH_MAX] = {0};
     Diff_Evaluator_Run eval_run = {0};
     Diff_Cmake_Run cmake_run = {0};
     bool ok = false;
 
-    if (!config || !diff_case || !passed || !failed || !skipped) return;
+    if (!config || !case_pack || !diff_case || !passed || !failed || !skipped) return;
     (void)skipped;
 
-    if (!test_ws_case_enter(&ws, nob_temp_sv_to_cstr(diff_case->name))) {
+    if (!diff_build_qualified_case_name(case_pack->family_label, diff_case->name, qualified_case_name) ||
+        !test_ws_case_enter(&ws, qualified_case_name)) {
         test_v2_emit_failure_message(__func__, 0, "could not enter isolated differential test workspace");
-        nob_log(NOB_ERROR, "FAILED: %.*s: could not enter isolated differential test workspace",
-                (int)diff_case->name.count,
-                diff_case->name.data);
+        nob_log(NOB_ERROR, "FAILED: %s: could not enter isolated differential test workspace", qualified_case_name);
         (*failed)++;
         return;
     }
@@ -855,30 +886,34 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         !diff_run_evaluator_case(arena, cmakelists_path, source_dir, build_eval_dir, &eval_run) ||
         !diff_run_cmake_case(arena, config, source_dir, build_cmake_dir, &cmake_run) ||
         !diff_record_snapshots(&eval_run, &cmake_run) ||
-        !diff_write_case_summary(config, diff_case, &eval_run, &cmake_run, "case_summary.txt")) {
+        !diff_write_case_summary(config,
+                                 case_pack,
+                                 diff_case,
+                                 qualified_case_name,
+                                 &eval_run,
+                                 &cmake_run,
+                                 "case_summary.txt")) {
         goto fail;
     }
 
     ok = diff_case_matches(diff_case, &eval_run, &cmake_run);
     if (!ok) {
         nob_log(NOB_ERROR,
-                "differential mismatch in case %.*s (expected=%s evaluator=%s cmake=%s)",
-                (int)diff_case->name.count,
-                diff_case->name.data,
+                "differential mismatch in case %s (expected=%s evaluator=%s cmake=%s)",
+                qualified_case_name,
                 diff_case->expected_outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
                 eval_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
                 cmake_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR");
         if (eval_run.outcome == DIFF_EXPECT_SUCCESS && cmake_run.outcome == DIFF_EXPECT_SUCCESS) {
             nob_log(NOB_ERROR,
-                    "snapshot mismatch in case %.*s\n--- evaluator ---\n%.*s--- cmake ---\n%.*s",
-                    (int)diff_case->name.count,
-                    diff_case->name.data,
+                    "snapshot mismatch in case %s\n--- evaluator ---\n%.*s--- cmake ---\n%.*s",
+                    qualified_case_name,
                     (int)eval_run.snapshot.count,
                     eval_run.snapshot.data ? eval_run.snapshot.data : "",
                     (int)cmake_run.snapshot.count,
                     cmake_run.snapshot.data ? cmake_run.snapshot.data : "");
         }
-        (void)diff_preserve_failure_artifacts(diff_case->name);
+        (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
         (*failed)++;
     } else {
         (*passed)++;
@@ -886,46 +921,35 @@ static void run_diff_case(const Diff_Cmake_Config *config,
 
     arena_destroy(arena);
     if (!test_ws_case_leave(&ws)) {
-        nob_log(NOB_ERROR, "FAILED: %.*s: could not cleanup isolated differential test workspace",
-                (int)diff_case->name.count,
-                diff_case->name.data);
+        nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated differential test workspace",
+                qualified_case_name);
         (*failed)++;
     }
     return;
 
 fail:
-    nob_log(NOB_ERROR, "FAILED: %.*s: differential harness error",
-            (int)diff_case->name.count,
-            diff_case->name.data);
-    (void)diff_preserve_failure_artifacts(diff_case->name);
+    nob_log(NOB_ERROR, "FAILED: %s: differential harness error", qualified_case_name);
+    (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
     if (arena) arena_destroy(arena);
     (*failed)++;
     if (!test_ws_case_leave(&ws)) {
-        nob_log(NOB_ERROR, "FAILED: %.*s: could not cleanup isolated differential test workspace",
-                (int)diff_case->name.count,
-                diff_case->name.data);
+        nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated differential test workspace",
+                qualified_case_name);
         (*failed)++;
     }
 }
 
-static void run_evaluator_diff_target_usage_seed_cases(int *passed, int *failed, int *skipped) {
+static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
+                                         const Diff_Case_Pack *case_pack,
+                                         int *passed,
+                                         int *failed,
+                                         int *skipped) {
     Arena *arena = NULL;
     String_View content = {0};
     Test_Case_Pack_Entry *entries = NULL;
-    Diff_Cmake_Config cmake = {0};
-    char skip_reason[256] = {0};
 
-    if (!passed || !failed || !skipped) return;
-    if (!diff_resolve_cmake(&cmake, skip_reason)) {
-        nob_log(NOB_ERROR, "evaluator diff suite: failed to resolve cmake runtime");
-        (*failed)++;
-        return;
-    }
-    if (!cmake.available) {
-        nob_log(NOB_INFO, "SKIPPED: evaluator diff suite: %s", skip_reason);
-        (*skipped)++;
-        return;
-    }
+    if (!config || !case_pack || !passed || !failed || !skipped) return;
+    (void)skipped;
 
     arena = arena_create(512 * 1024);
     if (!arena) {
@@ -933,9 +957,9 @@ static void run_evaluator_diff_target_usage_seed_cases(int *passed, int *failed,
         return;
     }
 
-    if (!evaluator_load_text_file_to_arena(arena, EVALUATOR_DIFF_CASE_PACK_PATH, &content) ||
+    if (!evaluator_load_text_file_to_arena(arena, case_pack->case_pack_path, &content) ||
         !test_case_pack_parse(arena, content, &entries)) {
-        nob_log(NOB_ERROR, "evaluator diff suite: failed to parse %s", EVALUATOR_DIFF_CASE_PACK_PATH);
+        nob_log(NOB_ERROR, "evaluator diff suite: failed to parse %s", case_pack->case_pack_path);
         arena_destroy(arena);
         (*failed)++;
         return;
@@ -945,13 +969,14 @@ static void run_evaluator_diff_target_usage_seed_cases(int *passed, int *failed,
         Diff_Case diff_case = {0};
         if (!diff_parse_case(arena, entries[i], &diff_case)) {
             nob_log(NOB_ERROR,
-                    "evaluator diff suite: failed to parse metadata for case %.*s",
+                    "evaluator diff suite: failed to parse metadata for family %s case %.*s",
+                    case_pack->family_label,
                     (int)entries[i].name.count,
                     entries[i].name.data);
             (*failed)++;
             continue;
         }
-        run_diff_case(&cmake, &diff_case, passed, failed, skipped);
+        run_diff_case(config, case_pack, &diff_case, passed, failed, skipped);
     }
 
     arena_destroy(arena);
@@ -959,7 +984,9 @@ static void run_evaluator_diff_target_usage_seed_cases(int *passed, int *failed,
 
 void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
+    Diff_Cmake_Config cmake = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    char skip_reason[256] = {0};
     bool prepared = test_ws_prepare(&ws, "evaluator_diff");
     bool entered = false;
 
@@ -977,7 +1004,17 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
         return;
     }
 
-    run_evaluator_diff_target_usage_seed_cases(passed, failed, skipped);
+    if (!diff_resolve_cmake(&cmake, skip_reason)) {
+        nob_log(NOB_ERROR, "evaluator diff suite: failed to resolve cmake runtime");
+        if (failed) (*failed)++;
+    } else if (!cmake.available) {
+        nob_log(NOB_INFO, "SKIPPED: evaluator diff suite: %s", skip_reason);
+        if (skipped) (*skipped)++;
+    } else {
+        for (size_t i = 0; i < NOB_ARRAY_LEN(s_diff_case_packs); i++) {
+            run_evaluator_diff_case_pack(&cmake, &s_diff_case_packs[i], passed, failed, skipped);
+        }
+    }
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

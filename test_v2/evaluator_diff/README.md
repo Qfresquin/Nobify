@@ -19,7 +19,7 @@ binary.
 V1 is intentionally narrow:
 
 - `project-mode` only
-- `target_*` seed cases only
+- seed case packs for `target_*`, `list()`, and `var_commands`
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome only
@@ -29,8 +29,13 @@ aggregate.
 
 ## Case-Pack DSL
 
-Cases live in
-`test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake`.
+Cases live under `test_v2/evaluator_diff/cases/*.cmake`.
+
+Current case packs:
+
+- `target_usage_seed_cases.cmake`
+- `list_seed_cases.cmake`
+- `var_commands_seed_cases.cmake`
 
 Supported directives:
 
