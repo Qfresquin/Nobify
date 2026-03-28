@@ -13,6 +13,7 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"target_usage", "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake"},
     {"list", "test_v2/evaluator_diff/cases/list_seed_cases.cmake"},
     {"var_commands", "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake"},
+    {"property_query", "test_v2/evaluator_diff/cases/property_query_seed_cases.cmake"},
 };
 
 typedef enum {

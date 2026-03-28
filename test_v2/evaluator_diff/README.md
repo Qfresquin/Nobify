@@ -19,7 +19,7 @@ binary.
 V1 is intentionally narrow:
 
 - `project-mode` only
-- seed case packs for `target_*`, `list()`, and `var_commands`
+- seed case packs for `target_*`, `list()`, `var_commands`, and `property_query`
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome only
@@ -36,6 +36,7 @@ Current case packs:
 - `target_usage_seed_cases.cmake`
 - `list_seed_cases.cmake`
 - `var_commands_seed_cases.cmake`
+- `property_query_seed_cases.cmake`
 
 Supported directives:
 

@@ -378,7 +378,7 @@ static String_View sb_build_sv_temp(EvalExecContext *ctx, Nob_String_Builder *sb
     return nob_sv_from_cstr(buf);
 }
 
-static void sb_append_sv(Nob_String_Builder *sb, String_View sv) {
+static void expr_sb_append_sv(Nob_String_Builder *sb, String_View sv) {
     if (!sb || !sv.data || sv.count == 0) return;
     nob_sb_append_buf(sb, sv.data, sv.count);
 }
@@ -441,7 +441,7 @@ static String_View expand_once(struct EvalExecContext *ctx, String_View in) {
                 if (!eval_macro_bind_get(ctx, inner, &val)) {
                     val = eval_var_get_visible(ctx, inner);
                 }
-                sb_append_sv(&sb, val);
+                expr_sb_append_sv(&sb, val);
                 i = j - 1;
                 continue;
             }

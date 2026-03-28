@@ -7,8 +7,6 @@
 #include <stdio.h>
 #include <string.h>
 
-void nob__cmd_append(Nob_Cmd *cmd, size_t n, ...);
-
 typedef struct {
     BM_Target_Id id;
     BM_Target_Id resolved_id;

@@ -18,8 +18,6 @@
 #include <unistd.h>
 #endif
 
-void nob__cmd_append(Nob_Cmd *cmd, size_t n, ...);
-
 typedef enum {
     TRY_COMPILE_SIGNATURE_SOURCE = 0,
     TRY_COMPILE_SIGNATURE_PROJECT,

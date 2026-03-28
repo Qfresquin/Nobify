@@ -15,8 +15,6 @@
 #include <unistd.h>
 #endif
 
-void nob__cmd_append(Nob_Cmd *cmd, size_t n, ...);
-
 typedef struct {
     String_View config;
     String_View parallel_level;
