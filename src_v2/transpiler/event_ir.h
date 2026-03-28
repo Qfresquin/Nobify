@@ -211,6 +211,7 @@ typedef enum {
     EV_PROP_SET = 0,
     EV_PROP_APPEND_LIST,
     EV_PROP_APPEND_STRING,
+    EV_PROP_PREPEND_LIST,
 } Cmake_Target_Property_Op;
 
 typedef enum {

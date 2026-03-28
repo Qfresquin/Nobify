@@ -19,17 +19,25 @@ static String_View merge_property_value_temp(EvalExecContext *ctx,
     if (incoming.count == 0) return current;
     if (current.count == 0) return incoming;
 
-    bool with_semicolon = (op == EV_PROP_APPEND_LIST);
+    bool with_semicolon = (op == EV_PROP_APPEND_LIST || op == EV_PROP_PREPEND_LIST);
     size_t total = current.count + incoming.count + (with_semicolon ? 1 : 0);
     char *buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
 
     size_t off = 0;
-    memcpy(buf + off, current.data, current.count);
-    off += current.count;
-    if (with_semicolon) buf[off++] = ';';
-    memcpy(buf + off, incoming.data, incoming.count);
-    off += incoming.count;
+    if (op == EV_PROP_PREPEND_LIST) {
+        memcpy(buf + off, incoming.data, incoming.count);
+        off += incoming.count;
+        if (with_semicolon) buf[off++] = ';';
+        memcpy(buf + off, current.data, current.count);
+        off += current.count;
+    } else {
+        memcpy(buf + off, current.data, current.count);
+        off += current.count;
+        if (with_semicolon) buf[off++] = ';';
+        memcpy(buf + off, incoming.data, incoming.count);
+        off += incoming.count;
+    }
     buf[off] = '\0';
     return nob_sv_from_cstr(buf);
 }
@@ -80,6 +88,7 @@ static Event_Property_Mutate_Op property_mutate_op_from_legacy(Cmake_Target_Prop
         case EV_PROP_SET: return EVENT_PROPERTY_MUTATE_SET;
         case EV_PROP_APPEND_LIST: return EVENT_PROPERTY_MUTATE_APPEND_LIST;
         case EV_PROP_APPEND_STRING: return EVENT_PROPERTY_MUTATE_APPEND_STRING;
+        case EV_PROP_PREPEND_LIST: return EVENT_PROPERTY_MUTATE_PREPEND_LIST;
     }
     return EVENT_PROPERTY_MUTATE_SET;
 }

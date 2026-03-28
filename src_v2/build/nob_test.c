@@ -75,6 +75,7 @@ static void append_test_lexer_all_sources(Nob_Cmd *cmd);
 static void append_test_parser_all_sources(Nob_Cmd *cmd);
 static void append_test_build_model_all_sources(Nob_Cmd *cmd);
 static void append_test_evaluator_all_sources(Nob_Cmd *cmd);
+static void append_test_evaluator_diff_all_sources(Nob_Cmd *cmd);
 static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd);
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
 static void append_test_codegen_all_sources(Nob_Cmd *cmd);
@@ -162,6 +163,7 @@ static Test_Module TEST_MODULES[] = {
     {"build-model", append_test_build_model_all_sources, true},
     {"evaluator", append_test_evaluator_all_sources, true},
     /* Explicit-only: heavier host-sensitive scenarios stay opt-in outside test-v2. */
+    {"evaluator-diff", append_test_evaluator_diff_all_sources, false},
     {"evaluator-integration", append_test_evaluator_integration_all_sources, false},
     {"pipeline", append_test_pipeline_all_sources, true},
     {"codegen", append_test_codegen_all_sources, true},
@@ -679,6 +681,17 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
         "test_v2/evaluator/test_evaluator_v2_suite_batch5.c");
 }
 
+static void append_v2_evaluator_diff_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/test_host_fixture_support.c",
+        "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
+        "test_v2/test_workspace.c",
+        "test_v2/evaluator/test_evaluator_v2_support.c",
+        "test_v2/evaluator_diff/test_evaluator_diff_v2_main.c",
+        "test_v2/evaluator_diff/test_evaluator_diff_v2_suite.c");
+}
+
 static void append_v2_evaluator_integration_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_host_fixture_support.c",
@@ -1121,6 +1134,12 @@ static void append_test_build_model_all_sources(Nob_Cmd *cmd) {
 
 static void append_test_evaluator_all_sources(Nob_Cmd *cmd) {
     append_v2_evaluator_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_evaluator_diff_all_sources(Nob_Cmd *cmd) {
+    append_v2_evaluator_diff_test_sources(cmd);
     append_v2_evaluator_runtime_sources(cmd);
     append_v2_pcre_sources(cmd);
 }
@@ -2003,7 +2022,7 @@ int main(int argc, char **argv) {
     }
 
     nob_log(NOB_INFO,
-            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-build-model|test-evaluator|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
+            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-build-model|test-evaluator|test-evaluator-diff|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
             argv[0]);
     return 1;
 }

@@ -103,7 +103,112 @@ Architecture note for this snapshot:
 - canonical persistent evaluator state now lives in `EvalSessionState`, while
   each `eval_session_run(...)` uses a fresh transient `EvalExecContext`
 
-## 4. Audit Matrix
+## 4. Differential Harness Program
+
+Differential coverage is tracked separately from the audit verdict above.
+
+Important distinction:
+- `Audit Status = FULL` means the current evaluator implementation appears
+  semantically complete for the audited CMake 3.28 corpus
+- it does not mean the command already has a real-CMake differential lane
+- the differential program below is the operational backlog for converting that
+  parity claim into explicit oracle-backed evidence
+
+Current v1 status:
+- runner entry point: `./build/nob_test test-evaluator-diff`
+- suite location: `test_v2/evaluator_diff/`
+- oracle policy: resolve `cmake` from `CMK2NOB_TEST_CMAKE_BIN`, then `PATH`
+- version gate: only `cmake 3.28.x` participates; otherwise the suite skips
+- current mode: `project-mode` only
+- current family coverage: `target_*` seed cases
+- current comparison model:
+  - `SUCCESS`: compare normalized `OUTCOME` plus `diff_snapshot.txt`
+  - `ERROR`: compare normalized `OUTCOME` only
+
+Current v1 DSL:
+- `#@@CASE <name>`
+- `#@@OUTCOME SUCCESS|ERROR`
+- `#@@FILE <relpath>`
+- `#@@DIR <relpath>`
+- `#@@QUERY VAR <name>`
+- `#@@QUERY CACHE_DEFINED <name>`
+- `#@@QUERY TARGET_EXISTS <target>`
+- `#@@QUERY TARGET_PROP <target> <property>`
+- `#@@QUERY FILE_EXISTS <path>`
+
+Current v1 snapshot lines:
+- `OUTCOME=<SUCCESS|ERROR>`
+- `VAR:<name>=<value|__UNDEFINED__>`
+- `CACHE_DEFINED:<name>=0|1`
+- `TARGET_EXISTS:<target>=0|1`
+- `TARGET_PROP:<target>:<prop>=<value|__UNSET__|__MISSING_TARGET__>`
+- `FILE_EXISTS:<path>=0|1`
+
+Operational backlog rule:
+- every registry command and every structural node must eventually be assigned
+  to exactly one differential mode family
+- no command should remain “unowned” by the differential program
+
+Differential mode families:
+- `snapshot differential`
+  - compare stable semantic snapshots such as variables, properties, target
+    existence, cache visibility, and evaluator-visible state
+- `host-effect differential`
+  - compare normalized filesystem, process, or host-side effects rather than
+    only final in-memory properties
+- `normalized failure differential`
+  - compare success/failure class and normalized observable failure shape
+    without requiring exact diagnostic text parity
+- `special oracle lane`
+  - use a family-specific harness for commands whose oracle is not well modeled
+    by the generic project/script snapshot path
+
+Rules for advancing coverage:
+- a family is only considered differentially covered when it has at least one
+  success case and one relevant failure case
+- every critical differential behavior should also keep a local non-differential
+  regression in `test_v2/evaluator/`
+- the coverage matrix should be treated as the family-level backlog, not as a
+  file-level checklist
+
+Roadmap:
+- **Phase 1, close configurable `project-mode` basics**
+  - expand from `target_*` into `add_*`, `project`, `get_*`, `set_*`,
+    `option`, `math`, `list`, `string`, `cmake_path`, directory properties,
+    and target/query surfaces that fit stable snapshots without external
+    toolchain dependence
+- **Phase 2, add `script-mode` to the same harness**
+  - introduce `#@@MODE PROJECT|SCRIPT`
+  - cover `file()`, `configure_file`, `execute_process`, `include()`,
+    `cmake_language(EVAL/CALL/DEFER)`, policy commands, and script-first
+    control/data commands whose primary semantics do not require a project
+    configure
+- **Phase 3, model host and filesystem effects**
+  - extend snapshots into manifests for files, normalized contents, process
+    results, and staged side effects
+  - target `file(DOWNLOAD|ARCHIVE_*)`, `find_*`, parts of `FetchContent`,
+    `install`, and `export`
+- **Phase 4, create special-oracle lanes**
+  - add dedicated harnesses for families whose oracles are not well represented
+    by the generic snapshot lane
+  - target `find_package`, providers, redirects, package registry/export,
+    `try_compile`, `try_run`, `ctest_*`, and `custom command/target`
+- **Phase 5, cover structural nodes and compat/policy quirks**
+  - differentialize `if`, `foreach`, `while`, `function`, `macro`, `block`,
+    `return`, `break`, `continue`, and policy/compat interactions that change
+    observable behavior
+- **Phase 6, close backlog ownership**
+  - classify every row in this matrix as `snapshot differential`,
+    `host-effect differential`, `normalized failure differential`, or
+    `special oracle lane`
+  - no row should remain outside one of those buckets
+- **Phase 7, operational hardening**
+  - add explicit CI coverage with pinned `cmake 3.28.x`
+  - publish per-family differential status
+  - treat differential status as evidence in parity discussions without merging
+    it into the default smoke aggregate
+
+## 5. Audit Matrix
 
 | Command | Kind | Registry Tag | Audit Status | Repo Relevance | CMake 3.28 Expectation | Current Evaluator Behavior | Primary Evidence | Official Reference |
 |---|---|---|---|---|---|---|---|---|
@@ -246,7 +351,7 @@ Architecture note for this snapshot:
 
 No `missing-official` rows were found in the current workspace after restricting the audit to official built-ins/structural language entries and excluding module-provided helper macros/functions.
 
-## 5. `PARTIAL` Detail Matrix
+## 6. `PARTIAL` Detail Matrix
 
 This snapshot has no remaining `Audit Status = PARTIAL` rows.
 
@@ -255,7 +360,7 @@ The previous evaluator-semantic gaps for `cmake_host_system_information`,
 `remove_definitions`, `target_compile_features`, and
 `target_precompile_headers` are now covered by focused evaluator tests and the
 main audit matrix above.
-## 6. Interpretation Notes
+## 7. Interpretation Notes
 
 - This document is intentionally stricter than the static registry metadata.
 - A registry `FULL` tag can still audit as `PARTIAL` when the current code rejects a documented CMake 3.28 behavior that matters to the audited corpus.

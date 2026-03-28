@@ -153,6 +153,10 @@ typedef bool (*Target_Usage_Emit_Item_Fn)(EvalExecContext *ctx,
 
 static bool target_usage_visibility_writes_direct(Cmake_Visibility visibility);
 static bool target_usage_visibility_writes_interface(Cmake_Visibility visibility);
+static bool target_usage_emit_include_directories_entry(EvalExecContext *ctx,
+                                                        Cmake_Event_Origin origin,
+                                                        String_View target_name,
+                                                        const Target_Usage_Item_Entry *entry);
 
 static String_View target_usage_identity_item(EvalExecContext *ctx, String_View item) {
     (void)ctx;
@@ -214,6 +218,21 @@ static bool target_usage_require_interface_only_on_imported_groups(EvalExecConte
 
     for (size_t gi = 0; gi < arena_arr_len(groups); gi++) {
         if (groups[gi].visibility == EV_VISIBILITY_INTERFACE) continue;
+        return target_diag_error(ctx, node, cause, target_name);
+    }
+    return true;
+}
+
+static bool target_usage_require_interface_only_on_imported_items(EvalExecContext *ctx,
+                                                                  const Node *node,
+                                                                  String_View target_name,
+                                                                  const Target_Usage_Item_Entry *entries,
+                                                                  String_View cause) {
+    if (!ctx || !node) return false;
+    if (!eval_target_is_imported(ctx, target_name)) return true;
+
+    for (size_t i = 0; i < arena_arr_len(entries); i++) {
+        if (entries[i].visibility == EV_VISIBILITY_INTERFACE) continue;
         return target_diag_error(ctx, node, cause, target_name);
     }
     return true;
@@ -480,6 +499,20 @@ static bool target_usage_visibility_writes_interface(Cmake_Visibility visibility
     return visibility == EV_VISIBILITY_PUBLIC || visibility == EV_VISIBILITY_INTERFACE;
 }
 
+static Cmake_Target_Property_Op target_usage_item_property_op(const Target_Usage_Item_Entry *entry) {
+    if (!entry) return EV_PROP_APPEND_LIST;
+    return entry->is_before ? EV_PROP_PREPEND_LIST : EV_PROP_APPEND_LIST;
+}
+
+static String_View target_usage_wrap_build_interface_temp(EvalExecContext *ctx, String_View item) {
+    String_View parts[3] = {
+        nob_sv_from_cstr("$<BUILD_INTERFACE:"),
+        item,
+        nob_sv_from_cstr(">"),
+    };
+    return svu_join_no_sep_temp(ctx, parts, 3);
+}
+
 static bool target_usage_append_item_entry(EvalExecContext *ctx,
                                            Target_Usage_Item_Entry **entries,
                                            Cmake_Visibility visibility,
@@ -588,19 +621,74 @@ static bool target_usage_apply_item_entries(EvalExecContext *ctx,
 
     for (size_t i = 0; i < arena_arr_len(entries); i++) {
         const Target_Usage_Item_Entry *entry = &entries[i];
+        Cmake_Target_Property_Op prop_op = target_usage_item_property_op(entry);
+
         if (direct_prop.count > 0 && target_usage_visibility_writes_direct(entry->visibility)) {
             if (!target_usage_store_and_emit_target_property(
-                    ctx, origin, target_name, direct_prop, entry->item, EV_PROP_APPEND_LIST)) {
+                    ctx, origin, target_name, direct_prop, entry->item, prop_op)) {
                 return false;
             }
         }
         if (interface_prop.count > 0 && target_usage_visibility_writes_interface(entry->visibility)) {
             if (!target_usage_store_and_emit_target_property(
-                    ctx, origin, target_name, interface_prop, entry->item, EV_PROP_APPEND_LIST)) {
+                    ctx, origin, target_name, interface_prop, entry->item, prop_op)) {
                 return false;
             }
         }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(entries); i++) {
+        const Target_Usage_Item_Entry *entry = &entries[i];
         if (emit_item && !emit_item(ctx, origin, target_name, entry)) return false;
+    }
+
+    return true;
+}
+
+static bool target_usage_apply_include_directory_entries(EvalExecContext *ctx,
+                                                         Cmake_Event_Origin origin,
+                                                         String_View target_name,
+                                                         const Target_Usage_Item_Entry *entries) {
+    if (!ctx) return false;
+
+    for (size_t i = 0; i < arena_arr_len(entries); i++) {
+        const Target_Usage_Item_Entry *entry = &entries[i];
+        Cmake_Target_Property_Op prop_op = target_usage_item_property_op(entry);
+
+        if (target_usage_visibility_writes_direct(entry->visibility)) {
+            if (!target_usage_store_and_emit_target_property(ctx,
+                                                             origin,
+                                                             target_name,
+                                                             nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
+                                                             entry->item,
+                                                             prop_op)) {
+                return false;
+            }
+        }
+        if (target_usage_visibility_writes_interface(entry->visibility)) {
+            if (!target_usage_store_and_emit_target_property(ctx,
+                                                             origin,
+                                                             target_name,
+                                                             nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
+                                                             entry->item,
+                                                             prop_op)) {
+                return false;
+            }
+            if (entry->is_system &&
+                !target_usage_store_and_emit_target_property(ctx,
+                                                             origin,
+                                                             target_name,
+                                                             nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"),
+                                                             entry->item,
+                                                             prop_op)) {
+                return false;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(entries); i++) {
+        const Target_Usage_Item_Entry *entry = &entries[i];
+        if (!target_usage_emit_include_directories_entry(ctx, origin, target_name, entry)) return false;
     }
 
     return true;
@@ -1141,6 +1229,30 @@ static bool target_sources_store_file_set(EvalExecContext *ctx,
                                                          EV_PROP_APPEND_LIST)) {
             return false;
         }
+        if (is_headers) {
+            String_View build_interface_dir =
+                target_usage_wrap_build_interface_temp(ctx, file_set->base_dirs[i]);
+            if (eval_should_stop(ctx)) return false;
+
+            if (vis != EV_VISIBILITY_INTERFACE &&
+                !target_usage_store_and_emit_target_property(ctx,
+                                                             origin,
+                                                             target_name,
+                                                             nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
+                                                             build_interface_dir,
+                                                             EV_PROP_APPEND_LIST)) {
+                return false;
+            }
+            if (vis != EV_VISIBILITY_PRIVATE &&
+                !target_usage_store_and_emit_target_property(ctx,
+                                                             origin,
+                                                             target_name,
+                                                             nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
+                                                             build_interface_dir,
+                                                             EV_PROP_APPEND_LIST)) {
+                return false;
+            }
+        }
     }
 
     for (size_t i = 0; i < arena_arr_len(file_set->files); i++) {
@@ -1249,12 +1361,20 @@ Eval_Result eval_handle_target_link_options(EvalExecContext *ctx, const Node *no
             a,
             nob_sv_from_cstr("target_link_options() requires target and items"),
             nob_sv_from_cstr("Usage: target_link_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
-            false,
+            true,
             true,
             false,
             false,
             target_usage_identity_item,
             &req)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_require_interface_only_on_imported_items(
+            ctx,
+            node,
+            req.target_name,
+            req.items,
+            nob_sv_from_cstr("target_link_options() may only set INTERFACE items on IMPORTED targets"))) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -1284,12 +1404,20 @@ Eval_Result eval_handle_target_link_directories(EvalExecContext *ctx, const Node
             a,
             nob_sv_from_cstr("target_link_directories() requires target and items"),
             nob_sv_from_cstr("Usage: target_link_directories(<tgt> <PUBLIC|PRIVATE|INTERFACE> <dirs...>)"),
-            false,
+            true,
             false,
             false,
             false,
             target_usage_resolve_path_item_temp,
             &req)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_require_interface_only_on_imported_items(
+            ctx,
+            node,
+            req.target_name,
+            req.items,
+            nob_sv_from_cstr("target_link_directories() may only set INTERFACE items on IMPORTED targets"))) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -1319,7 +1447,7 @@ Eval_Result eval_handle_target_include_directories(EvalExecContext *ctx, const N
             a,
             nob_sv_from_cstr("target_include_directories() requires target and items"),
             nob_sv_from_cstr("Usage: target_include_directories(<tgt> [SYSTEM] [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
-            false,
+            true,
             true,
             true,
             true,
@@ -1327,14 +1455,16 @@ Eval_Result eval_handle_target_include_directories(EvalExecContext *ctx, const N
             &req)) {
         return eval_result_from_ctx(ctx);
     }
+    if (!target_usage_require_interface_only_on_imported_items(
+            ctx,
+            node,
+            req.target_name,
+            req.items,
+            nob_sv_from_cstr("target_include_directories() may only set INTERFACE items on IMPORTED targets"))) {
+        return eval_result_from_ctx(ctx);
+    }
 
-    if (!target_usage_apply_item_entries(ctx,
-                                         o,
-                                         req.target_name,
-                                         req.items,
-                                         nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
-                                         nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
-                                         target_usage_emit_include_directories_entry)) {
+    if (!target_usage_apply_include_directory_entries(ctx, o, req.target_name, req.items)) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -1354,12 +1484,20 @@ Eval_Result eval_handle_target_compile_definitions(EvalExecContext *ctx, const N
             a,
             nob_sv_from_cstr("target_compile_definitions() requires target and items"),
             nob_sv_from_cstr("Usage: target_compile_definitions(<tgt> <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
-            false,
+            true,
             false,
             false,
             false,
             target_compile_definition_normalize_temp,
             &req)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_require_interface_only_on_imported_items(
+            ctx,
+            node,
+            req.target_name,
+            req.items,
+            nob_sv_from_cstr("target_compile_definitions() may only set INTERFACE items on IMPORTED targets"))) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -1388,12 +1526,20 @@ Eval_Result eval_handle_target_compile_options(EvalExecContext *ctx, const Node 
             a,
             nob_sv_from_cstr("target_compile_options() requires target and items"),
             nob_sv_from_cstr("Usage: target_compile_options(<tgt> [BEFORE] <PUBLIC|PRIVATE|INTERFACE> <items...>)"),
-            false,
+            true,
             true,
             false,
             false,
             target_usage_identity_item,
             &req)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_require_interface_only_on_imported_items(
+            ctx,
+            node,
+            req.target_name,
+            req.items,
+            nob_sv_from_cstr("target_compile_options() may only set INTERFACE items on IMPORTED targets"))) {
         return eval_result_from_ctx(ctx);
     }
 

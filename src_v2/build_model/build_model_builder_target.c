@@ -42,6 +42,7 @@ static bool bm_target_record_raw_set(BM_Builder *builder,
                                   &target->raw_properties,
                                   key,
                                   (op == EV_PROP_APPEND_STRING) ? EVENT_PROPERTY_MUTATE_APPEND_STRING :
+                                  (op == EV_PROP_PREPEND_LIST) ? EVENT_PROPERTY_MUTATE_PREPEND_LIST :
                                   (op == EV_PROP_APPEND_LIST) ? EVENT_PROPERTY_MUTATE_APPEND_LIST :
                                                                  EVENT_PROPERTY_MUTATE_SET,
                                   0,

@@ -640,6 +640,7 @@ static const char *prop_op_name(Cmake_Target_Property_Op op) {
         case EV_PROP_SET: return "SET";
         case EV_PROP_APPEND_LIST: return "APPEND_LIST";
         case EV_PROP_APPEND_STRING: return "APPEND_STRING";
+        case EV_PROP_PREPEND_LIST: return "PREPEND_LIST";
     }
     return "UNKNOWN";
 }
