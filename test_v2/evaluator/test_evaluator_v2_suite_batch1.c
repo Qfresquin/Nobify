@@ -144,6 +144,78 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     TEST_PASS();
 }
 
+TEST(evaluator_ctest_capabilities_align_with_coverage_matrix) {
+    static const char *ctest_commands[] = {
+        "ctest_build",
+        "ctest_coverage",
+        "ctest_empty_binary_directory",
+        "ctest_memcheck",
+        "ctest_read_custom_files",
+        "ctest_run_script",
+        "ctest_sleep",
+        "ctest_start",
+        "ctest_submit",
+        "ctest_test",
+        "ctest_update",
+        "ctest_upload",
+    };
+    static const char *matrix_rel_path = "docs/evaluator/evaluator_coverage_matrix.md";
+    static const char *divergence_summary =
+        "| Native rows where `Audit Status != Registry Tag` | 0 |";
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(ctest_commands); i++) {
+        String_View command_name = nob_sv_from_cstr(ctest_commands[i]);
+        Command_Capability cap = {0};
+        ASSERT(eval_test_get_command_capability(ctx, command_name, &cap));
+        ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
+        ASSERT(eval_session_command_exists(ctx->session, command_name));
+    }
+
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    ASSERT(repo_root && repo_root[0] != '\0');
+
+    char matrix_path[_TINYDIR_PATH_MAX] = {0};
+    int n = snprintf(matrix_path, sizeof(matrix_path), "%s/%s", repo_root, matrix_rel_path);
+    ASSERT(n > 0 && n < (int)sizeof(matrix_path));
+
+    String_View matrix_text = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, matrix_path, &matrix_text));
+    ASSERT(sv_contains_sv(matrix_text, nob_sv_from_cstr(divergence_summary)));
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(ctest_commands); i++) {
+        char expected_row[128] = {0};
+        n = snprintf(expected_row,
+                     sizeof(expected_row),
+                     "| `%s` | native | FULL | FULL |",
+                     ctest_commands[i]);
+        ASSERT(n > 0 && n < (int)sizeof(expected_row));
+        ASSERT(sv_contains_sv(matrix_text, nob_sv_from_cstr(expected_row)));
+    }
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_session_api_runs_with_explicit_request_and_stream) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2360,6 +2432,7 @@ TEST(evaluator_directory_option_commands_expand_shell_and_linker_tokens_once) {
 void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_golden_all_cases(passed, failed, skipped);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed, skipped);
+    test_evaluator_ctest_capabilities_align_with_coverage_matrix(passed, failed, skipped);
     test_evaluator_session_api_runs_with_explicit_request_and_stream(passed, failed, skipped);
     test_evaluator_registry_api_supports_custom_commands_and_null_stream_runs(passed, failed, skipped);
     test_evaluator_session_services_env_lookup_is_injected(passed, failed, skipped);

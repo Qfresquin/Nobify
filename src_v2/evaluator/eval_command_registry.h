@@ -32,19 +32,19 @@
     X("cpack_add_component", eval_handle_cpack_add_component, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cpack_add_component_group", eval_handle_cpack_add_component_group, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("cpack_add_install_type", eval_handle_cpack_add_install_type, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_build", eval_handle_ctest_build, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_build", eval_handle_ctest_build, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("ctest_configure", eval_handle_ctest_configure, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_coverage", eval_handle_ctest_coverage, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_empty_binary_directory", eval_handle_ctest_empty_binary_directory, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_memcheck", eval_handle_ctest_memcheck, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_read_custom_files", eval_handle_ctest_read_custom_files, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_run_script", eval_handle_ctest_run_script, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_sleep", eval_handle_ctest_sleep, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_start", eval_handle_ctest_start, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_submit", eval_handle_ctest_submit, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_test", eval_handle_ctest_test, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_update", eval_handle_ctest_update, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
-    X("ctest_upload", eval_handle_ctest_upload, EVAL_CMD_IMPL_PARTIAL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_coverage", eval_handle_ctest_coverage, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_empty_binary_directory", eval_handle_ctest_empty_binary_directory, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_memcheck", eval_handle_ctest_memcheck, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_read_custom_files", eval_handle_ctest_read_custom_files, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_run_script", eval_handle_ctest_run_script, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_sleep", eval_handle_ctest_sleep, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_start", eval_handle_ctest_start, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_submit", eval_handle_ctest_submit, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_test", eval_handle_ctest_test, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_update", eval_handle_ctest_update, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
+    X("ctest_upload", eval_handle_ctest_upload, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("define_property", eval_handle_define_property, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("enable_language", eval_handle_enable_language, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("enable_testing", eval_handle_enable_testing, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
