@@ -486,6 +486,44 @@ static bool string_jsonv_object_find(String_Json_Value *obj, String_View key, si
     return false;
 }
 
+static int string_json_sv_cmp(String_View lhs, String_View rhs) {
+    size_t n = lhs.count < rhs.count ? lhs.count : rhs.count;
+    if (n > 0) {
+        int cmp = memcmp(lhs.data, rhs.data, n);
+        if (cmp != 0) return cmp;
+    }
+    if (lhs.count < rhs.count) return -1;
+    if (lhs.count > rhs.count) return 1;
+    return 0;
+}
+
+static bool string_jsonv_object_member_key_at_temp(EvalExecContext *ctx,
+                                                   String_Json_Value *obj,
+                                                   size_t member_index,
+                                                   String_View *out_key) {
+    if (!ctx || !obj || obj->type != STRING_JSON_OBJECT || !out_key) return false;
+    if (member_index >= obj->object_count) return false;
+
+    size_t *sorted = (size_t*)arena_alloc(eval_temp_arena(ctx), sizeof(size_t) * obj->object_count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, sorted, false);
+    for (size_t i = 0; i < obj->object_count; i++) sorted[i] = i;
+
+    for (size_t i = 1; i < obj->object_count; i++) {
+        size_t cur = sorted[i];
+        size_t j = i;
+        while (j > 0 &&
+               string_json_sv_cmp(obj->object_items[cur].key,
+                                  obj->object_items[sorted[j - 1]].key) < 0) {
+            sorted[j] = sorted[j - 1];
+            j--;
+        }
+        sorted[j] = cur;
+    }
+
+    *out_key = obj->object_items[sorted[member_index]].key;
+    return true;
+}
+
 static bool string_jsonv_resolve_path(String_Json_Value *root,
                                       String_View *path,
                                       size_t path_count,
@@ -785,7 +823,9 @@ static bool string_handle_json_command(EvalExecContext *ctx,
                                                    string_json_message_with_token_temp(ctx, "string(JSON MEMBER) invalid index", index_sv),
                                                    path, path_count);
         }
-        (void)eval_var_set_current(ctx, out_var, target->object_items[idx].key);
+        String_View member_key = nob_sv_from_cstr("");
+        if (!string_jsonv_object_member_key_at_temp(ctx, target, idx, &member_key)) return false;
+        (void)eval_var_set_current(ctx, out_var, member_key);
         if (eval_should_stop(ctx)) return false;
         return true;
     }

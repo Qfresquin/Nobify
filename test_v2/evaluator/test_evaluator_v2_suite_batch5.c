@@ -1742,7 +1742,7 @@ TEST(evaluator_string_hash_repeat_and_json_full_surface) {
         if (nob_sv_eq(it, nob_sv_from_cstr("H_SHA3_512=b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0"))) saw_sha3_512 = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("SREP=ababab"))) saw_repeat = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("SREP0="))) saw_repeat_zero = true;
-        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_MEMBER=s"))) saw_member = true;
+        if (nob_sv_eq(it, nob_sv_from_cstr("SJ_MEMBER=n"))) saw_member = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("SJ_RM_LEN=2"))) saw_rm_len = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("SJ_SET_GET=99"))) saw_set_get = true;
         if (nob_sv_eq(it, nob_sv_from_cstr("SJ_EQ=ON"))) saw_eq = true;
@@ -2053,9 +2053,9 @@ TEST(evaluator_string_find_compare_configure_random_timestamp_and_uuid_cover_rem
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMP_GREATER_EQUAL_FALSE")), nob_sv_from_cstr("0")));
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_BOTH")),
-                     nob_sv_from_cstr("say \"hi\"-say \\\"hi\\\"")));
+                     nob_sv_from_cstr("say \\\"hi\\\"-say \\\"hi\\\"")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CFG_AT_ONLY")),
-                     nob_sv_from_cstr("say \"hi\"-say \\\"hi\\\"")));
+                     nob_sv_from_cstr("${MSG}-say \\\"hi\\\"")));
 
     String_View rand_a = eval_test_var_get(ctx, nob_sv_from_cstr("RAND_A"));
     String_View rand_b = eval_test_var_get(ctx, nob_sv_from_cstr("RAND_B"));
@@ -2063,7 +2063,7 @@ TEST(evaluator_string_find_compare_configure_random_timestamp_and_uuid_cover_rem
     ASSERT(nob_sv_eq(rand_a, rand_b));
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TS_DEFAULT")),
-                     nob_sv_from_cstr("2000-01-01T00:00:00")));
+                     nob_sv_from_cstr("2000-01-01T00:00:00Z")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UUID_UP")),
                      nob_sv_from_cstr("6CB8E707-0FC5-5F55-88D4-D4FED43E64A8")));
 
@@ -2925,11 +2925,32 @@ TEST(evaluator_try_compile_empty_capture_file_is_silent) {
     TEST_PASS();
 }
 
-TEST(evaluator_internal_cleanup_stack_failure_helper) {
+static void evaluator_internal_cleanup_stack_failure_helper_impl(int *passed, int *failed, int *skipped) {
     ASSERT(evaluator_test_begin_nob_log_capture_guarded());
     ASSERT(evaluator_test_guard_env("NOBIFY_CLEANUP_GUARD", "dirty"));
     ASSERT(false);
     TEST_PASS();
+}
+
+static void evaluator_internal_cleanup_stack_failure_helper_run(int *passed, int *failed, int *skipped) {
+    Test_Case_Workspace test_ws_case = {0};
+    Test_V2_Cleanup_Stack prev_cleanup_stack = test_v2_cleanup_scope_enter();
+    if (!test_ws_case_enter(&test_ws_case, "evaluator_internal_cleanup_stack_failure_helper")) {
+        test_v2_emit_failure_message(__func__, 0, "could not enter isolated test workspace");
+        nob_log(NOB_ERROR, "FAILED: %s: could not enter isolated test workspace", __func__);
+        (*failed)++;
+        test_v2_cleanup_scope_leave(prev_cleanup_stack);
+        return;
+    }
+
+    evaluator_internal_cleanup_stack_failure_helper_impl(passed, failed, skipped);
+    test_v2_cleanup_run_all();
+    if (!test_ws_case_leave(&test_ws_case)) {
+        test_v2_emit_failure_message(__func__, 0, "could not cleanup isolated test workspace");
+        nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated test workspace", __func__);
+        (*failed)++;
+    }
+    test_v2_cleanup_scope_leave(prev_cleanup_stack);
 }
 
 TEST(evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure) {
@@ -2945,7 +2966,7 @@ TEST(evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure
     ASSERT(cwd_n > 0 && (size_t)cwd_n < sizeof(cwd_before_copy));
     ASSERT(getenv("NOBIFY_CLEANUP_GUARD") == NULL);
 
-    test_evaluator_internal_cleanup_stack_failure_helper(&inner_passed, &inner_failed, &inner_skipped);
+    evaluator_internal_cleanup_stack_failure_helper_run(&inner_passed, &inner_failed, &inner_skipped);
 
     ASSERT(inner_passed == 0);
     ASSERT(inner_failed == 1);

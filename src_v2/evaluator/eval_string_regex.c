@@ -2,6 +2,34 @@
 
 #include <pcre2posix.h>
 
+static String_View string_regex_unescape_replacement_temp(EvalExecContext *ctx, String_View in) {
+    if (!ctx || !in.data || in.count == 0) return in;
+
+    bool has_escape = false;
+    for (size_t i = 0; i + 1 < in.count; i++) {
+        if (in.data[i] == '\\' && in.data[i + 1] == '\\') {
+            has_escape = true;
+            break;
+        }
+    }
+    if (!has_escape) return in;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < in.count; i++) {
+        if (in.data[i] == '\\' && i + 1 < in.count && in.data[i + 1] == '\\') {
+            buf[off++] = '\\';
+            i++;
+            continue;
+        }
+        buf[off++] = in.data[i];
+    }
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
 Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cmake_Event_Origin o, SV_List a) {
     if (!ctx || !node || arena_arr_len(a) < 1 || eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
@@ -55,7 +83,7 @@ Eval_Result eval_string_handle_regex(EvalExecContext *ctx, const Node *node, Cma
         }
 
         String_View pattern = a[2];
-        String_View replacement = a[3];
+        String_View replacement = string_regex_unescape_replacement_temp(ctx, a[3]);
         String_View out_var = a[4];
         String_View input = (arena_arr_len(a) > 5) ? eval_sv_join_semi_temp(ctx, &a[5], arena_arr_len(a) - 5) : nob_sv_from_cstr("");
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);

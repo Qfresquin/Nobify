@@ -20,7 +20,7 @@ V1 is intentionally narrow:
 
 - `project-mode` only
 - seed case packs for `target_*`, `list()`, `var_commands`, `property_query`,
-  `cmake_path()`, `math()`, and `add_executable()`/`add_library()`
+  `cmake_path()`, `math()`, `add_executable()`/`add_library()`, and `string()`
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome only
@@ -41,6 +41,7 @@ Current case packs:
 - `cmake_path_seed_cases.cmake`
 - `math_seed_cases.cmake`
 - `add_targets_seed_cases.cmake`
+- `string_seed_cases.cmake`
 
 Supported directives:
 

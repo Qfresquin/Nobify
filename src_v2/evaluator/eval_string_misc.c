@@ -259,7 +259,11 @@ static String_View string_timestamp_format_temp(EvalExecContext *ctx,
                                                 String_View format,
                                                 bool utc) {
     if (!ctx) return nob_sv_from_cstr("");
-    if (format.count == 0) format = nob_sv_from_cstr("%Y-%m-%dT%H:%M:%S");
+    if (format.count == 0) {
+        format = utc
+            ? nob_sv_from_cstr("%Y-%m-%dT%H:%M:%SZ")
+            : nob_sv_from_cstr("%Y-%m-%dT%H:%M:%S");
+    }
 
     time_t now = time(NULL);
     const char *sde = eval_getenv_temp(ctx, "SOURCE_DATE_EPOCH");
@@ -414,7 +418,7 @@ Eval_Result eval_string_handle_misc(EvalExecContext *ctx, const Node *node, Cmak
             return eval_result_from_ctx(ctx);
         }
         String_View out_var = a[1];
-        String_View fmt = nob_sv_from_cstr("%Y-%m-%dT%H:%M:%S");
+        String_View fmt = nob_sv_from_cstr("");
         bool has_fmt = false;
         bool utc = false;
         for (size_t i = 2; i < arena_arr_len(a); i++) {

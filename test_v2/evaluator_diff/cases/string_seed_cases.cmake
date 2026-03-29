@@ -1,0 +1,145 @@
+#@@CASE string_text_regex_and_misc_surface
+#@@OUTCOME SUCCESS
+#@@QUERY VAR SBUF
+#@@QUERY VAR S_JOIN
+#@@QUERY VAR S_CFG
+#@@QUERY VAR S_REPL
+#@@QUERY VAR S_LOW
+#@@QUERY VAR S_SUB
+#@@QUERY VAR S_RX_MATCH
+#@@QUERY VAR S_RX_REPL
+#@@QUERY VAR S_RX_ALL
+#@@QUERY VAR S_SHA
+#@@QUERY VAR S_ASCII
+#@@QUERY VAR S_HEX
+#@@QUERY VAR S_ID
+#@@QUERY VAR S_GX
+set(SBUF "Hi")
+string(APPEND SBUF "-There")
+string(JOIN ":" S_JOIN alpha beta gamma)
+set(V "qq")
+string(CONFIGURE "@V@-${V}" S_CFG @ONLY)
+string(REPLACE "na" "X" S_REPL "banana")
+string(TOLOWER "MiX" S_LOW)
+string(SUBSTRING "abcdef" 2 3 S_SUB)
+string(REGEX MATCH "a[0-9]+" S_RX_MATCH "xxa12yy")
+string(REGEX REPLACE "a([0-9]+)" "B\\1" S_RX_REPL "xa12ya34")
+string(REGEX MATCHALL "[a-z][0-9]" S_RX_ALL "a1b2c3")
+string(SHA256 S_SHA "abc")
+string(ASCII 65 66 67 S_ASCII)
+string(HEX "Ab" S_HEX)
+string(MAKE_C_IDENTIFIER "9a-b.c" S_ID)
+string(GENEX_STRIP "A$<$<CONFIG:Debug>:_d>B$<1:X>" S_GX)
+#@@ENDCASE
+
+#@@CASE string_hash_repeat_and_json_surface
+#@@OUTCOME SUCCESS
+#@@QUERY VAR H_MD5
+#@@QUERY VAR H_SHA1
+#@@QUERY VAR H_SHA224
+#@@QUERY VAR H_SHA256
+#@@QUERY VAR H_SHA384
+#@@QUERY VAR H_SHA512
+#@@QUERY VAR H_SHA3_224
+#@@QUERY VAR H_SHA3_256
+#@@QUERY VAR H_SHA3_384
+#@@QUERY VAR H_SHA3_512
+#@@QUERY VAR SREP
+#@@QUERY VAR SREP0
+#@@QUERY VAR SJ_MEMBER
+#@@QUERY VAR SJ_RM_LEN
+#@@QUERY VAR SJ_SET_GET
+#@@QUERY VAR SJ_EQ
+#@@QUERY VAR SJ_NEQ
+#@@QUERY VAR SJ_ERR_OK
+#@@QUERY VAR SJ_E1
+#@@QUERY VAR SJ_E2
+#@@QUERY VAR SJ_ERR1_HAS_MISSING
+#@@QUERY VAR SJ_ERR2_HAS_KIND
+set(SJSON [=[{"k":[1,2,3],"s":"x","n":null}]=])
+string(MD5 H_MD5 "abc")
+string(SHA1 H_SHA1 "abc")
+string(SHA224 H_SHA224 "abc")
+string(SHA256 H_SHA256 "abc")
+string(SHA384 H_SHA384 "abc")
+string(SHA512 H_SHA512 "abc")
+string(SHA3_224 H_SHA3_224 "abc")
+string(SHA3_256 H_SHA3_256 "abc")
+string(SHA3_384 H_SHA3_384 "abc")
+string(SHA3_512 H_SHA3_512 "abc")
+string(REPEAT "ab" 3 SREP)
+string(REPEAT "x" 0 SREP0)
+string(JSON SJ_MEMBER MEMBER "${SJSON}" 1)
+string(JSON SJ_RM REMOVE "${SJSON}" k 1)
+string(JSON SJ_RM_LEN LENGTH "${SJ_RM}" k)
+string(JSON SJ_SET SET "${SJSON}" k 5 99)
+string(JSON SJ_SET_GET GET "${SJ_SET}" k 3)
+string(JSON SJ_EQ EQUAL "${SJSON}" "${SJSON}")
+string(JSON SJ_NEQ EQUAL "${SJSON}" [=[{"k":[1],"s":"x","n":null}]=])
+string(JSON SJ_OK ERROR_VARIABLE SJ_ERR_OK TYPE "${SJSON}" k)
+string(JSON SJ_E1 ERROR_VARIABLE SJ_ERR1 GET "${SJSON}" missing)
+string(JSON SJ_E2 ERROR_VARIABLE SJ_ERR2 LENGTH "${SJSON}" s)
+if("${SJ_ERR1}" MATCHES "missing")
+  set(SJ_ERR1_HAS_MISSING ON)
+else()
+  set(SJ_ERR1_HAS_MISSING OFF)
+endif()
+if("${SJ_ERR2}" MATCHES "ARRAY or OBJECT")
+  set(SJ_ERR2_HAS_KIND ON)
+else()
+  set(SJ_ERR2_HAS_KIND OFF)
+endif()
+#@@ENDCASE
+
+#@@CASE string_find_compare_random_timestamp_and_uuid_surface
+#@@OUTCOME SUCCESS
+#@@QUERY VAR FIND_FWD
+#@@QUERY VAR FIND_REV
+#@@QUERY VAR FIND_NONE
+#@@QUERY VAR FIND_EMPTY_REV
+#@@QUERY VAR CMP_LESS
+#@@QUERY VAR CMP_GREATER_FALSE
+#@@QUERY VAR CMP_EQUAL
+#@@QUERY VAR CMP_NOTEQUAL_FALSE
+#@@QUERY VAR CMP_LESS_EQUAL
+#@@QUERY VAR CMP_GREATER_EQUAL_FALSE
+#@@QUERY VAR CFG_BOTH
+#@@QUERY VAR CFG_AT_ONLY
+#@@QUERY VAR RAND_EQ
+#@@QUERY VAR RAND_LEN
+#@@QUERY VAR TS_DEFAULT
+#@@QUERY VAR UUID_MD5
+#@@QUERY VAR UUID_UP
+set(MSG [=[say "hi"]=])
+string(FIND "banana" "na" FIND_FWD)
+string(FIND "banana" "na" FIND_REV REVERSE)
+string(FIND "banana" "zz" FIND_NONE)
+string(FIND "banana" "" FIND_EMPTY_REV REVERSE)
+string(COMPARE LESS "abc" "abd" CMP_LESS)
+string(COMPARE GREATER "abc" "abd" CMP_GREATER_FALSE)
+string(COMPARE EQUAL "abc" "abc" CMP_EQUAL)
+string(COMPARE NOTEQUAL "abc" "abc" CMP_NOTEQUAL_FALSE)
+string(COMPARE LESS_EQUAL "abd" "abd" CMP_LESS_EQUAL)
+string(COMPARE GREATER_EQUAL "abc" "abd" CMP_GREATER_EQUAL_FALSE)
+string(CONFIGURE "\${MSG}-@MSG@" CFG_BOTH ESCAPE_QUOTES)
+string(CONFIGURE "\${MSG}-@MSG@" CFG_AT_ONLY @ONLY ESCAPE_QUOTES)
+string(RANDOM RANDOM_SEED 9 RAND_A)
+string(RANDOM RANDOM_SEED 9 RAND_B)
+string(COMPARE EQUAL "${RAND_A}" "${RAND_B}" RAND_EQ)
+string(LENGTH "${RAND_A}" RAND_LEN)
+set(ENV{SOURCE_DATE_EPOCH} 946684800)
+string(TIMESTAMP TS_DEFAULT UTC)
+string(UUID UUID_MD5 NAMESPACE "6ba7b810-9dad-11d1-80b4-00c04fd430c8" NAME "demo" TYPE MD5)
+string(UUID UUID_UP NAMESPACE "6ba7b810-9dad-11d1-80b4-00c04fd430c8" NAME "abc" TYPE SHA1 UPPER)
+unset(ENV{SOURCE_DATE_EPOCH})
+#@@ENDCASE
+
+#@@CASE string_regex_parse_error
+#@@OUTCOME ERROR
+string(REGEX MATCH "[" BAD_RX "abc")
+#@@ENDCASE
+
+#@@CASE string_invalid_uuid_or_json_shape_error
+#@@OUTCOME ERROR
+string(UUID BADUUID NAMESPACE DNS NAME abc TYPE SHA1)
+#@@ENDCASE

@@ -17,6 +17,7 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"cmake_path", "test_v2/evaluator_diff/cases/cmake_path_seed_cases.cmake"},
     {"math", "test_v2/evaluator_diff/cases/math_seed_cases.cmake"},
     {"add_targets", "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake"},
+    {"string", "test_v2/evaluator_diff/cases/string_seed_cases.cmake"},
 };
 
 typedef enum {

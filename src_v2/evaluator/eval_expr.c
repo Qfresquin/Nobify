@@ -14,6 +14,7 @@
 
 #define EVAL_EXPAND_MAX_RECURSION 100
 #define EVAL_EXPAND_MAX_RECURSION_HARD_CAP 10000
+#define EVAL_ESCAPED_DOLLAR_SENTINEL '\x1f'
 
 static bool path_exists_cstr(const char *path) {
     if (!path || path[0] == '\0') return false;
@@ -383,7 +384,31 @@ static void expr_sb_append_sv(Nob_String_Builder *sb, String_View sv) {
     nob_sb_append_buf(sb, sv.data, sv.count);
 }
 
-static String_View expand_once(struct EvalExecContext *ctx, String_View in) {
+static String_View expand_restore_escaped_dollar_temp(EvalExecContext *ctx, String_View in) {
+    if (!ctx || !in.data || in.count == 0) return in;
+
+    bool has_sentinel = false;
+    for (size_t i = 0; i < in.count; i++) {
+        if (in.data[i] == EVAL_ESCAPED_DOLLAR_SENTINEL) {
+            has_sentinel = true;
+            break;
+        }
+    }
+    if (!has_sentinel) return in;
+
+    char *buf = (char*)arena_alloc(eval_temp_arena(ctx), in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    for (size_t i = 0; i < in.count; i++) {
+        buf[i] = (in.data[i] == EVAL_ESCAPED_DOLLAR_SENTINEL) ? '$' : in.data[i];
+    }
+    buf[in.count] = '\0';
+    return nob_sv_from_parts(buf, in.count);
+}
+
+static String_View eval_expand_vars_depth(struct EvalExecContext *ctx, String_View input, int depth);
+
+static String_View expand_once(struct EvalExecContext *ctx, String_View in, int depth) {
     Arena *temp_arena = eval_temp_arena(ctx);
     if (!temp_arena) return nob_sv_from_cstr("");
 
@@ -402,7 +427,7 @@ static String_View expand_once(struct EvalExecContext *ctx, String_View in) {
         char c = in.data[i];
 
         if (c == '\\' && i + 1 < in.count && in.data[i + 1] == '$') {
-            nob_sb_append(&sb, '$');
+            nob_sb_append(&sb, EVAL_ESCAPED_DOLLAR_SENTINEL);
             i++;
             continue;
         }
@@ -436,7 +461,7 @@ static String_View expand_once(struct EvalExecContext *ctx, String_View in) {
             }
             if (depth == 0) {
                 String_View inner = nob_sv_from_parts(in.data + start, (j - 1) - start);
-                inner = eval_expand_vars(ctx, inner);
+                inner = eval_expand_vars_depth(ctx, inner, depth + 1);
                 String_View val = nob_sv_from_cstr("");
                 if (!eval_macro_bind_get(ctx, inner, &val)) {
                     val = eval_var_get_visible(ctx, inner);
@@ -455,37 +480,22 @@ static String_View expand_once(struct EvalExecContext *ctx, String_View in) {
     return out;
 }
 
-String_View eval_expand_vars(struct EvalExecContext *ctx, String_View input) {
+static String_View eval_expand_vars_depth(struct EvalExecContext *ctx, String_View input, int depth) {
     if (!ctx || eval_should_stop(ctx)) return nob_sv_from_cstr("");
+
+    const int max_depth = eval_expand_limit(ctx);
+    if (depth > max_depth) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("expand_vars"), (Cmake_Event_Origin){0}, nob_sv_from_cstr("Recursion limit exceeded"), nob_sv_from_cstr("Tune CMAKE_NOBIFY_EXPAND_MAX_RECURSION or NOBIFY_EVAL_EXPAND_MAX_RECURSION"));
+        return expand_restore_escaped_dollar_temp(ctx, input);
+    }
 
     String_View cur = sv_copy_to_temp_arena(ctx, input);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+    return expand_restore_escaped_dollar_temp(ctx, expand_once(ctx, cur, depth));
+}
 
-    const int max_iter = eval_expand_limit(ctx);
-    String_View *seen = (String_View*)arena_alloc(eval_temp_arena(ctx), sizeof(String_View) * (size_t)(max_iter + 1));
-    EVAL_OOM_RETURN_IF_NULL(ctx, seen, nob_sv_from_cstr(""));
-    size_t seen_count = 0;
-    seen[seen_count++] = cur;
-
-    for (int i = 0; i < max_iter; i++) {
-        String_View next = expand_once(ctx, cur);
-        if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-        if (sv_eq(next, cur)) return next;
-
-        // Proper cycle detection: any repeated expansion state means cycle.
-        for (size_t j = 0; j < seen_count; j++) {
-            if (sv_eq(next, seen[j])) {
-                (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("expand_vars"), (Cmake_Event_Origin){0}, nob_sv_from_cstr("Cyclic variable expansion detected"), nob_sv_from_cstr("Check mutually recursive set() definitions"));
-                return next;
-            }
-        }
-
-        seen[seen_count++] = next;
-        cur = next;
-    }
-
-    (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_STATE, nob_sv_from_cstr("eval_expr"), nob_sv_from_cstr("expand_vars"), (Cmake_Event_Origin){0}, nob_sv_from_cstr("Recursion limit exceeded"), nob_sv_from_cstr("Tune CMAKE_NOBIFY_EXPAND_MAX_RECURSION or NOBIFY_EVAL_EXPAND_MAX_RECURSION"));
-    return cur;
+String_View eval_expand_vars(struct EvalExecContext *ctx, String_View input) {
+    return eval_expand_vars_depth(ctx, input, 0);
 }
 
 typedef struct {
