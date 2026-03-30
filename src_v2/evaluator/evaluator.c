@@ -16,6 +16,11 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 static void destroy_sub_arena_cb(void *userdata) {
     Arena *arena = (Arena*)userdata;
@@ -25,6 +30,56 @@ static void destroy_sub_arena_cb(void *userdata) {
 static void eval_registry_cleanup_cb(void *userdata) {
     EvalRegistry *registry = (EvalRegistry*)userdata;
     eval_registry_destroy(registry);
+}
+
+static bool eval_host_path_is_executable(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    DWORD attrs = GetFileAttributesA(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+static String_View eval_default_cmake_command_temp(EvalExecContext *ctx) {
+    const char *env_path = getenv("CMK2NOB_TEST_CMAKE_BIN");
+    if (env_path && env_path[0] != '\0') return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(env_path));
+
+#if defined(_WIN32)
+    {
+        char resolved[MAX_PATH] = {0};
+        DWORD n = SearchPathA(NULL, "cmake", NULL, (DWORD)sizeof(resolved), resolved, NULL);
+        if (n > 0 && n < (DWORD)sizeof(resolved) && eval_host_path_is_executable(resolved)) {
+            return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(resolved));
+        }
+    }
+#else
+    {
+        const char *path_env = getenv("PATH");
+        if (path_env && path_env[0] != '\0') {
+            size_t temp_mark = nob_temp_save();
+            const char *segment = path_env;
+            while (segment && segment[0] != '\0') {
+                const char *sep = strchr(segment, ':');
+                size_t seg_len = sep ? (size_t)(sep - segment) : strlen(segment);
+                if (seg_len > 0) {
+                    const char *candidate = nob_temp_sprintf("%.*s/cmake", (int)seg_len, segment);
+                    if (eval_host_path_is_executable(candidate)) {
+                        String_View resolved = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(candidate));
+                        nob_temp_rewind(temp_mark);
+                        return resolved;
+                    }
+                }
+                if (!sep) break;
+                segment = sep + 1;
+            }
+            nob_temp_rewind(temp_mark);
+        }
+    }
+#endif
+
+    return nob_sv_from_cstr("cmake");
 }
 
 // -----------------------------------------------------------------------------
@@ -2553,7 +2608,9 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
         if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
     }
-    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_COMMAND"), nob_sv_from_cstr("cmake")),
+    EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx,
+                                                     nob_sv_from_cstr("CMAKE_COMMAND"),
+                                                     eval_default_cmake_command_temp(ctx)),
                                 "set CMAKE_COMMAND");
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;

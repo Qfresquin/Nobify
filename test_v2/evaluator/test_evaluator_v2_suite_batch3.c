@@ -932,6 +932,47 @@ TEST(evaluator_get_property_target_source_and_test_wrappers) {
     TEST_PASS();
 }
 
+TEST(evaluator_get_property_cache_missing_entry_materializes_empty_and_zero_without_error) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "get_property(CACHE_VALUE_SET CACHE missing_cache_entry PROPERTY VALUE SET)\n"
+        "get_property(CACHE_ADV_SET CACHE missing_cache_entry PROPERTY ADVANCED SET)\n"
+        "get_property(CACHE_ADV CACHE missing_cache_entry PROPERTY ADVANCED)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CACHE_VALUE_SET")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CACHE_ADV_SET")), nob_sv_from_cstr("0")));
+    ASSERT(eval_test_var_defined(ctx, nob_sv_from_cstr("CACHE_ADV")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CACHE_ADV")), nob_sv_from_cstr("")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_get_directory_property_missing_materializes_empty_string) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3352,6 +3393,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_set_property_cache_requires_existing_entry(passed, failed, skipped);
     test_evaluator_get_property_core_queries_and_directory_wrappers(passed, failed, skipped);
     test_evaluator_get_property_target_source_and_test_wrappers(passed, failed, skipped);
+    test_evaluator_get_property_cache_missing_entry_materializes_empty_and_zero_without_error(passed, failed, skipped);
     test_evaluator_get_directory_property_missing_materializes_empty_string(passed, failed, skipped);
     test_evaluator_get_property_source_directory_clause_and_get_cmake_property_lists_and_special_cases(passed, failed, skipped);
     test_evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs(passed, failed, skipped);

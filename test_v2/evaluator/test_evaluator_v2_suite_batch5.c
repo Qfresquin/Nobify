@@ -435,7 +435,8 @@ TEST(evaluator_get_filename_component_covers_documented_modes) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GFC_NAME_WE")), nob_sv_from_cstr("c")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GFC_NAME_WLE")), nob_sv_from_cstr("c.tar")));
     ASSERT(eval_test_cache_defined(ctx, nob_sv_from_cstr("GFC_NAME_WLE")));
-    ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("GFC_ABS")), "gfc_real/sub/file.txt"));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("GFC_ABS")),
+                     nob_sv_from_cstr("gfc_real/sub/file.txt")));
     ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("GFC_REAL")), "gfc_real/sub/file.txt"));
 #if defined(_WIN32)
     ASSERT(nob_sv_end_with(eval_test_var_get(ctx, nob_sv_from_cstr("GFC_PROG")), "cmd.exe"));

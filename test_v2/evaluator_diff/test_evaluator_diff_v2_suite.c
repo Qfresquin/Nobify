@@ -15,6 +15,7 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"var_commands", "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake"},
     {"property_query", "test_v2/evaluator_diff/cases/property_query_seed_cases.cmake"},
     {"cmake_path", "test_v2/evaluator_diff/cases/cmake_path_seed_cases.cmake"},
+    {"get_filename_component", "test_v2/evaluator_diff/cases/get_filename_component_seed_cases.cmake"},
     {"math", "test_v2/evaluator_diff/cases/math_seed_cases.cmake"},
     {"add_targets", "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake"},
     {"add_subdirectory", "test_v2/evaluator_diff/cases/add_subdirectory_seed_cases.cmake"},

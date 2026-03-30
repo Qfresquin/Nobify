@@ -1150,19 +1150,6 @@ bool eval_property_query(EvalExecContext *ctx,
                 if (eval_should_stop(ctx)) return false;
                 return true;
             }
-        } else if (eval_sv_eq_ci_lit(scope_upper, "CACHE")) {
-            if (!eval_cache_defined(ctx, validated_name)) {
-                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
-                                               node,
-                                               origin,
-                                               EV_DIAG_ERROR,
-                                               EVAL_DIAG_NOT_FOUND,
-                                               "dispatcher",
-                                               nob_sv_from_cstr("get_property(CACHE ...) cache entry does not exist"),
-                                               validated_name);
-                if (eval_should_stop(ctx)) return false;
-                return true;
-            }
         } else if (eval_sv_eq_ci_lit(scope_upper, "TEST")) {
             String_View test_dir =
                 inherit_directory.count > 0 ? inherit_directory : eval_current_source_dir_for_paths(ctx);

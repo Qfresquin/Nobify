@@ -120,7 +120,7 @@ Current v1 status:
 - oracle policy: resolve `cmake` from `CMK2NOB_TEST_CMAKE_BIN`, then `PATH`
 - version gate: only `cmake 3.28.x` participates; otherwise the suite skips
 - current mode: `project-mode` only
-- current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `math()`, `add_executable()`/`add_library()`, `add_subdirectory()`, and `string()` seed cases
+- current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`, `add_subdirectory()`, and `string()` seed cases
 - current comparison model:
   - `SUCCESS`: compare normalized `OUTCOME` plus `diff_snapshot.txt`
   - `ERROR`: compare normalized `OUTCOME` only

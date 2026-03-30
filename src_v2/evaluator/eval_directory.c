@@ -656,8 +656,7 @@ static bool gfc_parse_absolute_or_realpath_trailing_args(EvalExecContext *ctx,
                 (void)EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, origin, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("get_filename_component(BASE_DIR) requires a value"), nob_sv_from_cstr("Usage: get_filename_component(<var> <file> ABSOLUTE|REALPATH [BASE_DIR <dir>] [CACHE])"));
                 return false;
             }
-            req->base_dir = eval_path_resolve_for_cmake_arg(ctx, args[++i], current_src, false);
-            if (eval_should_stop(ctx)) return false;
+            req->base_dir = args[++i];
             continue;
         }
         if (eval_sv_eq_ci_lit(args[i], "CACHE")) {
