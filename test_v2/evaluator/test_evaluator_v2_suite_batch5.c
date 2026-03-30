@@ -2437,7 +2437,7 @@ TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
     Ast_Root root = parse_cmake(
         temp_arena,
         "set(NAME Demo)\n"
-        "set(QUOTE one\\\"two)\n"
+        "set(QUOTE \"one\\\"two\")\n"
         "set(ENABLE_FEATURE ON)\n"
         "set(DISABLE_FEATURE 0)\n"
         "configure_file(cfg_template.in cfg_configured.txt @ONLY ESCAPE_QUOTES NEWLINE_STYLE DOS)\n"
@@ -2456,7 +2456,7 @@ TEST(evaluator_configure_file_expands_cmakedefines_and_copyonly) {
     ASSERT(nob_sv_eq(configured,
                      nob_sv_from_cstr("NAME=Demo\r\n"
                                       "LITERAL=${NAME}\r\n"
-                                      "QUOTE=one\\\\\"two\r\n"
+                                      "QUOTE=one\\\"two\r\n"
                                       "#define ENABLE_FEATURE\r\n"
                                       "/* #undef DISABLE_FEATURE */\r\n"
                                       "#define ENABLE_FEATURE 1\r\n"

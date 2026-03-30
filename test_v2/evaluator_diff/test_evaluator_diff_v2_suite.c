@@ -2,7 +2,31 @@
 #include "test_fs.h"
 
 #include <ctype.h>
+#include <fcntl.h>
 #include <stdio.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
+#if defined(_WIN32)
+#define DIFF_FILENO _fileno
+#define DIFF_DUP _dup
+#define DIFF_DUP2 _dup2
+#define DIFF_OPEN _open
+#define DIFF_CLOSE _close
+#else
+#define DIFF_FILENO fileno
+#define DIFF_DUP dup
+#define DIFF_DUP2 dup2
+#define DIFF_OPEN open
+#define DIFF_CLOSE close
+#endif
 
 typedef struct {
     const char *family_label;
@@ -20,6 +44,10 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"add_targets", "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake"},
     {"add_subdirectory", "test_v2/evaluator_diff/cases/add_subdirectory_seed_cases.cmake"},
     {"string", "test_v2/evaluator_diff/cases/string_seed_cases.cmake"},
+    {"top_level_project", "test_v2/evaluator_diff/cases/top_level_project_seed_cases.cmake"},
+    {"message", "test_v2/evaluator_diff/cases/message_seed_cases.cmake"},
+    {"configure_file", "test_v2/evaluator_diff/cases/configure_file_seed_cases.cmake"},
+    {"property_wrappers", "test_v2/evaluator_diff/cases/property_wrappers_seed_cases.cmake"},
 };
 
 typedef enum {
@@ -28,11 +56,32 @@ typedef enum {
 } Diff_Expected_Outcome;
 
 typedef enum {
+    DIFF_LAYOUT_BODY_ONLY_PROJECT = 0,
+    DIFF_LAYOUT_RAW_CMAKELISTS,
+} Diff_Project_Layout;
+
+typedef enum {
+    DIFF_PATH_SCOPE_SOURCE = 0,
+    DIFF_PATH_SCOPE_BUILD,
+} Diff_Path_Scope;
+
+typedef enum {
+    DIFF_ENV_SET = 0,
+    DIFF_ENV_UNSET,
+} Diff_Env_Op_Kind;
+
+typedef enum {
     DIFF_QUERY_VAR = 0,
     DIFF_QUERY_CACHE_DEFINED,
     DIFF_QUERY_TARGET_EXISTS,
     DIFF_QUERY_TARGET_PROP,
     DIFF_QUERY_FILE_EXISTS,
+    DIFF_QUERY_STDOUT,
+    DIFF_QUERY_STDERR,
+    DIFF_QUERY_FILE_TEXT,
+    DIFF_QUERY_CMAKE_PROP,
+    DIFF_QUERY_GLOBAL_PROP,
+    DIFF_QUERY_DIR_PROP,
 } Diff_Query_Kind;
 
 typedef struct {
@@ -42,15 +91,38 @@ typedef struct {
 } Diff_Query;
 
 typedef struct {
+    Diff_Path_Scope scope;
     String_View relpath;
 } Diff_Path_Entry;
+
+typedef struct {
+    Diff_Path_Scope scope;
+    String_View relpath;
+    String_View text;
+} Diff_Text_Fixture;
+
+typedef struct {
+    Diff_Env_Op_Kind kind;
+    String_View name;
+    String_View value;
+} Diff_Env_Op;
+
+typedef struct {
+    String_View name;
+    String_View type;
+    String_View value;
+} Diff_Cache_Init;
 
 typedef struct {
     String_View name;
     String_View body;
     Diff_Expected_Outcome expected_outcome;
+    Diff_Project_Layout layout;
     Diff_Path_Entry *files;
     Diff_Path_Entry *dirs;
+    Diff_Text_Fixture *text_files;
+    Diff_Env_Op *env_ops;
+    Diff_Cache_Init *cache_inits;
     Diff_Query *queries;
 } Diff_Case;
 
@@ -62,7 +134,11 @@ typedef struct {
 
 typedef struct {
     Diff_Expected_Outcome outcome;
-    String_View snapshot;
+    String_View probe_snapshot;
+    String_View post_snapshot;
+    String_View combined_snapshot;
+    String_View stdout_text;
+    String_View stderr_text;
     Eval_Run_Report report;
     bool have_report;
 } Diff_Evaluator_Run;
@@ -70,10 +146,23 @@ typedef struct {
 typedef struct {
     Diff_Expected_Outcome outcome;
     bool command_started;
-    String_View snapshot;
+    String_View probe_snapshot;
+    String_View post_snapshot;
+    String_View combined_snapshot;
     String_View stdout_text;
     String_View stderr_text;
 } Diff_Cmake_Run;
+
+typedef struct {
+    int saved_stdout_fd;
+    int saved_stderr_fd;
+    bool active;
+} Diff_Std_Capture;
+
+typedef struct {
+    Test_Host_Env_Guard **items;
+    size_t count;
+} Diff_Env_Guard_List;
 
 static bool diff_build_qualified_case_name(const char *family_label,
                                            String_View case_name,
@@ -146,6 +235,11 @@ static bool diff_write_entire_file(const char *path, const char *data) {
     size_t size = data ? strlen(data) : 0;
     if (!diff_ensure_parent_dir(path)) return false;
     return nob_write_entire_file(path, data ? data : "", size);
+}
+
+static bool diff_write_sv_file(const char *path, String_View data) {
+    if (!diff_ensure_parent_dir(path)) return false;
+    return nob_write_entire_file(path, data.data ? data.data : "", data.count);
 }
 
 static bool diff_make_empty_file(const char *path) {
@@ -241,13 +335,74 @@ static bool diff_append_line_expr(Nob_String_Builder *sb,
     return true;
 }
 
+static bool diff_split_scoped_path(String_View raw,
+                                   Diff_Path_Scope default_scope,
+                                   Diff_Path_Scope *out_scope,
+                                   String_View *out_relpath) {
+    if (!out_scope || !out_relpath) return false;
+
+    if (diff_sv_has_prefix(raw, "source/")) {
+        *out_scope = DIFF_PATH_SCOPE_SOURCE;
+        *out_relpath = nob_sv_from_parts(raw.data + 7, raw.count - 7);
+        return true;
+    }
+    if (diff_sv_has_prefix(raw, "build/")) {
+        *out_scope = DIFF_PATH_SCOPE_BUILD;
+        *out_relpath = nob_sv_from_parts(raw.data + 6, raw.count - 6);
+        return true;
+    }
+
+    *out_scope = default_scope;
+    *out_relpath = raw;
+    return true;
+}
+
+static bool diff_parse_scoped_path_entry(Arena *arena,
+                                         String_View raw,
+                                         Diff_Path_Scope default_scope,
+                                         Diff_Path_Entry *out_entry) {
+    Diff_Path_Scope scope = DIFF_PATH_SCOPE_SOURCE;
+    String_View relpath = {0};
+
+    if (!arena || !out_entry) return false;
+    if (!diff_split_scoped_path(raw, default_scope, &scope, &relpath)) return false;
+    *out_entry = (Diff_Path_Entry){
+        .scope = scope,
+        .relpath = diff_copy_sv(arena, relpath),
+    };
+    return out_entry->relpath.data != NULL;
+}
+
+static bool diff_parse_layout(String_View line, Diff_Project_Layout *out_layout) {
+    if (!out_layout) return false;
+    if (nob_sv_eq(line, nob_sv_from_cstr("BODY_ONLY_PROJECT"))) {
+        *out_layout = DIFF_LAYOUT_BODY_ONLY_PROJECT;
+        return true;
+    }
+    if (nob_sv_eq(line, nob_sv_from_cstr("RAW_CMAKELISTS"))) {
+        *out_layout = DIFF_LAYOUT_RAW_CMAKELISTS;
+        return true;
+    }
+    return false;
+}
+
 static bool diff_parse_query(Arena *arena, String_View line, Diff_Query *out_query) {
     String_View rest = line;
     String_View first = {0};
     String_View second = {0};
+    const char *space = NULL;
+
     if (!arena || !out_query) return false;
     *out_query = (Diff_Query){0};
 
+    if (nob_sv_eq(line, nob_sv_from_cstr("#@@QUERY STDOUT"))) {
+        out_query->kind = DIFF_QUERY_STDOUT;
+        return true;
+    }
+    if (nob_sv_eq(line, nob_sv_from_cstr("#@@QUERY STDERR"))) {
+        out_query->kind = DIFF_QUERY_STDERR;
+        return true;
+    }
     if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY VAR "))) {
         out_query->kind = DIFF_QUERY_VAR;
         out_query->arg0 = diff_copy_sv(arena, rest);
@@ -264,7 +419,7 @@ static bool diff_parse_query(Arena *arena, String_View line, Diff_Query *out_que
         return out_query->arg0.data != NULL;
     }
     if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY TARGET_PROP "))) {
-        const char *space = memchr(rest.data, ' ', rest.count);
+        space = memchr(rest.data, ' ', rest.count);
         if (!space) return false;
         first = nob_sv_from_parts(rest.data, (size_t)(space - rest.data));
         second = nob_sv_from_parts(space + 1, rest.count - (size_t)(space - rest.data) - 1);
@@ -279,8 +434,93 @@ static bool diff_parse_query(Arena *arena, String_View line, Diff_Query *out_que
         out_query->arg0 = diff_copy_sv(arena, rest);
         return out_query->arg0.data != NULL;
     }
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY FILE_TEXT "))) {
+        out_query->kind = DIFF_QUERY_FILE_TEXT;
+        out_query->arg0 = diff_copy_sv(arena, rest);
+        return out_query->arg0.data != NULL;
+    }
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY CMAKE_PROP "))) {
+        out_query->kind = DIFF_QUERY_CMAKE_PROP;
+        out_query->arg0 = diff_copy_sv(arena, rest);
+        return out_query->arg0.data != NULL;
+    }
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY GLOBAL_PROP "))) {
+        out_query->kind = DIFF_QUERY_GLOBAL_PROP;
+        out_query->arg0 = diff_copy_sv(arena, rest);
+        return out_query->arg0.data != NULL;
+    }
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY DIR_PROP "))) {
+        space = memchr(rest.data, ' ', rest.count);
+        if (!space) return false;
+        first = nob_sv_from_parts(rest.data, (size_t)(space - rest.data));
+        second = nob_sv_from_parts(space + 1, rest.count - (size_t)(space - rest.data) - 1);
+        if (first.count == 0 || second.count == 0) return false;
+        out_query->kind = DIFF_QUERY_DIR_PROP;
+        out_query->arg0 = diff_copy_sv(arena, first);
+        out_query->arg1 = diff_copy_sv(arena, second);
+        return out_query->arg0.data != NULL && out_query->arg1.data != NULL;
+    }
 
     return false;
+}
+
+static bool diff_parse_env_op(Arena *arena, String_View line, Diff_Env_Op *out_op) {
+    String_View rest = line;
+    String_View name = {0};
+    String_View value = {0};
+    const char *eq = NULL;
+
+    if (!arena || !out_op) return false;
+    *out_op = (Diff_Env_Op){0};
+
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@ENV_UNSET "))) {
+        if (rest.count == 0) return false;
+        out_op->kind = DIFF_ENV_UNSET;
+        out_op->name = diff_copy_sv(arena, rest);
+        return out_op->name.data != NULL;
+    }
+
+    rest = line;
+    if (!nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@ENV "))) return false;
+    eq = memchr(rest.data, '=', rest.count);
+    if (!eq) return false;
+    name = nob_sv_from_parts(rest.data, (size_t)(eq - rest.data));
+    value = nob_sv_from_parts(eq + 1, rest.count - (size_t)(eq - rest.data) - 1);
+    if (name.count == 0) return false;
+
+    out_op->kind = DIFF_ENV_SET;
+    out_op->name = diff_copy_sv(arena, name);
+    out_op->value = diff_copy_sv(arena, value);
+    return out_op->name.data != NULL && out_op->value.data != NULL;
+}
+
+static bool diff_parse_cache_init(Arena *arena, String_View line, Diff_Cache_Init *out_init) {
+    String_View rest = line;
+    String_View lhs = {0};
+    String_View name = {0};
+    String_View type = {0};
+    String_View value = {0};
+    const char *eq = NULL;
+    const char *colon = NULL;
+
+    if (!arena || !out_init) return false;
+    *out_init = (Diff_Cache_Init){0};
+
+    if (!nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@CACHE_INIT "))) return false;
+    eq = memchr(rest.data, '=', rest.count);
+    if (!eq) return false;
+    lhs = nob_sv_from_parts(rest.data, (size_t)(eq - rest.data));
+    value = nob_sv_from_parts(eq + 1, rest.count - (size_t)(eq - rest.data) - 1);
+    colon = memchr(lhs.data, ':', lhs.count);
+    if (!colon) return false;
+    name = nob_sv_from_parts(lhs.data, (size_t)(colon - lhs.data));
+    type = nob_sv_from_parts(colon + 1, lhs.count - (size_t)(colon - lhs.data) - 1);
+    if (name.count == 0 || type.count == 0) return false;
+
+    out_init->name = diff_copy_sv(arena, name);
+    out_init->type = diff_copy_sv(arena, type);
+    out_init->value = diff_copy_sv(arena, value);
+    return out_init->name.data != NULL && out_init->type.data != NULL && out_init->value.data != NULL;
 }
 
 static bool diff_parse_case(Arena *arena,
@@ -288,11 +528,15 @@ static bool diff_parse_case(Arena *arena,
                             Diff_Case *out_case) {
     Nob_String_Builder body = {0};
     bool have_outcome = false;
+    bool have_layout = false;
     size_t pos = 0;
 
     if (!arena || !out_case) return false;
-    *out_case = (Diff_Case){0};
+    *out_case = (Diff_Case){
+        .layout = DIFF_LAYOUT_BODY_ONLY_PROJECT,
+    };
     out_case->name = diff_copy_sv(arena, entry.name);
+    if (!out_case->name.data) return false;
 
     while (pos < entry.script.count) {
         size_t line_start = pos;
@@ -311,18 +555,99 @@ static bool diff_parse_case(Arena *arena,
             have_outcome = true;
             continue;
         }
+
+        line = test_case_pack_trim_cr(raw_line);
+        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@PROJECT_LAYOUT "))) {
+            if (have_layout || !diff_parse_layout(line, &out_case->layout)) return false;
+            have_layout = true;
+            continue;
+        }
+
         line = test_case_pack_trim_cr(raw_line);
         if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@FILE "))) {
-            Diff_Path_Entry file = { .relpath = diff_copy_sv(arena, line) };
-            if (file.relpath.data == NULL || !arena_arr_push(arena, out_case->files, file)) return false;
+            Diff_Path_Entry file = {0};
+            if (!diff_parse_scoped_path_entry(arena, line, DIFF_PATH_SCOPE_SOURCE, &file) ||
+                !arena_arr_push(arena, out_case->files, file)) {
+                return false;
+            }
             continue;
         }
+
         line = test_case_pack_trim_cr(raw_line);
         if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@DIR "))) {
-            Diff_Path_Entry dir = { .relpath = diff_copy_sv(arena, line) };
-            if (dir.relpath.data == NULL || !arena_arr_push(arena, out_case->dirs, dir)) return false;
+            Diff_Path_Entry dir = {0};
+            if (!diff_parse_scoped_path_entry(arena, line, DIFF_PATH_SCOPE_SOURCE, &dir) ||
+                !arena_arr_push(arena, out_case->dirs, dir)) {
+                return false;
+            }
             continue;
         }
+
+        line = test_case_pack_trim_cr(raw_line);
+        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@FILE_TEXT "))) {
+            Diff_Text_Fixture text_file = {0};
+            Nob_String_Builder text = {0};
+            Diff_Path_Entry path_entry = {0};
+            bool found_end = false;
+
+            if (!diff_parse_scoped_path_entry(arena, line, DIFF_PATH_SCOPE_SOURCE, &path_entry)) {
+                nob_sb_free(text);
+                return false;
+            }
+
+            while (pos < entry.script.count) {
+                size_t text_line_start = pos;
+                size_t text_line_end = pos;
+                while (text_line_end < entry.script.count && entry.script.data[text_line_end] != '\n') text_line_end++;
+                pos = text_line_end < entry.script.count ? text_line_end + 1 : text_line_end;
+
+                String_View text_raw = nob_sv_from_parts(entry.script.data + text_line_start,
+                                                         text_line_end - text_line_start);
+                String_View text_line = test_case_pack_trim_cr(text_raw);
+                if (nob_sv_eq(text_line, nob_sv_from_cstr("#@@END_FILE_TEXT"))) {
+                    found_end = true;
+                    break;
+                }
+                if (diff_sv_has_prefix(text_line, "#@@")) {
+                    nob_sb_free(text);
+                    return false;
+                }
+                nob_sb_append_buf(&text, text_raw.data, text_raw.count);
+                nob_sb_append(&text, '\n');
+            }
+
+            if (!found_end) {
+                nob_sb_free(text);
+                return false;
+            }
+
+            text_file.scope = path_entry.scope;
+            text_file.relpath = path_entry.relpath;
+            text_file.text = diff_copy_sv(arena, nob_sv_from_parts(text.items ? text.items : "", text.count));
+            nob_sb_free(text);
+            if (!text_file.text.data || !arena_arr_push(arena, out_case->text_files, text_file)) return false;
+            continue;
+        }
+
+        line = test_case_pack_trim_cr(raw_line);
+        if (diff_sv_has_prefix(line, "#@@ENV ") || diff_sv_has_prefix(line, "#@@ENV_UNSET ")) {
+            Diff_Env_Op op = {0};
+            if (!diff_parse_env_op(arena, line, &op) || !arena_arr_push(arena, out_case->env_ops, op)) {
+                return false;
+            }
+            continue;
+        }
+
+        line = test_case_pack_trim_cr(raw_line);
+        if (diff_sv_has_prefix(line, "#@@CACHE_INIT ")) {
+            Diff_Cache_Init init = {0};
+            if (!diff_parse_cache_init(arena, line, &init) ||
+                !arena_arr_push(arena, out_case->cache_inits, init)) {
+                return false;
+            }
+            continue;
+        }
+
         line = test_case_pack_trim_cr(raw_line);
         if (diff_sv_has_prefix(line, "#@@QUERY ")) {
             Diff_Query query = {0};
@@ -331,7 +656,9 @@ static bool diff_parse_case(Arena *arena,
             }
             continue;
         }
+
         line = test_case_pack_trim_cr(raw_line);
+        if (diff_sv_has_prefix(line, "#@@MODE ")) return false;
         if (diff_sv_has_prefix(line, "#@@")) return false;
 
         nob_sb_append_buf(&body, raw_line.data, raw_line.count);
@@ -348,36 +675,55 @@ static bool diff_parse_case(Arena *arena,
     return out_case->body.data != NULL;
 }
 
-static bool diff_query_path_scope(String_View path,
-                                  String_View *out_scope_var,
-                                  String_View *out_suffix) {
-    if (!out_scope_var || !out_suffix) return false;
-
-    if (diff_sv_has_prefix(path, "source/")) {
-        *out_scope_var = nob_sv_from_cstr("${CMAKE_SOURCE_DIR}");
-        *out_suffix = nob_sv_from_parts(path.data + 7, path.count - 7);
-        return true;
+static bool diff_append_cmake_scoped_path_literal(Nob_String_Builder *out,
+                                                  Diff_Path_Scope scope,
+                                                  String_View relpath) {
+    if (!out) return false;
+    nob_sb_append_cstr(out,
+                       scope == DIFF_PATH_SCOPE_SOURCE ? "${CMAKE_SOURCE_DIR}"
+                                                       : "${CMAKE_BINARY_DIR}");
+    if (relpath.count > 0) {
+        nob_sb_append_cstr(out, "/");
+        nob_sb_append_buf(out, relpath.data, relpath.count);
     }
-    if (diff_sv_has_prefix(path, "build/")) {
-        *out_scope_var = nob_sv_from_cstr("${CMAKE_BINARY_DIR}");
-        *out_suffix = nob_sv_from_parts(path.data + 6, path.count - 6);
-        return true;
-    }
-
-    *out_scope_var = nob_sv_from_cstr("${CMAKE_BINARY_DIR}");
-    *out_suffix = path;
     return true;
 }
 
 static bool diff_build_probe_block(Arena *arena,
                                    const Diff_Case *diff_case,
                                    Nob_String_Builder *out) {
+    bool needs_dir_prop_queries = false;
     if (!arena || !diff_case || !out) return false;
+    for (size_t i = 0; i < arena_arr_len(diff_case->queries); i++) {
+        if (diff_case->queries[i].kind == DIFF_QUERY_DIR_PROP) {
+            needs_dir_prop_queries = true;
+            break;
+        }
+    }
 
     nob_sb_append_cstr(out, "\n# --- nobify differential probe ---\n");
     nob_sb_append_cstr(out, "set(_NOB_DIFF_SNAPSHOT_PATH \"${CMAKE_BINARY_DIR}/diff_snapshot.txt\")\n");
     nob_sb_append_cstr(out, "set(_NOB_DIFF_NL \"\n\")\n");
     nob_sb_append_cstr(out, "file(WRITE \"${_NOB_DIFF_SNAPSHOT_PATH}\" \"OUTCOME=SUCCESS${_NOB_DIFF_NL}\")\n");
+    if (needs_dir_prop_queries) {
+        nob_sb_append_cstr(out, "function(_nob_diff_dir_known out_var abs_dir)\n");
+        nob_sb_append_cstr(out, "  set(_NOB_DIFF_FOUND 0)\n");
+        nob_sb_append_cstr(out, "  set(_NOB_DIFF_QUEUE \"${CMAKE_SOURCE_DIR}\")\n");
+        nob_sb_append_cstr(out, "  while(_NOB_DIFF_QUEUE)\n");
+        nob_sb_append_cstr(out, "    list(POP_FRONT _NOB_DIFF_QUEUE _NOB_DIFF_DIR)\n");
+        nob_sb_append_cstr(out, "    get_property(_NOB_DIFF_BIN DIRECTORY \"${_NOB_DIFF_DIR}\" PROPERTY BINARY_DIR)\n");
+        nob_sb_append_cstr(out, "    if(\"${_NOB_DIFF_DIR}\" STREQUAL \"${abs_dir}\" OR \"${_NOB_DIFF_BIN}\" STREQUAL \"${abs_dir}\")\n");
+        nob_sb_append_cstr(out, "      set(_NOB_DIFF_FOUND 1)\n");
+        nob_sb_append_cstr(out, "      break()\n");
+        nob_sb_append_cstr(out, "    endif()\n");
+        nob_sb_append_cstr(out, "    get_property(_NOB_DIFF_CHILDREN DIRECTORY \"${_NOB_DIFF_DIR}\" PROPERTY SUBDIRECTORIES)\n");
+        nob_sb_append_cstr(out, "    if(_NOB_DIFF_CHILDREN)\n");
+        nob_sb_append_cstr(out, "      list(APPEND _NOB_DIFF_QUEUE ${_NOB_DIFF_CHILDREN})\n");
+        nob_sb_append_cstr(out, "    endif()\n");
+        nob_sb_append_cstr(out, "  endwhile()\n");
+        nob_sb_append_cstr(out, "  set(${out_var} \"${_NOB_DIFF_FOUND}\" PARENT_SCOPE)\n");
+        nob_sb_append_cstr(out, "endfunction()\n");
+    }
 
     for (size_t i = 0; i < arena_arr_len(diff_case->queries); i++) {
         const Diff_Query *query = &diff_case->queries[i];
@@ -404,8 +750,7 @@ static bool diff_build_probe_block(Arena *arena,
             case DIFF_QUERY_CACHE_DEFINED: {
                 String_View prefix = nob_sv_from_cstr(
                     nob_temp_sprintf("CACHE_DEFINED:%.*s=", (int)query->arg0.count, query->arg0.data));
-                nob_sb_append_cstr(out,
-                                   nob_temp_sprintf("get_property(_NOB_DIFF_VAL_%zu CACHE ", i));
+                nob_sb_append_cstr(out, nob_temp_sprintf("get_property(_NOB_DIFF_VAL_%zu CACHE ", i));
                 if (!diff_append_bracket_quoted(out, query->arg0)) return false;
                 nob_sb_append_cstr(out, " PROPERTY VALUE SET)\n");
                 nob_sb_append_cstr(out, nob_temp_sprintf("if(_NOB_DIFF_VAL_%zu)\n", i));
@@ -460,19 +805,14 @@ static bool diff_build_probe_block(Arena *arena,
             }
 
             case DIFF_QUERY_FILE_EXISTS: {
-                String_View scope_var = {0};
-                String_View suffix = {0};
+                Diff_Path_Scope scope = DIFF_PATH_SCOPE_BUILD;
+                String_View relpath = {0};
                 String_View prefix = nob_sv_from_cstr(
                     nob_temp_sprintf("FILE_EXISTS:%.*s=", (int)query->arg0.count, query->arg0.data));
-                if (!diff_query_path_scope(query->arg0, &scope_var, &suffix)) return false;
+                if (!diff_split_scoped_path(query->arg0, DIFF_PATH_SCOPE_BUILD, &scope, &relpath)) return false;
 
-                nob_sb_append_cstr(out, "set(_NOB_DIFF_PATH_");
-                nob_sb_append_cstr(out, nob_temp_sprintf("%zu \"", i));
-                nob_sb_append_cstr(out, scope_var.data);
-                if (suffix.count > 0) {
-                    nob_sb_append_cstr(out, "/");
-                    nob_sb_append_buf(out, suffix.data, suffix.count);
-                }
+                nob_sb_append_cstr(out, nob_temp_sprintf("set(_NOB_DIFF_PATH_%zu \"", i));
+                if (!diff_append_cmake_scoped_path_literal(out, scope, relpath)) return false;
                 nob_sb_append_cstr(out, "\")\n");
                 nob_sb_append_cstr(out, nob_temp_sprintf("if(EXISTS \"${_NOB_DIFF_PATH_%zu}\")\n", i));
                 nob_sb_append_cstr(out, nob_temp_sprintf("  set(_NOB_DIFF_VAL_%zu \"1\")\n", i));
@@ -482,6 +822,79 @@ static bool diff_build_probe_block(Arena *arena,
                 if (!diff_append_line_expr(out, i, prefix)) return false;
                 break;
             }
+
+            case DIFF_QUERY_CMAKE_PROP: {
+                String_View prefix = nob_sv_from_cstr(
+                    nob_temp_sprintf("CMAKE_PROP:%.*s=", (int)query->arg0.count, query->arg0.data));
+                nob_sb_append_cstr(out, nob_temp_sprintf("get_cmake_property(_NOB_DIFF_VAL_%zu ", i));
+                if (!diff_append_bracket_quoted(out, query->arg0)) return false;
+                nob_sb_append_cstr(out, ")\n");
+                nob_sb_append_cstr(out,
+                                   nob_temp_sprintf("if(\"${_NOB_DIFF_VAL_%zu}\" STREQUAL \"NOTFOUND\")\n",
+                                                    i));
+                nob_sb_append_cstr(out, nob_temp_sprintf("  set(_NOB_DIFF_VAL_%zu \"__UNSET__\")\n", i));
+                nob_sb_append_cstr(out, "endif()\n");
+                if (!diff_append_line_expr(out, i, prefix)) return false;
+                break;
+            }
+
+            case DIFF_QUERY_GLOBAL_PROP: {
+                String_View prefix = nob_sv_from_cstr(
+                    nob_temp_sprintf("GLOBAL_PROP:%.*s=", (int)query->arg0.count, query->arg0.data));
+                nob_sb_append_cstr(out, nob_temp_sprintf("get_property(_NOB_DIFF_SET_%zu GLOBAL PROPERTY ", i));
+                if (!diff_append_bracket_quoted(out, query->arg0)) return false;
+                nob_sb_append_cstr(out, " SET)\n");
+                nob_sb_append_cstr(out, nob_temp_sprintf("if(_NOB_DIFF_SET_%zu)\n", i));
+                nob_sb_append_cstr(out, nob_temp_sprintf("  get_property(_NOB_DIFF_VAL_%zu GLOBAL PROPERTY ", i));
+                if (!diff_append_bracket_quoted(out, query->arg0)) return false;
+                nob_sb_append_cstr(out, ")\n");
+                nob_sb_append_cstr(out, "else()\n");
+                nob_sb_append_cstr(out, nob_temp_sprintf("  set(_NOB_DIFF_VAL_%zu \"__UNSET__\")\n", i));
+                nob_sb_append_cstr(out, "endif()\n");
+                if (!diff_append_line_expr(out, i, prefix)) return false;
+                break;
+            }
+
+            case DIFF_QUERY_DIR_PROP: {
+                Diff_Path_Scope scope = DIFF_PATH_SCOPE_SOURCE;
+                String_View relpath = {0};
+                String_View prefix = nob_sv_from_cstr(
+                    nob_temp_sprintf("DIR_PROP:%.*s:%.*s=",
+                                     (int)query->arg0.count,
+                                     query->arg0.data,
+                                     (int)query->arg1.count,
+                                     query->arg1.data));
+                if (!diff_split_scoped_path(query->arg0, DIFF_PATH_SCOPE_SOURCE, &scope, &relpath)) return false;
+
+                nob_sb_append_cstr(out, nob_temp_sprintf("set(_NOB_DIFF_DIR_%zu \"", i));
+                if (!diff_append_cmake_scoped_path_literal(out, scope, relpath)) return false;
+                nob_sb_append_cstr(out, "\")\n");
+                nob_sb_append_cstr(out,
+                                   nob_temp_sprintf("_nob_diff_dir_known(_NOB_DIFF_DIR_KNOWN_%zu \"${_NOB_DIFF_DIR_%zu}\")\n",
+                                                    i,
+                                                    i));
+                nob_sb_append_cstr(out, nob_temp_sprintf("if(_NOB_DIFF_DIR_KNOWN_%zu)\n", i));
+                nob_sb_append_cstr(out, nob_temp_sprintf("  get_property(_NOB_DIFF_SET_%zu DIRECTORY \"${_NOB_DIFF_DIR_%zu}\" PROPERTY ", i, i));
+                if (!diff_append_bracket_quoted(out, query->arg1)) return false;
+                nob_sb_append_cstr(out, " SET)\n");
+                nob_sb_append_cstr(out, nob_temp_sprintf("  if(_NOB_DIFF_SET_%zu)\n", i));
+                nob_sb_append_cstr(out, nob_temp_sprintf("    get_property(_NOB_DIFF_VAL_%zu DIRECTORY \"${_NOB_DIFF_DIR_%zu}\" PROPERTY ", i, i));
+                if (!diff_append_bracket_quoted(out, query->arg1)) return false;
+                nob_sb_append_cstr(out, ")\n");
+                nob_sb_append_cstr(out, "  else()\n");
+                nob_sb_append_cstr(out, nob_temp_sprintf("    set(_NOB_DIFF_VAL_%zu \"__UNSET__\")\n", i));
+                nob_sb_append_cstr(out, "  endif()\n");
+                nob_sb_append_cstr(out, "else()\n");
+                nob_sb_append_cstr(out, nob_temp_sprintf("  set(_NOB_DIFF_VAL_%zu \"__MISSING_DIR__\")\n", i));
+                nob_sb_append_cstr(out, "endif()\n");
+                if (!diff_append_line_expr(out, i, prefix)) return false;
+                break;
+            }
+
+            case DIFF_QUERY_STDOUT:
+            case DIFF_QUERY_STDERR:
+            case DIFF_QUERY_FILE_TEXT:
+                break;
         }
     }
 
@@ -498,8 +911,22 @@ static bool diff_generate_cmakelists(Arena *arena,
     if (out_script) *out_script = nob_sv_from_cstr("");
     if (!arena || !diff_case || !cmakelists_path || !out_script) return false;
 
-    nob_sb_append_cstr(&sb, "cmake_minimum_required(VERSION 3.28)\n");
-    nob_sb_append_cstr(&sb, "project(DiffCase LANGUAGES C CXX)\n");
+    for (size_t i = 0; i < arena_arr_len(diff_case->cache_inits); i++) {
+        const Diff_Cache_Init *cache_init = &diff_case->cache_inits[i];
+        nob_sb_append_cstr(&sb, "set(");
+        nob_sb_append_buf(&sb, cache_init->name.data, cache_init->name.count);
+        nob_sb_append_cstr(&sb, " ");
+        if (!diff_append_bracket_quoted(&sb, cache_init->value)) goto defer;
+        nob_sb_append_cstr(&sb, " CACHE ");
+        nob_sb_append_buf(&sb, cache_init->type.data, cache_init->type.count);
+        nob_sb_append_cstr(&sb, " \"\")\n");
+    }
+
+    if (diff_case->layout == DIFF_LAYOUT_BODY_ONLY_PROJECT) {
+        nob_sb_append_cstr(&sb, "cmake_minimum_required(VERSION 3.28)\n");
+        nob_sb_append_cstr(&sb, "project(DiffCase LANGUAGES C CXX)\n");
+    }
+
     nob_sb_append_buf(&sb, diff_case->body.data, diff_case->body.count);
     if (diff_case->body.count == 0 || diff_case->body.data[diff_case->body.count - 1] != '\n') {
         nob_sb_append(&sb, '\n');
@@ -516,19 +943,90 @@ defer:
     return ok;
 }
 
-static bool diff_prepare_source_fixture(const Diff_Case *diff_case, const char *source_dir) {
-    if (!diff_case || !source_dir) return false;
+static bool diff_resolve_scoped_path_actual(Diff_Path_Scope scope,
+                                            String_View relpath,
+                                            const char *source_dir,
+                                            const char *binary_dir,
+                                            char out[_TINYDIR_PATH_MAX]) {
+    const char *root = scope == DIFF_PATH_SCOPE_SOURCE ? source_dir : binary_dir;
+    if (!root || !out) return false;
+    if (relpath.count == 0) return diff_copy_string(root, out);
+    return test_fs_join_path(root, nob_temp_sv_to_cstr(relpath), out);
+}
+
+static bool diff_prepare_case_fixtures(const Diff_Case *diff_case,
+                                       const char *source_dir,
+                                       const char *build_eval_dir,
+                                       const char *build_cmake_dir) {
+    if (!diff_case || !source_dir || !build_eval_dir || !build_cmake_dir) return false;
 
     for (size_t i = 0; i < arena_arr_len(diff_case->dirs); i++) {
-        char path[_TINYDIR_PATH_MAX] = {0};
-        if (!test_fs_join_path(source_dir, nob_temp_sv_to_cstr(diff_case->dirs[i].relpath), path)) return false;
-        if (!diff_ensure_dir_chain(path)) return false;
+        char path_a[_TINYDIR_PATH_MAX] = {0};
+        char path_b[_TINYDIR_PATH_MAX] = {0};
+        const Diff_Path_Entry *dir = &diff_case->dirs[i];
+        if (dir->scope == DIFF_PATH_SCOPE_SOURCE) {
+            if (!diff_resolve_scoped_path_actual(dir->scope, dir->relpath, source_dir, build_eval_dir, path_a) ||
+                !diff_ensure_dir_chain(path_a)) {
+                return false;
+            }
+        } else {
+            if (!diff_resolve_scoped_path_actual(dir->scope, dir->relpath, source_dir, build_eval_dir, path_a) ||
+                !diff_resolve_scoped_path_actual(dir->scope, dir->relpath, source_dir, build_cmake_dir, path_b) ||
+                !diff_ensure_dir_chain(path_a) ||
+                !diff_ensure_dir_chain(path_b)) {
+                return false;
+            }
+        }
     }
 
     for (size_t i = 0; i < arena_arr_len(diff_case->files); i++) {
-        char path[_TINYDIR_PATH_MAX] = {0};
-        if (!test_fs_join_path(source_dir, nob_temp_sv_to_cstr(diff_case->files[i].relpath), path)) return false;
-        if (!diff_make_empty_file(path)) return false;
+        char path_a[_TINYDIR_PATH_MAX] = {0};
+        char path_b[_TINYDIR_PATH_MAX] = {0};
+        const Diff_Path_Entry *file = &diff_case->files[i];
+        if (file->scope == DIFF_PATH_SCOPE_SOURCE) {
+            if (!diff_resolve_scoped_path_actual(file->scope, file->relpath, source_dir, build_eval_dir, path_a) ||
+                !diff_make_empty_file(path_a)) {
+                return false;
+            }
+        } else {
+            if (!diff_resolve_scoped_path_actual(file->scope, file->relpath, source_dir, build_eval_dir, path_a) ||
+                !diff_resolve_scoped_path_actual(file->scope, file->relpath, source_dir, build_cmake_dir, path_b) ||
+                !diff_make_empty_file(path_a) ||
+                !diff_make_empty_file(path_b)) {
+                return false;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(diff_case->text_files); i++) {
+        char path_a[_TINYDIR_PATH_MAX] = {0};
+        char path_b[_TINYDIR_PATH_MAX] = {0};
+        const Diff_Text_Fixture *text_file = &diff_case->text_files[i];
+        if (text_file->scope == DIFF_PATH_SCOPE_SOURCE) {
+            if (!diff_resolve_scoped_path_actual(text_file->scope,
+                                                 text_file->relpath,
+                                                 source_dir,
+                                                 build_eval_dir,
+                                                 path_a) ||
+                !diff_write_sv_file(path_a, text_file->text)) {
+                return false;
+            }
+        } else {
+            if (!diff_resolve_scoped_path_actual(text_file->scope,
+                                                 text_file->relpath,
+                                                 source_dir,
+                                                 build_eval_dir,
+                                                 path_a) ||
+                !diff_resolve_scoped_path_actual(text_file->scope,
+                                                 text_file->relpath,
+                                                 source_dir,
+                                                 build_cmake_dir,
+                                                 path_b) ||
+                !diff_write_sv_file(path_a, text_file->text) ||
+                !diff_write_sv_file(path_b, text_file->text)) {
+                return false;
+            }
+        }
     }
 
     return true;
@@ -541,7 +1039,271 @@ static Diff_Expected_Outcome diff_evaluator_outcome_from_result(Eval_Result resu
     return report->error_count == 0 ? DIFF_EXPECT_SUCCESS : DIFF_EXPECT_ERROR;
 }
 
+static String_View diff_base64_encode_to_arena(Arena *arena, String_View input) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t out_len = 0;
+    char *out = NULL;
+    size_t in_i = 0;
+    size_t out_i = 0;
+
+    if (!arena) return nob_sv_from_cstr("");
+    out_len = ((input.count + 2) / 3) * 4;
+    out = arena_alloc(arena, out_len + 1);
+    if (!out) return nob_sv_from_cstr("");
+
+    while (in_i + 3 <= input.count) {
+        unsigned int chunk = ((unsigned int)(unsigned char)input.data[in_i] << 16) |
+                             ((unsigned int)(unsigned char)input.data[in_i + 1] << 8) |
+                             (unsigned int)(unsigned char)input.data[in_i + 2];
+        out[out_i++] = alphabet[(chunk >> 18) & 0x3F];
+        out[out_i++] = alphabet[(chunk >> 12) & 0x3F];
+        out[out_i++] = alphabet[(chunk >> 6) & 0x3F];
+        out[out_i++] = alphabet[chunk & 0x3F];
+        in_i += 3;
+    }
+
+    if (in_i < input.count) {
+        unsigned int chunk = (unsigned int)(unsigned char)input.data[in_i] << 16;
+        out[out_i++] = alphabet[(chunk >> 18) & 0x3F];
+        if (in_i + 1 < input.count) {
+            chunk |= (unsigned int)(unsigned char)input.data[in_i + 1] << 8;
+            out[out_i++] = alphabet[(chunk >> 12) & 0x3F];
+            out[out_i++] = alphabet[(chunk >> 6) & 0x3F];
+            out[out_i++] = '=';
+        } else {
+            out[out_i++] = alphabet[(chunk >> 12) & 0x3F];
+            out[out_i++] = '=';
+            out[out_i++] = '=';
+        }
+    }
+
+    out[out_i] = '\0';
+    return nob_sv_from_parts(out, out_i);
+}
+
+static bool diff_append_b64_snapshot_line(Arena *arena,
+                                          Nob_String_Builder *sb,
+                                          String_View prefix,
+                                          String_View value) {
+    String_View normalized = {0};
+    String_View encoded = {0};
+    if (!arena || !sb) return false;
+    normalized = evaluator_normalize_newlines_to_arena(arena, value);
+    encoded = diff_base64_encode_to_arena(arena, normalized);
+    if (!encoded.data) return false;
+    nob_sb_append_buf(sb, prefix.data, prefix.count);
+    nob_sb_append_buf(sb, encoded.data, encoded.count);
+    nob_sb_append(&sb[0], '\n');
+    return true;
+}
+
+static bool diff_is_cmake_stdout_boilerplate_line(String_View line) {
+    return diff_sv_has_prefix(line, "-- Configuring done") ||
+           diff_sv_has_prefix(line, "-- Generating done") ||
+           diff_sv_has_prefix(line, "-- Build files have been written to:") ||
+           diff_sv_has_prefix(line, "-- Configuring incomplete, errors occurred!");
+}
+
+static String_View diff_filter_cmake_stdout_to_arena(Arena *arena, String_View value) {
+    Nob_String_Builder sb = {0};
+    size_t pos = 0;
+    if (!arena) return nob_sv_from_cstr("");
+    value = evaluator_normalize_newlines_to_arena(arena, value);
+    while (pos < value.count) {
+        size_t line_start = pos;
+        size_t line_end = pos;
+        while (line_end < value.count && value.data[line_end] != '\n') line_end++;
+        pos = line_end < value.count ? line_end + 1 : line_end;
+        String_View line = nob_sv_from_parts(value.data + line_start, line_end - line_start);
+        if (diff_is_cmake_stdout_boilerplate_line(line)) continue;
+        nob_sb_append_buf(&sb, line.data, line.count);
+        if (pos <= value.count) nob_sb_append(&sb, '\n');
+    }
+    return diff_copy_sv(arena, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+}
+
+static bool diff_query_is_postrun(Diff_Query_Kind kind) {
+    return kind == DIFF_QUERY_STDOUT || kind == DIFF_QUERY_STDERR || kind == DIFF_QUERY_FILE_TEXT;
+}
+
+static bool diff_case_requires_postrun_compare(const Diff_Case *diff_case) {
+    if (!diff_case) return false;
+    for (size_t i = 0; i < arena_arr_len(diff_case->queries); i++) {
+        if (diff_query_is_postrun(diff_case->queries[i].kind)) return true;
+    }
+    return false;
+}
+
+static bool diff_build_postrun_snapshot(Arena *arena,
+                                        const Diff_Case *diff_case,
+                                        String_View stdout_text,
+                                        String_View stderr_text,
+                                        const char *source_dir,
+                                        const char *binary_dir,
+                                        String_View *out_snapshot) {
+    Nob_String_Builder sb = {0};
+    bool ok = false;
+
+    if (out_snapshot) *out_snapshot = nob_sv_from_cstr("");
+    if (!arena || !diff_case || !source_dir || !binary_dir || !out_snapshot) return false;
+
+    for (size_t i = 0; i < arena_arr_len(diff_case->queries); i++) {
+        const Diff_Query *query = &diff_case->queries[i];
+        switch (query->kind) {
+            case DIFF_QUERY_STDOUT: {
+                if (!diff_append_b64_snapshot_line(arena,
+                                                   &sb,
+                                                   nob_sv_from_cstr("STDOUT_B64="),
+                                                   stdout_text)) {
+                    goto defer;
+                }
+                break;
+            }
+
+            case DIFF_QUERY_STDERR: {
+                if (!diff_append_b64_snapshot_line(arena,
+                                                   &sb,
+                                                   nob_sv_from_cstr("STDERR_B64="),
+                                                   stderr_text)) {
+                    goto defer;
+                }
+                break;
+            }
+
+            case DIFF_QUERY_FILE_TEXT: {
+                Diff_Path_Scope scope = DIFF_PATH_SCOPE_BUILD;
+                String_View relpath = {0};
+                char path[_TINYDIR_PATH_MAX] = {0};
+                Test_Fs_Path_Info info = {0};
+                String_View file_text = {0};
+                String_View prefix = nob_sv_from_cstr(
+                    nob_temp_sprintf("FILE_TEXT_B64:%.*s=", (int)query->arg0.count, query->arg0.data));
+
+                if (!diff_split_scoped_path(query->arg0, DIFF_PATH_SCOPE_BUILD, &scope, &relpath) ||
+                    !diff_resolve_scoped_path_actual(scope, relpath, source_dir, binary_dir, path) ||
+                    !test_fs_get_path_info(path, &info)) {
+                    goto defer;
+                }
+
+                nob_sb_append_buf(&sb, prefix.data, prefix.count);
+                if (!info.exists || info.is_dir) {
+                    nob_sb_append_cstr(&sb, "__MISSING_FILE__\n");
+                    break;
+                }
+
+                if (!diff_read_text_file(arena, path, &file_text)) goto defer;
+                if (!diff_append_b64_snapshot_line(arena, &sb, nob_sv_from_cstr(""), file_text)) goto defer;
+                break;
+            }
+
+            case DIFF_QUERY_VAR:
+            case DIFF_QUERY_CACHE_DEFINED:
+            case DIFF_QUERY_TARGET_EXISTS:
+            case DIFF_QUERY_TARGET_PROP:
+            case DIFF_QUERY_FILE_EXISTS:
+            case DIFF_QUERY_CMAKE_PROP:
+            case DIFF_QUERY_GLOBAL_PROP:
+            case DIFF_QUERY_DIR_PROP:
+                break;
+        }
+    }
+
+    *out_snapshot = diff_copy_sv(arena, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    ok = out_snapshot->data != NULL;
+
+defer:
+    nob_sb_free(sb);
+    return ok;
+}
+
+static bool diff_build_combined_snapshot(Arena *arena,
+                                         String_View probe_snapshot,
+                                         String_View post_snapshot,
+                                         String_View *out_snapshot) {
+    Nob_String_Builder sb = {0};
+    bool ok = false;
+
+    if (out_snapshot) *out_snapshot = nob_sv_from_cstr("");
+    if (!arena || !out_snapshot) return false;
+
+    nob_sb_append_buf(&sb, probe_snapshot.data ? probe_snapshot.data : "", probe_snapshot.count);
+    if (probe_snapshot.count > 0 &&
+        post_snapshot.count > 0 &&
+        probe_snapshot.data[probe_snapshot.count - 1] != '\n') {
+        nob_sb_append(&sb, '\n');
+    }
+    nob_sb_append_buf(&sb, post_snapshot.data ? post_snapshot.data : "", post_snapshot.count);
+    *out_snapshot = diff_copy_sv(arena, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    ok = out_snapshot->data != NULL;
+    nob_sb_free(sb);
+    return ok;
+}
+
+static bool diff_begin_std_capture(const char *stdout_path,
+                                   const char *stderr_path,
+                                   Diff_Std_Capture *capture) {
+    int stdout_fd = -1;
+    int stderr_fd = -1;
+
+    if (capture) *capture = (Diff_Std_Capture){ .saved_stdout_fd = -1, .saved_stderr_fd = -1 };
+    if (!stdout_path || !stderr_path || !capture) return false;
+
+    fflush(stdout);
+    fflush(stderr);
+
+    capture->saved_stdout_fd = DIFF_DUP(DIFF_FILENO(stdout));
+    capture->saved_stderr_fd = DIFF_DUP(DIFF_FILENO(stderr));
+    if (capture->saved_stdout_fd < 0 || capture->saved_stderr_fd < 0) goto fail;
+
+    stdout_fd = DIFF_OPEN(stdout_path, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, 0666);
+    stderr_fd = DIFF_OPEN(stderr_path, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, 0666);
+    if (stdout_fd < 0 || stderr_fd < 0) goto fail;
+
+    if (DIFF_DUP2(stdout_fd, DIFF_FILENO(stdout)) < 0 ||
+        DIFF_DUP2(stderr_fd, DIFF_FILENO(stderr)) < 0) {
+        goto fail;
+    }
+
+    DIFF_CLOSE(stdout_fd);
+    DIFF_CLOSE(stderr_fd);
+    capture->active = true;
+    return true;
+
+fail:
+    if (stdout_fd >= 0) DIFF_CLOSE(stdout_fd);
+    if (stderr_fd >= 0) DIFF_CLOSE(stderr_fd);
+    if (capture->saved_stdout_fd >= 0) {
+        DIFF_CLOSE(capture->saved_stdout_fd);
+        capture->saved_stdout_fd = -1;
+    }
+    if (capture->saved_stderr_fd >= 0) {
+        DIFF_CLOSE(capture->saved_stderr_fd);
+        capture->saved_stderr_fd = -1;
+    }
+    capture->active = false;
+    return false;
+}
+
+static void diff_end_std_capture(Diff_Std_Capture *capture) {
+    if (!capture || !capture->active) return;
+    fflush(stdout);
+    fflush(stderr);
+    if (capture->saved_stdout_fd >= 0) {
+        (void)DIFF_DUP2(capture->saved_stdout_fd, DIFF_FILENO(stdout));
+        DIFF_CLOSE(capture->saved_stdout_fd);
+        capture->saved_stdout_fd = -1;
+    }
+    if (capture->saved_stderr_fd >= 0) {
+        (void)DIFF_DUP2(capture->saved_stderr_fd, DIFF_FILENO(stderr));
+        DIFF_CLOSE(capture->saved_stderr_fd);
+        capture->saved_stderr_fd = -1;
+    }
+    capture->active = false;
+}
+
 static bool diff_run_evaluator_case(Arena *arena,
+                                    const Diff_Case *diff_case,
                                     const char *cmakelists_path,
                                     const char *source_dir,
                                     const char *binary_dir,
@@ -553,9 +1315,14 @@ static bool diff_run_evaluator_case(Arena *arena,
     Eval_Test_Runtime *ctx = NULL;
     String_View script = {0};
     Ast_Root root = {0};
+    Diff_Std_Capture capture = {0};
+    char snapshot_path[_TINYDIR_PATH_MAX] = {0};
+    char stdout_path[_TINYDIR_PATH_MAX] = {0};
+    char stderr_path[_TINYDIR_PATH_MAX] = {0};
+    bool log_capture_started = false;
 
     if (out_run) *out_run = (Diff_Evaluator_Run){0};
-    if (!arena || !cmakelists_path || !source_dir || !binary_dir || !out_run) return false;
+    if (!arena || !diff_case || !cmakelists_path || !source_dir || !binary_dir || !out_run) return false;
 
     temp_arena = arena_create(2 * 1024 * 1024);
     event_arena = arena_create(2 * 1024 * 1024);
@@ -578,19 +1345,68 @@ static bool diff_run_evaluator_case(Arena *arena,
     ctx = eval_test_create(&init);
     if (!ctx) goto defer;
 
-    Eval_Result result = eval_test_run(ctx, root);
-    const Eval_Run_Report *report = eval_test_report(ctx);
-    out_run->outcome = diff_evaluator_outcome_from_result(result, report);
-    if (report) {
-        out_run->report = *report;
-        out_run->have_report = true;
+    if (!test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path) ||
+        !test_fs_join_path(".", "evaluator_stdout.txt", stdout_path) ||
+        !test_fs_join_path(".", "evaluator_stderr.txt", stderr_path)) {
+        goto defer;
+    }
+
+    evaluator_begin_nob_log_capture();
+    log_capture_started = true;
+    if (!diff_begin_std_capture(stdout_path, stderr_path, &capture)) goto defer;
+
+    {
+        Eval_Result result = eval_test_run(ctx, root);
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        diff_end_std_capture(&capture);
+        out_run->outcome = diff_evaluator_outcome_from_result(result, report);
+        if (report) {
+            out_run->report = *report;
+            out_run->have_report = true;
+        }
+    }
+
+    evaluator_end_nob_log_capture();
+    log_capture_started = false;
+
+    if (!diff_read_text_file(arena, stdout_path, &out_run->stdout_text) ||
+        !diff_read_text_file(arena, stderr_path, &out_run->stderr_text)) {
+        goto defer;
+    }
+    out_run->stdout_text = evaluator_normalize_newlines_to_arena(arena, out_run->stdout_text);
+    out_run->stderr_text = evaluator_normalize_newlines_to_arena(arena, out_run->stderr_text);
+
+    {
+        Nob_String_Builder *logs = evaluator_captured_nob_logs_ptr();
+        String_View log_text = nob_sv_from_parts(logs && logs->items ? logs->items : "",
+                                                 logs ? logs->count : 0);
+        if (!diff_write_sv_file("evaluator_nob_log.txt", log_text)) goto defer;
     }
 
     if (out_run->outcome == DIFF_EXPECT_SUCCESS) {
-        char snapshot_path[_TINYDIR_PATH_MAX] = {0};
-        if (!test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path)) goto defer;
-        if (!diff_read_text_file(arena, snapshot_path, &out_run->snapshot)) goto defer;
-        out_run->snapshot = evaluator_normalize_newlines_to_arena(arena, out_run->snapshot);
+        if (!diff_read_text_file(arena, snapshot_path, &out_run->probe_snapshot)) goto defer;
+        out_run->probe_snapshot = evaluator_normalize_newlines_to_arena(arena, out_run->probe_snapshot);
+    }
+
+    if (!diff_build_postrun_snapshot(arena,
+                                     diff_case,
+                                     out_run->stdout_text,
+                                     out_run->stderr_text,
+                                     source_dir,
+                                     binary_dir,
+                                     &out_run->post_snapshot)) {
+        goto defer;
+    }
+
+    if (out_run->outcome == DIFF_EXPECT_SUCCESS) {
+        if (!diff_build_combined_snapshot(arena,
+                                          out_run->probe_snapshot,
+                                          out_run->post_snapshot,
+                                          &out_run->combined_snapshot)) {
+            goto defer;
+        }
+    } else {
+        out_run->combined_snapshot = out_run->post_snapshot;
     }
 
     eval_test_destroy(ctx);
@@ -599,6 +1415,8 @@ static bool diff_run_evaluator_case(Arena *arena,
     return true;
 
 defer:
+    diff_end_std_capture(&capture);
+    if (log_capture_started) evaluator_end_nob_log_capture();
     if (ctx) eval_test_destroy(ctx);
     if (temp_arena) arena_destroy(temp_arena);
     if (event_arena) arena_destroy(event_arena);
@@ -606,6 +1424,7 @@ defer:
 }
 
 static bool diff_run_cmake_case(Arena *arena,
+                                const Diff_Case *diff_case,
                                 const Diff_Cmake_Config *config,
                                 const char *source_dir,
                                 const char *binary_dir,
@@ -617,7 +1436,9 @@ static bool diff_run_cmake_case(Arena *arena,
     bool ok = false;
 
     if (out_run) *out_run = (Diff_Cmake_Run){0};
-    if (!arena || !config || !config->available || !source_dir || !binary_dir || !out_run) return false;
+    if (!arena || !diff_case || !config || !config->available || !source_dir || !binary_dir || !out_run) {
+        return false;
+    }
 
     if (!test_fs_join_path(".", "cmake_stdout.txt", stdout_path) ||
         !test_fs_join_path(".", "cmake_stderr.txt", stderr_path) ||
@@ -636,15 +1457,82 @@ static bool diff_run_cmake_case(Arena *arena,
         !diff_read_text_file(arena, stderr_path, &out_run->stderr_text)) {
         return false;
     }
-    out_run->stdout_text = evaluator_normalize_newlines_to_arena(arena, out_run->stdout_text);
+    out_run->stdout_text = diff_filter_cmake_stdout_to_arena(arena, out_run->stdout_text);
     out_run->stderr_text = evaluator_normalize_newlines_to_arena(arena, out_run->stderr_text);
 
     if (ok) {
-        if (!diff_read_text_file(arena, snapshot_path, &out_run->snapshot)) return false;
-        out_run->snapshot = evaluator_normalize_newlines_to_arena(arena, out_run->snapshot);
+        if (!diff_read_text_file(arena, snapshot_path, &out_run->probe_snapshot)) return false;
+        out_run->probe_snapshot = evaluator_normalize_newlines_to_arena(arena, out_run->probe_snapshot);
+    }
+
+    if (!diff_build_postrun_snapshot(arena,
+                                     diff_case,
+                                     out_run->stdout_text,
+                                     out_run->stderr_text,
+                                     source_dir,
+                                     binary_dir,
+                                     &out_run->post_snapshot)) {
+        return false;
+    }
+
+    if (out_run->outcome == DIFF_EXPECT_SUCCESS) {
+        if (!diff_build_combined_snapshot(arena,
+                                          out_run->probe_snapshot,
+                                          out_run->post_snapshot,
+                                          &out_run->combined_snapshot)) {
+            return false;
+        }
+    } else {
+        out_run->combined_snapshot = out_run->post_snapshot;
     }
 
     return true;
+}
+
+static bool diff_apply_env_ops(const Diff_Case *diff_case,
+                               Diff_Env_Guard_List *out_guards) {
+    size_t count = 0;
+    if (out_guards) *out_guards = (Diff_Env_Guard_List){0};
+    if (!diff_case || !out_guards) return false;
+
+    count = arena_arr_len(diff_case->env_ops);
+    if (count == 0) return true;
+
+    out_guards->items = calloc(count, sizeof(*out_guards->items));
+    if (!out_guards->items) return false;
+    out_guards->count = count;
+
+    for (size_t i = 0; i < count; i++) {
+        const Diff_Env_Op *op = &diff_case->env_ops[i];
+        const char *value = op->kind == DIFF_ENV_SET ? nob_temp_sv_to_cstr(op->value) : NULL;
+        out_guards->items[i] = calloc(1, sizeof(*out_guards->items[i]));
+        if (!out_guards->items[i]) {
+            for (size_t j = i; j > 0; j--) test_host_env_guard_cleanup(out_guards->items[j - 1]);
+            free(out_guards->items);
+            out_guards->items = NULL;
+            out_guards->count = 0;
+            return false;
+        }
+        if (!test_host_env_guard_begin(out_guards->items[i], nob_temp_sv_to_cstr(op->name), value)) {
+            free(out_guards->items[i]);
+            out_guards->items[i] = NULL;
+            for (size_t j = i; j > 0; j--) test_host_env_guard_cleanup(out_guards->items[j - 1]);
+            free(out_guards->items);
+            out_guards->items = NULL;
+            out_guards->count = 0;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void diff_release_env_guards(Diff_Env_Guard_List *guards) {
+    if (!guards || !guards->items) return;
+    for (size_t i = guards->count; i > 0; i--) test_host_env_guard_cleanup(guards->items[i - 1]);
+    free(guards->items);
+    guards->items = NULL;
+    guards->count = 0;
 }
 
 static bool diff_copy_path_if_exists(const char *src, const char *dst) {
@@ -671,6 +1559,9 @@ static bool diff_preserve_failure_artifacts(String_View case_name) {
         "build_cmake",
         "cmake_stdout.txt",
         "cmake_stderr.txt",
+        "evaluator_stdout.txt",
+        "evaluator_stderr.txt",
+        "evaluator_nob_log.txt",
         "evaluator_snapshot.txt",
         "cmake_snapshot.txt",
         "case_summary.txt",
@@ -723,6 +1614,11 @@ static bool diff_write_case_summary(const Diff_Cmake_Config *config,
     nob_sb_append_cstr(&sb,
                        nob_temp_sprintf("expected=%s\n",
                                         diff_case->expected_outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR"));
+    nob_sb_append_cstr(&sb,
+                       nob_temp_sprintf("layout=%s\n",
+                                        diff_case->layout == DIFF_LAYOUT_RAW_CMAKELISTS
+                                            ? "RAW_CMAKELISTS"
+                                            : "BODY_ONLY_PROJECT"));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("cmake_bin=%s\n", config->cmake_bin));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("cmake_version=%s\n", config->cmake_version));
     nob_sb_append_cstr(&sb,
@@ -749,10 +1645,8 @@ static bool diff_write_case_summary(const Diff_Cmake_Config *config,
 static bool diff_record_snapshots(const Diff_Evaluator_Run *eval_run,
                                   const Diff_Cmake_Run *cmake_run) {
     bool ok = true;
-    ok = ok && diff_write_entire_file("evaluator_snapshot.txt",
-                                      eval_run->snapshot.data ? nob_temp_sv_to_cstr(eval_run->snapshot) : "");
-    ok = ok && diff_write_entire_file("cmake_snapshot.txt",
-                                      cmake_run->snapshot.data ? nob_temp_sv_to_cstr(cmake_run->snapshot) : "");
+    ok = ok && diff_write_sv_file("evaluator_snapshot.txt", eval_run->combined_snapshot);
+    ok = ok && diff_write_sv_file("cmake_snapshot.txt", cmake_run->combined_snapshot);
     return ok;
 }
 
@@ -762,8 +1656,11 @@ static bool diff_case_matches(const Diff_Case *diff_case,
     if (!diff_case || !eval_run || !cmake_run) return false;
     if (eval_run->outcome != diff_case->expected_outcome) return false;
     if (cmake_run->outcome != diff_case->expected_outcome) return false;
-    if (diff_case->expected_outcome == DIFF_EXPECT_ERROR) return true;
-    return nob_sv_eq(eval_run->snapshot, cmake_run->snapshot);
+    if (diff_case->expected_outcome == DIFF_EXPECT_ERROR) {
+        if (!diff_case_requires_postrun_compare(diff_case)) return true;
+        return nob_sv_eq(eval_run->post_snapshot, cmake_run->post_snapshot);
+    }
+    return nob_sv_eq(eval_run->combined_snapshot, cmake_run->combined_snapshot);
 }
 
 static bool diff_resolve_cmake(Diff_Cmake_Config *out_config,
@@ -853,6 +1750,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
                           int *skipped) {
     Test_Case_Workspace ws = {0};
     Arena *arena = NULL;
+    Diff_Env_Guard_List env_guards = {0};
     char case_cwd[_TINYDIR_PATH_MAX] = {0};
     char source_dir[_TINYDIR_PATH_MAX] = {0};
     char build_eval_dir[_TINYDIR_PATH_MAX] = {0};
@@ -874,7 +1772,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         return;
     }
 
-    arena = arena_create(512 * 1024);
+    arena = arena_create(1024 * 1024);
     if (!arena) goto fail;
 
     if (!test_fs_save_current_dir(case_cwd) ||
@@ -888,10 +1786,11 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     if (!nob_mkdir_if_not_exists(source_dir) ||
         !nob_mkdir_if_not_exists(build_eval_dir) ||
         !nob_mkdir_if_not_exists(build_cmake_dir) ||
-        !diff_prepare_source_fixture(diff_case, source_dir) ||
+        !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
         !diff_generate_cmakelists(arena, diff_case, cmakelists_path, &(String_View){0}) ||
-        !diff_run_evaluator_case(arena, cmakelists_path, source_dir, build_eval_dir, &eval_run) ||
-        !diff_run_cmake_case(arena, config, source_dir, build_cmake_dir, &cmake_run) ||
+        !diff_apply_env_ops(diff_case, &env_guards) ||
+        !diff_run_evaluator_case(arena, diff_case, cmakelists_path, source_dir, build_eval_dir, &eval_run) ||
+        !diff_run_cmake_case(arena, diff_case, config, source_dir, build_cmake_dir, &cmake_run) ||
         !diff_record_snapshots(&eval_run, &cmake_run) ||
         !diff_write_case_summary(config,
                                  case_pack,
@@ -911,14 +1810,14 @@ static void run_diff_case(const Diff_Cmake_Config *config,
                 diff_case->expected_outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
                 eval_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
                 cmake_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR");
-        if (eval_run.outcome == DIFF_EXPECT_SUCCESS && cmake_run.outcome == DIFF_EXPECT_SUCCESS) {
+        if (diff_case->expected_outcome == DIFF_EXPECT_SUCCESS) {
             nob_log(NOB_ERROR,
                     "snapshot mismatch in case %s\n--- evaluator ---\n%.*s--- cmake ---\n%.*s",
                     qualified_case_name,
-                    (int)eval_run.snapshot.count,
-                    eval_run.snapshot.data ? eval_run.snapshot.data : "",
-                    (int)cmake_run.snapshot.count,
-                    cmake_run.snapshot.data ? cmake_run.snapshot.data : "");
+                    (int)eval_run.combined_snapshot.count,
+                    eval_run.combined_snapshot.data ? eval_run.combined_snapshot.data : "",
+                    (int)cmake_run.combined_snapshot.count,
+                    cmake_run.combined_snapshot.data ? cmake_run.combined_snapshot.data : "");
         }
         (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
         (*failed)++;
@@ -926,6 +1825,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         (*passed)++;
     }
 
+    diff_release_env_guards(&env_guards);
     arena_destroy(arena);
     if (!test_ws_case_leave(&ws)) {
         nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated differential test workspace",
@@ -937,6 +1837,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
 fail:
     nob_log(NOB_ERROR, "FAILED: %s: differential harness error", qualified_case_name);
     (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
+    diff_release_env_guards(&env_guards);
     if (arena) arena_destroy(arena);
     (*failed)++;
     if (!test_ws_case_leave(&ws)) {

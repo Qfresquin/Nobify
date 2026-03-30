@@ -34,7 +34,11 @@ static bool string_append_sv_escaped_quotes(Nob_String_Builder *sb, String_View 
     if (!escape_quotes) return string_append_sv(sb, sv);
     for (size_t i = 0; i < sv.count; i++) {
         char c = sv.data[i];
-        if (c == '"') nob_sb_append(sb, '\\');
+        if (c == '"') {
+            size_t backslash_count = 0;
+            for (size_t j = i; j > 0 && sv.data[j - 1] == '\\'; j--) backslash_count++;
+            if ((backslash_count % 2u) == 0u) nob_sb_append(sb, '\\');
+        }
         nob_sb_append(sb, c);
     }
     return true;

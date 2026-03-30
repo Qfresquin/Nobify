@@ -550,8 +550,8 @@ EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG1=a=x\\"y b=\\x\\"y' vis=PRIVATE
 EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_configure' key='COMPILE_DEFINITIONS' value='S_CFG2=a=x\\"y b=\\${VAR}' op=APPEND_LIST
 EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG2=a=x\\"y b=\\${VAR}' vis=PRIVATE
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_configure' key='COMPILE_DEFINITIONS' value='S_CFG3=a=x\\\\"y b=\\x\\\\"y' op=APPEND_LIST
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG3=a=x\\\\"y b=\\x\\\\"y' vis=PRIVATE
+EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_configure' key='COMPILE_DEFINITIONS' value='S_CFG3=a=x\\"y b=\\x\\"y' op=APPEND_LIST
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG3=a=x\\"y b=\\x\\"y' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_make_c_identifier_extended ===

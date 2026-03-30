@@ -115,6 +115,40 @@ static bool msg_is_cmake_false(String_View v) {
     return false;
 }
 
+static String_View msg_current_file_display(EvalExecContext *ctx) {
+    const char *path = (ctx && ctx->current_file && ctx->current_file[0] != '\0')
+        ? ctx->current_file
+        : "CMakeLists.txt";
+    const char *base = path;
+    for (const char *p = path; *p; ++p) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    return nob_sv_from_cstr(base);
+}
+
+static void msg_emit_prefixed_line(FILE *stream, const char *prefix, String_View msg) {
+    if (!stream || !prefix) return;
+    fprintf(stream, "%s%.*s\n", prefix, (int)msg.count, msg.data ? msg.data : "");
+}
+
+static void msg_emit_location_diag(FILE *stream,
+                                   const char *level,
+                                   EvalExecContext *ctx,
+                                   const Node *node,
+                                   String_View msg) {
+    String_View file_display = msg_current_file_display(ctx);
+    size_t line = node ? node->line : 0u;
+    if (!stream || !level) return;
+    fprintf(stream,
+            "CMake %s at %.*s:%zu (message):\n  %.*s\n\n\n",
+            level,
+            (int)file_display.count,
+            file_display.data ? file_display.data : "",
+            line,
+            (int)msg.count,
+            msg.data ? msg.data : "");
+}
+
 bool eval_append_configure_log(EvalExecContext *ctx, const Node *node, String_View msg) {
     if (!ctx) return false;
 
@@ -210,9 +244,17 @@ Eval_Result eval_handle_message(EvalExecContext *ctx, const Node *node) {
     }
 
     if (mode == MSG_MODE_FATAL_ERROR || mode == MSG_MODE_SEND_ERROR) {
-        fprintf(stderr, "CMake ERROR: %.*s\n", (int)msg.count, msg.data ? msg.data : "");
+        msg_emit_location_diag(stderr, "Error", ctx, node, msg);
+    } else if (mode == MSG_MODE_WARNING || mode == MSG_MODE_AUTHOR_WARNING || mode == MSG_MODE_DEPRECATION) {
+        msg_emit_location_diag(stderr, "Warning", ctx, node, msg);
+    } else if (mode == MSG_MODE_NOTICE) {
+        msg_emit_prefixed_line(stderr, "", msg);
+    } else if (mode == MSG_MODE_STATUS || mode == MSG_MODE_VERBOSE || mode == MSG_MODE_DEBUG ||
+               mode == MSG_MODE_TRACE || mode == MSG_MODE_CHECK_START || mode == MSG_MODE_CHECK_PASS ||
+               mode == MSG_MODE_CHECK_FAIL) {
+        msg_emit_prefixed_line(stdout, "-- ", msg);
     } else {
-        fprintf(stdout, "CMake: %.*s\n", (int)msg.count, msg.data ? msg.data : "");
+        msg_emit_prefixed_line(stdout, "", msg);
     }
 
     if (mode == MSG_MODE_FATAL_ERROR || mode == MSG_MODE_SEND_ERROR) {

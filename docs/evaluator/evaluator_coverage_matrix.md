@@ -120,21 +120,32 @@ Current v1 status:
 - oracle policy: resolve `cmake` from `CMK2NOB_TEST_CMAKE_BIN`, then `PATH`
 - version gate: only `cmake 3.28.x` participates; otherwise the suite skips
 - current mode: `project-mode` only
-- current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`, `add_subdirectory()`, and `string()` seed cases
+- current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`, `add_subdirectory()`, `string()`, `project()` / `cmake_minimum_required()` / `cmake_policy()`, `message()`, `configure_file()`, and direct property-wrapper seed cases
 - current comparison model:
-  - `SUCCESS`: compare normalized `OUTCOME` plus `diff_snapshot.txt`
-  - `ERROR`: compare normalized `OUTCOME` only
+  - `SUCCESS`: compare normalized probe snapshot plus opt-in post-run observations
+  - `ERROR`: compare normalized `OUTCOME` only by default, plus any opt-in post-run observations
 
 Current v1 DSL:
 - `#@@CASE <name>`
 - `#@@OUTCOME SUCCESS|ERROR`
+- `#@@PROJECT_LAYOUT BODY_ONLY_PROJECT|RAW_CMAKELISTS`
 - `#@@FILE <relpath>`
 - `#@@DIR <relpath>`
+- `#@@FILE_TEXT <relpath>` ... `#@@END_FILE_TEXT`
+- `#@@ENV <NAME>=<value>`
+- `#@@ENV_UNSET <NAME>`
+- `#@@CACHE_INIT <NAME>:<TYPE>=<value>`
 - `#@@QUERY VAR <name>`
 - `#@@QUERY CACHE_DEFINED <name>`
 - `#@@QUERY TARGET_EXISTS <target>`
 - `#@@QUERY TARGET_PROP <target> <property>`
 - `#@@QUERY FILE_EXISTS <path>`
+- `#@@QUERY STDOUT`
+- `#@@QUERY STDERR`
+- `#@@QUERY FILE_TEXT <path>`
+- `#@@QUERY CMAKE_PROP <property>`
+- `#@@QUERY GLOBAL_PROP <property>`
+- `#@@QUERY DIR_PROP <dir> <property>`
 
 Current v1 snapshot lines:
 - `OUTCOME=<SUCCESS|ERROR>`
@@ -143,6 +154,12 @@ Current v1 snapshot lines:
 - `TARGET_EXISTS:<target>=0|1`
 - `TARGET_PROP:<target>:<prop>=<value|__UNSET__|__MISSING_TARGET__>`
 - `FILE_EXISTS:<path>=0|1`
+- `CMAKE_PROP:<prop>=<value|__UNSET__>`
+- `GLOBAL_PROP:<prop>=<value|__UNSET__>`
+- `DIR_PROP:<dir>:<prop>=<value|__UNSET__|__MISSING_DIR__>`
+- `STDOUT_B64=<base64>`
+- `STDERR_B64=<base64>`
+- `FILE_TEXT_B64:<path>=<base64|__MISSING_FILE__>`
 
 Operational backlog rule:
 - every registry command and every structural node must eventually be assigned
@@ -177,6 +194,9 @@ Roadmap:
     `option`, `math`, `list`, `string`, `cmake_path`, directory properties,
     and target/query surfaces that fit stable snapshots without external
     toolchain dependence
+  - harness groundwork for `RAW_CMAKELISTS`, scoped fixtures, env/cache seeds,
+    post-run file/output observations, and direct property-wrapper queries is
+    now in place
 - **Phase 2, add `script-mode` to the same harness**
   - introduce `#@@MODE PROJECT|SCRIPT`
   - cover `file()`, `configure_file`, `execute_process`, `include()`,

@@ -65,7 +65,11 @@ static void file_append_configure_value(Nob_String_Builder *out, String_View val
         return;
     }
     for (size_t i = 0; i < val.count; i++) {
-        if (val.data[i] == '"') nob_sb_append(out, '\\');
+        if (val.data[i] == '"') {
+            size_t backslash_count = 0;
+            for (size_t j = i; j > 0 && val.data[j - 1] == '\\'; j--) backslash_count++;
+            if ((backslash_count % 2u) == 0u) nob_sb_append(out, '\\');
+        }
         nob_sb_append(out, val.data[i]);
     }
 }
