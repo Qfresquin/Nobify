@@ -610,6 +610,16 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("set_property(TARGET ...) cannot be used on ALIAS targets"), objects[ti]);
                 continue;
             }
+            if (!eval_property_write(ctx,
+                                     o,
+                                     nob_sv_from_cstr("TARGET"),
+                                     objects[ti],
+                                     key,
+                                     value,
+                                     op,
+                                     false)) {
+                return eval_result_from_ctx(ctx);
+            }
             if (!eval_emit_target_prop_set(ctx, o, objects[ti], key, value, op)) {
                 return eval_result_from_ctx(ctx);
             }

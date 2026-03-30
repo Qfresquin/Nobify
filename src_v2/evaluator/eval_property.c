@@ -349,6 +349,11 @@ static bool property_collect_directory_tests_temp(EvalExecContext *ctx,
     return true;
 }
 
+static String_View property_value_from_directory_chain_temp(EvalExecContext *ctx,
+                                                            String_View start_dir,
+                                                            String_View prop_upper,
+                                                            bool *out_set);
+
 static bool property_resolve_source_object_temp(EvalExecContext *ctx,
                                                 String_View object_id,
                                                 String_View inherit_directory,
@@ -576,6 +581,27 @@ static bool property_synthetic_value_temp(EvalExecContext *ctx,
             if (out_set) *out_set = true;
             if (out_value) {
                 *out_value = eval_sv_eq_ci_lit(prop_upper, "SOURCE_DIR") ? declared_dir : binary_dir;
+            }
+            return true;
+        }
+        if (eval_sv_eq_ci_lit(prop_upper, "COMPILE_OPTIONS") ||
+            eval_sv_eq_ci_lit(prop_upper, "LINK_OPTIONS") ||
+            eval_sv_eq_ci_lit(prop_upper, "INCLUDE_DIRECTORIES") ||
+            eval_sv_eq_ci_lit(prop_upper, "LINK_DIRECTORIES") ||
+            eval_sv_eq_ci_lit(prop_upper, "LINK_LIBRARIES")) {
+            String_View declared_dir = nob_sv_from_cstr("");
+            bool have_dir_value = false;
+            if (!target_get_declared_dir_temp(ctx, object_id, &declared_dir)) return false;
+            if (eval_should_stop(ctx)) return false;
+            String_View dir_value = property_value_from_directory_chain_temp(ctx,
+                                                                            declared_dir,
+                                                                            prop_upper,
+                                                                            &have_dir_value);
+            if (eval_should_stop(ctx)) return false;
+            if (out_known) *out_known = true;
+            if (have_dir_value) {
+                if (out_set) *out_set = true;
+                if (out_value) *out_value = dir_value;
             }
             return true;
         }

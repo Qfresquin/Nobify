@@ -1,0 +1,80 @@
+#@@CASE host_identity_supported_queries_and_policy_gates_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/host_sysroot/etc/os-release
+ID=nobify
+NAME="Nobify Linux"
+PRETTY_NAME="Nobify Linux 1.0"
+VERSION_ID=1.0
+#@@END_FILE_TEXT
+#@@QUERY VAR HOST_OS_MATCH
+#@@QUERY VAR DISTRO_PRETTY
+#@@QUERY VAR SITE_EMPTY
+#@@QUERY VAR BUILD_NAME_EMPTY
+#@@QUERY VAR BUILD_NAME_HAS_HOST
+#@@QUERY VAR BUILD_CMD_HAS_BUILD
+#@@QUERY VAR BUILD_CMD_HAS_TARGET
+#@@QUERY VAR BUILD_CMD_HAS_DEBUG
+#@@QUERY VAR BUILD_CMD_HAS_PARALLEL
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  set(CMAKE_SYSROOT "${CMAKE_CURRENT_SOURCE_DIR}/host_sysroot")
+  cmake_host_system_information(RESULT DISTRO_PRETTY QUERY DISTRIB_PRETTY_NAME)
+else()
+  set(DISTRO_PRETTY non-linux)
+endif()
+cmake_host_system_information(RESULT HOST_OS QUERY OS_NAME)
+string(COMPARE EQUAL "${HOST_OS}" "${CMAKE_HOST_SYSTEM_NAME}" HOST_OS_MATCH)
+site_name(SITE_OUT)
+if(SITE_OUT STREQUAL "")
+  set(SITE_EMPTY 1)
+else()
+  set(SITE_EMPTY 0)
+endif()
+cmake_policy(SET CMP0036 OLD)
+build_name(BUILD_NAME_OUT)
+if(BUILD_NAME_OUT STREQUAL "")
+  set(BUILD_NAME_EMPTY 1)
+else()
+  set(BUILD_NAME_EMPTY 0)
+endif()
+string(FIND "${BUILD_NAME_OUT}" "${CMAKE_HOST_SYSTEM_NAME}" BUILD_NAME_HAS_HOST_POS)
+if(BUILD_NAME_HAS_HOST_POS EQUAL -1)
+  set(BUILD_NAME_HAS_HOST 0)
+else()
+  set(BUILD_NAME_HAS_HOST 1)
+endif()
+set(CMAKE_GENERATOR "Unix Makefiles")
+cmake_policy(SET CMP0061 OLD)
+build_command(BUILD_CMD CONFIGURATION Debug TARGET demo PARALLEL_LEVEL 2)
+string(FIND "${BUILD_CMD}" "cmake --build ." BUILD_CMD_HAS_BUILD_POS)
+string(FIND "${BUILD_CMD}" "demo" BUILD_CMD_HAS_TARGET_POS)
+string(FIND "${BUILD_CMD}" "Debug" BUILD_CMD_HAS_DEBUG_POS)
+string(FIND "${BUILD_CMD}" "2" BUILD_CMD_HAS_PARALLEL_POS)
+if(BUILD_CMD_HAS_BUILD_POS EQUAL -1)
+  set(BUILD_CMD_HAS_BUILD 0)
+else()
+  set(BUILD_CMD_HAS_BUILD 1)
+endif()
+if(BUILD_CMD_HAS_TARGET_POS EQUAL -1)
+  set(BUILD_CMD_HAS_TARGET 0)
+else()
+  set(BUILD_CMD_HAS_TARGET 1)
+endif()
+if(BUILD_CMD_HAS_DEBUG_POS EQUAL -1)
+  set(BUILD_CMD_HAS_DEBUG 0)
+else()
+  set(BUILD_CMD_HAS_DEBUG 1)
+endif()
+if(BUILD_CMD_HAS_PARALLEL_POS EQUAL -1)
+  set(BUILD_CMD_HAS_PARALLEL 0)
+else()
+  set(BUILD_CMD_HAS_PARALLEL 1)
+endif()
+#@@ENDCASE
+
+#@@CASE host_identity_invalid_forms_are_rejected
+#@@OUTCOME ERROR
+site_name()
+build_name()
+build_command()
+cmake_host_system_information(RESULT_ONLY)
+#@@ENDCASE

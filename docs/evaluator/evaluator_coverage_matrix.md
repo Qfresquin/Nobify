@@ -121,6 +121,44 @@ Current v1 status:
 - version gate: only `cmake 3.28.x` participates; otherwise the suite skips
 - current mode: `project-mode` only
 - current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`, `add_subdirectory()`, `string()`, `project()` / `cmake_minimum_required()` / `cmake_policy()`, `message()`, `configure_file()`, and direct property-wrapper seed cases
+- expanded Phase 1 snapshot families now also cover:
+  - `directory_usage`
+    - `add_compile_definitions`
+    - `add_compile_options`
+    - `add_link_options`
+    - `include_directories`
+    - `link_directories`
+    - `link_libraries`
+    - `add_definitions`
+    - `remove_definitions`
+  - `property_setters`
+    - `set_property`
+    - `set_target_properties`
+    - `set_directory_properties`
+    - `set_source_files_properties`
+    - `set_tests_properties`
+  - `testing_meta`
+    - `enable_testing`
+    - `add_test`
+  - `argument_parsing`
+    - `separate_arguments`
+    - `cmake_parse_arguments`
+  - `find_pathlike`
+    - `find_file`
+    - `find_library`
+    - `find_path`
+    - `find_program`
+  - `host_identity`
+    - `cmake_host_system_information`
+    - `site_name`
+    - `build_name`
+    - `build_command`
+  - `cache_loading`
+    - `load_cache`
+  - `legacy_generation`
+    - `make_directory`
+    - `aux_source_directory`
+    - `create_test_sourcelist`
 - current comparison model:
   - `SUCCESS`: compare normalized probe snapshot plus opt-in post-run observations
   - `ERROR`: compare normalized `OUTCOME` only by default, plus any opt-in post-run observations
@@ -165,6 +203,32 @@ Operational backlog rule:
 - every registry command and every structural node must eventually be assigned
   to exactly one differential mode family
 - no command should remain “unowned” by the differential program
+
+Current backlog split for remaining non-covered families:
+- still expected to fit generic `project-mode` snapshot differential in a later
+  batch:
+  - `project`-adjacent expansion still worth adding as dedicated families:
+    `set_property` follow-on depth, `add_dependencies` if a stable public query
+    is chosen, and any remaining `get_*`/`set_*` wrappers not yet seeded
+- explicitly reclassified out of Phase 1 snapshot closure and into later lanes:
+  - `host-effect differential`
+    - `install`
+    - `export`
+    - `file()` complex subcommands
+    - `FetchContent_*`
+  - `special oracle lane`
+    - `find_package`
+    - `try_compile`
+    - `try_run`
+    - `ctest_*`
+    - `add_custom_command`
+    - `add_custom_target`
+    - `cmake_file_api`
+    - `source_group`
+    - `include_external_msproject`
+    - `output_required_files`
+    - `subdirs`
+    - `subdir_depends`
 
 Differential mode families:
 - `snapshot differential`

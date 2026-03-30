@@ -1395,10 +1395,14 @@ static bool directory_parse_link_libraries_request(EvalExecContext *ctx,
 }
 
 static bool directory_execute_link_libraries_request(EvalExecContext *ctx,
+                                                     Event_Origin origin,
                                                      const Link_Libraries_Request *req) {
-    (void)ctx;
-    (void)req;
-    return true;
+    return sync_directory_property_mutation(ctx,
+                                            origin,
+                                            "LINK_LIBRARIES",
+                                            EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                            EVENT_PROPERTY_MODIFIER_NONE,
+                                            &req->items);
 }
 
 Eval_Result eval_handle_add_compile_options(EvalExecContext *ctx, const Node *node) {
@@ -1473,7 +1477,7 @@ Eval_Result eval_handle_link_libraries(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     Link_Libraries_Request req = {0};
     if (!directory_parse_link_libraries_request(ctx, node, origin, &req)) return eval_result_from_ctx(ctx);
-    if (!directory_execute_link_libraries_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!directory_execute_link_libraries_request(ctx, origin, &req)) return eval_result_from_ctx(ctx);
     return eval_result_from_ctx(ctx);
 }
 

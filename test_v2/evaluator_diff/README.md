@@ -22,7 +22,9 @@ V1 is intentionally narrow:
 - seed case packs for `target_*`, `list()`, `var_commands`, `property_query`,
   `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`,
   `add_subdirectory()`, `string()`, `project()`/`cmake_minimum_required()`/`cmake_policy()`,
-  `message()`, `configure_file()`, and direct property-wrapper coverage
+  `message()`, `configure_file()`, `directory_usage`, `property_setters`,
+  `testing_meta`, `argument_parsing`, `find_pathlike`, `host_identity`,
+  `cache_loading`, `legacy_generation`, and direct property-wrapper coverage
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome plus any opt-in post-run observations
@@ -50,6 +52,14 @@ Current case packs:
 - `message_seed_cases.cmake`
 - `configure_file_seed_cases.cmake`
 - `property_wrappers_seed_cases.cmake`
+- `directory_usage_seed_cases.cmake`
+- `property_setters_seed_cases.cmake`
+- `testing_meta_seed_cases.cmake`
+- `argument_parsing_seed_cases.cmake`
+- `find_pathlike_seed_cases.cmake`
+- `host_identity_seed_cases.cmake`
+- `cache_loading_seed_cases.cmake`
+- `legacy_generation_seed_cases.cmake`
 
 Supported directives:
 

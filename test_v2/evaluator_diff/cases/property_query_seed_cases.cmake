@@ -70,3 +70,65 @@ get_property(CACHED_X_ADVANCED CACHE CACHED_X PROPERTY ADVANCED)
 #@@OUTCOME ERROR
 set_property(CACHE MISSING_X PROPERTY VALUE bad)
 #@@ENDCASE
+
+#@@CASE property_query_source_directory_clause_and_get_cmake_property_lists
+#@@OUTCOME SUCCESS
+#@@FILE main.c
+#@@QUERY VAR SRC_SCOPED
+#@@QUERY VAR HAS_VAR
+#@@QUERY VAR HAS_CACHE
+#@@QUERY VAR HAS_COMMAND_ADD_LIBRARY
+#@@QUERY VAR HAS_COMMAND_FUNCTION
+#@@QUERY VAR HAS_COMMAND_MACRO
+#@@QUERY VAR HAS_MACRO
+#@@QUERY VAR MISSING_PROP
+function(BatchFunction)
+endfunction()
+macro(batch_macro)
+endmacro()
+set(NORMAL_A one)
+set(CACHED_A two CACHE STRING "doc")
+set_source_files_properties(main.c DIRECTORY . PROPERTIES SCOPED_SRC local)
+get_property(SRC_SCOPED SOURCE main.c DIRECTORY . PROPERTY SCOPED_SRC)
+get_cmake_property(ALL_VARS VARIABLES)
+get_cmake_property(CACHE_VARS CACHE_VARIABLES)
+get_cmake_property(ALL_COMMANDS COMMANDS)
+get_cmake_property(ALL_MACROS MACROS)
+get_cmake_property(MISSING_PROP DOES_NOT_EXIST)
+list(FIND ALL_VARS NORMAL_A IDX_VAR)
+list(FIND CACHE_VARS CACHED_A IDX_CACHE)
+list(FIND ALL_COMMANDS add_library IDX_COMMAND_ADD_LIBRARY)
+list(FIND ALL_COMMANDS batchfunction IDX_COMMAND_FUNCTION)
+list(FIND ALL_COMMANDS batch_macro IDX_COMMAND_MACRO)
+list(FIND ALL_MACROS batch_macro IDX_MACRO)
+if(IDX_VAR EQUAL -1)
+  set(HAS_VAR 0)
+else()
+  set(HAS_VAR 1)
+endif()
+if(IDX_CACHE EQUAL -1)
+  set(HAS_CACHE 0)
+else()
+  set(HAS_CACHE 1)
+endif()
+if(IDX_COMMAND_ADD_LIBRARY EQUAL -1)
+  set(HAS_COMMAND_ADD_LIBRARY 0)
+else()
+  set(HAS_COMMAND_ADD_LIBRARY 1)
+endif()
+if(IDX_COMMAND_FUNCTION EQUAL -1)
+  set(HAS_COMMAND_FUNCTION 0)
+else()
+  set(HAS_COMMAND_FUNCTION 1)
+endif()
+if(IDX_COMMAND_MACRO EQUAL -1)
+  set(HAS_COMMAND_MACRO 0)
+else()
+  set(HAS_COMMAND_MACRO 1)
+endif()
+if(IDX_MACRO EQUAL -1)
+  set(HAS_MACRO 0)
+else()
+  set(HAS_MACRO 1)
+endif()
+#@@ENDCASE
