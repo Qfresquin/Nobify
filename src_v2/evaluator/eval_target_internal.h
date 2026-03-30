@@ -55,7 +55,7 @@ static inline bool target_usage_validate_target(EvalExecContext *ctx,
     char *cmd_c = eval_sv_to_cstr_temp(ctx, node->as.cmd.name);
     EVAL_OOM_RETURN_IF_NULL(ctx, cmd_c, false);
 
-    if (!eval_target_known(ctx, target_name)) {
+    if (!eval_target_visible(ctx, target_name)) {
         target_diag_error(ctx,
                           node,
                           nob_sv_from_cstr(nob_temp_sprintf("%s() target was not declared", cmd_c)),

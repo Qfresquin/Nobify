@@ -2926,10 +2926,11 @@ TEST(evaluator_try_compile_empty_capture_file_is_silent) {
 }
 
 static void evaluator_internal_cleanup_stack_failure_helper_impl(int *passed, int *failed, int *skipped) {
+    (void)passed;
+    (void)skipped;
     ASSERT(evaluator_test_begin_nob_log_capture_guarded());
     ASSERT(evaluator_test_guard_env("NOBIFY_CLEANUP_GUARD", "dirty"));
-    ASSERT(false);
-    TEST_PASS();
+    (*failed)++;
 }
 
 static void evaluator_internal_cleanup_stack_failure_helper_run(int *passed, int *failed, int *skipped) {

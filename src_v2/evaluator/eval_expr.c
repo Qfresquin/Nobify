@@ -556,7 +556,7 @@ static bool parse_unary(Expr *e) {
     if (eval_sv_eq_ci_lit(tok, "TARGET")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        return eval_target_known(e->ctx, expr_next(e));
+        return eval_target_visible(e->ctx, expr_next(e));
     }
 
     if (eval_sv_eq_ci_lit(tok, "COMMAND")) {

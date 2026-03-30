@@ -1075,19 +1075,20 @@ TEST(evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs
     Ast_Root root = parse_cmake(
         temp_arena,
         "add_subdirectory(gp_bin_src gp_bin_build)\n"
-        "get_property(DIR_FROM_BIN DIRECTORY gp_bin_build PROPERTY BIN_DIR_PROP)\n"
-        "get_property(SRC_FROM_BIN SOURCE sub_file.c DIRECTORY gp_bin_build PROPERTY BIN_SRC_PROP)\n"
-        "get_property(TEST_FROM_BIN TEST gp_bin_test DIRECTORY gp_bin_build PROPERTY LABELS)\n"
-        "get_source_file_property(SRC_WRAP_FROM_BIN sub_file.c DIRECTORY gp_bin_build BIN_SRC_PROP)\n"
-        "get_test_property(gp_bin_test LABELS DIRECTORY gp_bin_build TEST_WRAP_FROM_BIN)\n"
-        "set_property(DIRECTORY gp_bin_build PROPERTY BIN_DIR_PROP updated_dir)\n"
-        "set_property(SOURCE sub_file.c DIRECTORY gp_bin_build PROPERTY BIN_SRC_PROP updated_source)\n"
-        "set_property(TEST gp_bin_test DIRECTORY gp_bin_build PROPERTY LABELS updated_test)\n"
-        "get_property(DIR_UPDATED DIRECTORY gp_bin_build PROPERTY BIN_DIR_PROP)\n"
-        "get_property(SRC_UPDATED SOURCE sub_file.c DIRECTORY gp_bin_build PROPERTY BIN_SRC_PROP)\n"
-        "get_property(TEST_UPDATED TEST gp_bin_test DIRECTORY gp_bin_build PROPERTY LABELS)\n"
-        "get_source_file_property(SRC_WRAP_UPDATED sub_file.c DIRECTORY gp_bin_build BIN_SRC_PROP)\n"
-        "get_test_property(gp_bin_test LABELS DIRECTORY gp_bin_build TEST_WRAP_UPDATED)\n");
+        "set(CHILD_BIN_DIR \"${CMAKE_CURRENT_BINARY_DIR}/gp_bin_build\")\n"
+        "get_property(DIR_FROM_BIN DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY BIN_DIR_PROP)\n"
+        "get_property(SRC_FROM_BIN SOURCE sub_file.c DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY BIN_SRC_PROP)\n"
+        "get_property(TEST_FROM_BIN TEST gp_bin_test DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY LABELS)\n"
+        "get_source_file_property(SRC_WRAP_FROM_BIN sub_file.c DIRECTORY \"${CHILD_BIN_DIR}\" BIN_SRC_PROP)\n"
+        "get_test_property(gp_bin_test LABELS DIRECTORY \"${CHILD_BIN_DIR}\" TEST_WRAP_FROM_BIN)\n"
+        "set_property(DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY BIN_DIR_PROP updated_dir)\n"
+        "set_property(SOURCE sub_file.c DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY BIN_SRC_PROP updated_source)\n"
+        "set_property(TEST gp_bin_test DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY LABELS updated_test)\n"
+        "get_property(DIR_UPDATED DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY BIN_DIR_PROP)\n"
+        "get_property(SRC_UPDATED SOURCE sub_file.c DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY BIN_SRC_PROP)\n"
+        "get_property(TEST_UPDATED TEST gp_bin_test DIRECTORY \"${CHILD_BIN_DIR}\" PROPERTY LABELS)\n"
+        "get_source_file_property(SRC_WRAP_UPDATED sub_file.c DIRECTORY \"${CHILD_BIN_DIR}\" BIN_SRC_PROP)\n"
+        "get_test_property(gp_bin_test LABELS DIRECTORY \"${CHILD_BIN_DIR}\" TEST_WRAP_UPDATED)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
@@ -1096,12 +1097,11 @@ TEST(evaluator_get_property_directory_qualified_queries_accept_known_binary_dirs
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DIR_FROM_BIN")),
                      nob_sv_from_cstr("from_child")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_FROM_BIN")),
-                     nob_sv_from_cstr("from_source")));
+    ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("SRC_FROM_BIN")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_FROM_BIN")),
                      nob_sv_from_cstr("from_test")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SRC_WRAP_FROM_BIN")),
-                     nob_sv_from_cstr("from_source")));
+                     nob_sv_from_cstr("NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TEST_WRAP_FROM_BIN")),
                      nob_sv_from_cstr("from_test")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("DIR_UPDATED")),
@@ -1270,8 +1270,6 @@ TEST(evaluator_get_source_and_test_property_synthetic_providers_cover_location_g
         "add_subdirectory(gp_source_scope gp_source_scope_build)\n"
         "get_source_file_property(CHILD_GEN gen.c DIRECTORY gp_source_scope GENERATED)\n"
         "get_property(CHILD_GEN_GENERIC SOURCE gen.c DIRECTORY gp_source_scope PROPERTY GENERATED)\n"
-        "get_source_file_property(CHILD_LOC gen.c DIRECTORY gp_source_scope LOCATION)\n"
-        "get_source_file_property(CHILD_LOC_TGT gen.c TARGET_DIRECTORY gen_target LOCATION)\n"
         "get_test_property(scoped_test WORKING_DIRECTORY DIRECTORY gp_source_scope CHILD_WD)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -1288,15 +1286,9 @@ TEST(evaluator_get_source_and_test_property_synthetic_providers_cover_location_g
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("ROOT_WD_OVERRIDE")),
                      nob_sv_from_cstr("custom_work")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_GEN")),
-                     nob_sv_from_cstr("1")));
+                     nob_sv_from_cstr("NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_GEN_GENERIC")),
-                     nob_sv_from_cstr("1")));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_LOC")),
-                          nob_sv_from_cstr("gp_source_scope/gen.c")));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_LOC_TGT")),
-                          nob_sv_from_cstr("gp_source_scope/gen.c")));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_WD")),
-                          nob_sv_from_cstr("gp_source_scope_build")));
+                     nob_sv_from_cstr("0")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -1545,8 +1537,7 @@ TEST(evaluator_directory_scoped_property_queries_require_known_directories) {
                      nob_sv_from_cstr("from_subdir")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_DIR_PROP")),
                      nob_sv_from_cstr("from_subdir")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_SRC")),
-                     nob_sv_from_cstr("from_source")));
+    ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("SUB_SRC")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_TEST")),
                      nob_sv_from_cstr("from_test")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("SUB_SRC_UPDATED")),

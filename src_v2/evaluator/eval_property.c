@@ -592,7 +592,13 @@ static bool property_synthetic_value_temp(EvalExecContext *ctx,
             return false;
         }
         if (eval_sv_eq_ci_lit(prop_upper, "LOCATION")) {
+            Property_Directory_Scoped_Object parts = {0};
+            if (!property_parse_directory_scoped_object(object_id, &parts)) return false;
+            String_View selected_dir = parts.has_directory_scope
+                ? parts.directory
+                : (inherit_directory.count > 0 ? inherit_directory : eval_current_source_dir_for_paths(ctx));
             if (out_known) *out_known = true;
+            if (!property_selected_directory_is_current(ctx, selected_dir)) return true;
             if (out_set) *out_set = true;
             if (out_value) *out_value = source_path;
             return true;
@@ -957,6 +963,19 @@ static String_View resolve_property_value_temp(EvalExecContext *ctx,
         return value;
     }
 
+    if (eval_sv_eq_ci_lit(scope_upper, "SOURCE")) {
+        Property_Directory_Scoped_Object parts = {0};
+        if (!property_parse_directory_scoped_object(object_id, &parts)) return nob_sv_from_cstr("");
+        if (parts.has_directory_scope && property_selected_directory_is_current(ctx, parts.directory)) {
+            value = property_value_from_store_temp(ctx, scope_upper, parts.object_name, prop_upper, &have);
+            if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
+            if (have) {
+                if (out_set) *out_set = true;
+                return value;
+            }
+        }
+    }
+
     bool synthetic_known = false;
     String_View synthetic_value = nob_sv_from_cstr("");
     if (!property_synthetic_value_temp(ctx,
@@ -1119,7 +1138,7 @@ bool eval_property_query(EvalExecContext *ctx,
     String_View validated_name = validation_object.count > 0 ? validation_object : object_id;
     if (validate_object && (mode == EVAL_PROP_QUERY_VALUE || mode == EVAL_PROP_QUERY_SET)) {
         if (eval_sv_eq_ci_lit(scope_upper, "TARGET")) {
-            if (!eval_target_known(ctx, validated_name)) {
+            if (!eval_target_visible(ctx, validated_name)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                                node,
                                                origin,

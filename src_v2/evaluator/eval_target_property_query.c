@@ -309,7 +309,7 @@ static bool get_property_parse_source_scope(EvalExecContext *ctx,
             }
 
             String_View target_name = args[i + 1];
-            if (!eval_target_known(ctx, target_name)) {
+            if (!eval_target_visible(ctx, target_name)) {
                 target_diag_error(
                     ctx,
                     node,
@@ -689,7 +689,7 @@ static bool get_source_file_property_parse_request(EvalExecContext *ctx,
         return false;
     }
 
-    if (!eval_target_known(ctx, args[3])) {
+    if (!eval_target_visible(ctx, args[3])) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,
@@ -788,10 +788,19 @@ Eval_Result eval_handle_get_property(EvalExecContext *ctx, const Node *node) {
         .mode = req.mode,
         .validate_object = true,
         .missing_behavior = EVAL_PROP_QUERY_MISSING_UNSET,
-        .unset_as_empty = true,
+        .unset_as_empty = req.scope != GET_PROPERTY_SCOPE_SOURCE,
     };
     if (!property_query_request_execute(ctx, node, origin, &query)) {
         return eval_result_from_ctx(ctx);
+    }
+
+    if (req.mode == EVAL_PROP_QUERY_VALUE &&
+        req.scope == GET_PROPERTY_SCOPE_SOURCE &&
+        eval_sv_eq_ci_lit(req.property_name, "GENERATED") &&
+        !eval_var_defined_visible(ctx, req.out_var)) {
+        if (!eval_var_set_current(ctx, req.out_var, nob_sv_from_cstr("0"))) {
+            return eval_result_from_ctx(ctx);
+        }
     }
 
     return eval_result_from_ctx(ctx);
@@ -898,7 +907,7 @@ Eval_Result eval_handle_get_target_property(EvalExecContext *ctx, const Node *no
             &req)) {
         return eval_result_from_ctx(ctx);
     }
-    if (!eval_target_known(ctx, req.object_name)) {
+    if (!eval_target_visible(ctx, req.object_name)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
                                        node,
                                        origin,

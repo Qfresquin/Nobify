@@ -2273,6 +2273,7 @@ bool eval_directory_note_target(EvalExecContext *ctx, String_View source_dir, St
 bool eval_directory_note_test(EvalExecContext *ctx, String_View source_dir, String_View test_name);
 bool eval_directory_capture_current_scope(EvalExecContext *ctx);
 bool eval_target_known(EvalExecContext *ctx, String_View name);
+bool eval_target_visible(EvalExecContext *ctx, String_View name);
 bool eval_target_register(EvalExecContext *ctx, String_View name);
 bool eval_target_set_type(EvalExecContext *ctx, String_View name, Cmake_Target_Type target_type);
 bool eval_target_get_type(EvalExecContext *ctx, String_View name, Cmake_Target_Type *out_target_type);

@@ -3923,6 +3923,17 @@ TEST(evaluator_get_target_property_synthetic_providers_cover_type_imported_alias
         "add_library(root_imported SHARED IMPORTED GLOBAL)\n"
         "add_library(root_alias ALIAS root_real)\n"
         "add_subdirectory(gtp_sub gtp_sub_build)\n"
+        "if(TARGET child_imported_local)\n"
+        "  set(CHILD_IMPORT_VISIBLE TRUE)\n"
+        "else()\n"
+        "  set(CHILD_IMPORT_VISIBLE FALSE)\n"
+        "endif()\n"
+        "if(TARGET child_imported_alias)\n"
+        "  set(CHILD_IMPORTED_ALIAS_VISIBLE TRUE)\n"
+        "else()\n"
+        "  set(CHILD_IMPORTED_ALIAS_VISIBLE FALSE)\n"
+        "endif()\n"
+        "get_directory_property(CHILD_IMPORTED DIRECTORY gtp_sub IMPORTED_TARGETS)\n"
         "get_target_property(ROOT_TYPE root_real TYPE)\n"
         "get_target_property(ROOT_IMPORTED root_real IMPORTED)\n"
         "get_target_property(ROOT_IMPORT_FLAG root_imported IMPORTED)\n"
@@ -3936,10 +3947,8 @@ TEST(evaluator_get_target_property_synthetic_providers_cover_type_imported_alias
         "get_target_property(CHILD_TYPE child_local TYPE)\n"
         "get_target_property(CHILD_SRC child_local SOURCE_DIR)\n"
         "get_target_property(CHILD_BIN child_local BINARY_DIR)\n"
-        "get_target_property(CHILD_IMPORT_FLAG child_imported_local IMPORTED)\n"
-        "get_target_property(CHILD_IMPORT_GLOBAL child_imported_local IMPORTED_GLOBAL)\n"
         "get_target_property(CHILD_ALIAS_OF child_local_alias ALIASED_TARGET)\n"
-        "get_target_property(CHILD_ALIAS_GLOBAL child_imported_alias ALIAS_GLOBAL)\n"
+        "get_target_property(CHILD_ALIAS_GLOBAL child_local_alias ALIAS_GLOBAL)\n"
         "get_target_property(CHILD_ALIAS_MISSING child_local ALIASED_TARGET)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -3974,14 +3983,16 @@ TEST(evaluator_get_target_property_synthetic_providers_cover_type_imported_alias
                           nob_sv_from_cstr("gtp_sub")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_BIN")),
                           nob_sv_from_cstr("gtp_sub_build")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_FLAG")),
-                     nob_sv_from_cstr("TRUE")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_GLOBAL")),
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORT_VISIBLE")),
                      nob_sv_from_cstr("FALSE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORTED_ALIAS_VISIBLE")),
+                     nob_sv_from_cstr("FALSE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_IMPORTED")),
+                     nob_sv_from_cstr("child_imported_local")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_OF")),
                      nob_sv_from_cstr("child_local")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_GLOBAL")),
-                     nob_sv_from_cstr("FALSE")));
+                     nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CHILD_ALIAS_MISSING")),
                      nob_sv_from_cstr("CHILD_ALIAS_MISSING-NOTFOUND")));
 

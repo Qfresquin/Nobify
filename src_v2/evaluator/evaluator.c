@@ -1599,6 +1599,41 @@ static Eval_Target_Record *eval_target_find_record(EvalExecContext *ctx, String_
     return NULL;
 }
 
+static bool eval_directory_is_same_or_descendant(EvalExecContext *ctx,
+                                                 String_View candidate_dir,
+                                                 String_View ancestor_dir) {
+    if (!ctx || candidate_dir.count == 0 || ancestor_dir.count == 0) return false;
+
+    candidate_dir = eval_sv_path_normalize_temp(ctx, candidate_dir);
+    if (eval_should_stop(ctx)) return false;
+    ancestor_dir = eval_sv_path_normalize_temp(ctx, ancestor_dir);
+    if (eval_should_stop(ctx)) return false;
+
+    while (candidate_dir.count > 0) {
+        String_View parent = nob_sv_from_cstr("");
+        if (svu_eq_ci_sv(candidate_dir, ancestor_dir)) return true;
+        if (!eval_directory_parent(ctx, candidate_dir, &parent)) return false;
+        if (eval_should_stop(ctx)) return false;
+        if (parent.count == 0 || svu_eq_ci_sv(parent, candidate_dir)) break;
+        candidate_dir = parent;
+    }
+
+    return false;
+}
+
+bool eval_target_visible(EvalExecContext *ctx, String_View name) {
+    Eval_Target_Record *record = eval_target_find_record(ctx, name);
+    if (!ctx || !record) return false;
+
+    if (!record->imported && !(record->alias && !record->alias_global)) return true;
+    if (record->imported && record->imported_global) return true;
+    if (record->alias && record->alias_global) return true;
+
+    return eval_directory_is_same_or_descendant(ctx,
+                                                eval_current_source_dir_for_paths(ctx),
+                                                record->declared_dir);
+}
+
 static Eval_Test_Record *eval_test_find_record(EvalExecContext *ctx,
                                                String_View name,
                                                String_View declared_dir) {
@@ -1616,7 +1651,7 @@ static Eval_Test_Record *eval_test_find_record(EvalExecContext *ctx,
 }
 
 bool eval_target_register(EvalExecContext *ctx, String_View name) {
-    if (!ctx || eval_target_known(ctx, name)) return true;
+    if (!ctx || eval_target_find_record(ctx, name)) return true;
     Eval_Target_Model *targets = &ctx->semantic_state.targets;
     Eval_Target_Record record = {0};
     record.name = sv_copy_to_arena(targets->arena, name);
@@ -2746,7 +2781,7 @@ bool eval_session_target_known(const EvalSession *session, String_View target_na
     if (!session || target_name.count == 0) return false;
     EvalExecContext exec = {0};
     eval_exec_prepare_session_view(&exec, (EvalSession*)session);
-    return eval_target_known(&exec, target_name) || eval_target_alias_known(&exec, target_name);
+    return eval_target_visible(&exec, target_name);
 }
 
 size_t eval_session_canonical_artifact_count(const EvalSession *session) {

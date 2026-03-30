@@ -112,7 +112,7 @@ Eval_Result eval_handle_set_source_files_properties(EvalExecContext *ctx, const 
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     }
     for (size_t ti = 0; ti < arena_arr_len(target_dirs); ti++) {
-        if (!eval_target_known(ctx, target_dirs[ti])) {
+        if (!eval_target_visible(ctx, target_dirs[ti])) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_source_files_properties(TARGET_DIRECTORY ...) target was not declared"), target_dirs[ti]);
             return eval_result_from_ctx(ctx);
         }
@@ -130,16 +130,6 @@ Eval_Result eval_handle_set_source_files_properties(EvalExecContext *ctx, const 
                                          a[pi + 1],
                                          EV_PROP_SET,
                                          true)) {
-                    return eval_result_from_ctx(ctx);
-                }
-                if (!eval_property_write_current_directory_shadow(ctx,
-                                                                  o,
-                                                                  scope_upper,
-                                                                  files[fi],
-                                                                  a[pi],
-                                                                  a[pi + 1],
-                                                                  EV_PROP_SET,
-                                                                  true)) {
                     return eval_result_from_ctx(ctx);
                 }
             }
@@ -661,7 +651,7 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
 
     if (is_source_scope) {
         for (size_t ti = 0; ti < arena_arr_len(source_target_dirs); ti++) {
-            if (eval_target_known(ctx, source_target_dirs[ti])) continue;
+            if (eval_target_visible(ctx, source_target_dirs[ti])) continue;
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_NOT_FOUND, "dispatcher", nob_sv_from_cstr("set_property(SOURCE TARGET_DIRECTORY ...) target was not declared"), source_target_dirs[ti]);
             return eval_result_from_ctx(ctx);
         }
@@ -733,16 +723,6 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                                      value,
                                      op,
                                      true)) {
-                return eval_result_from_ctx(ctx);
-            }
-            if (!eval_property_write_current_directory_shadow(ctx,
-                                                              o,
-                                                              scope_upper,
-                                                              objects[oi],
-                                                              key,
-                                                              value,
-                                                              op,
-                                                              true)) {
                 return eval_result_from_ctx(ctx);
             }
         }
