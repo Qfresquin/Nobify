@@ -1,0 +1,37 @@
+#@@CASE execute_process_capture_pipeline_and_output_file
+#@@MODE SCRIPT
+#@@OUTCOME SUCCESS
+#@@QUERY VAR OUT
+#@@QUERY VAR RES
+#@@QUERY VAR PIPE
+#@@QUERY VAR PIPE_RES
+#@@QUERY VAR PIPE_RESULTS
+#@@QUERY VAR FILE_OUT_STRIPPED
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E echo "tail  "
+  OUTPUT_VARIABLE OUT
+  RESULT_VARIABLE RES
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E echo "first"
+  COMMAND "${CMAKE_COMMAND}" -E echo "second"
+  OUTPUT_VARIABLE PIPE
+  RESULT_VARIABLE PIPE_RES
+  RESULTS_VARIABLE PIPE_RESULTS
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E echo "file-copy"
+  OUTPUT_FILE ep_out.txt)
+file(READ ep_out.txt FILE_OUT)
+string(STRIP "${FILE_OUT}" FILE_OUT_STRIPPED)
+#@@ENDCASE
+
+#@@CASE execute_process_invalid_forms
+#@@MODE SCRIPT
+#@@OUTCOME ERROR
+execute_process()
+execute_process(COMMAND)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E true OUTPUT_VARIABLE)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E true COMMAND_ECHO MAYBE)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E true COMMAND_ERROR_IS_FATAL NONE)
+#@@ENDCASE

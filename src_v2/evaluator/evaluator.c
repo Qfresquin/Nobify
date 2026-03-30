@@ -1978,6 +1978,115 @@ static String_View arg_to_sv_flat(EvalExecContext *ctx, const Arg *arg) {
     return nob_sv_from_cstr(buf);
 }
 
+#define EVAL_LITERAL_BS_BEFORE_DOLLAR_SENTINEL '\x1e'
+
+static String_View arg_restore_literal_bs_sentinel_temp(EvalExecContext *ctx, String_View in) {
+    if (!ctx || !in.data || in.count == 0) return in;
+
+    bool has_sentinel = false;
+    for (size_t i = 0; i < in.count; i++) {
+        if (in.data[i] == EVAL_LITERAL_BS_BEFORE_DOLLAR_SENTINEL) {
+            has_sentinel = true;
+            break;
+        }
+    }
+    if (!has_sentinel) return in;
+
+    char *buf = (char*)arena_alloc(ctx->arena, in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    for (size_t i = 0; i < in.count; i++) {
+        buf[i] = (in.data[i] == EVAL_LITERAL_BS_BEFORE_DOLLAR_SENTINEL) ? '\\' : in.data[i];
+    }
+    buf[in.count] = '\0';
+    return nob_sv_from_parts(buf, in.count);
+}
+
+static String_View arg_process_quoted_literal_temp(EvalExecContext *ctx, String_View in) {
+    bool has_escape = false;
+    size_t out_count = 0;
+    char *buf = NULL;
+
+    if (!ctx) return nob_sv_from_cstr("");
+    if (in.count >= 2 && in.data[0] == '"' && in.data[in.count - 1] == '"') {
+        in.data += 1;
+        in.count -= 2;
+    }
+    if (in.count == 0) return in;
+    for (size_t i = 0; i < in.count; i++) {
+        if (in.data[i] == '\\') {
+            has_escape = true;
+            break;
+        }
+    }
+    if (!has_escape) return in;
+
+    buf = (char*)arena_alloc(ctx->arena, in.count + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    for (size_t i = 0; i < in.count; i++) {
+        char ch = in.data[i];
+        if (ch != '\\') {
+            buf[out_count++] = ch;
+            continue;
+        }
+
+        if (i + 1 >= in.count) {
+            buf[out_count++] = ch;
+            continue;
+        }
+
+        size_t slash_begin = i;
+        while (i < in.count && in.data[i] == '\\') i++;
+        if (i < in.count && in.data[i] == '$') {
+            size_t slash_count = i - slash_begin;
+            size_t literal_pairs = slash_count / 2u;
+            for (size_t k = 0; k < literal_pairs; k++) {
+                buf[out_count++] = EVAL_LITERAL_BS_BEFORE_DOLLAR_SENTINEL;
+            }
+            if ((slash_count % 2u) != 0u) {
+                buf[out_count++] = '\\';
+                buf[out_count++] = '$';
+                continue;
+            }
+            i--;
+            continue;
+        }
+        i = slash_begin;
+        ch = in.data[++i];
+        switch (ch) {
+            case 't': buf[out_count++] = '\t'; break;
+            case 'r': buf[out_count++] = '\r'; break;
+            case 'n': buf[out_count++] = '\n'; break;
+            case ';': buf[out_count++] = ';'; break;
+            case '"': buf[out_count++] = '"'; break;
+            case '\\': buf[out_count++] = '\\'; break;
+            case '$':
+                buf[out_count++] = '\\';
+                buf[out_count++] = '$';
+                break;
+            case '\n': break;
+            case '\r':
+                if (i + 1 < in.count && in.data[i + 1] == '\n') i++;
+                break;
+            default:
+                buf[out_count++] = '\\';
+                buf[out_count++] = ch;
+                break;
+        }
+    }
+
+    buf[out_count] = '\0';
+    return nob_sv_from_parts(buf, out_count);
+}
+
+String_View eval_resolve_quoted_arg_temp(EvalExecContext *ctx, String_View flat, bool expand_vars) {
+    if (!ctx) return nob_sv_from_cstr("");
+    String_View value = arg_process_quoted_literal_temp(ctx, flat);
+    if (expand_vars) value = eval_expand_vars(ctx, value);
+    value = arg_restore_literal_bs_sentinel_temp(ctx, value);
+    return value;
+}
+
 static SV_List eval_resolve_args_impl(EvalExecContext *ctx,
                                       const Args *raw_args,
                                       bool expand_vars,
@@ -1989,20 +2098,20 @@ static SV_List eval_resolve_args_impl(EvalExecContext *ctx,
         const Arg *arg = &(*raw_args)[i];
 
         String_View flat = arg_to_sv_flat(ctx, arg);
-        String_View expanded = expand_vars ? eval_expand_vars(ctx, flat) : flat;
-        if (eval_should_stop(ctx)) return (SV_List){0};
 
         if (arg->kind == ARG_QUOTED) {
-            // Quoted args preserve semicolons as plain text.
-            if (expanded.count >= 2 && expanded.data[0] == '"' && expanded.data[expanded.count - 1] == '"') {
-                expanded.data += 1;
-                expanded.count -= 2;
-            }
+            // Quoted args preserve semicolons as plain text and must unescape
+            // source-level escapes before variable expansion, without touching
+            // backslashes that come from the expanded variable values.
+            String_View expanded = eval_resolve_quoted_arg_temp(ctx, flat, expand_vars);
+            if (eval_should_stop(ctx)) return (SV_List){0};
             if (!sv_list_push(ctx->arena, &out, expanded)) {
                 ctx_oom(ctx);
                 return (SV_List){0};
             }
         } else if (arg->kind == ARG_BRACKET) {
+            String_View expanded = expand_vars ? eval_expand_vars(ctx, flat) : flat;
+            if (eval_should_stop(ctx)) return (SV_List){0};
             // Bracket args also preserve semicolons and skip normal splitting.
             String_View stripped = expanded;
             (void)sv_strip_cmake_bracket_arg(expanded, &stripped);
@@ -2012,6 +2121,8 @@ static SV_List eval_resolve_args_impl(EvalExecContext *ctx,
                 return (SV_List){0};
             }
         } else {
+            String_View expanded = expand_vars ? eval_expand_vars(ctx, flat) : flat;
+            if (eval_should_stop(ctx)) return (SV_List){0};
             // Macro call-site semantics keep unquoted args literal (no list split).
             if (!split_unquoted_lists) {
                 if (!sv_list_push(ctx->arena, &out, expanded)) {

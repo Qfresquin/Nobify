@@ -1163,6 +1163,7 @@ bool eval_exec_publish_current_vars(EvalExecContext *ctx);
 
 // ---- args e expansão (NOVO COMPORTAMENTO) ----
 // Retorna a lista expandida e dividida por ';' (alocada na TEMP ARENA)
+String_View eval_resolve_quoted_arg_temp(EvalExecContext *ctx, String_View flat, bool expand_vars);
 SV_List eval_resolve_args(EvalExecContext *ctx, const Args *raw_args);
 SV_List eval_resolve_args_literal(EvalExecContext *ctx, const Args *raw_args);
 

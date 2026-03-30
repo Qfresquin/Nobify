@@ -56,6 +56,12 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"message", "test_v2/evaluator_diff/cases/message_seed_cases.cmake"},
     {"configure_file", "test_v2/evaluator_diff/cases/configure_file_seed_cases.cmake"},
     {"property_wrappers", "test_v2/evaluator_diff/cases/property_wrappers_seed_cases.cmake"},
+    {"include_script", "test_v2/evaluator_diff/cases/include_seed_cases.cmake"},
+    {"execute_process_script", "test_v2/evaluator_diff/cases/execute_process_seed_cases.cmake"},
+    {"cmake_language_script", "test_v2/evaluator_diff/cases/cmake_language_seed_cases.cmake"},
+    {"file_script", "test_v2/evaluator_diff/cases/file_script_seed_cases.cmake"},
+    {"cmake_policy_script", "test_v2/evaluator_diff/cases/cmake_policy_script_seed_cases.cmake"},
+    {"configure_file_script", "test_v2/evaluator_diff/cases/configure_file_script_seed_cases.cmake"},
 };
 
 typedef enum {
@@ -67,6 +73,11 @@ typedef enum {
     DIFF_LAYOUT_BODY_ONLY_PROJECT = 0,
     DIFF_LAYOUT_RAW_CMAKELISTS,
 } Diff_Project_Layout;
+
+typedef enum {
+    DIFF_MODE_PROJECT = 0,
+    DIFF_MODE_SCRIPT,
+} Diff_Case_Mode;
 
 typedef enum {
     DIFF_PATH_SCOPE_SOURCE = 0,
@@ -125,6 +136,7 @@ typedef struct {
     String_View name;
     String_View body;
     Diff_Expected_Outcome expected_outcome;
+    Diff_Case_Mode mode;
     Diff_Project_Layout layout;
     Diff_Path_Entry *files;
     Diff_Path_Entry *dirs;
@@ -394,6 +406,19 @@ static bool diff_parse_layout(String_View line, Diff_Project_Layout *out_layout)
     return false;
 }
 
+static bool diff_parse_mode(String_View line, Diff_Case_Mode *out_mode) {
+    if (!out_mode) return false;
+    if (nob_sv_eq(line, nob_sv_from_cstr("PROJECT"))) {
+        *out_mode = DIFF_MODE_PROJECT;
+        return true;
+    }
+    if (nob_sv_eq(line, nob_sv_from_cstr("SCRIPT"))) {
+        *out_mode = DIFF_MODE_SCRIPT;
+        return true;
+    }
+    return false;
+}
+
 static bool diff_parse_query(Arena *arena, String_View line, Diff_Query *out_query) {
     String_View rest = line;
     String_View first = {0};
@@ -537,10 +562,12 @@ static bool diff_parse_case(Arena *arena,
     Nob_String_Builder body = {0};
     bool have_outcome = false;
     bool have_layout = false;
+    bool have_mode = false;
     size_t pos = 0;
 
     if (!arena || !out_case) return false;
     *out_case = (Diff_Case){
+        .mode = DIFF_MODE_PROJECT,
         .layout = DIFF_LAYOUT_BODY_ONLY_PROJECT,
     };
     out_case->name = diff_copy_sv(arena, entry.name);
@@ -565,8 +592,26 @@ static bool diff_parse_case(Arena *arena,
         }
 
         line = test_case_pack_trim_cr(raw_line);
+        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@MODE "))) {
+            if (have_mode || !diff_parse_mode(line, &out_case->mode)) {
+                nob_sb_free(body);
+                return false;
+            }
+            if (out_case->mode == DIFF_MODE_SCRIPT && have_layout) {
+                nob_sb_free(body);
+                return false;
+            }
+            have_mode = true;
+            continue;
+        }
+
+        line = test_case_pack_trim_cr(raw_line);
         if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@PROJECT_LAYOUT "))) {
             if (have_layout || !diff_parse_layout(line, &out_case->layout)) return false;
+            if (out_case->mode == DIFF_MODE_SCRIPT) {
+                nob_sb_free(body);
+                return false;
+            }
             have_layout = true;
             continue;
         }
@@ -666,7 +711,6 @@ static bool diff_parse_case(Arena *arena,
         }
 
         line = test_case_pack_trim_cr(raw_line);
-        if (diff_sv_has_prefix(line, "#@@MODE ")) return false;
         if (diff_sv_has_prefix(line, "#@@")) return false;
 
         nob_sb_append_buf(&body, raw_line.data, raw_line.count);
@@ -676,6 +720,27 @@ static bool diff_parse_case(Arena *arena,
     if (!have_outcome) {
         nob_sb_free(body);
         return false;
+    }
+
+    if (out_case->mode == DIFF_MODE_SCRIPT) {
+        for (size_t i = 0; i < arena_arr_len(out_case->files); i++) {
+            if (out_case->files[i].scope == DIFF_PATH_SCOPE_BUILD) {
+                nob_sb_free(body);
+                return false;
+            }
+        }
+        for (size_t i = 0; i < arena_arr_len(out_case->dirs); i++) {
+            if (out_case->dirs[i].scope == DIFF_PATH_SCOPE_BUILD) {
+                nob_sb_free(body);
+                return false;
+            }
+        }
+        for (size_t i = 0; i < arena_arr_len(out_case->text_files); i++) {
+            if (out_case->text_files[i].scope == DIFF_PATH_SCOPE_BUILD) {
+                nob_sb_free(body);
+                return false;
+            }
+        }
     }
 
     out_case->body = diff_copy_sv(arena, nob_sv_from_parts(body.items ? body.items : "", body.count));
@@ -909,15 +974,15 @@ static bool diff_build_probe_block(Arena *arena,
     return true;
 }
 
-static bool diff_generate_cmakelists(Arena *arena,
-                                     const Diff_Case *diff_case,
-                                     const char *cmakelists_path,
-                                     String_View *out_script) {
+static bool diff_generate_case_script(Arena *arena,
+                                      const Diff_Case *diff_case,
+                                      const char *script_path,
+                                      String_View *out_script) {
     Nob_String_Builder sb = {0};
     bool ok = false;
 
     if (out_script) *out_script = nob_sv_from_cstr("");
-    if (!arena || !diff_case || !cmakelists_path || !out_script) return false;
+    if (!arena || !diff_case || !script_path || !out_script) return false;
 
     for (size_t i = 0; i < arena_arr_len(diff_case->cache_inits); i++) {
         const Diff_Cache_Init *cache_init = &diff_case->cache_inits[i];
@@ -930,7 +995,8 @@ static bool diff_generate_cmakelists(Arena *arena,
         nob_sb_append_cstr(&sb, " \"\")\n");
     }
 
-    if (diff_case->layout == DIFF_LAYOUT_BODY_ONLY_PROJECT) {
+    if (diff_case->mode == DIFF_MODE_PROJECT &&
+        diff_case->layout == DIFF_LAYOUT_BODY_ONLY_PROJECT) {
         nob_sb_append_cstr(&sb, "cmake_minimum_required(VERSION 3.28)\n");
         nob_sb_append_cstr(&sb, "project(DiffCase LANGUAGES C CXX)\n");
     }
@@ -942,7 +1008,7 @@ static bool diff_generate_cmakelists(Arena *arena,
     if (!diff_build_probe_block(arena, diff_case, &sb)) goto defer;
 
     nob_sb_append(&sb, '\0');
-    if (!diff_write_entire_file(cmakelists_path, sb.items ? sb.items : "")) goto defer;
+    if (!diff_write_entire_file(script_path, sb.items ? sb.items : "")) goto defer;
     *out_script = diff_copy_sv(arena, nob_sv_from_cstr(sb.items ? sb.items : ""));
     ok = out_script->data != NULL;
 
@@ -967,6 +1033,18 @@ static bool diff_prepare_case_fixtures(const Diff_Case *diff_case,
                                        const char *build_eval_dir,
                                        const char *build_cmake_dir) {
     if (!diff_case || !source_dir || !build_eval_dir || !build_cmake_dir) return false;
+
+    if (diff_case->mode == DIFF_MODE_SCRIPT) {
+        for (size_t i = 0; i < arena_arr_len(diff_case->dirs); i++) {
+            if (diff_case->dirs[i].scope == DIFF_PATH_SCOPE_BUILD) return false;
+        }
+        for (size_t i = 0; i < arena_arr_len(diff_case->files); i++) {
+            if (diff_case->files[i].scope == DIFF_PATH_SCOPE_BUILD) return false;
+        }
+        for (size_t i = 0; i < arena_arr_len(diff_case->text_files); i++) {
+            if (diff_case->text_files[i].scope == DIFF_PATH_SCOPE_BUILD) return false;
+        }
+    }
 
     for (size_t i = 0; i < arena_arr_len(diff_case->dirs); i++) {
         char path_a[_TINYDIR_PATH_MAX] = {0};
@@ -1312,7 +1390,7 @@ static void diff_end_std_capture(Diff_Std_Capture *capture) {
 
 static bool diff_run_evaluator_case(Arena *arena,
                                     const Diff_Case *diff_case,
-                                    const char *cmakelists_path,
+                                    const char *script_path,
                                     const char *source_dir,
                                     const char *binary_dir,
                                     Diff_Evaluator_Run *out_run) {
@@ -1324,13 +1402,15 @@ static bool diff_run_evaluator_case(Arena *arena,
     String_View script = {0};
     Ast_Root root = {0};
     Diff_Std_Capture capture = {0};
+    char workspace_cwd[_TINYDIR_PATH_MAX] = {0};
     char snapshot_path[_TINYDIR_PATH_MAX] = {0};
     char stdout_path[_TINYDIR_PATH_MAX] = {0};
     char stderr_path[_TINYDIR_PATH_MAX] = {0};
+    bool cwd_changed = false;
     bool log_capture_started = false;
 
     if (out_run) *out_run = (Diff_Evaluator_Run){0};
-    if (!arena || !diff_case || !cmakelists_path || !source_dir || !binary_dir || !out_run) return false;
+    if (!arena || !diff_case || !script_path || !source_dir || !binary_dir || !out_run) return false;
 
     temp_arena = arena_create(2 * 1024 * 1024);
     event_arena = arena_create(2 * 1024 * 1024);
@@ -1339,7 +1419,7 @@ static bool diff_run_evaluator_case(Arena *arena,
     stream = event_stream_create(event_arena);
     if (!stream) goto defer;
 
-    if (!evaluator_load_text_file_to_arena(temp_arena, cmakelists_path, &script)) goto defer;
+    if (!evaluator_load_text_file_to_arena(temp_arena, script_path, &script)) goto defer;
     root = parse_cmake(temp_arena, nob_temp_sv_to_cstr(script));
 
     init.arena = temp_arena;
@@ -1347,25 +1427,36 @@ static bool diff_run_evaluator_case(Arena *arena,
     init.stream = stream;
     init.source_dir = nob_sv_from_cstr(source_dir);
     init.binary_dir = nob_sv_from_cstr(binary_dir);
-    init.current_file = cmakelists_path;
-    init.exec_mode = EVAL_EXEC_MODE_PROJECT;
+    init.current_file = script_path;
+    init.exec_mode = diff_case->mode == DIFF_MODE_SCRIPT
+                         ? EVAL_EXEC_MODE_SCRIPT
+                         : EVAL_EXEC_MODE_PROJECT;
 
     ctx = eval_test_create(&init);
     if (!ctx) goto defer;
 
-    if (!test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path) ||
-        !test_fs_join_path(".", "evaluator_stdout.txt", stdout_path) ||
-        !test_fs_join_path(".", "evaluator_stderr.txt", stderr_path)) {
+    if (!test_fs_save_current_dir(workspace_cwd) ||
+        !test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path) ||
+        !test_fs_join_path(workspace_cwd, "evaluator_stdout.txt", stdout_path) ||
+        !test_fs_join_path(workspace_cwd, "evaluator_stderr.txt", stderr_path)) {
         goto defer;
     }
 
     evaluator_begin_nob_log_capture();
     log_capture_started = true;
     if (!diff_begin_std_capture(stdout_path, stderr_path, &capture)) goto defer;
+    if (diff_case->mode == DIFF_MODE_SCRIPT) {
+        if (!nob_set_current_dir(source_dir)) goto defer;
+        cwd_changed = true;
+    }
 
     {
         Eval_Result result = eval_test_run(ctx, root);
         const Eval_Run_Report *report = eval_test_report(ctx);
+        if (cwd_changed) {
+            (void)nob_set_current_dir(workspace_cwd);
+            cwd_changed = false;
+        }
         diff_end_std_capture(&capture);
         out_run->outcome = diff_evaluator_outcome_from_result(result, report);
         if (report) {
@@ -1423,6 +1514,7 @@ static bool diff_run_evaluator_case(Arena *arena,
     return true;
 
 defer:
+    if (cwd_changed) (void)nob_set_current_dir(workspace_cwd);
     diff_end_std_capture(&capture);
     if (log_capture_started) evaluator_end_nob_log_capture();
     if (ctx) eval_test_destroy(ctx);
@@ -1434,28 +1526,43 @@ defer:
 static bool diff_run_cmake_case(Arena *arena,
                                 const Diff_Case *diff_case,
                                 const Diff_Cmake_Config *config,
+                                const char *script_path,
                                 const char *source_dir,
                                 const char *binary_dir,
                                 Diff_Cmake_Run *out_run) {
     Nob_Cmd cmd = {0};
+    char workspace_cwd[_TINYDIR_PATH_MAX] = {0};
     char stdout_path[_TINYDIR_PATH_MAX] = {0};
     char stderr_path[_TINYDIR_PATH_MAX] = {0};
     char snapshot_path[_TINYDIR_PATH_MAX] = {0};
+    bool cwd_changed = false;
     bool ok = false;
 
     if (out_run) *out_run = (Diff_Cmake_Run){0};
-    if (!arena || !diff_case || !config || !config->available || !source_dir || !binary_dir || !out_run) {
+    if (!arena || !diff_case || !config || !config->available || !script_path || !source_dir ||
+        !binary_dir || !out_run) {
         return false;
     }
 
-    if (!test_fs_join_path(".", "cmake_stdout.txt", stdout_path) ||
-        !test_fs_join_path(".", "cmake_stderr.txt", stderr_path) ||
+    if (!test_fs_save_current_dir(workspace_cwd) ||
+        !test_fs_join_path(workspace_cwd, "cmake_stdout.txt", stdout_path) ||
+        !test_fs_join_path(workspace_cwd, "cmake_stderr.txt", stderr_path) ||
         !test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path)) {
         return false;
     }
 
-    nob_cmd_append(&cmd, config->cmake_bin, "-S", source_dir, "-B", binary_dir);
+    if (diff_case->mode == DIFF_MODE_SCRIPT) {
+        if (!nob_set_current_dir(source_dir)) return false;
+        cwd_changed = true;
+        nob_cmd_append(&cmd, config->cmake_bin, "-P", script_path);
+    } else {
+        nob_cmd_append(&cmd, config->cmake_bin, "-S", source_dir, "-B", binary_dir);
+    }
     ok = nob_cmd_run(&cmd, .stdout_path = stdout_path, .stderr_path = stderr_path);
+    if (cwd_changed) {
+        (void)nob_set_current_dir(workspace_cwd);
+        cwd_changed = false;
+    }
     nob_cmd_free(cmd);
 
     out_run->command_started = true;
@@ -1623,10 +1730,15 @@ static bool diff_write_case_summary(const Diff_Cmake_Config *config,
                        nob_temp_sprintf("expected=%s\n",
                                         diff_case->expected_outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR"));
     nob_sb_append_cstr(&sb,
+                       nob_temp_sprintf("mode=%s\n",
+                                        diff_case->mode == DIFF_MODE_SCRIPT ? "SCRIPT" : "PROJECT"));
+    nob_sb_append_cstr(&sb,
                        nob_temp_sprintf("layout=%s\n",
-                                        diff_case->layout == DIFF_LAYOUT_RAW_CMAKELISTS
-                                            ? "RAW_CMAKELISTS"
-                                            : "BODY_ONLY_PROJECT"));
+                                        diff_case->mode == DIFF_MODE_SCRIPT
+                                            ? "N/A"
+                                            : (diff_case->layout == DIFF_LAYOUT_RAW_CMAKELISTS
+                                                   ? "RAW_CMAKELISTS"
+                                                   : "BODY_ONLY_PROJECT")));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("cmake_bin=%s\n", config->cmake_bin));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("cmake_version=%s\n", config->cmake_version));
     nob_sb_append_cstr(&sb,
@@ -1763,7 +1875,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     char source_dir[_TINYDIR_PATH_MAX] = {0};
     char build_eval_dir[_TINYDIR_PATH_MAX] = {0};
     char build_cmake_dir[_TINYDIR_PATH_MAX] = {0};
-    char cmakelists_path[_TINYDIR_PATH_MAX] = {0};
+    char script_path[_TINYDIR_PATH_MAX] = {0};
     char qualified_case_name[_TINYDIR_PATH_MAX] = {0};
     Diff_Evaluator_Run eval_run = {0};
     Diff_Cmake_Run cmake_run = {0};
@@ -1787,7 +1899,9 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         !test_fs_join_path(case_cwd, "source", source_dir) ||
         !test_fs_join_path(case_cwd, "build_eval", build_eval_dir) ||
         !test_fs_join_path(case_cwd, "build_cmake", build_cmake_dir) ||
-        !test_fs_join_path(source_dir, "CMakeLists.txt", cmakelists_path)) {
+        !test_fs_join_path(source_dir,
+                           diff_case->mode == DIFF_MODE_SCRIPT ? "diff_script.cmake" : "CMakeLists.txt",
+                           script_path)) {
         goto fail;
     }
 
@@ -1795,10 +1909,33 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         !nob_mkdir_if_not_exists(build_eval_dir) ||
         !nob_mkdir_if_not_exists(build_cmake_dir) ||
         !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
-        !diff_generate_cmakelists(arena, diff_case, cmakelists_path, &(String_View){0}) ||
+        !diff_generate_case_script(arena, diff_case, script_path, &(String_View){0}) ||
         !diff_apply_env_ops(diff_case, &env_guards) ||
-        !diff_run_evaluator_case(arena, diff_case, cmakelists_path, source_dir, build_eval_dir, &eval_run) ||
-        !diff_run_cmake_case(arena, diff_case, config, source_dir, build_cmake_dir, &cmake_run) ||
+        !diff_run_evaluator_case(arena,
+                                 diff_case,
+                                 script_path,
+                                 source_dir,
+                                 diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_eval_dir,
+                                 &eval_run)) {
+        goto fail;
+    }
+
+    if (diff_case->mode == DIFF_MODE_SCRIPT) {
+        if (!test_fs_remove_tree(source_dir) ||
+            !nob_mkdir_if_not_exists(source_dir) ||
+            !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
+            !diff_generate_case_script(arena, diff_case, script_path, &(String_View){0})) {
+            goto fail;
+        }
+    }
+
+    if (!diff_run_cmake_case(arena,
+                             diff_case,
+                             config,
+                             script_path,
+                             source_dir,
+                             diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_cmake_dir,
+                             &cmake_run) ||
         !diff_record_snapshots(&eval_run, &cmake_run) ||
         !diff_write_case_summary(config,
                                  case_pack,

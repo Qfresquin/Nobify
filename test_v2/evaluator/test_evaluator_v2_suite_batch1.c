@@ -1694,7 +1694,7 @@ TEST(evaluator_include_cmp0017_search_order_from_builtin_modules) {
         if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
         if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("include_cmp0017_probe"))) continue;
         if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("PICK_OLD=user"))) saw_pick_old = true;
-        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("PICK_NEW=root"))) saw_pick_new = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("PICK_NEW=user"))) saw_pick_new = true;
     }
     ASSERT(saw_pick_old);
     ASSERT(saw_pick_new);

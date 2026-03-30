@@ -107,13 +107,15 @@ static String_View parse_eval_arg_single(EvalExecContext *ctx, const Arg *arg) {
     if (!ctx || !arg) return nob_sv_from_cstr("");
 
     String_View flat = parse_arg_flat(ctx, arg);
-    String_View value = eval_expand_vars(ctx, flat);
+    String_View value = flat;
+    if (arg->kind == ARG_QUOTED) {
+        value = eval_resolve_quoted_arg_temp(ctx, flat, true);
+    } else {
+        value = eval_expand_vars(ctx, flat);
+    }
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
 
     if (arg->kind == ARG_QUOTED) {
-        if (value.count >= 2 && value.data[0] == '"' && value.data[value.count - 1] == '"') {
-            return nob_sv_from_parts(value.data + 1, value.count - 2);
-        }
         return value;
     }
     if (arg->kind == ARG_BRACKET) {

@@ -16,15 +16,19 @@ binary.
 
 ## Current Scope
 
-V1 is intentionally narrow:
+The harness now supports both `project-mode` and `script-mode`:
 
-- `project-mode` only
+- `PROJECT` remains the default case mode
+- `SCRIPT` uses `cmake -P` and runs with `source_dir == binary_dir == source`
 - seed case packs for `target_*`, `list()`, `var_commands`, `property_query`,
-  `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`,
+  `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`/`add_dependencies()`,
   `add_subdirectory()`, `string()`, `project()`/`cmake_minimum_required()`/`cmake_policy()`,
   `message()`, `configure_file()`, `directory_usage`, `property_setters`,
   `testing_meta`, `argument_parsing`, `find_pathlike`, `host_identity`,
-  `cache_loading`, `legacy_generation`, and direct property-wrapper coverage
+  `cache_loading`, `legacy_generation`, direct property-wrapper coverage,
+  plus script-first families for `include()`, `execute_process()`,
+  `cmake_language(CALL/EVAL/GET_MESSAGE_LOG_LEVEL)`, script-snapshot
+  `file()`, `cmake_policy()`, and script-mode `configure_file()`
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome plus any opt-in post-run observations
@@ -60,10 +64,17 @@ Current case packs:
 - `host_identity_seed_cases.cmake`
 - `cache_loading_seed_cases.cmake`
 - `legacy_generation_seed_cases.cmake`
+- `include_seed_cases.cmake`
+- `execute_process_seed_cases.cmake`
+- `cmake_language_seed_cases.cmake`
+- `file_script_seed_cases.cmake`
+- `cmake_policy_script_seed_cases.cmake`
+- `configure_file_script_seed_cases.cmake`
 
 Supported directives:
 
 - `#@@CASE <name>`
+- `#@@MODE PROJECT|SCRIPT`
 - `#@@OUTCOME SUCCESS|ERROR`
 - `#@@PROJECT_LAYOUT BODY_ONLY_PROJECT|RAW_CMAKELISTS`
 - `#@@FILE <relpath>`
@@ -84,22 +95,34 @@ Supported directives:
 - `#@@QUERY GLOBAL_PROP <property>`
 - `#@@QUERY DIR_PROP <dir> <property>`
 
-By default, the case body is treated as a body-only project script. The harness
-generates a complete `CMakeLists.txt` with:
+`PROJECT` mode:
 
-- `cmake_minimum_required(VERSION 3.28)`
-- `project(DiffCase LANGUAGES C CXX)`
-- the case body
-- an automatically generated probe block
+- by default, the case body is treated as a body-only project script
+- the harness generates a complete `CMakeLists.txt` with:
+  - `cmake_minimum_required(VERSION 3.28)`
+  - `project(DiffCase LANGUAGES C CXX)`
+  - the case body
+  - an automatically generated probe block
 
 If `#@@PROJECT_LAYOUT RAW_CMAKELISTS` is used, the body becomes the full
 `CMakeLists.txt` and the harness appends only the probe block.
+
+`SCRIPT` mode:
+
+- the harness generates `source/diff_script.cmake`
+- it does not inject `cmake_minimum_required()` or `project()`
+- it appends the same probe block to the script body
+- the evaluator runs with `EVAL_EXEC_MODE_SCRIPT`
+- real CMake runs as `cmake -P <abs path>/diff_script.cmake`
+- the harness temporarily uses the case source directory as cwd on both sides
 
 Fixture path scope:
 
 - `source/<rel>` writes under the case source tree
 - `build/<rel>` writes under both evaluator and CMake build trees
 - bare fixture paths default to the source tree for compatibility
+- `build/<rel>` is rejected in `SCRIPT` mode to avoid ambiguous
+  `CMAKE_BINARY_DIR` semantics
 
 ## Snapshot Format
 

@@ -3613,6 +3613,69 @@ TEST(evaluator_target_usage_commands_store_canonical_direct_and_interface_proper
     TEST_PASS();
 }
 
+TEST(evaluator_add_dependencies_projects_manual_dependency_property) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(dep STATIC dep.c)\n"
+        "add_library(main STATIC main.c)\n"
+        "add_library(iface INTERFACE)\n"
+        "add_dependencies(main dep)\n"
+        "add_dependencies(iface dep)\n"
+        "get_target_property(MAIN_MANUAL main MANUALLY_ADDED_DEPENDENCIES)\n"
+        "get_target_property(IFACE_MANUAL iface MANUALLY_ADDED_DEPENDENCIES)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MAIN_MANUAL")),
+                     nob_sv_from_cstr("dep")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("IFACE_MANUAL")),
+                     nob_sv_from_cstr("dep")));
+
+    bool saw_main_dep = false;
+    bool saw_iface_dep = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_ADD_DEPENDENCY) continue;
+        if (nob_sv_eq(ev->as.target_add_dependency.target_name, nob_sv_from_cstr("main")) &&
+            nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("dep"))) {
+            saw_main_dep = true;
+        } else if (nob_sv_eq(ev->as.target_add_dependency.target_name, nob_sv_from_cstr("iface")) &&
+                   nob_sv_eq(ev->as.target_add_dependency.dependency_name, nob_sv_from_cstr("dep"))) {
+            saw_iface_dep = true;
+        }
+    }
+
+    ASSERT(saw_main_dep);
+    ASSERT(saw_iface_dep);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_usage_commands_require_visibility_and_restrict_imported_targets) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -4888,6 +4951,7 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_batch8_legacy_commands_reject_invalid_forms(passed, failed, skipped);
     test_evaluator_target_sources_compile_features_and_precompile_headers_model_usage_requirements(passed, failed, skipped);
     test_evaluator_target_usage_commands_store_canonical_direct_and_interface_properties(passed, failed, skipped);
+    test_evaluator_add_dependencies_projects_manual_dependency_property(passed, failed, skipped);
     test_evaluator_target_usage_commands_require_visibility_and_restrict_imported_targets(passed, failed, skipped);
     test_evaluator_target_usage_commands_project_system_and_before_into_canonical_properties(passed, failed, skipped);
     test_evaluator_target_sources_file_set_headers_project_include_directory_side_effects(passed, failed, skipped);

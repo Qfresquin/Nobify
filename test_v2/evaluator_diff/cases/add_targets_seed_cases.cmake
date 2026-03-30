@@ -35,6 +35,21 @@ add_library(base_alias ALIAS base_lib)
 add_library(iface INTERFACE EXCLUDE_FROM_ALL)
 #@@ENDCASE
 
+#@@CASE add_dependencies_projects_manual_dependency_property
+#@@OUTCOME SUCCESS
+#@@FILE dep.c
+#@@FILE main.c
+#@@QUERY VAR MAIN_MANUAL
+#@@QUERY VAR IFACE_MANUAL
+add_library(dep STATIC dep.c)
+add_library(main STATIC main.c)
+add_library(iface INTERFACE)
+add_dependencies(main dep)
+add_dependencies(iface dep)
+get_target_property(MAIN_MANUAL main MANUALLY_ADDED_DEPENDENCIES)
+get_target_property(IFACE_MANUAL iface MANUALLY_ADDED_DEPENDENCIES)
+#@@ENDCASE
+
 #@@CASE add_executable_alias_of_alias_errors
 #@@OUTCOME ERROR
 add_executable(tool IMPORTED GLOBAL)
@@ -45,4 +60,11 @@ add_executable(tool_alias2 ALIAS tool_alias)
 #@@CASE add_library_imported_requires_explicit_type
 #@@OUTCOME ERROR
 add_library(bad_import IMPORTED)
+#@@ENDCASE
+
+#@@CASE add_dependencies_missing_dependency_errors
+#@@OUTCOME ERROR
+#@@FILE main.c
+add_library(main STATIC main.c)
+add_dependencies(main missing_dep)
 #@@ENDCASE

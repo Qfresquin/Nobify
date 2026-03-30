@@ -132,3 +132,126 @@ else()
   set(HAS_MACRO 1)
 endif()
 #@@ENDCASE
+
+#@@CASE property_query_synthetic_directory_and_cmake_providers
+#@@OUTCOME SUCCESS
+#@@FILE source/gp_provider_sub/local.c
+#@@FILE_TEXT source/gp_provider_sub/CMakeLists.txt
+set(CHILD_ONLY child_scope)
+macro(child_macro)
+endmacro()
+add_library(child_real STATIC local.c)
+add_library(child_imp STATIC IMPORTED)
+add_test(NAME child_test COMMAND "${CMAKE_COMMAND}" -E true)
+#@@END_FILE_TEXT
+#@@QUERY VAR CP_ROLE
+#@@QUERY VAR CP_TRY
+#@@QUERY VAR CP_MULTI
+#@@QUERY VAR CHILD_DEF
+#@@QUERY VAR CHILD_BUILDSYSTEM
+#@@QUERY VAR CHILD_IMPORTED
+#@@QUERY VAR CHILD_TESTS
+#@@QUERY VAR CHILD_SOURCE_HAS_SUBDIR
+#@@QUERY VAR CHILD_BINARY_HAS_BUILD
+#@@QUERY VAR CHILD_PARENT_HAS_ROOT
+#@@QUERY VAR ROOT_SUBDIRS_HAS_CHILD
+#@@QUERY VAR HAS_CHILD_VAR
+#@@QUERY VAR HAS_CHILD_MACRO
+#@@QUERY VAR HAS_CHILD_LISTFILE
+enable_testing()
+macro(root_macro)
+endmacro()
+add_subdirectory(gp_provider_sub gp_provider_build)
+set(CHILD_ONLY root_shadow)
+get_cmake_property(CP_ROLE CMAKE_ROLE)
+get_cmake_property(CP_TRY IN_TRY_COMPILE)
+get_cmake_property(CP_MULTI GENERATOR_IS_MULTI_CONFIG)
+get_directory_property(CHILD_DEF DIRECTORY gp_provider_sub DEFINITION CHILD_ONLY)
+get_directory_property(CHILD_SOURCE DIRECTORY gp_provider_sub SOURCE_DIR)
+get_directory_property(CHILD_BINARY DIRECTORY gp_provider_sub BINARY_DIR)
+get_directory_property(CHILD_PARENT DIRECTORY gp_provider_sub PARENT_DIRECTORY)
+get_directory_property(ROOT_SUBDIRS SUBDIRECTORIES)
+get_directory_property(CHILD_BUILDSYSTEM DIRECTORY gp_provider_sub BUILDSYSTEM_TARGETS)
+get_directory_property(CHILD_IMPORTED DIRECTORY gp_provider_sub IMPORTED_TARGETS)
+get_directory_property(CHILD_TESTS DIRECTORY gp_provider_sub TESTS)
+get_directory_property(CHILD_VARIABLES DIRECTORY gp_provider_sub VARIABLES)
+get_directory_property(CHILD_MACROS DIRECTORY gp_provider_sub MACROS)
+get_directory_property(CHILD_LISTFILES DIRECTORY gp_provider_sub LISTFILE_STACK)
+list(FIND CHILD_VARIABLES CHILD_ONLY IDX_CHILD_VAR)
+list(FIND CHILD_MACROS child_macro IDX_CHILD_MACRO)
+string(FIND "${CHILD_SOURCE}" "gp_provider_sub" CHILD_SOURCE_HAS_SUBDIR_POS)
+string(FIND "${CHILD_BINARY}" "gp_provider_build" CHILD_BINARY_HAS_BUILD_POS)
+string(FIND "${CHILD_PARENT}" "${CMAKE_CURRENT_SOURCE_DIR}" CHILD_PARENT_HAS_ROOT_POS)
+string(FIND "${ROOT_SUBDIRS}" "gp_provider_sub" ROOT_SUBDIRS_HAS_CHILD_POS)
+string(FIND "${CHILD_LISTFILES}" "gp_provider_sub/CMakeLists.txt" HAS_CHILD_LISTFILE_POS)
+if(IDX_CHILD_VAR EQUAL -1)
+  set(HAS_CHILD_VAR 0)
+else()
+  set(HAS_CHILD_VAR 1)
+endif()
+if(IDX_CHILD_MACRO EQUAL -1)
+  set(HAS_CHILD_MACRO 0)
+else()
+  set(HAS_CHILD_MACRO 1)
+endif()
+if(CHILD_SOURCE_HAS_SUBDIR_POS EQUAL -1)
+  set(CHILD_SOURCE_HAS_SUBDIR 0)
+else()
+  set(CHILD_SOURCE_HAS_SUBDIR 1)
+endif()
+if(CHILD_BINARY_HAS_BUILD_POS EQUAL -1)
+  set(CHILD_BINARY_HAS_BUILD 0)
+else()
+  set(CHILD_BINARY_HAS_BUILD 1)
+endif()
+if(CHILD_PARENT_HAS_ROOT_POS EQUAL -1)
+  set(CHILD_PARENT_HAS_ROOT 0)
+else()
+  set(CHILD_PARENT_HAS_ROOT 1)
+endif()
+if(ROOT_SUBDIRS_HAS_CHILD_POS EQUAL -1)
+  set(ROOT_SUBDIRS_HAS_CHILD 0)
+else()
+  set(ROOT_SUBDIRS_HAS_CHILD 1)
+endif()
+if(HAS_CHILD_LISTFILE_POS EQUAL -1)
+  set(HAS_CHILD_LISTFILE 0)
+else()
+  set(HAS_CHILD_LISTFILE 1)
+endif()
+#@@ENDCASE
+
+#@@CASE property_query_binary_dir_scoped_source_and_test_wrappers
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/gp_bin_src/CMakeLists.txt
+set_property(DIRECTORY PROPERTY BIN_DIR_PROP from_child)
+set_source_files_properties(sub_file.c PROPERTIES BIN_SRC_PROP from_source)
+add_test(NAME gp_bin_test COMMAND "${CMAKE_COMMAND}" -E true)
+set_tests_properties(gp_bin_test PROPERTIES LABELS from_test)
+#@@END_FILE_TEXT
+#@@FILE source/gp_bin_src/sub_file.c
+#@@QUERY VAR DIR_FROM_BIN
+#@@QUERY VAR TEST_FROM_BIN
+#@@QUERY VAR SRC_WRAP_FROM_BIN
+#@@QUERY VAR TEST_WRAP_FROM_BIN
+#@@QUERY VAR DIR_UPDATED
+#@@QUERY VAR SRC_UPDATED
+#@@QUERY VAR TEST_UPDATED
+#@@QUERY VAR SRC_WRAP_UPDATED
+#@@QUERY VAR TEST_WRAP_UPDATED
+enable_testing()
+add_subdirectory(gp_bin_src gp_bin_build)
+set(CHILD_BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/gp_bin_build")
+get_property(DIR_FROM_BIN DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_DIR_PROP)
+get_property(TEST_FROM_BIN TEST gp_bin_test DIRECTORY "${CHILD_BIN_DIR}" PROPERTY LABELS)
+get_source_file_property(SRC_WRAP_FROM_BIN sub_file.c DIRECTORY "${CHILD_BIN_DIR}" BIN_SRC_PROP)
+get_test_property(gp_bin_test LABELS DIRECTORY "${CHILD_BIN_DIR}" TEST_WRAP_FROM_BIN)
+set_property(DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_DIR_PROP updated_dir)
+set_property(SOURCE sub_file.c DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_SRC_PROP updated_source)
+set_property(TEST gp_bin_test DIRECTORY "${CHILD_BIN_DIR}" PROPERTY LABELS updated_test)
+get_property(DIR_UPDATED DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_DIR_PROP)
+get_property(SRC_UPDATED SOURCE sub_file.c DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_SRC_PROP)
+get_property(TEST_UPDATED TEST gp_bin_test DIRECTORY "${CHILD_BIN_DIR}" PROPERTY LABELS)
+get_source_file_property(SRC_WRAP_UPDATED sub_file.c DIRECTORY "${CHILD_BIN_DIR}" BIN_SRC_PROP)
+get_test_property(gp_bin_test LABELS DIRECTORY "${CHILD_BIN_DIR}" TEST_WRAP_UPDATED)
+#@@ENDCASE

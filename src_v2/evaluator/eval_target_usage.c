@@ -1309,6 +1309,16 @@ Eval_Result eval_handle_add_dependencies(EvalExecContext *ctx, const Node *node)
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "dispatcher", nob_sv_from_cstr("add_dependencies() cannot depend on ALIAS targets"), dep);
             return eval_result_from_ctx(ctx);
         }
+        if (!eval_property_write(ctx,
+                                 o,
+                                 nob_sv_from_cstr("TARGET"),
+                                 target_name,
+                                 nob_sv_from_cstr("MANUALLY_ADDED_DEPENDENCIES"),
+                                 dep,
+                                 EV_PROP_APPEND_LIST,
+                                 false)) {
+            return eval_result_from_ctx(ctx);
+        }
         if (!eval_emit_target_dependency(ctx, o, target_name, dep)) return eval_result_from_ctx(ctx);
     }
 

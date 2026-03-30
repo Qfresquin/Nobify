@@ -114,13 +114,15 @@ Important distinction:
 - the differential program below is the operational backlog for converting that
   parity claim into explicit oracle-backed evidence
 
-Current v1 status:
+Current differential status:
 - runner entry point: `./build/nob_test test-evaluator-diff`
 - suite location: `test_v2/evaluator_diff/`
 - oracle policy: resolve `cmake` from `CMK2NOB_TEST_CMAKE_BIN`, then `PATH`
 - version gate: only `cmake 3.28.x` participates; otherwise the suite skips
-- current mode: `project-mode` only
-- current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`, `add_subdirectory()`, `string()`, `project()` / `cmake_minimum_required()` / `cmake_policy()`, `message()`, `configure_file()`, and direct property-wrapper seed cases
+- current modes:
+  - `project-mode`
+  - `script-mode`
+- current family coverage: `target_*`, `list()`, `var_commands`, `property_query`, `cmake_path()`, `get_filename_component()`, `math()`, `add_executable()`/`add_library()`/`add_dependencies()`, `add_subdirectory()`, `string()`, `project()` / `cmake_minimum_required()` / `cmake_policy()`, `message()`, `configure_file()`, and direct property-wrapper seed cases
 - expanded Phase 1 snapshot families now also cover:
   - `directory_usage`
     - `add_compile_definitions`
@@ -159,12 +161,38 @@ Current v1 status:
     - `make_directory`
     - `aux_source_directory`
     - `create_test_sourcelist`
+- Phase 2 script-first families now also cover:
+  - `include`
+    - `include()`
+    - `include_guard()`
+    - the currently modeled `CMP0017` search-order subset
+  - `execute_process`
+  - `cmake_language`
+    - `CALL`
+    - `EVAL CODE`
+    - `GET_MESSAGE_LOG_LEVEL`
+  - `file()` script snapshot subset
+    - `WRITE`, `APPEND`, `READ`, `STRINGS`
+    - `GLOB`, `GLOB_RECURSE`
+    - `MAKE_DIRECTORY`, `RENAME`, `COPY_FILE`, `COPY`
+    - `REMOVE`, `REMOVE_RECURSE`
+    - `REAL_PATH`, `SIZE`, `HASH`, `TIMESTAMP`
+  - `cmake_policy` script subset
+    - `SET`, `GET`, `PUSH`, `POP`, `VERSION`
+    - `if(POLICY ...)`
+  - `configure_file` in `SCRIPT` mode
 - current comparison model:
   - `SUCCESS`: compare normalized probe snapshot plus opt-in post-run observations
   - `ERROR`: compare normalized `OUTCOME` only by default, plus any opt-in post-run observations
+- Phase 1 closure status:
+  - the generic `project-mode` snapshot lane is now closed for the currently
+    selected Phase 1 command families
+  - the remaining uncovered commands are no longer Phase 1 snapshot debt; they
+    are explicitly assigned to later differential lanes below
 
 Current v1 DSL:
 - `#@@CASE <name>`
+- `#@@MODE PROJECT|SCRIPT`
 - `#@@OUTCOME SUCCESS|ERROR`
 - `#@@PROJECT_LAYOUT BODY_ONLY_PROJECT|RAW_CMAKELISTS`
 - `#@@FILE <relpath>`
@@ -205,11 +233,6 @@ Operational backlog rule:
 - no command should remain “unowned” by the differential program
 
 Current backlog split for remaining non-covered families:
-- still expected to fit generic `project-mode` snapshot differential in a later
-  batch:
-  - `project`-adjacent expansion still worth adding as dedicated families:
-    `set_property` follow-on depth, `add_dependencies` if a stable public query
-    is chosen, and any remaining `get_*`/`set_*` wrappers not yet seeded
 - explicitly reclassified out of Phase 1 snapshot closure and into later lanes:
   - `host-effect differential`
     - `install`
@@ -263,10 +286,18 @@ Roadmap:
     now in place
 - **Phase 2, add `script-mode` to the same harness**
   - introduce `#@@MODE PROJECT|SCRIPT`
-  - cover `file()`, `configure_file`, `execute_process`, `include()`,
-    `cmake_language(EVAL/CALL/DEFER)`, policy commands, and script-first
-    control/data commands whose primary semantics do not require a project
-    configure
+  - status: in progress
+  - delivered in this slice:
+    - `include()` / `include_guard()`
+    - `execute_process()`
+    - `cmake_language(CALL/EVAL/GET_MESSAGE_LOG_LEVEL)`
+    - script-snapshot `file()`
+    - script-snapshot `cmake_policy()`
+    - script-mode `configure_file()`
+  - still deferred inside Phase 2:
+    - `cmake_language(DEFER)`
+    - dependency-provider paths
+    - `file()` subcommands that need host-effect or special-oracle lanes
 - **Phase 3, model host and filesystem effects**
   - extend snapshots into manifests for files, normalized contents, process
     results, and staged side effects

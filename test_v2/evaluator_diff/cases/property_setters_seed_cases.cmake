@@ -41,3 +41,30 @@ set_target_properties(alias_real PROPERTIES OUTPUT_NAME bad_alias)
 #@@OUTCOME ERROR
 set_property(CACHE MISSING_X PROPERTY VALUE bad)
 #@@ENDCASE
+
+#@@CASE property_setters_binary_dir_scoped_directory_source_and_test_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/gp_bin_src/CMakeLists.txt
+set_property(DIRECTORY PROPERTY BIN_DIR_PROP from_child)
+set_source_files_properties(sub_file.c PROPERTIES BIN_SRC_PROP from_source)
+add_test(NAME gp_bin_test COMMAND "${CMAKE_COMMAND}" -E true)
+set_tests_properties(gp_bin_test PROPERTIES LABELS from_test)
+#@@END_FILE_TEXT
+#@@FILE source/gp_bin_src/sub_file.c
+#@@QUERY VAR DIR_UPDATED
+#@@QUERY VAR SRC_UPDATED
+#@@QUERY VAR TEST_UPDATED
+#@@QUERY VAR SRC_WRAP_UPDATED
+#@@QUERY VAR TEST_WRAP_UPDATED
+enable_testing()
+add_subdirectory(gp_bin_src gp_bin_build)
+set(CHILD_BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/gp_bin_build")
+set_property(DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_DIR_PROP updated_dir)
+set_property(SOURCE sub_file.c DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_SRC_PROP updated_source)
+set_property(TEST gp_bin_test DIRECTORY "${CHILD_BIN_DIR}" PROPERTY LABELS updated_test)
+get_property(DIR_UPDATED DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_DIR_PROP)
+get_property(SRC_UPDATED SOURCE sub_file.c DIRECTORY "${CHILD_BIN_DIR}" PROPERTY BIN_SRC_PROP)
+get_property(TEST_UPDATED TEST gp_bin_test DIRECTORY "${CHILD_BIN_DIR}" PROPERTY LABELS)
+get_source_file_property(SRC_WRAP_UPDATED sub_file.c DIRECTORY "${CHILD_BIN_DIR}" BIN_SRC_PROP)
+get_test_property(gp_bin_test LABELS DIRECTORY "${CHILD_BIN_DIR}" TEST_WRAP_UPDATED)
+#@@ENDCASE
