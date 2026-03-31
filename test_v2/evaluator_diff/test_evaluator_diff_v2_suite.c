@@ -4,6 +4,8 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
 #if defined(_WIN32)
 #include <io.h>
 #else
@@ -63,6 +65,10 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"file_script", "test_v2/evaluator_diff/cases/file_script_seed_cases.cmake"},
     {"cmake_policy_script", "test_v2/evaluator_diff/cases/cmake_policy_script_seed_cases.cmake"},
     {"configure_file_script", "test_v2/evaluator_diff/cases/configure_file_script_seed_cases.cmake"},
+    {"install_host_effect", "test_v2/evaluator_diff/cases/install_host_effect_seed_cases.cmake"},
+    {"export_host_effect", "test_v2/evaluator_diff/cases/export_host_effect_seed_cases.cmake"},
+    {"file_host_effect", "test_v2/evaluator_diff/cases/file_host_effect_seed_cases.cmake"},
+    {"fetchcontent_host_effect", "test_v2/evaluator_diff/cases/fetchcontent_host_effect_seed_cases.cmake"},
 };
 
 typedef enum {
@@ -88,6 +94,7 @@ typedef enum {
 typedef enum {
     DIFF_ENV_SET = 0,
     DIFF_ENV_UNSET,
+    DIFF_ENV_SET_PATH,
 } Diff_Env_Op_Kind;
 
 typedef enum {
@@ -99,6 +106,8 @@ typedef enum {
     DIFF_QUERY_STDOUT,
     DIFF_QUERY_STDERR,
     DIFF_QUERY_FILE_TEXT,
+    DIFF_QUERY_FILE_SHA256,
+    DIFF_QUERY_TREE,
     DIFF_QUERY_CMAKE_PROP,
     DIFF_QUERY_GLOBAL_PROP,
     DIFF_QUERY_DIR_PROP,
@@ -125,6 +134,8 @@ typedef struct {
     Diff_Env_Op_Kind kind;
     String_View name;
     String_View value;
+    Diff_Path_Scope path_scope;
+    String_View path_relpath;
 } Diff_Env_Op;
 
 typedef struct {
@@ -289,6 +300,323 @@ static bool diff_read_text_file(Arena *arena, const char *path, String_View *out
     if (!arena || !path || !out) return false;
     if (!test_ws_host_path_exists(path)) return true;
     return evaluator_load_text_file_to_arena(arena, path, out);
+}
+
+static uint32_t diff_load_be32(const unsigned char *p) {
+    return ((uint32_t)p[0] << 24) |
+           ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) |
+           ((uint32_t)p[3]);
+}
+
+static void diff_store_be32(unsigned char *p, uint32_t v) {
+    p[0] = (unsigned char)((v >> 24) & 0xFF);
+    p[1] = (unsigned char)((v >> 16) & 0xFF);
+    p[2] = (unsigned char)((v >> 8) & 0xFF);
+    p[3] = (unsigned char)(v & 0xFF);
+}
+
+static uint32_t diff_rotr32(uint32_t x, uint32_t n) {
+    return (x >> n) | (x << (32 - n));
+}
+
+static void diff_sha256_process_block(uint32_t state[8], const unsigned char block[64]) {
+    static const uint32_t k[64] = {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U
+    };
+
+    uint32_t w[64] = {0};
+    for (size_t i = 0; i < 16; i++) w[i] = diff_load_be32(block + (i * 4));
+    for (size_t i = 16; i < 64; i++) {
+        uint32_t s0 = diff_rotr32(w[i - 15], 7) ^ diff_rotr32(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = diff_rotr32(w[i - 2], 17) ^ diff_rotr32(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    uint32_t a = state[0];
+    uint32_t b = state[1];
+    uint32_t c = state[2];
+    uint32_t d = state[3];
+    uint32_t e = state[4];
+    uint32_t f = state[5];
+    uint32_t g = state[6];
+    uint32_t h = state[7];
+
+    for (size_t i = 0; i < 64; i++) {
+        uint32_t s1 = diff_rotr32(e, 6) ^ diff_rotr32(e, 11) ^ diff_rotr32(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + s1 + ch + k[i] + w[i];
+        uint32_t s0 = diff_rotr32(a, 2) ^ diff_rotr32(a, 13) ^ diff_rotr32(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+}
+
+static void diff_sha256_compute(const unsigned char *msg, size_t len, unsigned char out[32]) {
+    static const uint32_t init_state[8] = {
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
+    };
+    uint32_t state[8] = {0};
+    memcpy(state, init_state, sizeof(state));
+
+    for (size_t i = 0; i + 64 <= len; i += 64) {
+        diff_sha256_process_block(state, msg + i);
+    }
+
+    unsigned char tail[128] = {0};
+    size_t rem = len % 64;
+    if (rem > 0) memcpy(tail, msg + (len - rem), rem);
+    tail[rem] = 0x80;
+    size_t tail_len = rem < 56 ? 64 : 128;
+    uint64_t bits = ((uint64_t)len) * 8U;
+    for (size_t i = 0; i < 8; i++) {
+        tail[tail_len - 1 - i] = (unsigned char)((bits >> (8 * i)) & 0xFFU);
+    }
+    diff_sha256_process_block(state, tail);
+    if (tail_len == 128) diff_sha256_process_block(state, tail + 64);
+
+    for (size_t i = 0; i < 8; i++) diff_store_be32(out + (i * 4), state[i]);
+}
+
+static String_View diff_sha256_hex_to_arena(Arena *arena, const void *data, size_t size) {
+    static const char lut[] = "0123456789abcdef";
+    const unsigned char *bytes = (const unsigned char*)data;
+    unsigned char digest[32] = {0};
+    char *hex = NULL;
+
+    if (!arena || (!bytes && size > 0)) return nob_sv_from_cstr("");
+    diff_sha256_compute(bytes ? bytes : (const unsigned char*)"", size, digest);
+    hex = arena_alloc(arena, 65);
+    if (!hex) return nob_sv_from_cstr("");
+    for (size_t i = 0; i < sizeof(digest); i++) {
+        hex[i * 2 + 0] = lut[(digest[i] >> 4) & 0x0F];
+        hex[i * 2 + 1] = lut[digest[i] & 0x0F];
+    }
+    hex[64] = '\0';
+    return nob_sv_from_parts(hex, 64);
+}
+
+static String_View diff_hash_file_sha256_to_arena(Arena *arena, const char *path) {
+    Nob_String_Builder sb = {0};
+    String_View out = nob_sv_from_cstr("");
+    if (!arena || !path) return out;
+    if (!nob_read_entire_file(path, &sb)) return out;
+    out = diff_sha256_hex_to_arena(arena, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    return out;
+}
+
+static void diff_normalize_slashes(char *text) {
+    if (!text) return;
+    for (size_t i = 0; text[i] != '\0'; i++) {
+        if (text[i] == '\\') text[i] = '/';
+    }
+}
+
+static int diff_cstr_ptr_cmp(const void *lhs, const void *rhs) {
+    const char *const *a = (const char *const*)lhs;
+    const char *const *b = (const char *const*)rhs;
+    return strcmp(*a, *b);
+}
+
+static bool diff_get_file_size_and_exec(const char *path, unsigned long long *out_size, bool *out_exec) {
+    if (out_size) *out_size = 0;
+    if (out_exec) *out_exec = false;
+    if (!path) return false;
+#if defined(_WIN32)
+    WIN32_FILE_ATTRIBUTE_DATA data = {0};
+    const char *ext = strrchr(path, '.');
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data)) return false;
+    if (out_size) {
+        *out_size = ((unsigned long long)data.nFileSizeHigh << 32) |
+                    (unsigned long long)data.nFileSizeLow;
+    }
+    if (out_exec && ext) {
+        *out_exec = _stricmp(ext, ".exe") == 0 ||
+                    _stricmp(ext, ".bat") == 0 ||
+                    _stricmp(ext, ".cmd") == 0 ||
+                    _stricmp(ext, ".com") == 0;
+    }
+    return true;
+#else
+    struct stat st = {0};
+    if (stat(path, &st) != 0) return false;
+    if (out_size) *out_size = (unsigned long long)st.st_size;
+    if (out_exec) *out_exec = access(path, X_OK) == 0;
+    return true;
+#endif
+}
+
+static bool diff_read_link_target(const char *path, char out[_TINYDIR_PATH_MAX]) {
+    if (!path || !out) return false;
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path,
+                           0,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS,
+                           NULL);
+    DWORD n = 0;
+    if (h == INVALID_HANDLE_VALUE) return false;
+    n = GetFinalPathNameByHandleA(h, out, _TINYDIR_PATH_MAX, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    if (n == 0 || n >= _TINYDIR_PATH_MAX) return false;
+    if (strncmp(out, "\\\\?\\", 4) == 0) memmove(out, out + 4, strlen(out + 4) + 1);
+    diff_normalize_slashes(out);
+    return true;
+#else
+    ssize_t n = readlink(path, out, _TINYDIR_PATH_MAX - 1);
+    if (n < 0 || n >= _TINYDIR_PATH_MAX) return false;
+    out[n] = '\0';
+    diff_normalize_slashes(out);
+    return true;
+#endif
+}
+
+static bool diff_collect_tree_manifest_lines(Arena *arena,
+                                             const char *root,
+                                             const char *relpath,
+                                             char ***out_lines) {
+    Test_Fs_Path_Info info = {0};
+    if (!arena || !root || !relpath || !out_lines) return false;
+    if (!test_fs_get_path_info(root, &info)) return false;
+    if (!info.exists) return true;
+
+    if (info.is_link_like) {
+        char target[_TINYDIR_PATH_MAX] = {0};
+        if (!diff_read_link_target(root, target)) return false;
+        return arena_arr_push(arena,
+                              *out_lines,
+                              arena_strdup(arena,
+                                           nob_temp_sprintf("L:%s:target=%s",
+                                                            relpath,
+                                                            target)));
+    }
+
+    if (info.is_dir) {
+        Nob_Dir_Entry dir = {0};
+        char **children = NULL;
+        if (strcmp(relpath, ".") != 0 &&
+            !arena_arr_push(arena,
+                            *out_lines,
+                            arena_strdup(arena, nob_temp_sprintf("D:%s", relpath)))) {
+            return false;
+        }
+        if (!nob_dir_entry_open(root, &dir)) return false;
+        while (nob_dir_entry_next(&dir)) {
+            if (test_fs_is_dot_or_dotdot(dir.name)) continue;
+            if (!arena_arr_push(arena, children, arena_strdup(arena, dir.name))) {
+                nob_dir_entry_close(dir);
+                return false;
+            }
+        }
+        if (dir.error) {
+            nob_dir_entry_close(dir);
+            return false;
+        }
+        nob_dir_entry_close(dir);
+        qsort(children, arena_arr_len(children), sizeof(children[0]), diff_cstr_ptr_cmp);
+        for (size_t i = 0; i < arena_arr_len(children); i++) {
+            char child_path[_TINYDIR_PATH_MAX] = {0};
+            const char *child_rel = NULL;
+            if (!test_fs_join_path(root, children[i], child_path)) return false;
+            child_rel = strcmp(relpath, ".") == 0
+                            ? nob_temp_sprintf("%s", children[i])
+                            : nob_temp_sprintf("%s/%s", relpath, children[i]);
+            if (!diff_collect_tree_manifest_lines(arena, child_path, child_rel, out_lines)) return false;
+        }
+        return true;
+    }
+
+    {
+        unsigned long long size = 0;
+        bool exec = false;
+        String_View hash = {0};
+        if (!diff_get_file_size_and_exec(root, &size, &exec)) return false;
+        hash = diff_hash_file_sha256_to_arena(arena, root);
+        if (hash.count == 0) return false;
+        return arena_arr_push(arena,
+                              *out_lines,
+                              arena_strdup(arena,
+                                           nob_temp_sprintf("F:%s:size=%llu:sha256=%.*s:exec=%d",
+                                                            relpath,
+                                                            size,
+                                                            (int)hash.count,
+                                                            hash.data,
+                                                            exec ? 1 : 0)));
+    }
+}
+
+static bool diff_build_tree_manifest(Arena *arena, const char *path, String_View *out_manifest) {
+    Nob_String_Builder sb = {0};
+    Test_Fs_Path_Info info = {0};
+    char **lines = NULL;
+    bool ok = false;
+
+    if (out_manifest) *out_manifest = nob_sv_from_cstr("");
+    if (!arena || !path || !out_manifest) return false;
+    if (!test_fs_get_path_info(path, &info)) return false;
+    if (!info.exists) return true;
+
+    if (info.is_dir) {
+        nob_sb_append_cstr(&sb, "D:.\n");
+        if (!diff_collect_tree_manifest_lines(arena, path, ".", &lines)) goto defer;
+    } else if (info.is_link_like) {
+        char target[_TINYDIR_PATH_MAX] = {0};
+        if (!diff_read_link_target(path, target)) goto defer;
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("L:.:target=%s\n", target));
+    } else {
+        unsigned long long size = 0;
+        bool exec = false;
+        String_View hash = {0};
+        if (!diff_get_file_size_and_exec(path, &size, &exec)) goto defer;
+        hash = diff_hash_file_sha256_to_arena(arena, path);
+        if (hash.count == 0) goto defer;
+        nob_sb_append_cstr(&sb,
+                           nob_temp_sprintf("F:.:size=%llu:sha256=%.*s:exec=%d\n",
+                                            size,
+                                            (int)hash.count,
+                                            hash.data,
+                                            exec ? 1 : 0));
+    }
+
+    for (size_t i = 0; i < arena_arr_len(lines); i++) {
+        nob_sb_append_cstr(&sb, lines[i]);
+        nob_sb_append(&sb, '\n');
+    }
+    *out_manifest = diff_copy_sv(arena, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
+    ok = out_manifest->data != NULL;
+
+defer:
+    nob_sb_free(sb);
+    return ok;
 }
 
 static void diff_sanitize_name(String_View name, char out[128]) {
@@ -473,6 +801,16 @@ static bool diff_parse_query(Arena *arena, String_View line, Diff_Query *out_que
         out_query->arg0 = diff_copy_sv(arena, rest);
         return out_query->arg0.data != NULL;
     }
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY FILE_SHA256 "))) {
+        out_query->kind = DIFF_QUERY_FILE_SHA256;
+        out_query->arg0 = diff_copy_sv(arena, rest);
+        return out_query->arg0.data != NULL;
+    }
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY TREE "))) {
+        out_query->kind = DIFF_QUERY_TREE;
+        out_query->arg0 = diff_copy_sv(arena, rest);
+        return out_query->arg0.data != NULL;
+    }
     if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@QUERY CMAKE_PROP "))) {
         out_query->kind = DIFF_QUERY_CMAKE_PROP;
         out_query->arg0 = diff_copy_sv(arena, rest);
@@ -503,6 +841,7 @@ static bool diff_parse_env_op(Arena *arena, String_View line, Diff_Env_Op *out_o
     String_View name = {0};
     String_View value = {0};
     const char *eq = NULL;
+    const char *space = NULL;
 
     if (!arena || !out_op) return false;
     *out_op = (Diff_Env_Op){0};
@@ -512,6 +851,23 @@ static bool diff_parse_env_op(Arena *arena, String_View line, Diff_Env_Op *out_o
         out_op->kind = DIFF_ENV_UNSET;
         out_op->name = diff_copy_sv(arena, rest);
         return out_op->name.data != NULL;
+    }
+
+    rest = line;
+    if (nob_sv_chop_prefix(&rest, nob_sv_from_cstr("#@@ENV_PATH "))) {
+        Diff_Path_Scope scope = DIFF_PATH_SCOPE_SOURCE;
+        String_View relpath = {0};
+        space = memchr(rest.data, ' ', rest.count);
+        if (!space) return false;
+        name = nob_sv_from_parts(rest.data, (size_t)(space - rest.data));
+        value = nob_sv_from_parts(space + 1, rest.count - (size_t)(space - rest.data) - 1);
+        if (name.count == 0 || value.count == 0) return false;
+        if (!diff_split_scoped_path(value, DIFF_PATH_SCOPE_SOURCE, &scope, &relpath)) return false;
+        out_op->kind = DIFF_ENV_SET_PATH;
+        out_op->name = diff_copy_sv(arena, name);
+        out_op->path_scope = scope;
+        out_op->path_relpath = diff_copy_sv(arena, relpath);
+        return out_op->name.data != NULL && out_op->path_relpath.data != NULL;
     }
 
     rest = line;
@@ -684,7 +1040,9 @@ static bool diff_parse_case(Arena *arena,
         }
 
         line = test_case_pack_trim_cr(raw_line);
-        if (diff_sv_has_prefix(line, "#@@ENV ") || diff_sv_has_prefix(line, "#@@ENV_UNSET ")) {
+        if (diff_sv_has_prefix(line, "#@@ENV ") ||
+            diff_sv_has_prefix(line, "#@@ENV_UNSET ") ||
+            diff_sv_has_prefix(line, "#@@ENV_PATH ")) {
             Diff_Env_Op op = {0};
             if (!diff_parse_env_op(arena, line, &op) || !arena_arr_push(arena, out_case->env_ops, op)) {
                 return false;
@@ -742,6 +1100,13 @@ static bool diff_parse_case(Arena *arena,
                 return false;
             }
         }
+        for (size_t i = 0; i < arena_arr_len(out_case->env_ops); i++) {
+            if (out_case->env_ops[i].kind == DIFF_ENV_SET_PATH &&
+                out_case->env_ops[i].path_scope == DIFF_PATH_SCOPE_BUILD) {
+                nob_sb_free(body);
+                return false;
+            }
+        }
     }
 
     out_case->body = diff_copy_sv(arena, nob_sv_from_parts(body.items ? body.items : "", body.count));
@@ -762,6 +1127,8 @@ static bool diff_append_cmake_scoped_path_literal(Nob_String_Builder *out,
     }
     return true;
 }
+
+static bool diff_query_is_postrun(Diff_Query_Kind kind);
 
 static bool diff_build_probe_block(Arena *arena,
                                    const Diff_Case *diff_case,
@@ -801,6 +1168,7 @@ static bool diff_build_probe_block(Arena *arena,
 
     for (size_t i = 0; i < arena_arr_len(diff_case->queries); i++) {
         const Diff_Query *query = &diff_case->queries[i];
+        if (diff_query_is_postrun(query->kind)) continue;
         switch (query->kind) {
             case DIFF_QUERY_VAR: {
                 String_View prefix = nob_sv_from_cstr(
@@ -968,6 +1336,8 @@ static bool diff_build_probe_block(Arena *arena,
             case DIFF_QUERY_STDOUT:
             case DIFF_QUERY_STDERR:
             case DIFF_QUERY_FILE_TEXT:
+            case DIFF_QUERY_FILE_SHA256:
+            case DIFF_QUERY_TREE:
                 break;
         }
     }
@@ -1211,7 +1581,12 @@ static String_View diff_filter_cmake_stdout_to_arena(Arena *arena, String_View v
 }
 
 static bool diff_query_is_postrun(Diff_Query_Kind kind) {
-    return kind == DIFF_QUERY_STDOUT || kind == DIFF_QUERY_STDERR || kind == DIFF_QUERY_FILE_TEXT;
+    return kind == DIFF_QUERY_STDOUT ||
+           kind == DIFF_QUERY_STDERR ||
+           kind == DIFF_QUERY_FILE_EXISTS ||
+           kind == DIFF_QUERY_FILE_TEXT ||
+           kind == DIFF_QUERY_FILE_SHA256 ||
+           kind == DIFF_QUERY_TREE;
 }
 
 static bool diff_case_requires_postrun_compare(const Diff_Case *diff_case) {
@@ -1258,6 +1633,24 @@ static bool diff_build_postrun_snapshot(Arena *arena,
                 break;
             }
 
+            case DIFF_QUERY_FILE_EXISTS: {
+                Diff_Path_Scope scope = DIFF_PATH_SCOPE_BUILD;
+                String_View relpath = {0};
+                char path[_TINYDIR_PATH_MAX] = {0};
+                Test_Fs_Path_Info info = {0};
+                nob_sb_append_cstr(&sb,
+                                   nob_temp_sprintf("FILE_EXISTS:%.*s=",
+                                                    (int)query->arg0.count,
+                                                    query->arg0.data));
+                if (!diff_split_scoped_path(query->arg0, DIFF_PATH_SCOPE_BUILD, &scope, &relpath) ||
+                    !diff_resolve_scoped_path_actual(scope, relpath, source_dir, binary_dir, path) ||
+                    !test_fs_get_path_info(path, &info)) {
+                    goto defer;
+                }
+                nob_sb_append_cstr(&sb, info.exists ? "1\n" : "0\n");
+                break;
+            }
+
             case DIFF_QUERY_FILE_TEXT: {
                 Diff_Path_Scope scope = DIFF_PATH_SCOPE_BUILD;
                 String_View relpath = {0};
@@ -1284,11 +1677,64 @@ static bool diff_build_postrun_snapshot(Arena *arena,
                 break;
             }
 
+            case DIFF_QUERY_FILE_SHA256: {
+                Diff_Path_Scope scope = DIFF_PATH_SCOPE_BUILD;
+                String_View relpath = {0};
+                char path[_TINYDIR_PATH_MAX] = {0};
+                Test_Fs_Path_Info info = {0};
+                String_View hash = {0};
+                nob_sb_append_cstr(&sb,
+                                   nob_temp_sprintf("FILE_SHA256:%.*s=",
+                                                    (int)query->arg0.count,
+                                                    query->arg0.data));
+                if (!diff_split_scoped_path(query->arg0, DIFF_PATH_SCOPE_BUILD, &scope, &relpath) ||
+                    !diff_resolve_scoped_path_actual(scope, relpath, source_dir, binary_dir, path) ||
+                    !test_fs_get_path_info(path, &info)) {
+                    goto defer;
+                }
+                if (!info.exists) {
+                    nob_sb_append_cstr(&sb, "__MISSING_FILE__\n");
+                    break;
+                }
+                if (info.is_dir) {
+                    nob_sb_append_cstr(&sb, "__IS_DIR__\n");
+                    break;
+                }
+                hash = diff_hash_file_sha256_to_arena(arena, path);
+                if (hash.count == 0) goto defer;
+                nob_sb_append_buf(&sb, hash.data, hash.count);
+                nob_sb_append(&sb, '\n');
+                break;
+            }
+
+            case DIFF_QUERY_TREE: {
+                Diff_Path_Scope scope = DIFF_PATH_SCOPE_BUILD;
+                String_View relpath = {0};
+                char path[_TINYDIR_PATH_MAX] = {0};
+                Test_Fs_Path_Info info = {0};
+                String_View manifest = {0};
+                nob_sb_append_cstr(&sb,
+                                   nob_temp_sprintf("TREE_B64:%.*s=",
+                                                    (int)query->arg0.count,
+                                                    query->arg0.data));
+                if (!diff_split_scoped_path(query->arg0, DIFF_PATH_SCOPE_BUILD, &scope, &relpath) ||
+                    !diff_resolve_scoped_path_actual(scope, relpath, source_dir, binary_dir, path) ||
+                    !test_fs_get_path_info(path, &info)) {
+                    goto defer;
+                }
+                if (!info.exists) {
+                    nob_sb_append_cstr(&sb, "__MISSING_PATH__\n");
+                    break;
+                }
+                if (!diff_build_tree_manifest(arena, path, &manifest)) goto defer;
+                if (!diff_append_b64_snapshot_line(arena, &sb, nob_sv_from_cstr(""), manifest)) goto defer;
+                break;
+            }
+
             case DIFF_QUERY_VAR:
             case DIFF_QUERY_CACHE_DEFINED:
             case DIFF_QUERY_TARGET_EXISTS:
             case DIFF_QUERY_TARGET_PROP:
-            case DIFF_QUERY_FILE_EXISTS:
             case DIFF_QUERY_CMAKE_PROP:
             case DIFF_QUERY_GLOBAL_PROP:
             case DIFF_QUERY_DIR_PROP:
@@ -1606,10 +2052,12 @@ static bool diff_run_cmake_case(Arena *arena,
 }
 
 static bool diff_apply_env_ops(const Diff_Case *diff_case,
+                               const char *source_dir,
+                               const char *binary_dir,
                                Diff_Env_Guard_List *out_guards) {
     size_t count = 0;
     if (out_guards) *out_guards = (Diff_Env_Guard_List){0};
-    if (!diff_case || !out_guards) return false;
+    if (!diff_case || !source_dir || !binary_dir || !out_guards) return false;
 
     count = arena_arr_len(diff_case->env_ops);
     if (count == 0) return true;
@@ -1620,7 +2068,8 @@ static bool diff_apply_env_ops(const Diff_Case *diff_case,
 
     for (size_t i = 0; i < count; i++) {
         const Diff_Env_Op *op = &diff_case->env_ops[i];
-        const char *value = op->kind == DIFF_ENV_SET ? nob_temp_sv_to_cstr(op->value) : NULL;
+        const char *value = NULL;
+        char resolved_path[_TINYDIR_PATH_MAX] = {0};
         out_guards->items[i] = calloc(1, sizeof(*out_guards->items[i]));
         if (!out_guards->items[i]) {
             for (size_t j = i; j > 0; j--) test_host_env_guard_cleanup(out_guards->items[j - 1]);
@@ -1628,6 +2077,24 @@ static bool diff_apply_env_ops(const Diff_Case *diff_case,
             out_guards->items = NULL;
             out_guards->count = 0;
             return false;
+        }
+        if (op->kind == DIFF_ENV_SET) {
+            value = nob_temp_sv_to_cstr(op->value);
+        } else if (op->kind == DIFF_ENV_SET_PATH) {
+            if (!diff_resolve_scoped_path_actual(op->path_scope,
+                                                 op->path_relpath,
+                                                 source_dir,
+                                                 binary_dir,
+                                                 resolved_path)) {
+                free(out_guards->items[i]);
+                out_guards->items[i] = NULL;
+                for (size_t j = i; j > 0; j--) test_host_env_guard_cleanup(out_guards->items[j - 1]);
+                free(out_guards->items);
+                out_guards->items = NULL;
+                out_guards->count = 0;
+                return false;
+            }
+            value = resolved_path;
         }
         if (!test_host_env_guard_begin(out_guards->items[i], nob_temp_sv_to_cstr(op->name), value)) {
             free(out_guards->items[i]);
@@ -1872,6 +2339,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     Test_Case_Workspace ws = {0};
     Arena *arena = NULL;
     Diff_Env_Guard_List env_guards = {0};
+    Diff_Env_Guard_List cmake_env_guards = {0};
     char case_cwd[_TINYDIR_PATH_MAX] = {0};
     char source_dir[_TINYDIR_PATH_MAX] = {0};
     char build_eval_dir[_TINYDIR_PATH_MAX] = {0};
@@ -1911,7 +2379,10 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         !nob_mkdir_if_not_exists(build_cmake_dir) ||
         !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
         !diff_generate_case_script(arena, diff_case, script_path, &(String_View){0}) ||
-        !diff_apply_env_ops(diff_case, &env_guards) ||
+        !diff_apply_env_ops(diff_case,
+                           source_dir,
+                           diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_eval_dir,
+                           &env_guards) ||
         !diff_run_evaluator_case(arena,
                                  diff_case,
                                  script_path,
@@ -1929,8 +2400,13 @@ static void run_diff_case(const Diff_Cmake_Config *config,
             goto fail;
         }
     }
+    diff_release_env_guards(&env_guards);
 
-    if (!diff_run_cmake_case(arena,
+    if (!diff_apply_env_ops(diff_case,
+                            source_dir,
+                            diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_cmake_dir,
+                            &cmake_env_guards) ||
+        !diff_run_cmake_case(arena,
                              diff_case,
                              config,
                              script_path,
@@ -1972,6 +2448,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     }
 
     diff_release_env_guards(&env_guards);
+    diff_release_env_guards(&cmake_env_guards);
     arena_destroy(arena);
     if (!test_ws_case_leave(&ws)) {
         nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated differential test workspace",
@@ -1984,6 +2461,7 @@ fail:
     nob_log(NOB_ERROR, "FAILED: %s: differential harness error", qualified_case_name);
     (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
     diff_release_env_guards(&env_guards);
+    diff_release_env_guards(&cmake_env_guards);
     if (arena) arena_destroy(arena);
     (*failed)++;
     if (!test_ws_case_leave(&ws)) {

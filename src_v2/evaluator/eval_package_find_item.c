@@ -484,11 +484,89 @@ static bool find_item_append_package_roots(EvalExecContext *ctx,
     return true;
 }
 
+static bool find_item_append_prefix_list_variants(EvalExecContext *ctx,
+                                                  Find_Item_Kind kind,
+                                                  String_View prefixes_csv,
+                                                  SV_List *out_dirs) {
+    if (!ctx || !out_dirs || prefixes_csv.count == 0) return true;
+
+    SV_List prefixes = NULL;
+    if (!find_package_split_semicolon_temp(ctx, prefixes_csv, &prefixes)) return false;
+    for (size_t i = 0; i < arena_arr_len(prefixes); i++) {
+        if (prefixes[i].count == 0) continue;
+        if (!find_item_list_append(ctx, out_dirs, prefixes[i])) return false;
+        if (kind == FIND_ITEM_PROGRAM) {
+            if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefixes[i], nob_sv_from_cstr("bin")))) return false;
+            if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefixes[i], nob_sv_from_cstr("sbin")))) return false;
+        } else if (kind == FIND_ITEM_LIBRARY) {
+            if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefixes[i], nob_sv_from_cstr("lib")))) return false;
+            if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefixes[i], nob_sv_from_cstr("lib64")))) return false;
+        } else {
+            if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefixes[i], nob_sv_from_cstr("include")))) return false;
+            if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), prefixes[i], nob_sv_from_cstr("share")))) return false;
+        }
+    }
+    return true;
+}
+
+static bool find_item_append_env_prefix_list_variants(EvalExecContext *ctx,
+                                                      Find_Item_Kind kind,
+                                                      String_View env_name,
+                                                      SV_List *out_dirs) {
+    if (!ctx || !out_dirs || env_name.count == 0) return false;
+    char *env_key = eval_sv_to_cstr_temp(ctx, env_name);
+    EVAL_OOM_RETURN_IF_NULL(ctx, env_key, false);
+
+    const char *raw = eval_getenv_temp(ctx, env_key);
+    if (!raw || raw[0] == '\0') return true;
+
+    String_View value = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(raw));
+    if (eval_should_stop(ctx)) return false;
+
+#if defined(_WIN32)
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+
+    const char *p = value.data;
+    const char *end = value.data + value.count;
+    while (p <= end) {
+        const char *q = p;
+        while (q < end && *q != sep) q++;
+        String_View item = nob_sv_from_parts(p, (size_t)(q - p));
+        if (item.count > 0) {
+            if (!find_item_list_append(ctx, out_dirs, item)) return false;
+            if (kind == FIND_ITEM_PROGRAM) {
+                if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), item, nob_sv_from_cstr("bin")))) return false;
+                if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), item, nob_sv_from_cstr("sbin")))) return false;
+            } else if (kind == FIND_ITEM_LIBRARY) {
+                if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), item, nob_sv_from_cstr("lib")))) return false;
+                if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), item, nob_sv_from_cstr("lib64")))) return false;
+            } else {
+                if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), item, nob_sv_from_cstr("include")))) return false;
+                if (!find_item_list_append(ctx, out_dirs, eval_sv_path_join(eval_temp_arena(ctx), item, nob_sv_from_cstr("share")))) return false;
+            }
+        }
+        if (q >= end) break;
+        p = q + 1;
+    }
+    return true;
+}
+
 static bool find_item_append_cmake_var_paths(EvalExecContext *ctx,
                                              const Find_Item_Options *opt,
                                              Find_Item_Kind kind,
                                              SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs || opt->no_default_path || opt->no_cmake_path) return true;
+
+    if (!find_item_append_prefix_list_variants(ctx,
+                                               kind,
+                                               eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_PREFIX_PATH")),
+                                               out_dirs)) {
+        return false;
+    }
+
     const char *var_name = NULL;
     switch (kind) {
     case FIND_ITEM_PROGRAM: var_name = "CMAKE_PROGRAM_PATH"; break;
@@ -511,6 +589,9 @@ static bool find_item_append_env_default_paths(EvalExecContext *ctx,
                                                Find_Item_Kind kind,
                                                SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs || opt->no_default_path || opt->no_cmake_environment_path) return true;
+
+    if (!find_item_append_env_prefix_list_variants(ctx, kind, nob_sv_from_cstr("CMAKE_PREFIX_PATH"), out_dirs)) return false;
+
     const char *env_name = NULL;
     switch (kind) {
     case FIND_ITEM_PROGRAM: env_name = "CMAKE_PROGRAM_PATH"; break;
@@ -538,6 +619,9 @@ static bool find_item_append_install_prefix(EvalExecContext *ctx,
                                             Find_Item_Kind kind,
                                             SV_List *out_dirs) {
     if (!ctx || !opt || !out_dirs || opt->no_default_path || opt->no_cmake_install_prefix) return true;
+    if (!eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_FIND_USE_INSTALL_PREFIX")))) {
+        return true;
+    }
     String_View prefix = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_INSTALL_PREFIX"));
     if (prefix.count == 0) return true;
     if (!find_item_list_append(ctx, out_dirs, prefix)) return false;

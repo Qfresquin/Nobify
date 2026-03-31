@@ -1,0 +1,70 @@
+#@@CASE file_host_effect_download_surface
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_TEXT build/download_out.txt
+#@@QUERY FILE_SHA256 build/download_out.txt
+#@@QUERY VAR DL_STATUS_LEN
+#@@QUERY VAR DL_STATUS_CODE
+#@@QUERY VAR DL_LOG_NONEMPTY
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/download_src.txt" "hello")
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/download_src.txt" DL_HASH)
+set(DL_URL "file://${CMAKE_CURRENT_SOURCE_DIR}/download_src.txt")
+file(DOWNLOAD
+  "${DL_URL}"
+  "${CMAKE_CURRENT_BINARY_DIR}/download_out.txt"
+  EXPECTED_HASH "SHA256=${DL_HASH}"
+  STATUS DL_STATUS
+  LOG DL_LOG)
+list(LENGTH DL_STATUS DL_STATUS_LEN)
+list(GET DL_STATUS 0 DL_STATUS_CODE)
+string(LENGTH "${DL_LOG}" DL_LOG_LEN)
+if(DL_LOG_LEN GREATER 0)
+  set(DL_LOG_NONEMPTY 1)
+else()
+  set(DL_LOG_NONEMPTY 0)
+endif()
+#@@ENDCASE
+
+#@@CASE file_host_effect_archive_surface
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_EXISTS build/sample.tar
+#@@QUERY TREE build/archive_out
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/archive_input/sub")
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/archive_input/a.txt" "A")
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/archive_input/sub/b.txt" "B")
+file(ARCHIVE_CREATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/sample.tar"
+  PATHS "${CMAKE_CURRENT_SOURCE_DIR}/archive_input"
+  FORMAT paxr
+  MTIME 0)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/archive_out")
+file(ARCHIVE_EXTRACT
+  INPUT "${CMAKE_CURRENT_BINARY_DIR}/sample.tar"
+  DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/archive_out")
+#@@ENDCASE
+
+#@@CASE file_host_effect_generate_lock_and_runtime_deps_surface
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_TEXT build/gen_out.txt
+#@@QUERY FILE_EXISTS build/lock_dir/cmake.lock
+#@@QUERY VAR LOCK_RES
+#@@QUERY VAR UNLOCK_RES
+#@@QUERY VAR RD_RES_LEN
+#@@QUERY VAR RD_UNRES_LEN
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gen_out.txt" CONTENT "OUT")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lock_dir")
+file(LOCK "${CMAKE_CURRENT_BINARY_DIR}/lock_dir" DIRECTORY RESULT_VARIABLE LOCK_RES)
+file(LOCK "${CMAKE_CURRENT_BINARY_DIR}/lock_dir" DIRECTORY RELEASE RESULT_VARIABLE UNLOCK_RES)
+file(GET_RUNTIME_DEPENDENCIES
+  RESOLVED_DEPENDENCIES_VAR RD_RES
+  UNRESOLVED_DEPENDENCIES_VAR RD_UNRES
+  EXECUTABLES "${CMAKE_COMMAND}")
+list(LENGTH RD_RES RD_RES_LEN)
+list(LENGTH RD_UNRES RD_UNRES_LEN)
+#@@ENDCASE
+
+#@@CASE file_host_effect_invalid_forms
+#@@OUTCOME ERROR
+file(ARCHIVE_CREATE OUTPUT)
+file(ARCHIVE_EXTRACT INPUT)
+file(LOCK)
+#@@ENDCASE

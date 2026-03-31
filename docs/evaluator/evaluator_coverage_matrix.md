@@ -185,6 +185,33 @@ Current differential status:
     - `SET`, `GET`, `PUSH`, `POP`, `VERSION`
     - `if(POLICY ...)`
   - `configure_file` in `SCRIPT` mode
+- Phase 3 deterministic host-effect families now also cover:
+  - `install`
+    - configure-time install artifacts and generated manifests
+    - `TARGETS`, `FILES`, `PROGRAMS`, `DIRECTORY`, `SCRIPT`, `CODE`
+    - `EXPORT`, `EXPORT_ANDROID_MK`
+    - `IMPORTED_RUNTIME_ARTIFACTS`
+    - `RUNTIME_DEPENDENCY_SET`
+  - `export`
+    - `TARGETS ... FILE`
+    - `EXPORT ... FILE`
+    - `PACKAGE` with isolated local registry side effects
+  - host-effect `file()`
+    - local `DOWNLOAD`
+    - `ARCHIVE_CREATE` / `ARCHIVE_EXTRACT`
+    - `GENERATE`
+    - `LOCK`
+    - `GET_RUNTIME_DEPENDENCIES`
+  - local deterministic `FetchContent_*`
+    - `FetchContent_Declare`
+    - `FetchContent_Populate`
+    - `FetchContent_MakeAvailable`
+    - local archive / local custom-download / local patch / saved-details / idempotence
+  - expanded `find_pathlike`
+    - isolated `ENV`
+    - isolated `PATH`
+    - `CMAKE_PREFIX_PATH`
+    - deterministic `CMAKE_INSTALL_PREFIX` default-search interactions
 - current comparison model:
   - `SUCCESS`: compare normalized probe snapshot plus opt-in post-run observations
   - `ERROR`: compare normalized `OUTCOME` only by default, plus any opt-in post-run observations
@@ -204,6 +231,7 @@ Current v1 DSL:
 - `#@@FILE_TEXT <relpath>` ... `#@@END_FILE_TEXT`
 - `#@@ENV <NAME>=<value>`
 - `#@@ENV_UNSET <NAME>`
+- `#@@ENV_PATH <NAME> <scoped-path>`
 - `#@@CACHE_INIT <NAME>:<TYPE>=<value>`
 - `#@@QUERY VAR <name>`
 - `#@@QUERY CACHE_DEFINED <name>`
@@ -213,6 +241,8 @@ Current v1 DSL:
 - `#@@QUERY STDOUT`
 - `#@@QUERY STDERR`
 - `#@@QUERY FILE_TEXT <path>`
+- `#@@QUERY FILE_SHA256 <path>`
+- `#@@QUERY TREE <path>`
 - `#@@QUERY CMAKE_PROP <property>`
 - `#@@QUERY GLOBAL_PROP <property>`
 - `#@@QUERY DIR_PROP <dir> <property>`
@@ -230,6 +260,8 @@ Current v1 snapshot lines:
 - `STDOUT_B64=<base64>`
 - `STDERR_B64=<base64>`
 - `FILE_TEXT_B64:<path>=<base64|__MISSING_FILE__>`
+- `FILE_SHA256:<path>=<hex|__MISSING_FILE__|__IS_DIR__>`
+- `TREE_B64:<path>=<base64 manifest|__MISSING_PATH__>`
 
 Operational backlog rule:
 - every registry command and every structural node must eventually be assigned
@@ -239,10 +271,9 @@ Operational backlog rule:
 Current backlog split for remaining non-covered families:
 - explicitly reclassified out of Phase 1 snapshot closure and into later lanes:
   - `host-effect differential`
-    - `install`
-    - `export`
-    - `file()` complex subcommands
-    - `FetchContent_*`
+    - `file(DOWNLOAD ...)` with real network
+    - `FetchContent_*` transports that require external VCS or network backends
+    - any future `cmake --install` real-install execution lane
   - `special oracle lane`
     - `find_package`
     - `try_compile`
@@ -307,8 +338,20 @@ Roadmap:
 - **Phase 3, model host and filesystem effects**
   - extend snapshots into manifests for files, normalized contents, process
     results, and staged side effects
-  - target `file(DOWNLOAD|ARCHIVE_*)`, `find_*`, parts of `FetchContent`,
-    `install`, and `export`
+  - status: closed for deterministic local host effects
+  - delivered in this slice:
+    - `#@@ENV_PATH`
+    - `#@@QUERY FILE_SHA256`
+    - `#@@QUERY TREE`
+    - deterministic local `install`
+    - deterministic local `export`
+    - deterministic local host-effect `file()`
+    - deterministic local `FetchContent_*`
+    - host/env expansion for `find_*`
+  - explicitly deferred beyond Phase 3:
+    - `file(DOWNLOAD ...)` with real network
+    - `FetchContent_*` with Git/SVN/Hg/CVS or other external backends
+    - real `cmake --install` execution lanes
 - **Phase 4, create special-oracle lanes**
   - add dedicated harnesses for families whose oracles are not well represented
     by the generic snapshot lane

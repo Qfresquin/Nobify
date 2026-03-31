@@ -22,6 +22,27 @@ static bool install_emit_rule(EvalExecContext *ctx,
     return eval_emit_install_rule_add(ctx, o, rule_type, item, destination);
 }
 
+static bool install_publish_artifact(EvalExecContext *ctx, String_View signature) {
+    if (!ctx) return false;
+    String_View install_path =
+        eval_sv_path_join(eval_temp_arena(ctx), eval_current_binary_dir(ctx), nob_sv_from_cstr("cmake_install.cmake"));
+    if (eval_should_stop(ctx)) return false;
+
+    bool exists = false;
+    if (!eval_service_file_exists(ctx, install_path, &exists)) return false;
+
+    Nob_String_Builder sb = {0};
+    if (!exists) nob_sb_append_cstr(&sb, "# Nobify evaluator-generated install manifest\n");
+    nob_sb_append_cstr(&sb, "# install(");
+    nob_sb_append_buf(&sb, signature.data ? signature.data : "", signature.count);
+    nob_sb_append_cstr(&sb, ")\n");
+
+    String_View contents = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    bool ok = eval_write_text_file(ctx, install_path, contents, exists);
+    nob_sb_free(sb);
+    return ok;
+}
+
 static bool install_is_files_like_keyword(String_View tok) {
     return eval_sv_eq_ci_lit(tok, "DESTINATION") ||
            eval_sv_eq_ci_lit(tok, "TYPE") ||
@@ -506,6 +527,10 @@ Eval_Result eval_handle_install(EvalExecContext *ctx, const Node *node) {
                           EV_DIAG_ERROR,
                           nob_sv_from_cstr("install() unsupported rule type"),
                           a[0]);
+    }
+
+    if (ok && !ctx->oom && ctx->runtime_state.run_report.error_count == errors_before) {
+        ok = install_publish_artifact(ctx, a[0]);
     }
 
     if (ok && !ctx->oom && ctx->runtime_state.run_report.error_count == errors_before) {

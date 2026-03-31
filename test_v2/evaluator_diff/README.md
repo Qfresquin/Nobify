@@ -31,6 +31,13 @@ The harness now supports both `project-mode` and `script-mode`:
   dependency-provider paths via `cmake_language(SET_DEPENDENCY_PROVIDER ...)`,
   script-snapshot `file()`, `cmake_policy()`, and script-mode
   `configure_file()`
+- deterministic host-effect families for:
+  - `install()`
+  - `export()`
+  - complex local `file()` effects
+  - local deterministic `FetchContent_*`
+- `find_pathlike` now also covers local `ENV`, `PATH`, and prefix-root driven
+  search flows under isolated workspace control
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome plus any opt-in post-run observations
@@ -73,6 +80,10 @@ Current case packs:
 - `file_script_seed_cases.cmake`
 - `cmake_policy_script_seed_cases.cmake`
 - `configure_file_script_seed_cases.cmake`
+- `install_host_effect_seed_cases.cmake`
+- `export_host_effect_seed_cases.cmake`
+- `file_host_effect_seed_cases.cmake`
+- `fetchcontent_host_effect_seed_cases.cmake`
 
 Supported directives:
 
@@ -85,6 +96,7 @@ Supported directives:
 - `#@@FILE_TEXT <relpath>` ... `#@@END_FILE_TEXT`
 - `#@@ENV <NAME>=<value>`
 - `#@@ENV_UNSET <NAME>`
+- `#@@ENV_PATH <NAME> <scoped-path>`
 - `#@@CACHE_INIT <NAME>:<TYPE>=<value>`
 - `#@@QUERY VAR <name>`
 - `#@@QUERY CACHE_DEFINED <name>`
@@ -94,6 +106,8 @@ Supported directives:
 - `#@@QUERY STDOUT`
 - `#@@QUERY STDERR`
 - `#@@QUERY FILE_TEXT <path>`
+- `#@@QUERY FILE_SHA256 <path>`
+- `#@@QUERY TREE <path>`
 - `#@@QUERY CMAKE_PROP <property>`
 - `#@@QUERY GLOBAL_PROP <property>`
 - `#@@QUERY DIR_PROP <dir> <property>`
@@ -126,6 +140,9 @@ Fixture path scope:
 - bare fixture paths default to the source tree for compatibility
 - `build/<rel>` is rejected in `SCRIPT` mode to avoid ambiguous
   `CMAKE_BINARY_DIR` semantics
+- `#@@ENV_PATH` resolves `source/<rel>` or `build/<rel>` to an absolute path
+  before each side runs
+- `build/<rel>` is also rejected for `#@@ENV_PATH` in `SCRIPT` mode
 
 ## Snapshot Format
 
@@ -144,6 +161,8 @@ lines:
 - `STDOUT_B64=<base64>`
 - `STDERR_B64=<base64>`
 - `FILE_TEXT_B64:<path>=<base64|__MISSING_FILE__>`
+- `FILE_SHA256:<path>=<hex|__MISSING_FILE__|__IS_DIR__>`
+- `TREE_B64:<path>=<base64 manifest|__MISSING_PATH__>`
 
 ## Failure Artifacts
 

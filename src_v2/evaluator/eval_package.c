@@ -1,4 +1,5 @@
 #include "eval_package_internal.h"
+#include "eval_hash.h"
 
 #include <string.h>
 
@@ -54,7 +55,35 @@ bool eval_package_registry_add(EvalExecContext *ctx,
         .prefix = sv_copy_to_event_arena(ctx, prefix),
     };
     if (eval_should_stop(ctx)) return false;
-    return EVAL_ARR_PUSH(ctx, ctx->event_arena, model->registry_entries, entry);
+    if (!EVAL_ARR_PUSH(ctx, ctx->event_arena, model->registry_entries, entry)) return false;
+
+    const char *home = eval_getenv_temp(ctx, "HOME");
+#if defined(_WIN32)
+    if (!home || home[0] == '\0') home = eval_getenv_temp(ctx, "USERPROFILE");
+#endif
+    if (!home || home[0] == '\0') return true;
+
+    String_View registry_root = eval_sv_path_join(eval_temp_arena(ctx),
+                                                  nob_sv_from_cstr(home),
+                                                  nob_sv_from_cstr(".cmake/packages"));
+    if (eval_should_stop(ctx)) return false;
+    String_View package_dir = eval_sv_path_join(eval_temp_arena(ctx), registry_root, package_name);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View entry_name = nob_sv_from_cstr("");
+    if (!eval_hash_compute_hex_temp(ctx, nob_sv_from_cstr("MD5"), prefix, &entry_name)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    String_View entry_path = eval_sv_path_join(eval_temp_arena(ctx), package_dir, entry_name);
+    if (eval_should_stop(ctx)) return false;
+
+    Nob_String_Builder sb = {0};
+    nob_sb_append_buf(&sb, prefix.data ? prefix.data : "", prefix.count);
+    nob_sb_append_cstr(&sb, "\n");
+    String_View contents = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    bool ok = eval_write_text_file(ctx, entry_path, contents, false);
+    nob_sb_free(sb);
+    return ok;
 }
 
 bool file_exists_sv(EvalExecContext *ctx, String_View path) {
