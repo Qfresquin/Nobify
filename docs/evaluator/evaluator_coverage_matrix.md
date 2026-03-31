@@ -171,6 +171,10 @@ Current differential status:
     - `CALL`
     - `EVAL CODE`
     - `GET_MESSAGE_LOG_LEVEL`
+    - `DEFER`
+    - `SET_DEPENDENCY_PROVIDER`
+      - `FIND_PACKAGE`
+      - `FETCHCONTENT_MAKEAVAILABLE_SERIAL`
   - `file()` script snapshot subset
     - `WRITE`, `APPEND`, `READ`, `STRINGS`
     - `GLOB`, `GLOB_RECURSE`
@@ -286,17 +290,19 @@ Roadmap:
     now in place
 - **Phase 2, add `script-mode` to the same harness**
   - introduce `#@@MODE PROJECT|SCRIPT`
-  - status: in progress
+  - status: closed
   - delivered in this slice:
     - `include()` / `include_guard()`
     - `execute_process()`
-    - `cmake_language(CALL/EVAL/GET_MESSAGE_LOG_LEVEL)`
+    - `cmake_language(CALL/EVAL/GET_MESSAGE_LOG_LEVEL/DEFER)`
+    - dependency-provider paths through
+      `cmake_language(SET_DEPENDENCY_PROVIDER ...)`
+      - `FIND_PACKAGE`
+      - `FETCHCONTENT_MAKEAVAILABLE_SERIAL`
     - script-snapshot `file()`
     - script-snapshot `cmake_policy()`
     - script-mode `configure_file()`
-  - still deferred inside Phase 2:
-    - `cmake_language(DEFER)`
-    - dependency-provider paths
+  - explicitly deferred out of Phase 2 and assigned to later lanes:
     - `file()` subcommands that need host-effect or special-oracle lanes
 - **Phase 3, model host and filesystem effects**
   - extend snapshots into manifests for files, normalized contents, process

@@ -59,6 +59,7 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"include_script", "test_v2/evaluator_diff/cases/include_seed_cases.cmake"},
     {"execute_process_script", "test_v2/evaluator_diff/cases/execute_process_seed_cases.cmake"},
     {"cmake_language_script", "test_v2/evaluator_diff/cases/cmake_language_seed_cases.cmake"},
+    {"dependency_provider", "test_v2/evaluator_diff/cases/dependency_provider_seed_cases.cmake"},
     {"file_script", "test_v2/evaluator_diff/cases/file_script_seed_cases.cmake"},
     {"cmake_policy_script", "test_v2/evaluator_diff/cases/cmake_policy_script_seed_cases.cmake"},
     {"configure_file_script", "test_v2/evaluator_diff/cases/configure_file_script_seed_cases.cmake"},

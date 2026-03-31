@@ -43,6 +43,54 @@ typedef struct {
     } as;
 } Flow_Cmake_Language_Request;
 
+static bool flow_defer_strip_bracket_arg(String_View in, String_View *out) {
+    if (!out) return false;
+    *out = in;
+    if (in.count < 4 || !in.data || in.data[0] != '[') return false;
+
+    size_t eq_count = 0;
+    size_t i = 1;
+    while (i < in.count && in.data[i] == '=') {
+        eq_count++;
+        i++;
+    }
+    if (i >= in.count || in.data[i] != '[') return false;
+    size_t open_len = i + 1;
+    if (in.count < open_len + 2 + eq_count) return false;
+
+    size_t close_pos = in.count - (eq_count + 2);
+    if (in.data[close_pos] != ']') return false;
+    for (size_t k = 0; k < eq_count; k++) {
+        if (in.data[close_pos + 1 + k] != '=') return false;
+    }
+    if (in.data[in.count - 1] != ']') return false;
+    if (close_pos < open_len) return false;
+
+    *out = nob_sv_from_parts(in.data + open_len, close_pos - open_len);
+    return true;
+}
+
+static String_View flow_defer_arg_flat(EvalExecContext *ctx, const Arg *arg) {
+    if (!ctx || !arg || arena_arr_len(arg->items) == 0) return nob_sv_from_cstr("");
+
+    size_t total = 0;
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) total += arg->items[i].text.count;
+
+    char *buf = (char*)arena_alloc(ctx->arena, total + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+
+    size_t off = 0;
+    for (size_t i = 0; i < arena_arr_len(arg->items); i++) {
+        String_View text = arg->items[i].text;
+        if (text.count > 0) {
+            memcpy(buf + off, text.data, text.count);
+            off += text.count;
+        }
+    }
+    buf[off] = '\0';
+    return nob_sv_from_parts(buf, off);
+}
+
 static bool flow_deferred_call_list_pop_front(Eval_Deferred_Call_List *calls, Eval_Deferred_Call *out_call) {
     if (!calls || !out_call || arena_arr_len(*calls) == 0) return false;
     *out_call = (*calls)[0];
@@ -514,7 +562,12 @@ static bool flow_set_var_to_deferred_call(EvalExecContext *ctx,
     }
     for (size_t i = 0; i < arena_arr_len(call->args); i++) {
         nob_sb_append(&sb, ';');
-        String_View item = flow_eval_arg_single(ctx, &call->args[i], false);
+        String_View item = flow_defer_arg_flat(ctx, &call->args[i]);
+        if (call->args[i].kind == ARG_BRACKET) {
+            String_View stripped = item;
+            (void)flow_defer_strip_bracket_arg(item, &stripped);
+            item = stripped;
+        }
         if (eval_should_stop(ctx) || !flow_append_sv(&sb, item)) {
             nob_sb_free(sb);
             return ctx_oom(ctx);

@@ -27,8 +27,10 @@ The harness now supports both `project-mode` and `script-mode`:
   `testing_meta`, `argument_parsing`, `find_pathlike`, `host_identity`,
   `cache_loading`, `legacy_generation`, direct property-wrapper coverage,
   plus script-first families for `include()`, `execute_process()`,
-  `cmake_language(CALL/EVAL/GET_MESSAGE_LOG_LEVEL)`, script-snapshot
-  `file()`, `cmake_policy()`, and script-mode `configure_file()`
+  `cmake_language(CALL/EVAL/GET_MESSAGE_LOG_LEVEL/DEFER)`,
+  dependency-provider paths via `cmake_language(SET_DEPENDENCY_PROVIDER ...)`,
+  script-snapshot `file()`, `cmake_policy()`, and script-mode
+  `configure_file()`
 - real CMake is the oracle
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome plus any opt-in post-run observations
@@ -67,6 +69,7 @@ Current case packs:
 - `include_seed_cases.cmake`
 - `execute_process_seed_cases.cmake`
 - `cmake_language_seed_cases.cmake`
+- `dependency_provider_seed_cases.cmake`
 - `file_script_seed_cases.cmake`
 - `cmake_policy_script_seed_cases.cmake`
 - `configure_file_script_seed_cases.cmake`
