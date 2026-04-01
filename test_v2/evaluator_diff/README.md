@@ -7,6 +7,7 @@ binary.
 
 - Default command: `./build/nob_test test-evaluator-diff`
 - Optional override: set `CMK2NOB_TEST_CMAKE_BIN=/abs/path/to/cmake`
+- Optional report: set `NOB_DIFF_STATUS_OUT=/abs/path/report.md`
 - Resolution order:
   - `CMK2NOB_TEST_CMAKE_BIN`
   - `cmake` from `PATH`
@@ -98,6 +99,17 @@ classification. This README only summarizes the current lane families:
     `ctest_special`, `file_api_meta_special`, `legacy_meta_special`
   - `enable_language_special` is currently a documentary owner in the matrix,
     not a separate pack yet
+
+## CI Reporting
+
+- GitHub Actions coverage lives in `.github/workflows/evaluator-diff.yml`
+- the workflow pins `cmake 3.28.6`
+- the suite can publish a per-family Markdown status report through
+  `NOB_DIFF_STATUS_OUT`
+- the CI job uploads that report as an artifact and copies it into the GitHub
+  step summary
+- this differential workflow stays separate from the default `test-v2` smoke
+  aggregate
 
 ## Case-Pack DSL
 

@@ -71,6 +71,8 @@ Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 The implementation-level contracts for v2 live in focused docs under `docs/`.
 
 - `docs/project_priorities.md`: canonical project direction and priority order.
+- `docs/cmake_artifact_parity_roadmap.md`: root roadmap for reaching CMake
+  3.28 artifact parity across build, install, export, and packaging flows.
 - `docs/evaluator/`: active evaluator documentation rewrite.
 - `docs/Evaluator/`: archived evaluator documentation baseline kept during the rewrite.
 - `docs/build_model/`: canonical build-model rewrite docs plus historical v2 notes kept during migration.

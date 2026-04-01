@@ -55,6 +55,7 @@ typedef enum {
 #define DIFF_ENV_CTEST_BIN "NOB_DIFF_CTEST_BIN"
 #define DIFF_ENV_CTEST_SERVER_URL "NOB_DIFF_CTEST_SERVER_URL"
 #define DIFF_ENV_CTEST_SERVER_ROOT "NOB_DIFF_CTEST_SERVER_ROOT"
+#define DIFF_ENV_STATUS_OUT "NOB_DIFF_STATUS_OUT"
 
 static const Diff_Case_Pack s_diff_case_packs[] = {
     {"target_usage", "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake", DIFF_ORACLE_GENERIC},
@@ -243,6 +244,24 @@ typedef struct {
     char url[256];
 } Diff_Ctest_Server;
 
+typedef enum {
+    DIFF_FAMILY_STATUS_NOT_RUN = 0,
+    DIFF_FAMILY_STATUS_PASS,
+    DIFF_FAMILY_STATUS_FAIL,
+    DIFF_FAMILY_STATUS_SKIP,
+} Diff_Family_Status_Kind;
+
+typedef struct {
+    const char *family_label;
+    Diff_Oracle_Kind oracle_kind;
+    bool selected;
+    Diff_Family_Status_Kind status;
+    int passed;
+    int failed;
+    int skipped;
+    char note[256];
+} Diff_Family_Status;
+
 static bool diff_build_qualified_case_name(const char *family_label,
                                            String_View case_name,
                                            char out[_TINYDIR_PATH_MAX]) {
@@ -342,6 +361,25 @@ static bool diff_copy_string(const char *src, char out[_TINYDIR_PATH_MAX]) {
     return n >= 0 && n < _TINYDIR_PATH_MAX;
 }
 
+static bool diff_path_is_absolute(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    if (path[0] == '/' || path[0] == '\\') return true;
+    return isalpha((unsigned char)path[0]) && path[1] == ':';
+#else
+    return path[0] == '/';
+#endif
+}
+
+static bool diff_resolve_output_path(const char *cwd,
+                                     const char *raw_path,
+                                     char out[_TINYDIR_PATH_MAX]) {
+    if (!raw_path || raw_path[0] == '\0' || !out) return false;
+    if (diff_path_is_absolute(raw_path)) return diff_copy_string(raw_path, out);
+    if (!cwd || cwd[0] == '\0') return false;
+    return test_fs_join_path(cwd, raw_path, out);
+}
+
 static const char *diff_oracle_kind_name(Diff_Oracle_Kind oracle_kind) {
     switch (oracle_kind) {
         case DIFF_ORACLE_GENERIC: return "generic";
@@ -351,6 +389,81 @@ static const char *diff_oracle_kind_name(Diff_Oracle_Kind oracle_kind) {
         case DIFF_ORACLE_META_GRAPH: return "meta_graph";
     }
     return "unknown";
+}
+
+static const char *diff_family_status_kind_name(Diff_Family_Status_Kind status) {
+    switch (status) {
+        case DIFF_FAMILY_STATUS_NOT_RUN: return "NOT_RUN";
+        case DIFF_FAMILY_STATUS_PASS: return "PASS";
+        case DIFF_FAMILY_STATUS_FAIL: return "FAIL";
+        case DIFF_FAMILY_STATUS_SKIP: return "SKIP";
+    }
+    return "UNKNOWN";
+}
+
+static void diff_log_family_summary(const Diff_Family_Status *status) {
+    if (!status || !status->selected || !status->family_label) return;
+    nob_log(status->status == DIFF_FAMILY_STATUS_FAIL ? NOB_ERROR : NOB_INFO,
+            "[diff] family %s: %s (passed=%d failed=%d skipped=%d%s%s)",
+            status->family_label,
+            diff_family_status_kind_name(status->status),
+            status->passed,
+            status->failed,
+            status->skipped,
+            status->note[0] != '\0' ? " note=" : "",
+            status->note[0] != '\0' ? status->note : "");
+}
+
+static bool diff_write_suite_status_report(const Diff_Cmake_Config *config,
+                                           const Diff_Family_Status *statuses,
+                                           size_t status_count,
+                                           int passed,
+                                           int failed,
+                                           int skipped,
+                                           const char *path) {
+    Nob_String_Builder sb = {0};
+    size_t selected_count = 0;
+    const char *filter = getenv("NOB_DIFF_FAMILY_FILTER");
+    const char *overall = failed > 0 ? "FAIL" : (passed > 0 ? "PASS" : "SKIP");
+    bool ok = false;
+
+    if (!config || !statuses || !path || path[0] == '\0') return false;
+
+    nob_sb_append_cstr(&sb, "# Evaluator Differential Status\n\n");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("- Overall: `%s`\n", overall));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("- Passed cases: `%d`\n", passed));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("- Failed cases: `%d`\n", failed));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("- Skipped cases: `%d`\n", skipped));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("- CMake: `%s`\n", config->cmake_bin));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("- CMake version: `%s`\n", config->cmake_version));
+    if (filter && filter[0] != '\0') {
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("- Family filter: `%s`\n", filter));
+    }
+    nob_sb_append_cstr(&sb, "\n| Family | Oracle | Status | Passed | Failed | Skipped | Notes |\n");
+    nob_sb_append_cstr(&sb, "|---|---|---|---:|---:|---:|---|\n");
+
+    for (size_t i = 0; i < status_count; i++) {
+        const Diff_Family_Status *status = &statuses[i];
+        const char *note = status->note[0] != '\0' ? status->note : "";
+        if (!status->selected) continue;
+        selected_count++;
+        nob_sb_append_cstr(&sb,
+                           nob_temp_sprintf("| `%s` | `%s` | `%s` | %d | %d | %d | %s |\n",
+                                            status->family_label ? status->family_label : "",
+                                            diff_oracle_kind_name(status->oracle_kind),
+                                            diff_family_status_kind_name(status->status),
+                                            status->passed,
+                                            status->failed,
+                                            status->skipped,
+                                            note));
+    }
+
+    nob_sb_append_cstr(&sb, "\n");
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("Selected families: %zu\n", selected_count));
+    nob_sb_append(&sb, '\0');
+    ok = diff_write_entire_file(path, sb.items ? sb.items : "");
+    nob_sb_free(sb);
+    return ok;
 }
 
 static bool diff_read_text_file(Arena *arena, const char *path, String_View *out) {
@@ -3212,6 +3325,7 @@ fail:
 
 static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
                                          const Diff_Case_Pack *case_pack,
+                                         Diff_Family_Status *status,
                                          int *passed,
                                          int *failed,
                                          int *skipped) {
@@ -3221,13 +3335,23 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
     char skip_reason[256] = {0};
     char pack_cwd[_TINYDIR_PATH_MAX] = {0};
 
-    if (!config || !case_pack || !passed || !failed || !skipped) return;
-
-    if (!diff_case_pack_selected(case_pack)) return;
+    if (!config || !case_pack || !status || !passed || !failed || !skipped) return;
+    *status = (Diff_Family_Status){
+        .family_label = case_pack->family_label,
+        .oracle_kind = (Diff_Oracle_Kind)case_pack->oracle_kind,
+        .selected = true,
+        .status = DIFF_FAMILY_STATUS_NOT_RUN,
+    };
 
     arena = arena_create(512 * 1024);
     if (!arena) {
-        (*failed)++;
+        status->failed++;
+        status->status = DIFF_FAMILY_STATUS_FAIL;
+        snprintf(status->note, sizeof(status->note), "arena allocation failed");
+        diff_log_family_summary(status);
+        (*passed) += status->passed;
+        (*failed) += status->failed;
+        (*skipped) += status->skipped;
         return;
     }
 
@@ -3235,7 +3359,13 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
         !test_case_pack_parse(arena, content, &entries)) {
         nob_log(NOB_ERROR, "evaluator diff suite: failed to parse %s", case_pack->case_pack_path);
         arena_destroy(arena);
-        (*failed)++;
+        status->failed++;
+        status->status = DIFF_FAMILY_STATUS_FAIL;
+        snprintf(status->note, sizeof(status->note), "failed to parse case pack");
+        diff_log_family_summary(status);
+        (*passed) += status->passed;
+        (*failed) += status->failed;
+        (*skipped) += status->skipped;
         return;
     }
 
@@ -3245,14 +3375,26 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
                 "SKIPPED: evaluator diff family %s (%s)",
                 case_pack->family_label,
                 skip_reason);
-        (*skipped) += (int)count;
+        status->skipped = (int)count;
+        status->status = DIFF_FAMILY_STATUS_SKIP;
+        snprintf(status->note, sizeof(status->note), "%s", skip_reason);
         arena_destroy(arena);
+        diff_log_family_summary(status);
+        (*passed) += status->passed;
+        (*failed) += status->failed;
+        (*skipped) += status->skipped;
         return;
     }
 
     if (!test_fs_save_current_dir(pack_cwd)) {
         arena_destroy(arena);
-        (*failed)++;
+        status->failed++;
+        status->status = DIFF_FAMILY_STATUS_FAIL;
+        snprintf(status->note, sizeof(status->note), "failed to snapshot family cwd");
+        diff_log_family_summary(status);
+        (*passed) += status->passed;
+        (*failed) += status->failed;
+        (*skipped) += status->skipped;
         return;
     }
 
@@ -3265,7 +3407,7 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
                     case_pack->family_label,
                     (int)entries[i].name.count,
                     entries[i].name.data ? entries[i].name.data : "");
-            (*failed)++;
+            status->failed++;
             nob_temp_rewind(temp_mark);
             continue;
         }
@@ -3275,24 +3417,44 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
                     case_pack->family_label,
                     (int)entries[i].name.count,
                     entries[i].name.data);
-            (*failed)++;
+            status->failed++;
             nob_temp_rewind(temp_mark);
             continue;
         }
-        run_diff_case(config, case_pack, &diff_case, passed, failed, skipped);
+        run_diff_case(config, case_pack, &diff_case, &status->passed, &status->failed, &status->skipped);
         nob_temp_rewind(temp_mark);
     }
 
     (void)nob_set_current_dir(pack_cwd);
     arena_destroy(arena);
+    if (status->failed > 0) {
+        status->status = DIFF_FAMILY_STATUS_FAIL;
+        snprintf(status->note, sizeof(status->note), "%d failing case(s)", status->failed);
+    } else if (status->passed > 0) {
+        status->status = DIFF_FAMILY_STATUS_PASS;
+        status->note[0] = '\0';
+    } else {
+        status->status = DIFF_FAMILY_STATUS_SKIP;
+        if (status->note[0] == '\0') {
+            snprintf(status->note, sizeof(status->note), "no runnable cases");
+        }
+    }
+    diff_log_family_summary(status);
+    (*passed) += status->passed;
+    (*failed) += status->failed;
+    (*skipped) += status->skipped;
 }
 
 void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     Diff_Cmake_Config cmake = {0};
+    Diff_Family_Status family_statuses[NOB_ARRAY_LEN(s_diff_case_packs)] = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     char suite_cwd[_TINYDIR_PATH_MAX] = {0};
+    char status_report_path[_TINYDIR_PATH_MAX] = {0};
     char skip_reason[256] = {0};
+    const char *status_out_env = getenv(DIFF_ENV_STATUS_OUT);
+    bool have_status_report = false;
     bool prepared = test_ws_prepare(&ws, "evaluator_diff");
     bool entered = false;
 
@@ -3330,6 +3492,16 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
         return;
     }
 
+    if (status_out_env && status_out_env[0] != '\0') {
+        have_status_report = diff_resolve_output_path(prev_cwd, status_out_env, status_report_path);
+        if (!have_status_report) {
+            nob_log(NOB_ERROR, "evaluator diff suite: failed to resolve %s=%s",
+                    DIFF_ENV_STATUS_OUT,
+                    status_out_env);
+            if (failed) (*failed)++;
+        }
+    }
+
     if (!diff_resolve_cmake(&cmake, skip_reason)) {
         nob_log(NOB_ERROR, "evaluator diff suite: failed to resolve cmake runtime");
         if (failed) (*failed)++;
@@ -3339,6 +3511,10 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
     } else {
         for (size_t i = 0; i < NOB_ARRAY_LEN(s_diff_case_packs); i++) {
             size_t temp_mark = nob_temp_save();
+            if (!diff_case_pack_selected(&s_diff_case_packs[i])) {
+                nob_temp_rewind(temp_mark);
+                continue;
+            }
             if (!nob_set_current_dir(suite_cwd)) {
                 nob_log(NOB_ERROR,
                         "evaluator diff suite: failed to restore suite cwd before family %s",
@@ -3347,8 +3523,30 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
                 nob_temp_rewind(temp_mark);
                 continue;
             }
-            run_evaluator_diff_case_pack(&cmake, &s_diff_case_packs[i], passed, failed, skipped);
+            run_evaluator_diff_case_pack(&cmake,
+                                         &s_diff_case_packs[i],
+                                         &family_statuses[i],
+                                         passed,
+                                         failed,
+                                         skipped);
             nob_temp_rewind(temp_mark);
+        }
+    }
+
+    if (have_status_report) {
+        if (!diff_write_suite_status_report(&cmake,
+                                            family_statuses,
+                                            NOB_ARRAY_LEN(s_diff_case_packs),
+                                            passed ? *passed : 0,
+                                            failed ? *failed : 0,
+                                            skipped ? *skipped : 0,
+                                            status_report_path)) {
+            nob_log(NOB_ERROR,
+                    "evaluator diff suite: failed to write status report to %s",
+                    status_report_path);
+            if (failed) (*failed)++;
+        } else {
+            nob_log(NOB_INFO, "evaluator diff suite: wrote status report to %s", status_report_path);
         }
     }
 

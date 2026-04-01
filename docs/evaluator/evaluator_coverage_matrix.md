@@ -39,6 +39,7 @@ divergences.
 - Runner: `./build/nob_test test-evaluator-diff`
 - CMake resolution: `CMK2NOB_TEST_CMAKE_BIN`, then `PATH`
 - Version gate: only `cmake 3.28.x` participates; otherwise the suite skips
+- Optional report output: `NOB_DIFF_STATUS_OUT=/abs/path/report.md`
 - Supported lanes:
   - `snapshot differential`
   - `host-effect differential`
@@ -51,11 +52,13 @@ divergences.
   - Phase 4: closed for special-oracle families
   - Phase 5: closed for structural/policy surface
   - Phase 6: closed by explicit row ownership in this matrix
-  - Phase 7: open for CI/reporting hardening
+  - Phase 7: closed for pinned CI coverage and per-family status reporting
 - Operational rule: every row in the audit matrix must have exactly one primary
   differential lane and one primary differential owner
 - Harness details, DSL, snapshot format, and failure artifacts live in
   [test_v2/evaluator_diff/README.md](../../test_v2/evaluator_diff/README.md)
+- Dedicated CI coverage lives in `.github/workflows/evaluator-diff.yml` and
+  stays separate from the default `test-v2` smoke aggregate
 
 ## Audit Matrix
 

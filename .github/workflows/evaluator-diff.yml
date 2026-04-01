@@ -1,0 +1,80 @@
+name: Evaluator Differential
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-evaluator-diff:
+    runs-on: ubuntu-22.04
+    env:
+      NOBIFY_USE_LIBCURL: "1"
+      NOBIFY_USE_LIBARCHIVE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            curl \
+            libcurl4-openssl-dev \
+            libarchive-dev \
+            pkg-config \
+            python3-pip
+
+      - name: Pin CMake 3.28.6
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install cmake==3.28.6
+          cmake --version
+
+      - name: Build test runner
+        run: |
+          mkdir -p build
+          cc -D_GNU_SOURCE -std=c11 -Wall -Wextra -pedantic -Ivendor -Itest_v2 src_v2/build/nob_test.c -o build/nob_v2_test
+
+      - name: Check result type conventions
+        run: |
+          bash test_v2/evaluator/check_result_type_conventions.sh
+
+      - name: Run evaluator differential suite
+        env:
+          NOB_DIFF_STATUS_OUT: ${{ runner.temp }}/evaluator-diff-status.md
+        run: |
+          export CMK2NOB_TEST_CMAKE_BIN="$(command -v cmake)"
+          ./build/nob_v2_test test-evaluator-diff
+
+      - name: Publish per-family status summary
+        if: always()
+        run: |
+          report="${RUNNER_TEMP}/evaluator-diff-status.md"
+          if [[ -f "$report" ]]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "# Evaluator Differential Status"
+              echo
+              echo "No report file was produced."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload per-family status artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluator-diff-status-linux
+          path: ${{ runner.temp }}/evaluator-diff-status.md
+          if-no-files-found: error
+
+      - name: Upload diff failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluator-diff-failures-linux
+          path: Temp_tests
+          if-no-files-found: ignore
