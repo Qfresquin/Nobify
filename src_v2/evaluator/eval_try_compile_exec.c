@@ -839,7 +839,7 @@ Eval_Result try_compile_execute_and_publish(EvalExecContext *ctx,
         }
     }
 
-    String_View result = exec_res.ok ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
+    String_View result = exec_res.ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
     String_View output_text = exec_res.output.count > 0 ? exec_res.output : nob_sv_from_cstr("");
     if (!try_compile_publish_result(ctx, origin, req, result, output_text)) {
         return eval_result_from_ctx(ctx);

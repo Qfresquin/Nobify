@@ -2511,7 +2511,6 @@ TEST(evaluator_try_run_new_signature_accepts_no_log_and_runs) {
         "  NO_CACHE\n"
         "  NO_LOG\n"
         "  LOG_DESCRIPTION hidden_try_run_probe\n"
-        "  RUN_OUTPUT_VARIABLE RUN_NEW_ALL\n"
         "  RUN_OUTPUT_STDOUT_VARIABLE RUN_NEW_STDOUT)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -2522,7 +2521,6 @@ TEST(evaluator_try_run_new_signature_accepts_no_log_and_runs) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_NEW")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_NEW")), nob_sv_from_cstr("2")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_NEW_STDOUT")), nob_sv_from_cstr("N")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_NEW_ALL")), nob_sv_from_cstr("N")));
     ASSERT(!nob_file_exists("try_run_no_log_bin/CMakeFiles/CMakeConfigureLog.yaml"));
 
     eval_test_destroy(ctx);
@@ -2632,7 +2630,6 @@ TEST(evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeho
         "  probe_ok_try_run.c\n"
         "  NO_CACHE\n"
         "  COMPILE_OUTPUT_VARIABLE COMPILE_OK_LOG\n"
-        "  RUN_OUTPUT_VARIABLE RUN_ALL\n"
         "  RUN_OUTPUT_STDOUT_VARIABLE RUN_STDOUT\n"
         "  RUN_OUTPUT_STDERR_VARIABLE RUN_STDERR)\n"
         "try_run(RUN_LEGACY COMPILE_LEGACY tc_try_run_legacy\n"
@@ -2651,7 +2648,6 @@ TEST(evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeho
         "try_run(RUN_XC COMPILE_XC\n"
         "  SOURCE_FROM_CONTENT probe_xc.c \"int main(void){return 0;}\"\n"
         "  NO_CACHE\n"
-        "  RUN_OUTPUT_VARIABLE RUN_XC_ALL\n"
         "  RUN_OUTPUT_STDOUT_VARIABLE RUN_XC_STDOUT\n"
         "  RUN_OUTPUT_STDERR_VARIABLE RUN_XC_STDERR)\n"
         "set(CMAKE_CROSSCOMPILING OFF)\n"
@@ -2660,20 +2656,18 @@ TEST(evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeho
         "  BINARY_DIR tc_try_run_project_build\n"
         "  TARGET tc_try_run_project_probe\n"
         "  COMPILE_OUTPUT_VARIABLE COMPILE_PROJECT_LOG\n"
-        "  RUN_OUTPUT_VARIABLE RUN_PROJECT_ALL\n"
         "  RUN_OUTPUT_STDOUT_VARIABLE RUN_PROJECT_STDOUT\n"
         "  RUN_OUTPUT_STDERR_VARIABLE RUN_PROJECT_STDERR)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 0);
+    ASSERT(report->error_count == 1);
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_OK")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_OK")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_STDOUT")), nob_sv_from_cstr("A")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_STDERR")), nob_sv_from_cstr("B")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_ALL")), nob_sv_from_cstr("AB")));
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_LEGACY")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_LEGACY")), nob_sv_from_cstr("0")));
@@ -2689,11 +2683,8 @@ TEST(evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeho
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_XC")), nob_sv_from_cstr("TRUE")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_XC")),
                      nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN")));
-    ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("RUN_XC_ALL")));
     ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("RUN_XC_STDOUT")));
     ASSERT(!eval_test_var_defined(ctx, nob_sv_from_cstr("RUN_XC_STDERR")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT")),
-                     nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDOUT")),
                      nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDERR")),
@@ -2703,16 +2694,26 @@ TEST(evaluator_try_run_executes_native_artifacts_and_stages_crosscompile_placeho
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_STDOUT")), nob_sv_from_cstr("P")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_STDERR")), nob_sv_from_cstr("Q")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PROJECT_ALL")), nob_sv_from_cstr("PQ")));
 
     String_View try_run_results = {0};
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, "TryRunResults.cmake", &try_run_results));
     ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC")));
-    ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT")));
     ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDOUT")));
     ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("RUN_XC__TRYRUN_OUTPUT_STDERR")));
     ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN")));
     ASSERT(sv_contains_sv(try_run_results, nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND")));
+
+    bool saw_cross_compile_diag = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause,
+                      nob_sv_from_cstr("try_run() invoked in cross-compiling mode without preset cache answers"))) {
+            saw_cross_compile_diag = true;
+            break;
+        }
+    }
+    ASSERT(saw_cross_compile_diag);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2745,14 +2746,12 @@ TEST(evaluator_try_run_consumes_prefilled_crosscompile_cache_answers) {
     Ast_Root root = parse_cmake(
         temp_arena,
         "set(RUN_PRESET 23 CACHE STRING \"\")\n"
-        "set(RUN_PRESET__TRYRUN_OUTPUT preset_all CACHE STRING \"\")\n"
         "set(RUN_PRESET__TRYRUN_OUTPUT_STDOUT preset_out CACHE STRING \"\")\n"
         "set(RUN_PRESET__TRYRUN_OUTPUT_STDERR preset_err CACHE STRING \"\")\n"
         "set(CMAKE_CROSSCOMPILING ON)\n"
         "unset(CMAKE_CROSSCOMPILING_EMULATOR)\n"
         "try_run(RUN_PRESET COMPILE_PRESET\n"
         "  SOURCE_FROM_CONTENT probe_preset.c \"int main(void){return 0;}\"\n"
-        "  RUN_OUTPUT_VARIABLE RUN_PRESET_ALL\n"
         "  RUN_OUTPUT_STDOUT_VARIABLE RUN_PRESET_STDOUT\n"
         "  RUN_OUTPUT_STDERR_VARIABLE RUN_PRESET_STDERR)\n"
         "unset(COMPILE_PRESET)\n"
@@ -2765,8 +2764,6 @@ TEST(evaluator_try_run_consumes_prefilled_crosscompile_cache_answers) {
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET")),
                      nob_sv_from_cstr("23")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET_ALL")),
-                     nob_sv_from_cstr("preset_all")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET_STDOUT")),
                      nob_sv_from_cstr("preset_out")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_PRESET_STDERR")),
@@ -2929,24 +2926,31 @@ TEST(evaluator_try_run_rejects_incomplete_argument_shapes) {
         "try_run(RUN_BAD2 COMPILE_BAD2\n"
         "  SOURCE_FROM_CONTENT probe_bad2.c \"int main(void){return 0;}\"\n"
         "  RUN_OUTPUT_VARIABLE)\n"
+        "try_run(RUN_BAD_CONFLICT COMPILE_BAD_CONFLICT\n"
+        "  SOURCE_FROM_CONTENT probe_bad_conflict.c \"int main(void){return 0;}\"\n"
+        "  RUN_OUTPUT_VARIABLE BAD_ALL\n"
+        "  RUN_OUTPUT_STDOUT_VARIABLE BAD_STDOUT)\n"
         "try_run(RUN_BAD3 COMPILE_BAD3 PROJECT Demo\n"
         "  BINARY_DIR tc_try_run_missing_source)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 4);
+    ASSERT(report->error_count == 5);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD")).count == 0);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD")).count == 0);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("BAD_LEGACY_OUT")).count == 0);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD2")).count == 0);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD2")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD_CONFLICT")).count == 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD_CONFLICT")).count == 0);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("COMPILE_BAD3")).count == 0);
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RUN_BAD3")).count == 0);
 
     bool saw_missing_inputs = false;
     bool saw_legacy_output_restriction = false;
     bool saw_run_output_missing_value = false;
+    bool saw_run_output_conflict = false;
     bool saw_project_source_dir_required = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
@@ -2961,6 +2965,9 @@ TEST(evaluator_try_run_rejects_incomplete_argument_shapes) {
                              nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) requires an output variable"))) {
             saw_run_output_missing_value = true;
         } else if (nob_sv_eq(ev->as.diag.cause,
+                             nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) may not be combined with RUN_OUTPUT_STDOUT_VARIABLE or RUN_OUTPUT_STDERR_VARIABLE"))) {
+            saw_run_output_conflict = true;
+        } else if (nob_sv_eq(ev->as.diag.cause,
                              nob_sv_from_cstr("try_compile(PROJECT ...) requires SOURCE_DIR"))) {
             saw_project_source_dir_required = true;
         }
@@ -2969,6 +2976,7 @@ TEST(evaluator_try_run_rejects_incomplete_argument_shapes) {
     ASSERT(saw_missing_inputs);
     ASSERT(saw_legacy_output_restriction);
     ASSERT(saw_run_output_missing_value);
+    ASSERT(saw_run_output_conflict);
     ASSERT(saw_project_source_dir_required);
 
     eval_test_destroy(ctx);

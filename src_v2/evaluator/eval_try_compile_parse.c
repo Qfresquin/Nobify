@@ -611,5 +611,17 @@ bool try_run_parse_request(EvalExecContext *ctx,
         return false;
     }
 
+    if (out_req->run_output_var.count > 0 &&
+        (out_req->run_stdout_var.count > 0 || out_req->run_stderr_var.count > 0)) {
+        return try_compile_parse_diag_and_stop(
+            ctx,
+            node,
+            EV_DIAG_ERROR,
+            EVAL_DIAG_INVALID_VALUE,
+            state.origin,
+            nob_sv_from_cstr("try_run(RUN_OUTPUT_VARIABLE) may not be combined with RUN_OUTPUT_STDOUT_VARIABLE or RUN_OUTPUT_STDERR_VARIABLE"),
+            nob_sv_from_cstr("Use RUN_OUTPUT_VARIABLE alone, or COMPILE_OUTPUT_VARIABLE with RUN_OUTPUT_STDOUT_VARIABLE and/or RUN_OUTPUT_STDERR_VARIABLE"));
+    }
+
     return try_compile_parse_request(ctx, node, &compile_args, &out_req->compile_req);
 }

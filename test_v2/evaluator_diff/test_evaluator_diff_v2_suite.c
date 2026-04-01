@@ -2,13 +2,20 @@
 #include "test_fs.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #if defined(_WIN32)
 #include <io.h>
 #else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -33,42 +40,62 @@
 typedef struct {
     const char *family_label;
     const char *case_pack_path;
+    int oracle_kind;
 } Diff_Case_Pack;
 
+typedef enum {
+    DIFF_ORACLE_GENERIC = 0,
+    DIFF_ORACLE_FIND_PACKAGE,
+    DIFF_ORACLE_TRY_API,
+    DIFF_ORACLE_CTEST,
+    DIFF_ORACLE_META_GRAPH,
+} Diff_Oracle_Kind;
+
+#define DIFF_ENV_CMAKE_BIN "NOB_DIFF_CMAKE_BIN"
+#define DIFF_ENV_CTEST_BIN "NOB_DIFF_CTEST_BIN"
+#define DIFF_ENV_CTEST_SERVER_URL "NOB_DIFF_CTEST_SERVER_URL"
+#define DIFF_ENV_CTEST_SERVER_ROOT "NOB_DIFF_CTEST_SERVER_ROOT"
+
 static const Diff_Case_Pack s_diff_case_packs[] = {
-    {"target_usage", "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake"},
-    {"list", "test_v2/evaluator_diff/cases/list_seed_cases.cmake"},
-    {"var_commands", "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake"},
-    {"property_query", "test_v2/evaluator_diff/cases/property_query_seed_cases.cmake"},
-    {"directory_usage", "test_v2/evaluator_diff/cases/directory_usage_seed_cases.cmake"},
-    {"property_setters", "test_v2/evaluator_diff/cases/property_setters_seed_cases.cmake"},
-    {"testing_meta", "test_v2/evaluator_diff/cases/testing_meta_seed_cases.cmake"},
-    {"argument_parsing", "test_v2/evaluator_diff/cases/argument_parsing_seed_cases.cmake"},
-    {"find_pathlike", "test_v2/evaluator_diff/cases/find_pathlike_seed_cases.cmake"},
-    {"host_identity", "test_v2/evaluator_diff/cases/host_identity_seed_cases.cmake"},
-    {"cache_loading", "test_v2/evaluator_diff/cases/cache_loading_seed_cases.cmake"},
-    {"legacy_generation", "test_v2/evaluator_diff/cases/legacy_generation_seed_cases.cmake"},
-    {"cmake_path", "test_v2/evaluator_diff/cases/cmake_path_seed_cases.cmake"},
-    {"get_filename_component", "test_v2/evaluator_diff/cases/get_filename_component_seed_cases.cmake"},
-    {"math", "test_v2/evaluator_diff/cases/math_seed_cases.cmake"},
-    {"add_targets", "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake"},
-    {"add_subdirectory", "test_v2/evaluator_diff/cases/add_subdirectory_seed_cases.cmake"},
-    {"string", "test_v2/evaluator_diff/cases/string_seed_cases.cmake"},
-    {"top_level_project", "test_v2/evaluator_diff/cases/top_level_project_seed_cases.cmake"},
-    {"message", "test_v2/evaluator_diff/cases/message_seed_cases.cmake"},
-    {"configure_file", "test_v2/evaluator_diff/cases/configure_file_seed_cases.cmake"},
-    {"property_wrappers", "test_v2/evaluator_diff/cases/property_wrappers_seed_cases.cmake"},
-    {"include_script", "test_v2/evaluator_diff/cases/include_seed_cases.cmake"},
-    {"execute_process_script", "test_v2/evaluator_diff/cases/execute_process_seed_cases.cmake"},
-    {"cmake_language_script", "test_v2/evaluator_diff/cases/cmake_language_seed_cases.cmake"},
-    {"dependency_provider", "test_v2/evaluator_diff/cases/dependency_provider_seed_cases.cmake"},
-    {"file_script", "test_v2/evaluator_diff/cases/file_script_seed_cases.cmake"},
-    {"cmake_policy_script", "test_v2/evaluator_diff/cases/cmake_policy_script_seed_cases.cmake"},
-    {"configure_file_script", "test_v2/evaluator_diff/cases/configure_file_script_seed_cases.cmake"},
-    {"install_host_effect", "test_v2/evaluator_diff/cases/install_host_effect_seed_cases.cmake"},
-    {"export_host_effect", "test_v2/evaluator_diff/cases/export_host_effect_seed_cases.cmake"},
-    {"file_host_effect", "test_v2/evaluator_diff/cases/file_host_effect_seed_cases.cmake"},
-    {"fetchcontent_host_effect", "test_v2/evaluator_diff/cases/fetchcontent_host_effect_seed_cases.cmake"},
+    {"target_usage", "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"list", "test_v2/evaluator_diff/cases/list_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"var_commands", "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"property_query", "test_v2/evaluator_diff/cases/property_query_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"directory_usage", "test_v2/evaluator_diff/cases/directory_usage_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"property_setters", "test_v2/evaluator_diff/cases/property_setters_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"testing_meta", "test_v2/evaluator_diff/cases/testing_meta_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"argument_parsing", "test_v2/evaluator_diff/cases/argument_parsing_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"find_pathlike", "test_v2/evaluator_diff/cases/find_pathlike_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"host_identity", "test_v2/evaluator_diff/cases/host_identity_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"cache_loading", "test_v2/evaluator_diff/cases/cache_loading_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"legacy_generation", "test_v2/evaluator_diff/cases/legacy_generation_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"cmake_path", "test_v2/evaluator_diff/cases/cmake_path_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"get_filename_component", "test_v2/evaluator_diff/cases/get_filename_component_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"math", "test_v2/evaluator_diff/cases/math_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"add_targets", "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"add_subdirectory", "test_v2/evaluator_diff/cases/add_subdirectory_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"string", "test_v2/evaluator_diff/cases/string_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"top_level_project", "test_v2/evaluator_diff/cases/top_level_project_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"message", "test_v2/evaluator_diff/cases/message_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"configure_file", "test_v2/evaluator_diff/cases/configure_file_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"property_wrappers", "test_v2/evaluator_diff/cases/property_wrappers_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"include_script", "test_v2/evaluator_diff/cases/include_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"execute_process_script", "test_v2/evaluator_diff/cases/execute_process_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"cmake_language_script", "test_v2/evaluator_diff/cases/cmake_language_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"dependency_provider", "test_v2/evaluator_diff/cases/dependency_provider_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"file_script", "test_v2/evaluator_diff/cases/file_script_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"cmake_policy_script", "test_v2/evaluator_diff/cases/cmake_policy_script_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"configure_file_script", "test_v2/evaluator_diff/cases/configure_file_script_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"install_host_effect", "test_v2/evaluator_diff/cases/install_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"export_host_effect", "test_v2/evaluator_diff/cases/export_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"file_host_effect", "test_v2/evaluator_diff/cases/file_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"fetchcontent_host_effect", "test_v2/evaluator_diff/cases/fetchcontent_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"find_package_special", "test_v2/evaluator_diff/cases/find_package_special_seed_cases.cmake", DIFF_ORACLE_FIND_PACKAGE},
+    {"try_compile_special", "test_v2/evaluator_diff/cases/try_compile_special_seed_cases.cmake", DIFF_ORACLE_TRY_API},
+    {"try_run_special", "test_v2/evaluator_diff/cases/try_run_special_seed_cases.cmake", DIFF_ORACLE_TRY_API},
+    {"ctest_special", "test_v2/evaluator_diff/cases/ctest_special_seed_cases.cmake", DIFF_ORACLE_CTEST},
+    {"file_api_meta_special", "test_v2/evaluator_diff/cases/file_api_meta_special_seed_cases.cmake", DIFF_ORACLE_META_GRAPH},
+    {"legacy_meta_special", "test_v2/evaluator_diff/cases/legacy_meta_special_seed_cases.cmake", DIFF_ORACLE_META_GRAPH},
 };
 
 typedef enum {
@@ -160,8 +187,13 @@ typedef struct {
 
 typedef struct {
     char cmake_bin[_TINYDIR_PATH_MAX];
+    char ctest_bin[_TINYDIR_PATH_MAX];
     char cmake_version[64];
+    char c_toolchain_reason[256];
+    char repo_root[_TINYDIR_PATH_MAX];
     bool available;
+    bool ctest_available;
+    bool c_toolchain_available;
 } Diff_Cmake_Config;
 
 typedef struct {
@@ -195,6 +227,18 @@ typedef struct {
     Test_Host_Env_Guard **items;
     size_t count;
 } Diff_Env_Guard_List;
+
+typedef struct {
+    bool active;
+#if defined(_WIN32)
+    int unused;
+#else
+    pid_t pid;
+#endif
+    unsigned short port;
+    char root[_TINYDIR_PATH_MAX];
+    char url[256];
+} Diff_Ctest_Server;
 
 static bool diff_build_qualified_case_name(const char *family_label,
                                            String_View case_name,
@@ -293,6 +337,17 @@ static bool diff_copy_string(const char *src, char out[_TINYDIR_PATH_MAX]) {
     if (!src || !out) return false;
     n = snprintf(out, _TINYDIR_PATH_MAX, "%s", src);
     return n >= 0 && n < _TINYDIR_PATH_MAX;
+}
+
+static const char *diff_oracle_kind_name(Diff_Oracle_Kind oracle_kind) {
+    switch (oracle_kind) {
+        case DIFF_ORACLE_GENERIC: return "generic";
+        case DIFF_ORACLE_FIND_PACKAGE: return "find_package";
+        case DIFF_ORACLE_TRY_API: return "try_api";
+        case DIFF_ORACLE_CTEST: return "ctest";
+        case DIFF_ORACLE_META_GRAPH: return "meta_graph";
+    }
+    return "unknown";
 }
 
 static bool diff_read_text_file(Arena *arena, const char *path, String_View *out) {
@@ -1835,7 +1890,42 @@ static void diff_end_std_capture(Diff_Std_Capture *capture) {
     capture->active = false;
 }
 
+static bool diff_run_special_oracle_postprocess(const Diff_Cmake_Config *config,
+                                                const Diff_Case_Pack *case_pack,
+                                                const char *source_dir,
+                                                const char *binary_dir) {
+    Nob_Cmd cmd = {0};
+    char helper_path[_TINYDIR_PATH_MAX] = {0};
+    char report_path[_TINYDIR_PATH_MAX] = {0};
+
+    if (!config || !case_pack || !source_dir || !binary_dir) return false;
+    if ((Diff_Oracle_Kind)case_pack->oracle_kind != DIFF_ORACLE_META_GRAPH) return true;
+    if (strcmp(case_pack->family_label, "file_api_meta_special") != 0) return true;
+    if (!test_fs_join_path(config->repo_root,
+                           "test_v2/evaluator_diff/helpers/__nob_diff_meta_graph_oracle.cmake",
+                           helper_path) ||
+        !test_fs_join_path(binary_dir, "__oracle/file_api_meta_report.txt", report_path) ||
+        !diff_ensure_parent_dir(report_path)) {
+        return false;
+    }
+    nob_cmd_append(&cmd,
+                   config->cmake_bin,
+                   nob_temp_sprintf("-DNOB_DIFF_SOURCE_DIR=%s", source_dir),
+                   nob_temp_sprintf("-DNOB_DIFF_BINARY_DIR=%s", binary_dir),
+                   nob_temp_sprintf("-DNOB_DIFF_REPORT=%s", report_path),
+                   "-P",
+                   helper_path);
+    if (!nob_cmd_run(&cmd)) {
+        nob_cmd_free(cmd);
+        return false;
+    }
+    nob_cmd_free(cmd);
+    return true;
+}
+
 static bool diff_run_evaluator_case(Arena *arena,
+                                    const Diff_Case_Pack *case_pack,
+                                    const Diff_Cmake_Config *config,
                                     const Diff_Case *diff_case,
                                     const char *script_path,
                                     const char *source_dir,
@@ -1857,7 +1947,9 @@ static bool diff_run_evaluator_case(Arena *arena,
     bool log_capture_started = false;
 
     if (out_run) *out_run = (Diff_Evaluator_Run){0};
-    if (!arena || !diff_case || !script_path || !source_dir || !binary_dir || !out_run) return false;
+    if (!arena || !case_pack || !config || !diff_case || !script_path || !source_dir || !binary_dir || !out_run) {
+        return false;
+    }
 
     temp_arena = arena_create(2 * 1024 * 1024);
     event_arena = arena_create(2 * 1024 * 1024);
@@ -1934,6 +2026,11 @@ static bool diff_run_evaluator_case(Arena *arena,
         out_run->probe_snapshot = evaluator_normalize_newlines_to_arena(arena, out_run->probe_snapshot);
     }
 
+    if (out_run->outcome == DIFF_EXPECT_SUCCESS &&
+        !diff_run_special_oracle_postprocess(config, case_pack, source_dir, binary_dir)) {
+        goto defer;
+    }
+
     if (!diff_build_postrun_snapshot(arena,
                                      diff_case,
                                      out_run->stdout_text,
@@ -1971,6 +2068,7 @@ defer:
 }
 
 static bool diff_run_cmake_case(Arena *arena,
+                                const Diff_Case_Pack *case_pack,
                                 const Diff_Case *diff_case,
                                 const Diff_Cmake_Config *config,
                                 const char *script_path,
@@ -1986,7 +2084,7 @@ static bool diff_run_cmake_case(Arena *arena,
     bool ok = false;
 
     if (out_run) *out_run = (Diff_Cmake_Run){0};
-    if (!arena || !diff_case || !config || !config->available || !script_path || !source_dir ||
+    if (!arena || !case_pack || !diff_case || !config || !config->available || !script_path || !source_dir ||
         !binary_dir || !out_run) {
         return false;
     }
@@ -1998,7 +2096,12 @@ static bool diff_run_cmake_case(Arena *arena,
         return false;
     }
 
-    if (diff_case->mode == DIFF_MODE_SCRIPT) {
+    if ((Diff_Oracle_Kind)case_pack->oracle_kind == DIFF_ORACLE_CTEST) {
+        if (!config->ctest_available) return false;
+        if (!nob_set_current_dir(source_dir)) return false;
+        cwd_changed = true;
+        nob_cmd_append(&cmd, config->ctest_bin, "-S", script_path, "-VV");
+    } else if (diff_case->mode == DIFF_MODE_SCRIPT) {
         if (!nob_set_current_dir(source_dir)) return false;
         cwd_changed = true;
         nob_cmd_append(&cmd, config->cmake_bin, "-P", script_path);
@@ -2019,12 +2122,17 @@ static bool diff_run_cmake_case(Arena *arena,
         !diff_read_text_file(arena, stderr_path, &out_run->stderr_text)) {
         return false;
     }
-    out_run->stdout_text = diff_filter_cmake_stdout_to_arena(arena, out_run->stdout_text);
+    if ((Diff_Oracle_Kind)case_pack->oracle_kind == DIFF_ORACLE_CTEST) {
+        out_run->stdout_text = evaluator_normalize_newlines_to_arena(arena, out_run->stdout_text);
+    } else {
+        out_run->stdout_text = diff_filter_cmake_stdout_to_arena(arena, out_run->stdout_text);
+    }
     out_run->stderr_text = evaluator_normalize_newlines_to_arena(arena, out_run->stderr_text);
 
     if (ok) {
         if (!diff_read_text_file(arena, snapshot_path, &out_run->probe_snapshot)) return false;
         out_run->probe_snapshot = evaluator_normalize_newlines_to_arena(arena, out_run->probe_snapshot);
+        if (!diff_run_special_oracle_postprocess(config, case_pack, source_dir, binary_dir)) return false;
     }
 
     if (!diff_build_postrun_snapshot(arena,
@@ -2110,12 +2218,133 @@ static bool diff_apply_env_ops(const Diff_Case *diff_case,
     return true;
 }
 
+static void diff_release_env_guards(Diff_Env_Guard_List *guards);
+
+static bool diff_apply_builtin_env(const Diff_Cmake_Config *config,
+                                   const Diff_Case_Pack *case_pack,
+                                   const Diff_Ctest_Server *ctest_server,
+                                   Diff_Env_Guard_List *out_guards) {
+    size_t guard_count = 1;
+    size_t next = 0;
+
+    if (out_guards) *out_guards = (Diff_Env_Guard_List){0};
+    if (!config || !case_pack || !out_guards) return false;
+
+    if (config->ctest_available) guard_count++;
+    if (ctest_server && ctest_server->active) guard_count += 2;
+
+    out_guards->items = calloc(guard_count, sizeof(*out_guards->items));
+    if (!out_guards->items) return false;
+    out_guards->count = guard_count;
+
+    for (size_t i = 0; i < guard_count; i++) {
+        out_guards->items[i] = calloc(1, sizeof(*out_guards->items[i]));
+        if (!out_guards->items[i]) {
+            for (size_t j = 0; j < i; j++) test_host_env_guard_cleanup(out_guards->items[j]);
+            free(out_guards->items);
+            out_guards->items = NULL;
+            out_guards->count = 0;
+            return false;
+        }
+    }
+
+    if (!test_host_env_guard_begin(out_guards->items[next++], DIFF_ENV_CMAKE_BIN, config->cmake_bin)) {
+        diff_release_env_guards(out_guards);
+        return false;
+    }
+    if (config->ctest_available) {
+        if (!test_host_env_guard_begin(out_guards->items[next++], DIFF_ENV_CTEST_BIN, config->ctest_bin)) {
+            diff_release_env_guards(out_guards);
+            return false;
+        }
+    }
+    if (ctest_server && ctest_server->active) {
+        if (!test_host_env_guard_begin(out_guards->items[next++], DIFF_ENV_CTEST_SERVER_URL, ctest_server->url) ||
+            !test_host_env_guard_begin(out_guards->items[next++], DIFF_ENV_CTEST_SERVER_ROOT, ctest_server->root)) {
+            diff_release_env_guards(out_guards);
+            return false;
+        }
+    }
+
+    (void)case_pack;
+    return true;
+}
+
 static void diff_release_env_guards(Diff_Env_Guard_List *guards) {
     if (!guards || !guards->items) return;
     for (size_t i = guards->count; i > 0; i--) test_host_env_guard_cleanup(guards->items[i - 1]);
     free(guards->items);
     guards->items = NULL;
     guards->count = 0;
+}
+
+static bool diff_case_pack_skip_reason(const Diff_Cmake_Config *config,
+                                       const Diff_Case_Pack *case_pack,
+                                       char reason[256]) {
+    if (reason) reason[0] = '\0';
+    if (!config || !case_pack || !reason) return false;
+    switch ((Diff_Oracle_Kind)case_pack->oracle_kind) {
+        case DIFF_ORACLE_GENERIC:
+        case DIFF_ORACLE_FIND_PACKAGE:
+        case DIFF_ORACLE_META_GRAPH:
+            return false;
+        case DIFF_ORACLE_TRY_API:
+            if (!config->c_toolchain_available) {
+                snprintf(reason,
+                         256,
+                         "requires functional C toolchain: %s",
+                         config->c_toolchain_reason[0] ? config->c_toolchain_reason : "probe failed");
+                return true;
+            }
+            return false;
+        case DIFF_ORACLE_CTEST:
+            if (!config->ctest_available) {
+                snprintf(reason, 256, "ctest not found alongside the selected CMake runtime");
+                return true;
+            }
+            if (!config->c_toolchain_available) {
+                snprintf(reason,
+                         256,
+                         "requires functional C toolchain for ctest lane: %s",
+                         config->c_toolchain_reason[0] ? config->c_toolchain_reason : "probe failed");
+                return true;
+            }
+#if defined(_WIN32)
+            snprintf(reason, 256, "ctest loopback server lane is currently implemented only on POSIX hosts");
+            return true;
+#else
+            return false;
+#endif
+    }
+    return false;
+}
+
+static bool diff_case_pack_selected(const Diff_Case_Pack *case_pack) {
+    const char *filter = getenv("NOB_DIFF_FAMILY_FILTER");
+    const char *cursor = NULL;
+
+    if (!case_pack) return false;
+    if (!filter || filter[0] == '\0') return true;
+
+    cursor = filter;
+    while (*cursor) {
+        const char *end = cursor;
+        size_t len = 0;
+        while (*end && *end != ',') end++;
+        len = (size_t)(end - cursor);
+        while (len > 0 && isspace((unsigned char)cursor[0])) {
+            cursor++;
+            len--;
+        }
+        while (len > 0 && isspace((unsigned char)cursor[len - 1])) len--;
+        if (len == strlen(case_pack->family_label) &&
+            strncmp(cursor, case_pack->family_label, len) == 0) {
+            return true;
+        }
+        cursor = *end ? end + 1 : end;
+    }
+
+    return false;
 }
 
 static bool diff_copy_path_if_exists(const char *src, const char *dst) {
@@ -2127,6 +2356,269 @@ static bool diff_copy_path_if_exists(const char *src, const char *dst) {
     if (info.is_dir) return test_fs_copy_tree(src, dst);
     return nob_copy_file(src, dst);
 }
+
+static bool diff_copy_helper_tree(const Diff_Cmake_Config *config, const char *source_dir) {
+    char helpers_src[_TINYDIR_PATH_MAX] = {0};
+    char helpers_dst[_TINYDIR_PATH_MAX] = {0};
+    Test_Fs_Path_Info info = {0};
+
+    if (!config || !source_dir || config->repo_root[0] == '\0') return false;
+    if (!test_fs_join_path(config->repo_root, "test_v2/evaluator_diff/helpers", helpers_src) ||
+        !test_fs_join_path(source_dir, "__nob_diff_helpers", helpers_dst) ||
+        !test_fs_get_path_info(helpers_src, &info)) {
+        return false;
+    }
+    if (!info.exists) return true;
+    if (!test_fs_remove_tree(helpers_dst)) return false;
+    return test_fs_copy_tree(helpers_src, helpers_dst);
+}
+
+#if !defined(_WIN32)
+static volatile sig_atomic_t g_diff_ctest_server_stop = 0;
+
+static void diff_ctest_server_signal_handler(int signo) {
+    (void)signo;
+    g_diff_ctest_server_stop = 1;
+}
+
+static bool diff_ctest_server_find_header_end(const char *data,
+                                              size_t len,
+                                              size_t *out_header_end) {
+    if (!data || !out_header_end) return false;
+    for (size_t i = 0; i + 3 < len; i++) {
+        if (data[i] == '\r' && data[i + 1] == '\n' && data[i + 2] == '\r' && data[i + 3] == '\n') {
+            *out_header_end = i + 4;
+            return true;
+        }
+    }
+    for (size_t i = 0; i + 1 < len; i++) {
+        if (data[i] == '\n' && data[i + 1] == '\n') {
+            *out_header_end = i + 2;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool diff_ctest_server_starts_with_ci(const char *line,
+                                             size_t line_len,
+                                             const char *needle) {
+    size_t needle_len = strlen(needle);
+    if (line_len < needle_len) return false;
+    for (size_t i = 0; i < needle_len; i++) {
+        if (tolower((unsigned char)line[i]) != tolower((unsigned char)needle[i])) return false;
+    }
+    return true;
+}
+
+static long diff_ctest_server_parse_content_length(const char *headers, size_t len) {
+    size_t pos = 0;
+    while (pos < len) {
+        size_t line_start = pos;
+        size_t line_end = pos;
+        while (line_end < len && headers[line_end] != '\n') line_end++;
+        while (line_end > line_start &&
+               (headers[line_end - 1] == '\r' || headers[line_end - 1] == '\n')) {
+            line_end--;
+        }
+        if (diff_ctest_server_starts_with_ci(headers + line_start,
+                                             line_end - line_start,
+                                             "content-length:")) {
+            const char *value = headers + line_start + strlen("content-length:");
+            while (value < headers + line_end && isspace((unsigned char)*value)) value++;
+            return strtol(value, NULL, 10);
+        }
+        pos = line_end;
+        while (pos < len && headers[pos] != '\n') pos++;
+        if (pos < len) pos++;
+    }
+    return 0;
+}
+
+static bool diff_ctest_server_append_manifest(const char *root,
+                                              int ordinal,
+                                              const char *method,
+                                              const char *path,
+                                              size_t body_len) {
+    char manifest_path[_TINYDIR_PATH_MAX] = {0};
+    Nob_String_Builder sb = {0};
+    String_View existing = {0};
+    Arena *arena = arena_create(64 * 1024);
+    bool ok = false;
+
+    if (!root || !method || !path || !arena) {
+        if (arena) arena_destroy(arena);
+        return false;
+    }
+    if (!test_fs_join_path(root, "manifest.txt", manifest_path)) goto defer;
+    if (!diff_read_text_file(arena, manifest_path, &existing)) goto defer;
+    nob_sb_append_buf(&sb, existing.data ? existing.data : "", existing.count);
+    nob_sb_append_cstr(&sb,
+                       nob_temp_sprintf("REQUEST:%03d METHOD=%s PATH=%s BODY=%zu\n",
+                                        ordinal,
+                                        method,
+                                        path,
+                                        body_len));
+    ok = diff_write_entire_file(manifest_path, sb.items ? sb.items : "");
+
+defer:
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    return ok;
+}
+
+static void diff_ctest_server_child_loop(int listen_fd, const char *root) {
+    int ordinal = 0;
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGTERM, diff_ctest_server_signal_handler);
+    signal(SIGINT, diff_ctest_server_signal_handler);
+    while (!g_diff_ctest_server_stop) {
+        int client_fd = accept(listen_fd, NULL, NULL);
+        if (client_fd < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
+        Nob_String_Builder request = {0};
+        size_t header_end = 0;
+        long content_length = -1;
+        bool header_ready = false;
+        for (;;) {
+            char buffer[4096] = {0};
+            ssize_t n = recv(client_fd, buffer, sizeof(buffer), 0);
+            if (n <= 0) break;
+            nob_sb_append_buf(&request, buffer, (size_t)n);
+            if (!header_ready &&
+                diff_ctest_server_find_header_end(request.items ? request.items : "",
+                                                  request.count,
+                                                  &header_end)) {
+                header_ready = true;
+                content_length = diff_ctest_server_parse_content_length(request.items, header_end);
+            }
+            if (header_ready && content_length >= 0 &&
+                request.count >= header_end + (size_t)content_length) {
+                break;
+            }
+        }
+
+        ordinal++;
+        if (request.count > 0 && request.items) {
+            char request_path[_TINYDIR_PATH_MAX] = {0};
+            char method[32] = {0};
+            char path[512] = {0};
+            size_t first_line_end = 0;
+            size_t body_len = 0;
+            int scanned = 0;
+
+            while (first_line_end < request.count && request.items[first_line_end] != '\n') first_line_end++;
+            scanned = sscanf(request.items, "%31s %511s", method, path);
+            if (scanned != 2) {
+                snprintf(method, sizeof(method), "UNKNOWN");
+                snprintf(path, sizeof(path), "/");
+            }
+            if (header_ready && request.count >= header_end) body_len = request.count - header_end;
+            if (test_fs_join_path(root,
+                                  nob_temp_sprintf("request_%03d.txt", ordinal),
+                                  request_path)) {
+                (void)diff_write_sv_file(request_path,
+                                         nob_sv_from_parts(request.items ? request.items : "", request.count));
+            }
+            (void)diff_ctest_server_append_manifest(root, ordinal, method, path, body_len);
+        }
+
+        {
+            static const char reply[] =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 12\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "buildid=321\n";
+            (void)send(client_fd, reply, sizeof(reply) - 1, 0);
+        }
+        close(client_fd);
+        nob_sb_free(request);
+    }
+    close(listen_fd);
+    _exit(0);
+}
+
+static bool diff_ctest_server_start(Diff_Ctest_Server *server, const char *root) {
+    int listen_fd = -1;
+    int yes = 1;
+    struct sockaddr_in addr = {0};
+    socklen_t addr_len = sizeof(addr);
+    pid_t pid = 0;
+    char root_copy[_TINYDIR_PATH_MAX] = {0};
+
+    if (!server || !root) return false;
+    if (!diff_copy_string(root, root_copy)) return false;
+    *server = (Diff_Ctest_Server){0};
+    if (!diff_ensure_dir_chain(root_copy)) return false;
+    if (!diff_copy_string(root_copy, server->root)) return false;
+
+    listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) return false;
+    (void)setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+        listen(listen_fd, 8) != 0 ||
+        getsockname(listen_fd, (struct sockaddr*)&addr, &addr_len) != 0) {
+        close(listen_fd);
+        return false;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        close(listen_fd);
+        return false;
+    }
+    if (pid == 0) {
+        diff_ctest_server_child_loop(listen_fd, root_copy);
+    }
+
+    close(listen_fd);
+    server->pid = pid;
+    server->active = true;
+    server->port = (unsigned short)ntohs(addr.sin_port);
+    snprintf(server->url, sizeof(server->url), "http://127.0.0.1:%u/submit.php?project=NobDiff",
+             (unsigned)server->port);
+    return true;
+}
+
+static void diff_ctest_server_stop(Diff_Ctest_Server *server) {
+    if (!server || !server->active) return;
+    kill(server->pid, SIGTERM);
+    if (server->port != 0) {
+        int wake_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (wake_fd >= 0) {
+            struct sockaddr_in wake_addr = {0};
+            wake_addr.sin_family = AF_INET;
+            wake_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            wake_addr.sin_port = htons(server->port);
+            (void)connect(wake_fd, (struct sockaddr*)&wake_addr, sizeof(wake_addr));
+            close(wake_fd);
+        }
+    }
+    (void)waitpid(server->pid, NULL, 0);
+    server->active = false;
+    server->pid = 0;
+    server->port = 0;
+}
+#else
+static bool diff_ctest_server_start(Diff_Ctest_Server *server, const char *root) {
+    (void)server;
+    (void)root;
+    return false;
+}
+
+static void diff_ctest_server_stop(Diff_Ctest_Server *server) {
+    (void)server;
+}
+#endif
 
 static bool diff_preserve_failure_artifacts(String_View case_name) {
     char cwd[_TINYDIR_PATH_MAX] = {0};
@@ -2192,6 +2684,8 @@ static bool diff_write_case_summary(const Diff_Cmake_Config *config,
 
     nob_sb_append_cstr(&sb, nob_temp_sprintf("family=%s\n", case_pack->family_label));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("case_pack=%s\n", case_pack->case_pack_path));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("oracle=%s\n",
+                                             diff_oracle_kind_name((Diff_Oracle_Kind)case_pack->oracle_kind)));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("qualified_case=%s\n", qualified_case_name));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("case=%.*s\n", (int)diff_case->name.count, diff_case->name.data));
     nob_sb_append_cstr(&sb,
@@ -2208,7 +2702,14 @@ static bool diff_write_case_summary(const Diff_Cmake_Config *config,
                                                    ? "RAW_CMAKELISTS"
                                                    : "BODY_ONLY_PROJECT")));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("cmake_bin=%s\n", config->cmake_bin));
+    nob_sb_append_cstr(&sb, nob_temp_sprintf("ctest_bin=%s\n", config->ctest_available ? config->ctest_bin : ""));
     nob_sb_append_cstr(&sb, nob_temp_sprintf("cmake_version=%s\n", config->cmake_version));
+    nob_sb_append_cstr(&sb,
+                       nob_temp_sprintf("c_toolchain_available=%d\n",
+                                        config->c_toolchain_available ? 1 : 0));
+    nob_sb_append_cstr(&sb,
+                       nob_temp_sprintf("c_toolchain_reason=%s\n",
+                                        config->c_toolchain_reason));
     nob_sb_append_cstr(&sb,
                        nob_temp_sprintf("evaluator_outcome=%s\n",
                                         eval_run->outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR"));
@@ -2238,10 +2739,15 @@ static bool diff_record_snapshots(const Diff_Evaluator_Run *eval_run,
     return ok;
 }
 
-static bool diff_case_matches(const Diff_Case *diff_case,
+static bool diff_case_matches(const Diff_Case_Pack *case_pack,
+                              const Diff_Case *diff_case,
                               const Diff_Evaluator_Run *eval_run,
                               const Diff_Cmake_Run *cmake_run) {
-    if (!diff_case || !eval_run || !cmake_run) return false;
+    if (!case_pack || !diff_case || !eval_run || !cmake_run) return false;
+    if ((Diff_Oracle_Kind)case_pack->oracle_kind == DIFF_ORACLE_CTEST &&
+        diff_case->expected_outcome == DIFF_EXPECT_SUCCESS) {
+        return nob_sv_eq(eval_run->post_snapshot, cmake_run->post_snapshot);
+    }
     if (eval_run->outcome != diff_case->expected_outcome) return false;
     if (cmake_run->outcome != diff_case->expected_outcome) return false;
     if (diff_case->expected_outcome == DIFF_EXPECT_ERROR) {
@@ -2249,6 +2755,134 @@ static bool diff_case_matches(const Diff_Case *diff_case,
         return nob_sv_eq(eval_run->post_snapshot, cmake_run->post_snapshot);
     }
     return nob_sv_eq(eval_run->combined_snapshot, cmake_run->combined_snapshot);
+}
+
+static void diff_extract_first_line(String_View text,
+                                    char out[256],
+                                    const char *fallback) {
+    size_t line_end = 0;
+    if (!out) return;
+    out[0] = '\0';
+    if (text.count == 0 || !text.data) {
+        snprintf(out, 256, "%s", fallback ? fallback : "");
+        return;
+    }
+    while (line_end < text.count && text.data[line_end] != '\n' && text.data[line_end] != '\r') line_end++;
+    if (line_end == 0) {
+        snprintf(out, 256, "%s", fallback ? fallback : "");
+        return;
+    }
+    if (line_end >= 255) line_end = 255;
+    memcpy(out, text.data, line_end);
+    out[line_end] = '\0';
+}
+
+static bool diff_resolve_ctest_binary(Diff_Cmake_Config *config) {
+    size_t temp_mark = 0;
+    const char *cmake_dir = NULL;
+    char sibling[_TINYDIR_PATH_MAX] = {0};
+    if (!config || !config->available) return false;
+    temp_mark = nob_temp_save();
+    cmake_dir = nob_temp_dir_name(config->cmake_bin);
+#if defined(_WIN32)
+    if (test_fs_join_path(cmake_dir, "ctest.exe", sibling) &&
+        diff_path_is_executable(sibling) &&
+        diff_copy_string(sibling, config->ctest_bin)) {
+        nob_temp_rewind(temp_mark);
+        return config->ctest_available = true;
+    }
+#endif
+    if (test_fs_join_path(cmake_dir, "ctest", sibling) &&
+        diff_path_is_executable(sibling) &&
+        diff_copy_string(sibling, config->ctest_bin)) {
+        nob_temp_rewind(temp_mark);
+        return config->ctest_available = true;
+    }
+    nob_temp_rewind(temp_mark);
+    if (test_ws_host_program_in_path("ctest", config->ctest_bin)) {
+        config->ctest_available = true;
+        return true;
+    }
+    config->ctest_available = false;
+    config->ctest_bin[0] = '\0';
+    return true;
+}
+
+static bool diff_probe_c_toolchain(Diff_Cmake_Config *config) {
+    Nob_Cmd cmd = {0};
+    Arena *arena = NULL;
+    String_View stdout_text = {0};
+    String_View stderr_text = {0};
+    char probe_root[_TINYDIR_PATH_MAX] = {0};
+    char src_dir[_TINYDIR_PATH_MAX] = {0};
+    char build_dir[_TINYDIR_PATH_MAX] = {0};
+    char cmakelists[_TINYDIR_PATH_MAX] = {0};
+    char main_c[_TINYDIR_PATH_MAX] = {0};
+    char stdout_path[_TINYDIR_PATH_MAX] = {0};
+    char stderr_path[_TINYDIR_PATH_MAX] = {0};
+    bool ok = false;
+
+    if (!config || !config->available) return false;
+    config->c_toolchain_available = false;
+    config->c_toolchain_reason[0] = '\0';
+
+    if (!test_fs_join_path(".", "__c_toolchain_probe", probe_root) ||
+        !test_fs_join_path(probe_root, "src", src_dir) ||
+        !test_fs_join_path(probe_root, "build", build_dir) ||
+        !test_fs_join_path(src_dir, "CMakeLists.txt", cmakelists) ||
+        !test_fs_join_path(src_dir, "main.c", main_c) ||
+        !test_fs_join_path(probe_root, "stdout.txt", stdout_path) ||
+        !test_fs_join_path(probe_root, "stderr.txt", stderr_path)) {
+        return false;
+    }
+
+    if (!diff_ensure_dir_chain(src_dir) ||
+        !diff_ensure_dir_chain(build_dir) ||
+        !diff_write_entire_file(cmakelists,
+                                "cmake_minimum_required(VERSION 3.28)\n"
+                                "project(NobDiffToolchainProbe C)\n"
+                                "add_executable(nob_diff_probe main.c)\n") ||
+        !diff_write_entire_file(main_c, "int main(void){return 0;}\n")) {
+        return false;
+    }
+
+    nob_cmd_append(&cmd, config->cmake_bin, "-S", src_dir, "-B", build_dir);
+    ok = nob_cmd_run(&cmd, .stdout_path = stdout_path, .stderr_path = stderr_path);
+    nob_cmd_free(cmd);
+    cmd = (Nob_Cmd){0};
+
+    arena = arena_create(128 * 1024);
+    if (!arena) return false;
+    if (!diff_read_text_file(arena, stdout_path, &stdout_text) ||
+        !diff_read_text_file(arena, stderr_path, &stderr_text)) {
+        arena_destroy(arena);
+        return false;
+    }
+
+    if (ok) {
+        nob_cmd_append(&cmd, config->cmake_bin, "--build", build_dir, "--target", "nob_diff_probe");
+        ok = nob_cmd_run(&cmd, .stdout_path = stdout_path, .stderr_path = stderr_path);
+        nob_cmd_free(cmd);
+        cmd = (Nob_Cmd){0};
+        if (!diff_read_text_file(arena, stdout_path, &stdout_text) ||
+            !diff_read_text_file(arena, stderr_path, &stderr_text)) {
+            arena_destroy(arena);
+            return false;
+        }
+    }
+
+    if (ok) {
+        config->c_toolchain_available = true;
+        config->c_toolchain_reason[0] = '\0';
+    } else {
+        char reason[256] = {0};
+        diff_extract_first_line(stderr_text, reason, "");
+        if (reason[0] == '\0') diff_extract_first_line(stdout_text, reason, "C toolchain probe failed");
+        snprintf(config->c_toolchain_reason, sizeof(config->c_toolchain_reason), "%s", reason);
+    }
+
+    arena_destroy(arena);
+    return true;
 }
 
 static bool diff_resolve_cmake(Diff_Cmake_Config *out_config,
@@ -2260,8 +2894,13 @@ static bool diff_resolve_cmake(Diff_Cmake_Config *out_config,
     Arena *arena = NULL;
     const char *env_path = NULL;
     bool found = false;
+    char repo_root[_TINYDIR_PATH_MAX] = {0};
 
-    if (out_config) *out_config = (Diff_Cmake_Config){0};
+    if (out_config) {
+        diff_copy_string(out_config->repo_root, repo_root);
+        *out_config = (Diff_Cmake_Config){0};
+        diff_copy_string(repo_root, out_config->repo_root);
+    }
     if (skip_reason) skip_reason[0] = '\0';
     if (!out_config || !skip_reason) return false;
 
@@ -2326,6 +2965,14 @@ static bool diff_resolve_cmake(Diff_Cmake_Config *out_config,
     }
 
     out_config->available = true;
+    if (!diff_resolve_ctest_binary(out_config)) {
+        arena_destroy(arena);
+        return false;
+    }
+    if (!diff_probe_c_toolchain(out_config)) {
+        arena_destroy(arena);
+        return false;
+    }
     arena_destroy(arena);
     return true;
 }
@@ -2339,16 +2986,23 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     Test_Case_Workspace ws = {0};
     Arena *arena = NULL;
     Diff_Env_Guard_List env_guards = {0};
+    Diff_Env_Guard_List eval_builtin_guards = {0};
     Diff_Env_Guard_List cmake_env_guards = {0};
+    Diff_Env_Guard_List cmake_builtin_guards = {0};
+    Diff_Ctest_Server eval_ctest_server = {0};
+    Diff_Ctest_Server cmake_ctest_server = {0};
     char case_cwd[_TINYDIR_PATH_MAX] = {0};
     char source_dir[_TINYDIR_PATH_MAX] = {0};
     char build_eval_dir[_TINYDIR_PATH_MAX] = {0};
     char build_cmake_dir[_TINYDIR_PATH_MAX] = {0};
+    char eval_binary_dir[_TINYDIR_PATH_MAX] = {0};
+    char cmake_binary_dir[_TINYDIR_PATH_MAX] = {0};
     char script_path[_TINYDIR_PATH_MAX] = {0};
     char qualified_case_name[_TINYDIR_PATH_MAX] = {0};
     Diff_Evaluator_Run eval_run = {0};
     Diff_Cmake_Run cmake_run = {0};
     bool ok = false;
+    const char *fail_step = "init";
 
     if (!config || !case_pack || !diff_case || !passed || !failed || !skipped) return;
     (void)skipped;
@@ -2364,56 +3018,104 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     arena = arena_create(1024 * 1024);
     if (!arena) goto fail;
 
+    fail_step = "prepare-paths";
     if (!test_fs_save_current_dir(case_cwd) ||
         !test_fs_join_path(case_cwd, "source", source_dir) ||
         !test_fs_join_path(case_cwd, "build_eval", build_eval_dir) ||
         !test_fs_join_path(case_cwd, "build_cmake", build_cmake_dir) ||
+        !diff_copy_string(diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_eval_dir, eval_binary_dir) ||
+        !diff_copy_string(diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_cmake_dir, cmake_binary_dir) ||
         !test_fs_join_path(source_dir,
                            diff_case->mode == DIFF_MODE_SCRIPT ? "diff_script.cmake" : "CMakeLists.txt",
                            script_path)) {
         goto fail;
     }
 
+    fail_step = "prepare-evaluator-inputs";
     if (!nob_mkdir_if_not_exists(source_dir) ||
         !nob_mkdir_if_not_exists(build_eval_dir) ||
         !nob_mkdir_if_not_exists(build_cmake_dir) ||
         !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
+        !diff_copy_helper_tree(config, source_dir) ||
         !diff_generate_case_script(arena, diff_case, script_path, &(String_View){0}) ||
         !diff_apply_env_ops(diff_case,
                            source_dir,
-                           diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_eval_dir,
-                           &env_guards) ||
-        !diff_run_evaluator_case(arena,
+                           eval_binary_dir,
+                           &env_guards)) {
+        goto fail;
+    }
+    fail_step = "start-evaluator-ctest-server";
+    if ((((Diff_Oracle_Kind)case_pack->oracle_kind != DIFF_ORACLE_CTEST) ||
+         (test_fs_join_path(eval_binary_dir, "__ctest_server", eval_ctest_server.root) &&
+          diff_ctest_server_start(&eval_ctest_server, eval_ctest_server.root))) == 0) {
+        goto fail;
+    }
+    fail_step = "apply-evaluator-builtin-env";
+    if (!diff_apply_builtin_env(config,
+                                case_pack,
+                                eval_ctest_server.active ? &eval_ctest_server : NULL,
+                                &eval_builtin_guards)) {
+        goto fail;
+    }
+    fail_step = "run-evaluator";
+    if (!diff_run_evaluator_case(arena,
+                                 case_pack,
+                                 config,
                                  diff_case,
                                  script_path,
                                  source_dir,
-                                 diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_eval_dir,
+                                 eval_binary_dir,
                                  &eval_run)) {
         goto fail;
     }
+    diff_ctest_server_stop(&eval_ctest_server);
+    diff_release_env_guards(&eval_builtin_guards);
 
     if (diff_case->mode == DIFF_MODE_SCRIPT) {
+        fail_step = "reset-script-source";
         if (!test_fs_remove_tree(source_dir) ||
             !nob_mkdir_if_not_exists(source_dir) ||
             !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
+            !diff_copy_helper_tree(config, source_dir) ||
             !diff_generate_case_script(arena, diff_case, script_path, &(String_View){0})) {
             goto fail;
         }
     }
     diff_release_env_guards(&env_guards);
 
+    fail_step = "prepare-cmake-inputs";
     if (!diff_apply_env_ops(diff_case,
                             source_dir,
-                            diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_cmake_dir,
-                            &cmake_env_guards) ||
-        !diff_run_cmake_case(arena,
+                            cmake_binary_dir,
+                            &cmake_env_guards)) {
+        goto fail;
+    }
+    fail_step = "start-cmake-ctest-server";
+    if ((((Diff_Oracle_Kind)case_pack->oracle_kind != DIFF_ORACLE_CTEST) ||
+         (test_fs_join_path(cmake_binary_dir, "__ctest_server", cmake_ctest_server.root) &&
+          diff_ctest_server_start(&cmake_ctest_server, cmake_ctest_server.root))) == 0) {
+        goto fail;
+    }
+    fail_step = "apply-cmake-builtin-env";
+    if (!diff_apply_builtin_env(config,
+                                case_pack,
+                                cmake_ctest_server.active ? &cmake_ctest_server : NULL,
+                                &cmake_builtin_guards)) {
+        goto fail;
+    }
+    fail_step = "run-cmake";
+    if (!diff_run_cmake_case(arena,
+                             case_pack,
                              diff_case,
                              config,
                              script_path,
                              source_dir,
-                             diff_case->mode == DIFF_MODE_SCRIPT ? source_dir : build_cmake_dir,
-                             &cmake_run) ||
-        !diff_record_snapshots(&eval_run, &cmake_run) ||
+                             cmake_binary_dir,
+                             &cmake_run)) {
+        goto fail;
+    }
+    fail_step = "record-snapshots";
+    if (!diff_record_snapshots(&eval_run, &cmake_run) ||
         !diff_write_case_summary(config,
                                  case_pack,
                                  diff_case,
@@ -2423,8 +3125,10 @@ static void run_diff_case(const Diff_Cmake_Config *config,
                                  "case_summary.txt")) {
         goto fail;
     }
+    diff_ctest_server_stop(&cmake_ctest_server);
+    diff_release_env_guards(&cmake_builtin_guards);
 
-    ok = diff_case_matches(diff_case, &eval_run, &cmake_run);
+    ok = diff_case_matches(case_pack, diff_case, &eval_run, &cmake_run);
     if (!ok) {
         nob_log(NOB_ERROR,
                 "differential mismatch in case %s (expected=%s evaluator=%s cmake=%s)",
@@ -2448,7 +3152,11 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     }
 
     diff_release_env_guards(&env_guards);
+    diff_release_env_guards(&eval_builtin_guards);
     diff_release_env_guards(&cmake_env_guards);
+    diff_release_env_guards(&cmake_builtin_guards);
+    diff_ctest_server_stop(&eval_ctest_server);
+    diff_ctest_server_stop(&cmake_ctest_server);
     arena_destroy(arena);
     if (!test_ws_case_leave(&ws)) {
         nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated differential test workspace",
@@ -2458,10 +3166,14 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     return;
 
 fail:
-    nob_log(NOB_ERROR, "FAILED: %s: differential harness error", qualified_case_name);
+    nob_log(NOB_ERROR, "FAILED: %s: differential harness error at step %s", qualified_case_name, fail_step);
     (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
     diff_release_env_guards(&env_guards);
+    diff_release_env_guards(&eval_builtin_guards);
     diff_release_env_guards(&cmake_env_guards);
+    diff_release_env_guards(&cmake_builtin_guards);
+    diff_ctest_server_stop(&eval_ctest_server);
+    diff_ctest_server_stop(&cmake_ctest_server);
     if (arena) arena_destroy(arena);
     (*failed)++;
     if (!test_ws_case_leave(&ws)) {
@@ -2479,9 +3191,11 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
     Arena *arena = NULL;
     String_View content = {0};
     Test_Case_Pack_Entry *entries = NULL;
+    char skip_reason[256] = {0};
 
     if (!config || !case_pack || !passed || !failed || !skipped) return;
-    (void)skipped;
+
+    if (!diff_case_pack_selected(case_pack)) return;
 
     arena = arena_create(512 * 1024);
     if (!arena) {
@@ -2494,6 +3208,17 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
         nob_log(NOB_ERROR, "evaluator diff suite: failed to parse %s", case_pack->case_pack_path);
         arena_destroy(arena);
         (*failed)++;
+        return;
+    }
+
+    if (diff_case_pack_skip_reason(config, case_pack, skip_reason)) {
+        size_t count = arena_arr_len(entries);
+        nob_log(NOB_INFO,
+                "SKIPPED: evaluator diff family %s (%s)",
+                case_pack->family_label,
+                skip_reason);
+        (*skipped) += (int)count;
+        arena_destroy(arena);
         return;
     }
 
@@ -2532,6 +3257,16 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
     if (!entered) {
         nob_log(NOB_ERROR, "evaluator diff suite: failed to enter isolated workspace");
         if (failed) (*failed)++;
+        (void)test_ws_cleanup(&ws);
+        return;
+    }
+
+    if (!diff_copy_string(prev_cwd, cmake.repo_root)) {
+        nob_log(NOB_ERROR, "evaluator diff suite: failed to snapshot repository root");
+        if (failed) (*failed)++;
+        if (!test_ws_leave(prev_cwd)) {
+            if (failed) (*failed)++;
+        }
         (void)test_ws_cleanup(&ws);
         return;
     }

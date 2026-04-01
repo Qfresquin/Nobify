@@ -36,6 +36,14 @@ The harness now supports both `project-mode` and `script-mode`:
   - `export()`
   - complex local `file()` effects
   - local deterministic `FetchContent_*`
+- special-oracle families for:
+  - `find_package()` resolution, redirects, registry, and provider interop
+  - `try_compile()` and `try_run()`
+  - `ctest_*`
+  - meta/graph families including `cmake_file_api`, `add_custom_command()`,
+    `add_custom_target()`, `source_group()`,
+    `include_external_msproject()`, `output_required_files()`, `subdirs()`,
+    and `subdir_depends()`
 - `find_pathlike` now also covers local `ENV`, `PATH`, and prefix-root driven
   search flows under isolated workspace control
 - real CMake is the oracle
@@ -84,6 +92,12 @@ Current case packs:
 - `export_host_effect_seed_cases.cmake`
 - `file_host_effect_seed_cases.cmake`
 - `fetchcontent_host_effect_seed_cases.cmake`
+- `find_package_special_seed_cases.cmake`
+- `try_compile_special_seed_cases.cmake`
+- `try_run_special_seed_cases.cmake`
+- `ctest_special_seed_cases.cmake`
+- `file_api_meta_special_seed_cases.cmake`
+- `legacy_meta_special_seed_cases.cmake`
 
 Supported directives:
 
@@ -164,6 +178,22 @@ lines:
 - `FILE_SHA256:<path>=<hex|__MISSING_FILE__|__IS_DIR__>`
 - `TREE_B64:<path>=<base64 manifest|__MISSING_PATH__>`
 
+## Special Oracles
+
+Most packs still use the generic normalized snapshot lane. The Phase 4 packs
+also use lane-specific oracle reports written under `build/__oracle/`:
+
+- `find_package_special` writes a canonical `find_package_report.txt`
+- `try_compile_special` and `try_run_special` write `try_compile_report.txt`
+  and `try_run_report.txt`
+- `ctest_special` writes `ctest_report.txt` and captures the loopback submit
+  server tree under `build/__ctest_server`
+- `file_api_meta_special` writes `file_api_meta_report.txt`
+- `legacy_meta_special` writes `legacy_meta_report.txt`
+
+These special lanes still reuse the same case-pack DSL and harness execution
+model; only the final artifact normalization differs.
+
 ## Failure Artifacts
 
 On mismatch, the harness preserves:
@@ -171,6 +201,7 @@ On mismatch, the harness preserves:
 - generated `CMakeLists.txt`
 - evaluator snapshot
 - CMake snapshot
+- lane-specific oracle reports under `build/__oracle/`
 - evaluator stdout/stderr
 - evaluator nob log
 - CMake stdout/stderr

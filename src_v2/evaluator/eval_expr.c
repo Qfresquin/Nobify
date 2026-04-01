@@ -510,6 +510,7 @@ static bool expr_has(Expr *e) { return e->pos < e->count; }
 static String_View expr_peek(Expr *e) { return e->toks[e->pos]; }
 static String_View expr_next(Expr *e) { return e->toks[e->pos++]; }
 static bool parse_expr(Expr *e);
+static bool parse_cmp(Expr *e);
 
 static bool parse_primary(Expr *e) {
     if (!expr_has(e)) return false;
@@ -534,7 +535,11 @@ static bool parse_unary(Expr *e) {
 
     if (eval_sv_eq_ci_lit(tok, "NOT")) {
         expr_next(e);
-        return !parse_unary(e);
+        // CMake allows constructs like:
+        //   if(NOT A STREQUAL B)
+        // so NOT must bind over the next comparison expression, not only a
+        // single primary/unary atom.
+        return !parse_cmp(e);
     }
 
     if (eval_sv_eq_ci_lit(tok, "DEFINED")) {

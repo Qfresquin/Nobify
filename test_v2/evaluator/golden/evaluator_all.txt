@@ -69,7 +69,7 @@ EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='pkg_a
 DIAG errors=0 warnings=0
 EVENTS count=4
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=2 col=1 name='ProbeDemo' version='' description='' languages='C;CXX'
-EV[1] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='HAVE_X' value='0'
+EV[1] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=3 col=1 key='HAVE_X' value='FALSE'
 EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='probe_app' type=EXECUTABLE
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe_app' path='main.c'
 === END CASE ===
@@ -77,11 +77,11 @@ EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe
 === CASE try_compile_source_from_content_copy_file_and_cache ===
 DIAG errors=0 warnings=0
 EVENTS count=7
-EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=1 col=1 key='TC_CONTENT_OK' value='1'
+EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=1 col=1 key='TC_CONTENT_OK' value='TRUE'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='tc_content' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='tc_content' path='main.c'
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='tc_content' key='COMPILE_DEFINITIONS' value='TC_CONTENT_OK=1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_CONTENT_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='tc_content' key='COMPILE_DEFINITIONS' value='TC_CONTENT_OK=TRUE' op=APPEND_LIST
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_CONTENT_OK=TRUE' vis=PRIVATE
 EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='tc_content' key='COMPILE_DEFINITIONS' value='TC_FLAG=' op=APPEND_LIST
 EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_FLAG=' vis=PRIVATE
 === END CASE ===
@@ -91,8 +91,8 @@ DIAG errors=0 warnings=0
 EVENTS count=6
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='tc_missing' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='tc_missing' path='main.c'
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='tc_missing' key='COMPILE_DEFINITIONS' value='TC_MISSING=0' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING=0' vis=PRIVATE
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='tc_missing' key='COMPILE_DEFINITIONS' value='TC_MISSING=FALSE' op=APPEND_LIST
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING=FALSE' vis=PRIVATE
 EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='tc_missing' key='COMPILE_DEFINITIONS' value='TC_MISSING_MSG=try_compile source file not found: ./missing_a.c\n' op=APPEND_LIST
 EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING_MSG=try_compile source file not found: ./missing_a.c\n' vis=PRIVATE
 === END CASE ===
@@ -102,8 +102,8 @@ DIAG errors=0 warnings=0
 EVENTS count=6
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=10 col=1 name='tc_mix' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=10 col=1 target='tc_mix' path='main.c'
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='tc_mix' key='COMPILE_DEFINITIONS' value='TC_MIX_OK=1' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_MIX_OK=1' vis=PRIVATE
+EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='tc_mix' key='COMPILE_DEFINITIONS' value='TC_MIX_OK=TRUE' op=APPEND_LIST
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_MIX_OK=TRUE' vis=PRIVATE
 EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='tc_mix' key='COMPILE_DEFINITIONS' value='TC_COPY_ERR=' op=APPEND_LIST
 EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_COPY_ERR=' vis=PRIVATE
 === END CASE ===
@@ -111,15 +111,15 @@ EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 tar
 === CASE try_compile_project_signature_success_and_failure ===
 DIAG errors=0 warnings=0
 EVENTS count=11
-EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=6 col=1 key='TC_PROJ_OK' value='1'
+EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=6 col=1 key='TC_PROJ_OK' value='TRUE'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=1 name='tc_proj' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=1 target='tc_proj' path='main.c'
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_OK=1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_OK=TRUE' op=APPEND_LIST
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_OK=TRUE' vis=PRIVATE
 EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FLAG=' op=APPEND_LIST
 EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FLAG=' vis=PRIVATE
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FAIL=0' op=APPEND_LIST
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL=0' vis=PRIVATE
+EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FAIL=FALSE' op=APPEND_LIST
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL=FALSE' vis=PRIVATE
 EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FAIL_MSG=try_compile(PROJECT) source directory is missing CMakeLists.txt: ./tc_proj_fail\n' op=APPEND_LIST
 EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL_MSG=try_compile(PROJECT) source directory is missing CMakeLists.txt: ./tc_proj_fail\n' vis=PRIVATE
 === END CASE ===

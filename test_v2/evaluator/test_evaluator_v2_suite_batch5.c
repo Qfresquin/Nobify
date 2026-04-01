@@ -2802,7 +2802,7 @@ TEST(evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak) {
         }
         if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
         if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("tc_try_local_probe"))) continue;
-        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_LOCAL_ONLY=1"))) {
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_LOCAL_ONLY=TRUE"))) {
             saw_local_only = true;
         }
         if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("INNER_ONLY_PARENT="))) {
@@ -2862,7 +2862,7 @@ TEST(evaluator_try_compile_failure_populates_output_variable) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
         if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("tc_try_fail_probe"))) continue;
-        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_FAIL=0"))) {
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("TC_FAIL=FALSE"))) {
             saw_fail_result = true;
             continue;
         }

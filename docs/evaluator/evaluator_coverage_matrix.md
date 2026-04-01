@@ -355,8 +355,22 @@ Roadmap:
 - **Phase 4, create special-oracle lanes**
   - add dedicated harnesses for families whose oracles are not well represented
     by the generic snapshot lane
-  - target `find_package`, providers, redirects, package registry/export,
-    `try_compile`, `try_run`, `ctest_*`, and `custom command/target`
+  - status: closed for special-oracle families
+  - delivered in this slice:
+    - special-oracle pack registration inside `test-evaluator-diff`
+    - repo-tracked helpers under `test_v2/evaluator_diff/helpers/`
+    - `find_package` resolution lane, including redirects, registry, and
+      provider interop
+    - `try_compile` / `try_run` oracle lanes
+    - `ctest_*` lane with loopback submit/upload capture
+    - meta/graph lanes for `cmake_file_api`, `add_custom_command`,
+      `add_custom_target`, `source_group`, `include_external_msproject`,
+      `output_required_files`, `subdirs`, and `subdir_depends`
+  - explicitly deferred beyond Phase 4:
+    - real network/CDash/TLS backends
+    - external VCS/service dependencies
+    - real `cmake --install` execution
+    - structural/policy backlog reserved for Phase 5
 - **Phase 5, cover structural nodes and compat/policy quirks**
   - differentialize `if`, `foreach`, `while`, `function`, `macro`, `block`,
     `return`, `break`, `continue`, and policy/compat interactions that change

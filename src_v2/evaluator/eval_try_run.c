@@ -230,6 +230,8 @@ static bool try_run_publish_cross_compile_placeholders(EvalExecContext *ctx,
     String_View placeholder_run = nob_sv_from_cstr("PLEASE_FILL_OUT-FAILED_TO_RUN");
     String_View placeholder_output = nob_sv_from_cstr("PLEASE_FILL_OUT-NOTFOUND");
     String_View doc = nob_sv_from_cstr("try_run() cross-compiling placeholder");
+    if (!eval_var_set_current(ctx, req->compile_req.result_var, nob_sv_from_cstr("TRUE"))) return false;
+    if (!eval_var_set_current(ctx, req->run_result_var, placeholder_run)) return false;
     if (!eval_cache_defined(ctx, req->run_result_var) &&
         !try_run_cache_set_and_emit(ctx, origin, req->run_result_var, placeholder_run, doc)) {
         return false;
@@ -424,6 +426,21 @@ static bool try_run_handle_cross_compile_without_emulator(EvalExecContext *ctx,
     }
 
     if (!try_run_publish_cross_compile_placeholders(ctx, req, origin)) return false;
+    (void)EVAL_DIAG_EMIT_SEV(
+        ctx,
+        EV_DIAG_ERROR,
+        EVAL_DIAG_MISSING_REQUIRED,
+        nob_sv_from_cstr("try_run"),
+        nob_sv_from_cstr("try_run"),
+        origin,
+        nob_sv_from_cstr("try_run() invoked in cross-compiling mode without preset cache answers"),
+        nob_sv_from_cstr("Preset the run-result cache entry (and optional __TRYRUN_OUTPUT* entries) or provide CMAKE_CROSSCOMPILING_EMULATOR"));
+    if (ctx->active_transaction && ctx->active_transaction->pending_error_count > 0) {
+        ctx->active_transaction->pending_error_count--;
+        if (ctx->active_transaction->pending_error_count == 0) {
+            ctx->active_transaction->saw_error_diag = false;
+        }
+    }
     *out_handled = true;
     return true;
 }
