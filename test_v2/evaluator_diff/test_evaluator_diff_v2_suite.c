@@ -96,6 +96,9 @@ static const Diff_Case_Pack s_diff_case_packs[] = {
     {"ctest_special", "test_v2/evaluator_diff/cases/ctest_special_seed_cases.cmake", DIFF_ORACLE_CTEST},
     {"file_api_meta_special", "test_v2/evaluator_diff/cases/file_api_meta_special_seed_cases.cmake", DIFF_ORACLE_META_GRAPH},
     {"legacy_meta_special", "test_v2/evaluator_diff/cases/legacy_meta_special_seed_cases.cmake", DIFF_ORACLE_META_GRAPH},
+    {"flow_control_structural", "test_v2/evaluator_diff/cases/flow_control_structural_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"callable_scope_structural", "test_v2/evaluator_diff/cases/callable_scope_structural_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+    {"structural_policy_compat", "test_v2/evaluator_diff/cases/structural_policy_compat_seed_cases.cmake", DIFF_ORACLE_GENERIC},
 };
 
 typedef enum {
@@ -1974,7 +1977,15 @@ static bool diff_run_evaluator_case(Arena *arena,
     ctx = eval_test_create(&init);
     if (!ctx) goto defer;
 
-    if (!test_fs_save_current_dir(workspace_cwd) ||
+    if (!test_fs_save_current_dir(workspace_cwd)) {
+        const char *fallback_cwd = nob_temp_dir_name(source_dir);
+        if (!fallback_cwd || fallback_cwd[0] == '\0' ||
+            !diff_copy_string(fallback_cwd, workspace_cwd) ||
+            !nob_set_current_dir(workspace_cwd)) {
+            goto defer;
+        }
+    }
+    if (
         !test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path) ||
         !test_fs_join_path(workspace_cwd, "evaluator_stdout.txt", stdout_path) ||
         !test_fs_join_path(workspace_cwd, "evaluator_stderr.txt", stderr_path)) {
@@ -2089,7 +2100,15 @@ static bool diff_run_cmake_case(Arena *arena,
         return false;
     }
 
-    if (!test_fs_save_current_dir(workspace_cwd) ||
+    if (!test_fs_save_current_dir(workspace_cwd)) {
+        const char *fallback_cwd = nob_temp_dir_name(source_dir);
+        if (!fallback_cwd || fallback_cwd[0] == '\0' ||
+            !diff_copy_string(fallback_cwd, workspace_cwd) ||
+            !nob_set_current_dir(workspace_cwd)) {
+            return false;
+        }
+    }
+    if (
         !test_fs_join_path(workspace_cwd, "cmake_stdout.txt", stdout_path) ||
         !test_fs_join_path(workspace_cwd, "cmake_stderr.txt", stderr_path) ||
         !test_fs_join_path(binary_dir, "diff_snapshot.txt", snapshot_path)) {
@@ -3073,13 +3092,18 @@ static void run_diff_case(const Diff_Cmake_Config *config,
 
     if (diff_case->mode == DIFF_MODE_SCRIPT) {
         fail_step = "reset-script-source";
-        if (!test_fs_remove_tree(source_dir) ||
+        if (!nob_set_current_dir(case_cwd) ||
+            !test_fs_remove_tree(source_dir) ||
             !nob_mkdir_if_not_exists(source_dir) ||
             !diff_prepare_case_fixtures(diff_case, source_dir, build_eval_dir, build_cmake_dir) ||
             !diff_copy_helper_tree(config, source_dir) ||
             !diff_generate_case_script(arena, diff_case, script_path, &(String_View){0})) {
             goto fail;
         }
+    }
+    fail_step = "restore-case-cwd";
+    if (!nob_set_current_dir(case_cwd)) {
+        goto fail;
     }
     diff_release_env_guards(&env_guards);
 
@@ -3130,6 +3154,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
 
     ok = diff_case_matches(case_pack, diff_case, &eval_run, &cmake_run);
     if (!ok) {
+        (void)nob_set_current_dir(case_cwd);
         nob_log(NOB_ERROR,
                 "differential mismatch in case %s (expected=%s evaluator=%s cmake=%s)",
                 qualified_case_name,
@@ -3151,6 +3176,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
         (*passed)++;
     }
 
+    (void)nob_set_current_dir(case_cwd);
     diff_release_env_guards(&env_guards);
     diff_release_env_guards(&eval_builtin_guards);
     diff_release_env_guards(&cmake_env_guards);
@@ -3166,6 +3192,7 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     return;
 
 fail:
+    if (case_cwd[0] != '\0') (void)nob_set_current_dir(case_cwd);
     nob_log(NOB_ERROR, "FAILED: %s: differential harness error at step %s", qualified_case_name, fail_step);
     (void)diff_preserve_failure_artifacts(nob_sv_from_cstr(qualified_case_name));
     diff_release_env_guards(&env_guards);
@@ -3192,6 +3219,7 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
     String_View content = {0};
     Test_Case_Pack_Entry *entries = NULL;
     char skip_reason[256] = {0};
+    char pack_cwd[_TINYDIR_PATH_MAX] = {0};
 
     if (!config || !case_pack || !passed || !failed || !skipped) return;
 
@@ -3222,8 +3250,25 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
         return;
     }
 
+    if (!test_fs_save_current_dir(pack_cwd)) {
+        arena_destroy(arena);
+        (*failed)++;
+        return;
+    }
+
     for (size_t i = 0; i < arena_arr_len(entries); i++) {
         Diff_Case diff_case = {0};
+        size_t temp_mark = nob_temp_save();
+        if (!nob_set_current_dir(pack_cwd)) {
+            nob_log(NOB_ERROR,
+                    "evaluator diff suite: failed to restore cwd before family %s case %.*s",
+                    case_pack->family_label,
+                    (int)entries[i].name.count,
+                    entries[i].name.data ? entries[i].name.data : "");
+            (*failed)++;
+            nob_temp_rewind(temp_mark);
+            continue;
+        }
         if (!diff_parse_case(arena, entries[i], &diff_case)) {
             nob_log(NOB_ERROR,
                     "evaluator diff suite: failed to parse metadata for family %s case %.*s",
@@ -3231,11 +3276,14 @@ static void run_evaluator_diff_case_pack(const Diff_Cmake_Config *config,
                     (int)entries[i].name.count,
                     entries[i].name.data);
             (*failed)++;
+            nob_temp_rewind(temp_mark);
             continue;
         }
         run_diff_case(config, case_pack, &diff_case, passed, failed, skipped);
+        nob_temp_rewind(temp_mark);
     }
 
+    (void)nob_set_current_dir(pack_cwd);
     arena_destroy(arena);
 }
 
@@ -3243,6 +3291,7 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     Diff_Cmake_Config cmake = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    char suite_cwd[_TINYDIR_PATH_MAX] = {0};
     char skip_reason[256] = {0};
     bool prepared = test_ws_prepare(&ws, "evaluator_diff");
     bool entered = false;
@@ -3257,6 +3306,16 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
     if (!entered) {
         nob_log(NOB_ERROR, "evaluator diff suite: failed to enter isolated workspace");
         if (failed) (*failed)++;
+        (void)test_ws_cleanup(&ws);
+        return;
+    }
+
+    if (!test_fs_save_current_dir(suite_cwd)) {
+        nob_log(NOB_ERROR, "evaluator diff suite: failed to snapshot suite workspace cwd");
+        if (failed) (*failed)++;
+        if (!test_ws_leave(prev_cwd)) {
+            if (failed) (*failed)++;
+        }
         (void)test_ws_cleanup(&ws);
         return;
     }
@@ -3279,7 +3338,17 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped) {
         if (skipped) (*skipped)++;
     } else {
         for (size_t i = 0; i < NOB_ARRAY_LEN(s_diff_case_packs); i++) {
+            size_t temp_mark = nob_temp_save();
+            if (!nob_set_current_dir(suite_cwd)) {
+                nob_log(NOB_ERROR,
+                        "evaluator diff suite: failed to restore suite cwd before family %s",
+                        s_diff_case_packs[i].family_label);
+                if (failed) (*failed)++;
+                nob_temp_rewind(temp_mark);
+                continue;
+            }
             run_evaluator_diff_case_pack(&cmake, &s_diff_case_packs[i], passed, failed, skipped);
+            nob_temp_rewind(temp_mark);
         }
     }
 

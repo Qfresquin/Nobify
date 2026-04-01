@@ -44,6 +44,24 @@ The harness now supports both `project-mode` and `script-mode`:
     `add_custom_target()`, `source_group()`,
     `include_external_msproject()`, `output_required_files()`, `subdirs()`,
     and `subdir_depends()`
+- structural/policy families for:
+  - `flow_control_structural`
+    - `if()`
+    - `foreach()`
+    - `while()`
+    - `break()`
+    - `continue()`
+    - `block()`
+  - `callable_scope_structural`
+    - `function()`
+    - `macro()`
+    - `return()`
+  - `structural_policy_compat`
+    - `CMP0124`
+    - `CMP0140`
+    - structural `if(POLICY ...)`
+    - policy-scope interactions through `include()`,
+      `cmake_minimum_required()`, and `cmake_policy()`
 - `find_pathlike` now also covers local `ENV`, `PATH`, and prefix-root driven
   search flows under isolated workspace control
 - real CMake is the oracle
@@ -52,6 +70,34 @@ The harness now supports both `project-mode` and `script-mode`:
 
 The suite is explicit-only and does not participate in the default `test-v2`
 aggregate.
+
+## Lane Families
+
+The coverage matrix is the source of truth for exact `row -> lane -> owner`
+classification. This README only summarizes the current lane families:
+
+- `snapshot differential`
+  - `target_usage`, `list`, `var_commands`, `property_query`,
+    `property_wrappers`, `cmake_path`, `get_filename_component`, `math`,
+    `add_targets`, `add_subdirectory`, `string`, `top_level_project`,
+    `message`, `configure_file`, `directory_usage`, `property_setters`,
+    `testing_meta`, `argument_parsing`, `host_identity`, `cache_loading`,
+    `legacy_generation`, `include_script`, `execute_process_script`,
+    `cmake_language_script`, `cmake_policy_script`,
+    `configure_file_script`, `flow_control_structural`,
+    `callable_scope_structural`, `structural_policy_compat`
+- `host-effect differential`
+  - `find_pathlike`, `install_host_effect`, `export_host_effect`,
+    `file_host_effect`, `fetchcontent_host_effect`, `legacy_generation`
+- `normalized failure differential`
+  - documentary owners only in the matrix today:
+    `legacy_cpack_failure`, `legacy_loader_failure`,
+    `legacy_compat_failure`
+- `special oracle lane`
+  - `find_package_special`, `try_compile_special`, `try_run_special`,
+    `ctest_special`, `file_api_meta_special`, `legacy_meta_special`
+  - `enable_language_special` is currently a documentary owner in the matrix,
+    not a separate pack yet
 
 ## Case-Pack DSL
 
@@ -98,6 +144,9 @@ Current case packs:
 - `ctest_special_seed_cases.cmake`
 - `file_api_meta_special_seed_cases.cmake`
 - `legacy_meta_special_seed_cases.cmake`
+- `flow_control_structural_seed_cases.cmake`
+- `callable_scope_structural_seed_cases.cmake`
+- `structural_policy_compat_seed_cases.cmake`
 
 Supported directives:
 

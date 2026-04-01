@@ -1316,6 +1316,51 @@ TEST(evaluator_flow_commands_reject_extra_arguments) {
     TEST_PASS();
 }
 
+TEST(evaluator_foreach_rejects_empty_signature) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "foreach()\n"
+        "endforeach()\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 1);
+
+    bool saw_foreach_error = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].h.kind != EV_DIAGNOSTIC) continue;
+        if (stream->items[i].as.diag.severity != EV_DIAG_ERROR) continue;
+        if (!nob_sv_eq(stream->items[i].as.diag.command, nob_sv_from_cstr("foreach"))) continue;
+        saw_foreach_error = true;
+        break;
+    }
+    ASSERT(saw_foreach_error);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_while_iteration_limit_snapshot_applies_per_loop_entry) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2449,6 +2494,7 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_cmake_path_extended_surface_and_strict_validation(passed, failed, skipped);
     test_evaluator_cmake_path_getters_and_relative_absolute_roundtrip_cover_remaining_components(passed, failed, skipped);
     test_evaluator_flow_commands_reject_extra_arguments(passed, failed, skipped);
+    test_evaluator_foreach_rejects_empty_signature(passed, failed, skipped);
     test_evaluator_while_iteration_limit_snapshot_applies_per_loop_entry(passed, failed, skipped);
     test_evaluator_while_iteration_limit_invalid_value_warns_and_falls_back(passed, failed, skipped);
     test_evaluator_enable_testing_does_not_set_build_testing_variable(passed, failed, skipped);

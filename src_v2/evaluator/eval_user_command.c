@@ -161,7 +161,7 @@ bool eval_user_cmd_invoke(EvalExecContext *ctx, String_View name, const SV_List 
     bool exec_pushed = false;
     Eval_Exec_Context exec = {0};
     exec.kind = is_function ? EVAL_EXEC_CTX_FUNCTION : EVAL_EXEC_CTX_MACRO;
-    exec.return_context = is_function ? EVAL_RETURN_CTX_FUNCTION : EVAL_RETURN_CTX_MACRO;
+    exec.return_context = is_function ? EVAL_RETURN_CTX_FUNCTION : ctx->return_context;
     exec.source_dir = eval_current_source_dir(ctx);
     exec.binary_dir = eval_current_binary_dir(ctx);
     exec.list_dir = eval_current_list_dir(ctx);
@@ -274,7 +274,7 @@ cleanup:
             if (!ok_set) ok = false;
         }
     }
-    eval_clear_return_state(ctx);
+    if (!(is_macro && did_return)) eval_clear_return_state(ctx);
     if (entered_function_depth > 0) {
         eval_file_lock_release_function_scope(ctx, entered_function_depth);
     }
@@ -288,6 +288,9 @@ cleanup:
         if (!eval_emit_flow_function_end(ctx, origin, name, did_return)) return false;
     } else if (is_macro) {
         if (!eval_emit_flow_macro_end(ctx, origin, name, did_return)) return false;
+        if (did_return) {
+            if (!eval_exec_request_return(ctx)) return false;
+        }
     }
 
     return ok;

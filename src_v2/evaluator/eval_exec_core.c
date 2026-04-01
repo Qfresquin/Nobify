@@ -106,7 +106,17 @@ static Eval_Result eval_foreach(EvalExecContext *ctx, const Node *node) {
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     SV_List a = eval_resolve_args(ctx, &node->as.foreach_stmt.args);
     if (ctx->oom) return eval_result_fatal();
-    if (arena_arr_len(a) == 0) return eval_result_ok();
+    if (arena_arr_len(a) == 0) {
+        (void)EVAL_DIAG_EMIT_SEV(ctx,
+                                 EV_DIAG_ERROR,
+                                 EVAL_DIAG_MISSING_REQUIRED,
+                                 nob_sv_from_cstr("flow"),
+                                 nob_sv_from_cstr("foreach"),
+                                 eval_origin_from_node(ctx, node),
+                                 nob_sv_from_cstr("foreach() expects at least one argument"),
+                                 nob_sv_from_cstr("Usage: foreach(<loop_var> <items...>)"));
+        return eval_result_from_ctx(ctx);
+    }
 
     String_View var = a[0];
     size_t idx = 1;
@@ -266,8 +276,17 @@ static Eval_Result eval_foreach(EvalExecContext *ctx, const Node *node) {
     exec->loop_depth--;
     if (!eval_emit_flow_loop_end(ctx, origin, nob_sv_from_cstr("foreach"), (uint32_t)iter_count)) return eval_result_fatal();
     if (cmp0124_new) {
-        if (loop_old_defined) (void)eval_var_set_current(ctx, var, loop_old);
-        else (void)eval_var_unset_current(ctx, var);
+        if (loop_old_defined) {
+            if (!eval_var_set_current(ctx, var, loop_old)) return eval_result_fatal();
+        } else if (!eval_var_unset_current(ctx, var)) {
+            return eval_result_fatal();
+        }
+    } else {
+        if (loop_old_defined) {
+            if (!eval_var_set_current(ctx, var, loop_old)) return eval_result_fatal();
+        } else if (!eval_var_set_current(ctx, var, nob_sv_from_cstr(""))) {
+            return eval_result_fatal();
+        }
     }
     return eval_result_merge(aggregate, eval_result_ok_if_running(ctx));
 }

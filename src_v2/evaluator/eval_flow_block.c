@@ -202,11 +202,6 @@ Eval_Result eval_handle_return(EvalExecContext *ctx, const Node *node) {
     SV_List args = eval_resolve_args(ctx, &node->as.cmd.args);
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
 
-    if (ctx->return_context == EVAL_RETURN_CTX_MACRO) {
-        (void)EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_CONTEXT, nob_sv_from_cstr("flow"), node->as.cmd.name, eval_origin_from_node(ctx, node), nob_sv_from_cstr("return() cannot be used inside macro()"), nob_sv_from_cstr("macro() is expanded in place; use function() if return() is required"));
-        return eval_result_from_ctx(ctx);
-    }
-
     eval_clear_return_state(ctx);
 
     bool cmp0140_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0140);

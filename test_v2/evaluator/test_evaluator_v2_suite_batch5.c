@@ -1333,6 +1333,80 @@ TEST(evaluator_cmake_minimum_required_inside_function_applies_policy_not_variabl
     TEST_PASS();
 }
 
+TEST(evaluator_foreach_cmp0124_old_defines_empty_and_new_unsets) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "cmake_policy(SET CMP0124 OLD)\n"
+        "foreach(OLD_I IN ITEMS x y)\n"
+        "endforeach()\n"
+        "if(DEFINED OLD_I)\n"
+        "  set(OLD_I_DEF 1)\n"
+        "  set(OLD_I_VAL \"${OLD_I}\")\n"
+        "else()\n"
+        "  set(OLD_I_DEF 0)\n"
+        "endif()\n"
+        "cmake_policy(SET CMP0124 NEW)\n"
+        "foreach(NEW_I IN ITEMS x y)\n"
+        "endforeach()\n"
+        "if(DEFINED NEW_I)\n"
+        "  set(NEW_I_DEF 1)\n"
+        "else()\n"
+        "  set(NEW_I_DEF 0)\n"
+        "endif()\n"
+        "add_executable(cmp0124_vars main.c)\n"
+        "target_compile_definitions(cmp0124_vars PRIVATE OLD_I_DEF=${OLD_I_DEF} OLD_I_VAL=${OLD_I_VAL} NEW_I_DEF=${NEW_I_DEF})\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->warning_count == 0);
+    ASSERT(report->error_count == 0);
+
+    bool saw_old_def = false;
+    bool saw_old_val_empty = false;
+    bool saw_new_def_zero = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OLD_I_DEF=1"))) {
+            saw_old_def = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("OLD_I_VAL="))) {
+            saw_old_val_empty = true;
+        }
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("NEW_I_DEF=0"))) {
+            saw_new_def_zero = true;
+        }
+    }
+
+    ASSERT(saw_old_def);
+    ASSERT(saw_old_val_empty);
+    ASSERT(saw_new_def_zero);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3003,6 +3077,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_policy_known_unknown_and_if_predicate(passed, failed, skipped);
     test_evaluator_policy_strict_arity_and_version_validation(passed, failed, skipped);
     test_evaluator_cmake_minimum_required_inside_function_applies_policy_not_variable(passed, failed, skipped);
+    test_evaluator_foreach_cmp0124_old_defines_empty_and_new_unsets(passed, failed, skipped);
     test_evaluator_cpack_commands_require_cpackcomponent_module_and_parse_component_extras(passed, failed, skipped);
     test_evaluator_cpack_commands_reject_missing_names_and_warn_on_extra_args(passed, failed, skipped);
     test_evaluator_diag_codes_are_explicit_and_report_classes(passed, failed, skipped);

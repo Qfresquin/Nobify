@@ -2768,7 +2768,7 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
         "  math()\n"
         "endfunction()\n"
         "macro(trace_macro)\n"
-        "  return()\n"
+        "  break()\n"
         "endmacro()\n"
         "unknown_trace_cmd()\n"
         "math()\n"
@@ -2832,15 +2832,15 @@ TEST(evaluator_event_ir_command_trace_sequences_unknown_and_error_paths) {
                                                             10,
                                                             EVENT_COMMAND_DISPATCH_MACRO);
     size_t macro_inner_begin = evaluator_find_command_begin_index(stream,
-                                                                  nob_sv_from_cstr("return"),
+                                                                  nob_sv_from_cstr("break"),
                                                                   5,
                                                                   EVENT_COMMAND_DISPATCH_BUILTIN);
     size_t macro_inner_diag = evaluator_find_diag_index(stream,
-                                                        nob_sv_from_cstr("return"),
+                                                        nob_sv_from_cstr("break"),
                                                         5,
-                                                        nob_sv_from_cstr("return() cannot be used inside macro()"));
+                                                        nob_sv_from_cstr("break() used outside of a loop"));
     size_t macro_inner_end = evaluator_find_command_end_index(stream,
-                                                              nob_sv_from_cstr("return"),
+                                                              nob_sv_from_cstr("break"),
                                                               5,
                                                               EVENT_COMMAND_DISPATCH_BUILTIN,
                                                               EVENT_COMMAND_STATUS_ERROR);
@@ -2999,7 +2999,7 @@ TEST(evaluator_event_ir_command_trace_sequences_success_paths) {
     TEST_PASS();
 }
 
-TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
+TEST(evaluator_return_in_macro_returns_from_callsite_context) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -3017,26 +3017,44 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
+    ASSERT(nob_write_entire_file("macro_return_include.cmake",
+                                 "macro(mc_ret)\n"
+                                 "  set(MAC_RET before)\n"
+                                 "  return()\n"
+                                 "  set(MAC_RET after)\n"
+                                 "endmacro()\n"
+                                 "mc_ret()\n"
+                                 "set(AFTER_MACRO_IN_INCLUDE inside)\n",
+                                 strlen("macro(mc_ret)\n"
+                                        "  set(MAC_RET before)\n"
+                                        "  return()\n"
+                                        "  set(MAC_RET after)\n"
+                                        "endmacro()\n"
+                                        "mc_ret()\n"
+                                        "set(AFTER_MACRO_IN_INCLUDE inside)\n")));
 
     Ast_Root root = parse_cmake(
         temp_arena,
         "set(MAC_RET start)\n"
-        "macro(mc_ret)\n"
-        "  set(MAC_RET before)\n"
-        "  return()\n"
-        "  set(MAC_RET after)\n"
-        "endmacro()\n"
-        "mc_ret()\n"
+        "include(macro_return_include.cmake)\n"
+        "if(DEFINED AFTER_MACRO_IN_INCLUDE)\n"
+        "  set(AFTER_MACRO_DEFINED yes)\n"
+        "else()\n"
+        "  set(AFTER_MACRO_DEFINED no)\n"
+        "endif()\n"
+        "set(AFTER_INCLUDE top)\n"
         "add_executable(ret_macro main.c)\n"
-        "target_compile_definitions(ret_macro PRIVATE MAC_RET=${MAC_RET})\n");
+        "target_compile_definitions(ret_macro PRIVATE MAC_RET=${MAC_RET} AFTER_MACRO_DEFINED=${AFTER_MACRO_DEFINED} AFTER_INCLUDE=${AFTER_INCLUDE})\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 1);
+    ASSERT(report->error_count == 0);
 
     bool saw_macro_return_error = false;
-    bool saw_macro_ret_after = false;
+    bool saw_macro_ret_before = false;
+    bool saw_after_macro_defined_no = false;
+    bool saw_after_include_top = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind == EV_DIAGNOSTIC &&
@@ -3046,13 +3064,25 @@ TEST(evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body) {
         }
         if (ev->h.kind == EV_TARGET_COMPILE_DEFINITIONS &&
             nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ret_macro")) &&
-            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MAC_RET=after"))) {
-            saw_macro_ret_after = true;
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MAC_RET=before"))) {
+            saw_macro_ret_before = true;
+        }
+        if (ev->h.kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ret_macro")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("AFTER_MACRO_DEFINED=no"))) {
+            saw_after_macro_defined_no = true;
+        }
+        if (ev->h.kind == EV_TARGET_COMPILE_DEFINITIONS &&
+            nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("ret_macro")) &&
+            nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("AFTER_INCLUDE=top"))) {
+            saw_after_include_top = true;
         }
     }
 
-    ASSERT(saw_macro_return_error);
-    ASSERT(saw_macro_ret_after);
+    ASSERT(!saw_macro_return_error);
+    ASSERT(saw_macro_ret_before);
+    ASSERT(saw_after_macro_defined_no);
+    ASSERT(saw_after_include_top);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3155,7 +3185,7 @@ void run_evaluator_v2_batch2(int *passed, int *failed, int *skipped) {
     test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed, skipped);
     test_evaluator_event_ir_command_trace_sequences_unknown_and_error_paths(passed, failed, skipped);
     test_evaluator_event_ir_command_trace_sequences_success_paths(passed, failed, skipped);
-    test_evaluator_return_in_macro_is_error_and_does_not_unwind_macro_body(passed, failed, skipped);
+    test_evaluator_return_in_macro_returns_from_callsite_context(passed, failed, skipped);
     test_evaluator_return_cmp0140_old_ignores_args_and_new_enables_propagate(passed, failed, skipped);
 }
 
