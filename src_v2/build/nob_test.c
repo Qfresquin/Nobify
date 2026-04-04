@@ -79,6 +79,7 @@ static void append_test_evaluator_diff_all_sources(Nob_Cmd *cmd);
 static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd);
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
 static void append_test_codegen_all_sources(Nob_Cmd *cmd);
+static void append_test_artifact_parity_all_sources(Nob_Cmd *cmd);
 static void append_v2_pcre_sources(Nob_Cmd *cmd);
 static void append_platform_link_flags(Nob_Cmd *cmd);
 static void report_captured_test_output(const Test_Module *module,
@@ -167,6 +168,7 @@ static Test_Module TEST_MODULES[] = {
     {"evaluator-integration", append_test_evaluator_integration_all_sources, false},
     {"pipeline", append_test_pipeline_all_sources, true},
     {"codegen", append_test_codegen_all_sources, true},
+    {"artifact-parity", append_test_artifact_parity_all_sources, false},
 };
 
 static bool starts_with(const char *text, const char *prefix) {
@@ -731,6 +733,17 @@ static void append_v2_codegen_test_sources(Nob_Cmd *cmd) {
         "test_v2/codegen/test_codegen_v2_suite_reject.c");
 }
 
+static void append_v2_artifact_parity_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/test_semantic_pipeline.c",
+        "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
+        "test_v2/test_workspace.c",
+        "test_v2/artifact_parity/test_artifact_parity_v2_support.c",
+        "test_v2/artifact_parity/test_artifact_parity_v2_main.c",
+        "test_v2/artifact_parity/test_artifact_parity_v2_suite.c");
+}
+
 static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "src_v2/build_model/build_model_builder.c",
@@ -1159,6 +1172,14 @@ static void append_test_pipeline_all_sources(Nob_Cmd *cmd) {
 
 static void append_test_codegen_all_sources(Nob_Cmd *cmd) {
     append_v2_codegen_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_artifact_parity_all_sources(Nob_Cmd *cmd) {
+    append_v2_artifact_parity_test_sources(cmd);
     append_v2_evaluator_runtime_sources(cmd);
     append_v2_build_model_runtime_sources(cmd);
     append_v2_codegen_runtime_sources(cmd);
@@ -2022,7 +2043,7 @@ int main(int argc, char **argv) {
     }
 
     nob_log(NOB_INFO,
-            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-build-model|test-evaluator|test-evaluator-diff|test-evaluator-integration|test-pipeline|test-codegen|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
+            "Usage: %s [--verbose] [clean-tests|clang-tidy-v2|clang-tidy-<module>|test-arena|test-lexer|test-parser|test-build-model|test-evaluator|test-evaluator-diff|test-evaluator-integration|test-pipeline|test-codegen|test-artifact-parity|test-v2|test-*-cov|test-*-san|test-*-asan|test-*-ubsan|test-*-msan]",
             argv[0]);
     return 1;
 }

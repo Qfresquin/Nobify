@@ -169,6 +169,7 @@ Owned by each logical test module:
 - `evaluator`
 - `pipeline`
 - `codegen`
+- `artifact-parity`
 
 Responsibilities:
 - semantic assertions specific to that suite

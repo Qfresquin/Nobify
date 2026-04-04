@@ -6,7 +6,7 @@ EVAL_OK 1
 BUILDER_OK 1
 FREEZE_OK 1
 DIAG errors=0 warnings=0
-EVENTS count=35
+EVENTS count=36
 MODEL project='PipeLinks' targets=2 packages=0 tests=0 install_enabled=0 testing_enabled=0 cpack_groups=0 cpack_types=0 cpack_components=0
 DIR include=0 system_include=1 link=1
 GLOBAL compile_defs=0 compile_opts=0 link_opts=0 link_libs=0

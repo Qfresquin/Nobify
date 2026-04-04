@@ -16,8 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-void nob__cmd_append(Nob_Cmd *cmd, size_t n, ...);
-
 void codegen_test_set_repo_root(const char *repo_root);
 bool codegen_render_script(const char *script,
                            const char *input_path,

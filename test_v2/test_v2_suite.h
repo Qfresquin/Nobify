@@ -17,6 +17,7 @@ void run_evaluator_diff_v2_tests(int *passed, int *failed, int *skipped);
 void run_evaluator_v2_integration_tests(int *passed, int *failed, int *skipped);
 void run_pipeline_v2_tests(int *passed, int *failed, int *skipped);
 void run_codegen_v2_tests(int *passed, int *failed, int *skipped);
+void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped);
 
 static inline int test_v2_require_official_runner(void) {
     const char *runner = getenv(CMK2NOB_TEST_RUNNER_ENV);

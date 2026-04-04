@@ -5,7 +5,7 @@
 This document defines the current baseline architecture and suite taxonomy for
 the v2 test stack.
 
-As of March 27, 2026:
+As of April 4, 2026:
 - the official test entrypoint is `./build/nob_test`
 - the runner owns module selection, build profiles, incremental compilation,
   workspace roots, captured logs, and aggregate execution
@@ -15,6 +15,8 @@ As of March 27, 2026:
 - generic host-fixture support for env/symlink/git/tar helpers is now
   centralized under shared helpers in `test_v2/`
 - `build-model` is now a first-class runner module and aggregate participant
+- `artifact-parity` now exists as an explicit-only host/integration module for
+  real-CMake versus generated-Nob artifact comparison
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -90,6 +92,12 @@ code.
   Focus: generated `nob` output, host compiler execution, and generated-binary
   behavior. This suite crosses semantic and host/toolchain boundaries.
   Current aggregate status: included.
+
+- `artifact-parity`
+  Focus: real `cmake 3.28.x` versus generated Nob artifact comparison through
+  structured manifests over build outputs and generated files, with manifest
+  domains reserved for install, export, and package parity growth.
+  Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`
   Focus: heavier evaluator scenarios that depend on host process, environment,
@@ -170,6 +178,7 @@ Owners:
 - `test_v2/evaluator/`
 - `test_v2/pipeline/`
 - `test_v2/codegen/`
+- `test_v2/artifact_parity/`
 
 Responsibilities:
 - semantic assertions
@@ -192,6 +201,7 @@ The target first-class test module set is:
 - `evaluator-integration`
 - `pipeline`
 - `codegen`
+- `artifact-parity`
 
 Current gap:
 - none in the planned first-class module set
@@ -239,6 +249,11 @@ Current default aggregate membership and intent:
 - `codegen`
   Included because generated output and generated-binary execution are part of
   the default end-to-end confidence story.
+
+- `artifact-parity`
+  Excluded from `test-v2` because it depends on a real `cmake 3.28.x` binary
+  and is intentionally kept as an explicit proof harness outside the default
+  smoke tier while P0 parity coverage is still narrow.
 
 - `evaluator-integration`
   Excluded from `test-v2` because it is heavier and more host-sensitive than the
